@@ -88,6 +88,20 @@ test('每条方法 implementationAnchor 都指向 core 或 apps/*（未落地的
   }
 });
 
+// 计划 §1「资源键只能是明确 workspaceId/sessionId，不用隐式 currentSession」——
+// 契约里若出现别的 resourceKey（deviceId/operationId/customId 之类）说明设计口径漂了。
+test('resourceKeys 值域严格 ⊂ {workspaceId, sessionId}', () => {
+  const ALLOWED = new Set(['workspaceId', 'sessionId']);
+  for (const row of rows) {
+    for (const k of row.resourceKeys) {
+      assert.ok(
+        ALLOWED.has(k),
+        `${row.method}: resourceKeys 出现非白名单值 "${k}"`
+      );
+    }
+  }
+});
+
 // 「无 resourceKey 的 management/write」必须是白名单里明确的全局动作，
 // 防止后续新增管理方法忘了声明资源键（例如 auth/revoke 应当带 deviceId 却漏）。
 test('management/write 且 resourceKeys 为空的动作，只允许白名单里的全局/无资源动作', () => {
