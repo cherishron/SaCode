@@ -87,3 +87,35 @@ test('每条方法 implementationAnchor 都指向 core 或 apps/*（未落地的
     );
   }
 });
+
+// 「无 resourceKey 的 management/write」必须是白名单里明确的全局动作，
+// 防止后续新增管理方法忘了声明资源键（例如 auth/revoke 应当带 deviceId 却漏）。
+test('management/write 且 resourceKeys 为空的动作，只允许白名单里的全局/无资源动作', () => {
+  const GLOBAL_NO_RESOURCE = new Set([
+    'global/appearance/set-theme',
+    'global/appearance/set-font-size',
+    'global/appearance/set-busy-send',
+    'global/settings/set-transcript-view',
+    'global/settings/set-composer-enter',
+    'global/settings/set-session-log',
+    'tips/set-hidden',
+    'daemon/shutdown',
+    'auth/devices',           // 列表：作用域在 management 本身
+    'auth/revoke',            // 撤销：目标 deviceId 由 management 范围门控；契约层无独立资源键
+  ]);
+  const offending = [];
+  for (const row of rows) {
+    if (
+      (row.permission === 'management' || row.permission === 'write') &&
+      row.resourceKeys.length === 0 &&
+      !GLOBAL_NO_RESOURCE.has(row.method)
+    ) {
+      offending.push(`${row.method} (${row.permission})`);
+    }
+  }
+  assert.deepEqual(
+    offending, [],
+    '以下 write/management 方法既无 resourceKeys 又不在全局白名单：\n  ' + offending.join('\n  ')
+  );
+});
+
