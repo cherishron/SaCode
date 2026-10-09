@@ -173,9 +173,15 @@ public class HookRegistry {
     let rules = ArrayList<HookRule>()
     var log: Option<SessionLog> = None
 
-    let policy: HookSecurityPolicy
+    var policy: HookSecurityPolicy
 
     public init(policy!: HookSecurityPolicy = HookSecurityPolicy()) { this.policy = policy }
+
+    public static func withPolicy(policy: HookSecurityPolicy): HookRegistry {
+        let reg = HookRegistry()
+        reg.policy = policy
+        return reg
+    }
     public init(log!: SessionLog, policy!: HookSecurityPolicy = HookSecurityPolicy()) {
         this.log = Some(log)
         this.policy = policy
