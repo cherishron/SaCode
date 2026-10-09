@@ -17,7 +17,7 @@
 | 5 | executeCommand real spawn | completed | task5 → 6499647 | stdin 独占临时文件交出完整 HookInput，双管道各线程抽干，有界 wait+terminate；300KB 双管道与超时不留孤儿进程 |
 | 6 | executeHttp SSRF + DNS + env whitelist | completed | task6 → 6499647 | stdx 客户端真实 POST；URL 白名单默认拒、环回放行、链路本地/IPv4 映射/元数据永不放行、逐条核 DNS 并钉死首址、noProxy、不跟随重定向、env 插值只认白名单且拒递归；非 2xx 放行 |
 | 7 | HookRegistry dispatch + SessionLog | completed | task7 → 6499647 | 隔离包验证（SessionLog 为同签名桩）：hook/dispatch、hook/result、hook/decision 三类写入与 deny 优先聚合 |
-| 8 | settings.json read + security | 部分 | task8 | worktree_setup.cj 内的 SettingsLoader 未纳入本轮编译验证，且未接进 HookRegistry 的 HookSecurityPolicy 装配 |
+| 8 | settings.json read + security | completed | task8 重做（971d0a1） | 新文件 core/src/hook_settings.cj：security 整块覆盖（项目存在即整体生效，缺块回落用户）、hooks 逐条注册带来源前缀 id、坏配置 fail-loud。6 条用例；隔离包 24/24 rc=0；两个变异各由指定用例杀掉。HookRegistry 加 withPolicy 绕开单命名实参重载歧义 |
 | 9 | webhook.cj migration | completed（编译级） | task9 → 6499647 | dispatch→HookResult；迁移文件在隔离包 cjpm build rc=0 |
 | 10 | schedule.cj migration | completed（编译级） | task10 → 6499647 | fire→HookResult；同上 |
 | 11 | workflow.cj migration | completed（编译级） | task11 → 6499647 | start/done/fail 先 dispatch 再状态转换；同上 |

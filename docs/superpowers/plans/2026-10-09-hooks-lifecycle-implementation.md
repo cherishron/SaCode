@@ -1,5 +1,9 @@
 # Hooks 生命周期事件系统实现计划
 
+> **状态（2026-10-09 复核）**：本文为实施计划/设计规格。任务 1–11 已实现并提交（任务 8 由新文件 `core/src/hook_settings.cj` 承载，不再寄生 `worktree_setup.cj`）；任务 12–13 未做；任务 14 代码在工作区未提交（该文件混有他人 in-flight 改动）；任务 15 仅执行器与配置装配面完成，端到端「allow 跳过审批」仍未验。逐条状态与证据见 `superpowers/sdd/2026-10-09-hooks-lifecycle/progress.md`。
+>
+> **前提更正**：旧注所称「`cjpm test` 受 `cmds.cj` 语法错误阻塞」已不成立——`cmds.cj` 现在编得过；真包当前的编译/测试失败均来自他人在途文件（本轮实测：`cjpm build` 唯一错误是 `goal_runner.cj:49 undeclared identifier 'parse'`，`cjpm test` 60 条错误全落在别人的测试源，Hook 文件两处均 0 错误）。因此 Hook 线的运行证据取自隔离包 `apps/desktop/.tmp-test/hookreg/`（真源全文 + 与真实 `append` 同签名的 SessionLog 桩），非真包全量。另：本计划假设的 `core/src/pipeline.cj` **不存在**，PreToolUse 的真实落点是 `agent.cj` 的 `pipeline()` 与 `ToolRuntime.execute()`，PermissionRequest 的落点在 `approval.cj` 与 `model_tool_runtime.cj`，续做前先按此重指。对应能力在 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账中列为 P2 缺口。勿将标题中的「实现 X」误读为已交付；产品真实进度以 PRD 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现 25 种 Hook 事件的集中注册表、command/http 执行器、决策返回路径、会话日志集成、settings.json 配置读取，以及 webhook/schedule/workflow 统一迁移，使 PreToolUse 等关键事件可拦截 agent loop 并返回 allow/deny/block/ask 决策。
