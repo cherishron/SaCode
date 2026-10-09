@@ -168,9 +168,9 @@ public func wtGitRun(directory: String, action: Array<String>, timeoutMs!: Int64
 // 只认成功：非零、超时、流不可解都算 git 读不出来，调用方据此 fail-closed。
 func wtGitText(directory: String, action: Array<String>, timeoutMs!: Int64 = wtGitTimeoutMs): String {
     let result = wtGitRun(directory, action, timeoutMs: timeoutMs)
-    if (result.timedOut) { wtFail("worktree-git-timeout", action[0]) }
-    if (result.incomplete) { wtFail("worktree-git-incomplete", action[0]) }
-    if (result.exitCode != 0) { wtFail("worktree-git-failed", "${action[0]}:${result.exitCode}:${result.diagnostic}") }
+    if (result.timedOut) { wtFail("worktree-git-timeout", detail: action[0]) }
+    if (result.incomplete) { wtFail("worktree-git-incomplete", detail: action[0]) }
+    if (result.exitCode != 0) { wtFail("worktree-git-failed", detail: "${action[0]}:${result.exitCode}:${result.diagnostic}") }
     return result.output
 }
 
@@ -204,7 +204,7 @@ func wtBaseNameOf(path: String): String {
 func wtCanonical(path: String): String {
     var resolved = ""
     try { resolved = canonicalize(path).toString() }
-    catch (e: Exception) { wtFail("worktree-path-unavailable", path) }
+    catch (e: Exception) { wtFail("worktree-path-unavailable", detail: path) }
     return resolved
 }
 
@@ -212,7 +212,7 @@ func wtCanonical(path: String): String {
 // 绝对路径；两种都要按「git 当时所在的目录」解析再规范。
 func wtResolveGitPath(directory: String, raw: String): String {
     let trimmed = raw.trimAscii()
-    if (trimmed.size == 0) { wtFail("worktree-git-query-empty", directory) }
+    if (trimmed.size == 0) { wtFail("worktree-git-query-empty", detail: directory) }
     let candidate = if (Path(trimmed).isAbsolute()) { trimmed } else { wtJoin(directory, trimmed) }
     return wtCanonical(candidate)
 }
@@ -228,17 +228,17 @@ func wtBaseDirectory(repoRoot: String): String {
 // 基目录必须是真目录、必须还在仓库根之内：`.sacode` 被人换成符号链接/junction 时，
 // worktree 会被建到别人的仓库里，一律拒。
 func wtAssertInside(repoRoot: String, path: String): Unit {
-    if (!exists(path)) { wtFail("worktree-path-unavailable", path) }
+    if (!exists(path)) { wtFail("worktree-path-unavailable", detail: path) }
     let real = wtCanonical(path)
     if (wtNormalisedPath(real) == wtNormalisedPath(repoRoot) || !wtIsUnder(real, repoRoot)) {
-        wtFail("worktree-base-escape", path)
+        wtFail("worktree-base-escape", detail: path)
     }
     // 第二道：重解析点本身。规范路径解析不出来的那一类也要被拦下——宁可误拒，不可能放行。
     // 探针的异常只当「读不出链接位」，不能把拒删的码一起吞掉，所以判空在外面。
     var isLink = false
     try { isLink = FileInfo(path).isSymbolicLink() }
     catch (e: Exception) { isLink = false }
-    if (isLink) { wtFail("worktree-base-escape", path) }
+    if (isLink) { wtFail("worktree-base-escape", detail: path) }
 }
 
 func wtEnsureBaseDirectory(repoRoot: String): String {
@@ -251,11 +251,11 @@ func wtEnsureBaseDirectory(repoRoot: String): String {
     }
     if (!exists(marker)) {
         try { Directory.create(marker, recursive: false) }
-        catch (e: Exception) { wtFail("worktree-base-unavailable", e.message) }
+        catch (e: Exception) { wtFail("worktree-base-unavailable", detail: e.message) }
         wtAssertInside(repoRoot, marker)
     }
     try { Directory.create(base, recursive: false) }
-    catch (e: Exception) { wtFail("worktree-base-unavailable", e.message) }
+    catch (e: Exception) { wtFail("worktree-base-unavailable", detail: e.message) }
     // 建完再核一次：中途被人换成链接也要当场发现。
     wtAssertInside(repoRoot, base)
     return wtCanonical(base)
@@ -294,18 +294,18 @@ func wtIsWindowsReservedName(name: String): Bool {
 // 不能以 - 或 . 结尾、不能含 ..（穿越）、不能撞 Windows 保留设备名，
 // 也不能用 agent- 前缀（那是清理面的保留位：agent 目录会被按前缀老化回收）。
 public func wtValidateSlug(raw: String): String {
-    if (raw.size == 0 || raw.size > wtNameLimit) { wtFail("worktree-bad-name", raw) }
+    if (raw.size == 0 || raw.size > wtNameLimit) { wtFail("worktree-bad-name", detail: raw) }
     let bytes = raw.toArray()
     for (b in bytes) {
         let allowed = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 46 || b == 95 || b == 45
-        if (!allowed) { wtFail("worktree-bad-name", raw) }
+        if (!allowed) { wtFail("worktree-bad-name", detail: raw) }
     }
-    if (bytes[0] == 45) { wtFail("worktree-bad-name", raw) }
+    if (bytes[0] == 45) { wtFail("worktree-bad-name", detail: raw) }
     let tail = bytes[Int64(bytes.size) - 1]
-    if (tail == 45 || tail == 46) { wtFail("worktree-bad-name", raw) }
-    if (raw.contains("..") || raw == ".") { wtFail("worktree-bad-name", raw) }
-    if (wtIsWindowsReservedName(raw)) { wtFail("worktree-bad-name", raw) }
-    if (raw.startsWith(wtAgentPrefix)) { wtFail("worktree-bad-name", raw) }
+    if (tail == 45 || tail == 46) { wtFail("worktree-bad-name", detail: raw) }
+    if (raw.contains("..") || raw == ".") { wtFail("worktree-bad-name", detail: raw) }
+    if (wtIsWindowsReservedName(raw)) { wtFail("worktree-bad-name", detail: raw) }
+    if (raw.startsWith(wtAgentPrefix)) { wtFail("worktree-bad-name", detail: raw) }
     return raw
 }
 
@@ -366,15 +366,15 @@ public class WtPrReference {
 
 // 编号闭集：纯数字，允许前导零，值在 [1, 2147483647]。
 func wtParsePrNumber(raw: String): Int64 {
-    if (raw.size == 0 || raw.size > 20) { wtFail("worktree-pr-bad-reference", raw) }
+    if (raw.size == 0 || raw.size > 20) { wtFail("worktree-pr-bad-reference", detail: raw) }
     let bytes = raw.toArray()
-    for (b in bytes) { if (b < 48 || b > 57) { wtFail("worktree-pr-bad-reference", raw) } }
+    for (b in bytes) { if (b < 48 || b > 57) { wtFail("worktree-pr-bad-reference", detail: raw) } }
     var first: Int64 = 0
     while (first < Int64(bytes.size) - 1 && bytes[first] == 48) { first += 1 }
     let digits = raw[first..raw.size]
-    if (digits.size > 10) { wtFail("worktree-pr-bad-reference", raw) }
+    if (digits.size > 10) { wtFail("worktree-pr-bad-reference", detail: raw) }
     let value = Int64.parse(digits)
-    if (value < 1 || value > 2147483647) { wtFail("worktree-pr-bad-reference", raw) }
+    if (value < 1 || value > 2147483647) { wtFail("worktree-pr-bad-reference", detail: raw) }
     return value
 }
 
@@ -385,15 +385,15 @@ public func wtParsePrReference(reference: String): WtPrReference {
     if (text.startsWith("#")) {
         return WtPrReference(wtParsePrNumber(text[1..text.size]), "", "", false)
     }
-    if (text.startsWith("http://")) { wtFail("worktree-pr-bad-reference", reference) }
+    if (text.startsWith("http://")) { wtFail("worktree-pr-bad-reference", detail: reference) }
     if (text.startsWith("https://github.com/")) {
         let rest = text["https://github.com/".size..text.size]
         let parts = rest.split("/")
-        if (parts.size != 4) { wtFail("worktree-pr-bad-reference", reference) }
-        if (parts[0].size == 0 || parts[1].size == 0 || parts[2] != "pull") { wtFail("worktree-pr-bad-reference", reference) }
+        if (parts.size != 4) { wtFail("worktree-pr-bad-reference", detail: reference) }
+        if (parts[0].size == 0 || parts[1].size == 0 || parts[2] != "pull") { wtFail("worktree-pr-bad-reference", detail: reference) }
         return WtPrReference(wtParsePrNumber(parts[3]), parts[0], parts[1], true)
     }
-    if (text.contains("/") || text.contains(":")) { wtFail("worktree-pr-bad-reference", reference) }
+    if (text.contains("/") || text.contains(":")) { wtFail("worktree-pr-bad-reference", detail: reference) }
     return WtPrReference(wtParsePrNumber(text), "", "", false)
 }
 
@@ -438,13 +438,13 @@ public class WtRoots {
 // 两者不同即「已经在工作树里」。仓库根按 common-dir 折出来（主工作树与链接工作树同解）。
 public func wtRepoRoots(directory: String): WtRoots {
     if (directory.size == 0) { wtFail("worktree-no-directory") }
-    if (!exists(directory)) { wtFail("worktree-directory-missing", directory) }
+    if (!exists(directory)) { wtFail("worktree-directory-missing", detail: directory) }
     let top = wtGitText(directory, ["rev-parse", "--show-toplevel"])
     let gitDir = wtResolveGitPath(directory, wtGitText(directory, ["rev-parse", "--absolute-git-dir"]))
     let common = wtResolveGitPath(directory, wtGitText(directory, ["rev-parse", "--git-common-dir"]))
     let worktreeRoot = wtResolveGitPath(directory, top)
     let repoRoot = if (wtLowerEquals(wtBaseNameOf(common), ".git")) { wtParentOf(common) } else { common }
-    if (!exists(repoRoot) || !FileInfo(repoRoot).isDirectory()) { wtFail("worktree-not-a-repository", repoRoot) }
+    if (!exists(repoRoot) || !FileInfo(repoRoot).isDirectory()) { wtFail("worktree-not-a-repository", detail: repoRoot) }
     return WtRoots(repoRoot, worktreeRoot, common, wtNormalisedPath(gitDir) != wtNormalisedPath(common))
 }
 
@@ -482,7 +482,7 @@ public func wtUniqueCommits(directory: String, ref: String): Int64 {
         let name = line.trimAscii()
         if (name.size > 0) { retainers.add(name) }
     }
-    if (retainers.size > wtRetentionRefLimit) { wtFail("worktree-retention-unbounded", "${retainers.size}") }
+    if (retainers.size > wtRetentionRefLimit) { wtFail("worktree-retention-unbounded", detail: "${retainers.size}") }
     let args = ArrayList<String>()
     for (a in ["rev-list", "--count", ref]) { args.add(a) }
     if (retainers.size > 0) {
@@ -490,8 +490,8 @@ public func wtUniqueCommits(directory: String, ref: String): Int64 {
         for (name in retainers) { args.add(name) }
     }
     let digits = wtGitText(directory, args.toArray()).trimAscii()
-    if (digits.size == 0 || digits.size > 19) { wtFail("worktree-git-bad-count", digits) }
-    for (b in digits.toArray()) { if (b < 48 || b > 57) { wtFail("worktree-git-bad-count", digits) } }
+    if (digits.size == 0 || digits.size > 19) { wtFail("worktree-git-bad-count", detail: digits) }
+    for (b in digits.toArray()) { if (b < 48 || b > 57) { wtFail("worktree-git-bad-count", detail: digits) } }
     return Int64.parse(digits)
 }
 
@@ -506,7 +506,7 @@ func wtCreateWorktree(repoRoot: String, target: String, branch: String, owned: B
     let args = ArrayList<String>()
     for (a in ["worktree", "add"]) { args.add(a) }
     if (wtBranchExists(repoRoot, branch)) {
-        if (!owned) { wtFail("worktree-branch-taken", branch) }
+        if (!owned) { wtFail("worktree-branch-taken", detail: branch) }
         args.add(target)
         args.add(branch)
     } else {
@@ -515,7 +515,7 @@ func wtCreateWorktree(repoRoot: String, target: String, branch: String, owned: B
     let result = wtGitRun(repoRoot, args.toArray(), timeoutMs: wtAddTimeoutMs)
     if (result.exitCode != 0 || result.timedOut || result.incomplete) {
         try { removeIfExists(target, recursive: true) } catch (e: Exception) {}
-        wtFail("worktree-create-failed", "${result.exitCode}:${result.diagnostic}")
+        wtFail("worktree-create-failed", detail: "${result.exitCode}:${result.diagnostic}")
     }
     return wtCanonical(target)
 }
@@ -528,7 +528,7 @@ func wtRemoveWorktree(repoRoot: String, target: String, force: Bool): Unit {
     args.add(target)
     let result = wtGitRun(repoRoot, args.toArray())
     if (result.exitCode != 0 || result.timedOut || result.incomplete) {
-        wtFail("worktree-remove-failed", "${result.exitCode}:${result.diagnostic}")
+        wtFail("worktree-remove-failed", detail: "${result.exitCode}:${result.diagnostic}")
     }
 }
 
@@ -550,7 +550,7 @@ class WtFields {
 
     func require(key: String): String {
         let value = get(key)
-        if (value.size == 0) { wtFail("worktree-log-damaged", key) }
+        if (value.size == 0) { wtFail("worktree-log-damaged", detail: key) }
         return value
     }
 }
@@ -559,7 +559,7 @@ func wtBuildPayload(pairs: Array<Array<String>>): String {
     var text = ""
     for (pair in pairs) {
         if (pair.size != 2 || pair[0].size == 0 || pair[1].size == 0 || pair[1].contains("\n")) {
-            wtFail("worktree-log-damaged", if (pair.size > 0) { pair[0] } else { "" })
+            wtFail("worktree-log-damaged", detail: if (pair.size > 0) { pair[0] } else { "" })
         }
         if (text.size > 0) { text += "\n" }
         text += "${pair[0]}=${pair[1]}"
@@ -574,11 +574,11 @@ func wtParsePayload(text: String, allowed: Array<String>): WtFields {
     for (line in text.split("\n")) {
         if (line.size == 0) { continue }
         let parts = line.split("=")
-        if (parts.size < 2) { wtFail("worktree-log-damaged", line) }
+        if (parts.size < 2) { wtFail("worktree-log-damaged", detail: line) }
         let key = parts[0]
         var known = false
         for (name in allowed) { if (name == key) { known = true } }
-        if (!known || fields.get(key).size > 0) { wtFail("worktree-log-damaged", key) }
+        if (!known || fields.get(key).size > 0) { wtFail("worktree-log-damaged", detail: key) }
         fields.put(key, line[key.size + 1..line.size])
     }
     return fields
@@ -721,11 +721,11 @@ public class SessionWorktree {
             let slug = if (given.size == 0) { wtGeneratedSlug() } else { wtValidateSlug(given) }
             if (let Some(state) <- currentBinding()) {
                 // 同名重入是幂等复用（回放之后再进也走这条）；换名字必须先退出。
-                if (state.name != slug) { wtFail("worktree-already-active", state.name) }
+                if (state.name != slug) { wtFail("worktree-already-active", detail: state.name) }
                 return state.directory
             }
             let roots = wtRepoRoots(workspace.effectiveDirectory())
-            if (roots.linked) { wtFail("worktree-nested", roots.worktreeRoot) }
+            if (roots.linked) { wtFail("worktree-nested", detail: roots.worktreeRoot) }
             return bindCreated(roots, slug, "HEAD")
         }
     }
@@ -735,20 +735,20 @@ public class SessionWorktree {
             let parsed = wtParsePrReference(reference)
             if (currentBinding().isSome()) { wtFail("worktree-already-active") }
             let roots = wtRepoRoots(workspace.effectiveDirectory())
-            if (roots.linked) { wtFail("worktree-nested", roots.worktreeRoot) }
+            if (roots.linked) { wtFail("worktree-nested", detail: roots.worktreeRoot) }
             let origin = wtGitRun(roots.repoRoot, ["remote", "get-url", "origin"])
-            if (origin.exitCode != 0) { wtFail("worktree-pr-origin-missing", roots.repoRoot) }
+            if (origin.exitCode != 0) { wtFail("worktree-pr-origin-missing", detail: roots.repoRoot) }
             let url = origin.output.trimAscii()
             if (parsed.byUrl && !wtOriginMatches(url, parsed.owner, parsed.repo)) {
-                wtFail("worktree-pr-origin-mismatch", parsed.owner)
+                wtFail("worktree-pr-origin-mismatch", detail: parsed.owner)
             }
             // 先抓再建目录：抓不到就是没有这个 PR，一个字节都不落。
             // 落到 refs/remotes/origin/pull/<N>/head：PR 自带的提交因此算「远程 ref 保留」，
             // 用户在这之上叠的新提交仍然算独有——第三重保护对 PR 分支同样成立。
             let refspec = "pull/${parsed.number}/head:refs/remotes/origin/pull/${parsed.number}/head"
             let fetched = wtGitRun(roots.repoRoot, ["fetch", "origin", refspec], timeoutMs: wtFetchTimeoutMs)
-            if (fetched.timedOut) { wtFail("worktree-pr-fetch-timeout", "${parsed.number}") }
-            if (fetched.exitCode != 0) { wtFail("worktree-pr-fetch-failed", "${fetched.exitCode}:${fetched.diagnostic}") }
+            if (fetched.timedOut) { wtFail("worktree-pr-fetch-timeout", detail: "${parsed.number}") }
+            if (fetched.exitCode != 0) { wtFail("worktree-pr-fetch-failed", detail: "${fetched.exitCode}:${fetched.diagnostic}") }
             return bindCreated(roots, "pull-${parsed.number}", "refs/remotes/origin/pull/${parsed.number}/head")
         }
     }
@@ -760,11 +760,11 @@ public class SessionWorktree {
         let branch = wtBranchOf(slug)
         if (exists(target)) {
             // 磁盘上已有同名目录：只有本会话建过的才算我们的东西。
-            if (!hasCreateRecord(target)) { wtFail("worktree-name-taken", target) }
+            if (!hasCreateRecord(target)) { wtFail("worktree-name-taken", detail: target) }
             let real = wtCanonical(target)
             let top = wtGitText(real, ["rev-parse", "--show-toplevel"])
             if (wtNormalisedPath(wtResolveGitPath(real, top)) != wtNormalisedPath(real)) {
-                wtFail("worktree-name-taken", real)
+                wtFail("worktree-name-taken", detail: real)
             }
             writeBind(real, slug, branch, roots.repoRoot)
             return real
@@ -795,7 +795,7 @@ public class SessionWorktree {
 
     public func exit(action: String, discardChanges!: Bool = false): String {
         // 动作闭集先判：它是参数校验，与「有没有绑定」无关，delete 永远不是取值。
-        if (action != "keep" && action != "remove") { wtFail("worktree-unknown-action", action) }
+        if (action != "keep" && action != "remove") { wtFail("worktree-unknown-action", detail: action) }
         synchronized(wtProcessLock) {
             // 绑定、三重保护与删除整段串行：不给「两边都以为自己是第一个」留缝。
             if (let Some(state) <- currentBinding()) {
@@ -804,21 +804,21 @@ public class SessionWorktree {
                     return describe()
                 }
                 // 保护一：创建会话归属。
-                if (!hasCreateRecord(state.directory)) { wtFail("worktree-not-owned", state.directory) }
+                if (!hasCreateRecord(state.directory)) { wtFail("worktree-not-owned", detail: state.directory) }
                 let roots = wtRepoRoots(state.directory)
                 // 保护三：独有提交。排在脏文件之前判——它没有任何强制通路，调用方必须先看到
                 // 这条硬约束，而不是先拿到一个能用 discardChanges 抹掉的码。
                 let unique = wtUniqueCommits(state.directory, "refs/heads/${state.branch}")
-                if (unique > 0) { wtFail("worktree-unique-commits", "${unique}") }
+                if (unique > 0) { wtFail("worktree-unique-commits", detail: "${unique}") }
                 // 保护二：未提交文件（含未跟踪，ignored 不算脏）。discardChanges 只覆盖这一项。
                 let uncommitted = wtStatusCount(state.directory)
-                if (uncommitted > 0 && !discardChanges) { wtFail("worktree-dirty", "${uncommitted}") }
+                if (uncommitted > 0 && !discardChanges) { wtFail("worktree-dirty", detail: "${uncommitted}") }
                 wtRemoveWorktree(roots.repoRoot, state.directory, discardChanges)
                 if (wtBranchExists(roots.repoRoot, state.branch)) {
                     // 走到这里提交已被别的分支或远程 ref 保留，删分支不丢东西；
                     // 留着它反而会把这个名字的下一次进入永久堵住。
                     let dropped = wtGitRun(roots.repoRoot, ["branch", "-D", state.branch])
-                    if (dropped.exitCode != 0) { wtFail("worktree-branch-cleanup-failed", dropped.diagnostic) }
+                    if (dropped.exitCode != 0) { wtFail("worktree-branch-cleanup-failed", detail: dropped.diagnostic) }
                 }
                 writeUnbind(state, "remove")
                 return describe()
@@ -862,7 +862,7 @@ public class SessionWorktree {
                 target = candidate
                 break
             }
-            if (target.size == 0) { wtFail("worktree-agent-slot-taken", id) }
+            if (target.size == 0) { wtFail("worktree-agent-slot-taken", detail: id) }
             let branch = wtBranchOf(wtBaseNameOf(target))
             // 目录被外部删掉但分支还在时，只有我们自己的记录能复用那条分支。
             let created = wtCreateWorktree(roots.repoRoot, target, branch, hasAgentRecordFor(target))
@@ -889,7 +889,7 @@ public class SessionWorktree {
                         wtRemoveWorktree(roots.repoRoot, record.directory, false)
                         if (wtBranchExists(roots.repoRoot, record.branch)) {
                             let dropped = wtGitRun(roots.repoRoot, ["branch", "-D", record.branch])
-                            if (dropped.exitCode != 0) { wtFail("worktree-branch-cleanup-failed", dropped.diagnostic) }
+                            if (dropped.exitCode != 0) { wtFail("worktree-branch-cleanup-failed", detail: dropped.diagnostic) }
                         }
                         removed = true
                     }
@@ -899,7 +899,7 @@ public class SessionWorktree {
                 return "{\"agentId\":${wtJsonQuote(id)},\"directory\":${wtJsonQuote(record.directory)},"
                     + "\"retained\":${wtJsonBool(retained)},\"removed\":${wtJsonBool(removed)}}"
             }
-            wtFail("worktree-agent-unknown", id)
+            wtFail("worktree-agent-unknown", detail: id)
         }
     }
 
@@ -1010,7 +1010,7 @@ public class SessionWorktree {
     func wtAgentIdOf(agentId: String): String {
         var validated = ""
         try { validated = wtValidateSlug(agentId) }
-        catch (e: Exception) { wtFail("worktree-bad-agent-id", agentId) }
+        catch (e: Exception) { wtFail("worktree-bad-agent-id", detail: agentId) }
         return validated
     }
 }

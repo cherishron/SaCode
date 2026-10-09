@@ -47,7 +47,7 @@ func wsProjectSettingsFile(repoRoot: String): String {
 func wsReadText(file: String): String {
     var text = ""
     try { text = String.fromUtf8(File.readFrom(file)) }
-    catch (e: Exception) { wsFail("worktree-settings-unreadable", file) }
+    catch (e: Exception) { wsFail("worktree-settings-unreadable", detail: file) }
     return text
 }
 
@@ -59,28 +59,28 @@ func wsSymlinkDirectories(file: String): Option<Array<String>> {
     if (file.size == 0 || !exists(file)) { return None }
     var parsed: JsonValue = JsonString("")
     try { parsed = JsonValue.fromStr(wsReadText(file)) }
-    catch (e: Exception) { wsFail("worktree-settings-invalid", file) }
+    catch (e: Exception) { wsFail("worktree-settings-invalid", detail: file) }
     var object = JsonObject()
     try { object = parsed.asObject() }
-    catch (e: Exception) { wsFail("worktree-settings-invalid", file) }
+    catch (e: Exception) { wsFail("worktree-settings-invalid", detail: file) }
     if (let Some(section) <- object.get("worktree")) {
         var tree = JsonObject()
         try { tree = section.asObject() }
-        catch (e: Exception) { wsFail("worktree-settings-invalid", "${file}:worktree") }
+        catch (e: Exception) { wsFail("worktree-settings-invalid", detail: "${file}:worktree") }
         for ((key, _) in tree.getFields()) {
-            if (key != "symlinkDirectories") { wsFail("worktree-settings-invalid", "${file}:worktree/${key}") }
+            if (key != "symlinkDirectories") { wsFail("worktree-settings-invalid", detail: "${file}:worktree/${key}") }
         }
         if (let Some(value) <- tree.get("symlinkDirectories")) {
             var list = JsonArray()
             try { list = value.asArray() }
-            catch (e: Exception) { wsFail("worktree-settings-invalid", "${file}:symlinkDirectories") }
+            catch (e: Exception) { wsFail("worktree-settings-invalid", detail: "${file}:symlinkDirectories") }
             let entries = ArrayList<String>()
             for (index in 0..list.size()) {
                 var item: JsonValue = JsonString("")
                 try { item = list.get(index).getOrThrow() }
-                catch (e: Exception) { wsFail("worktree-settings-invalid", "${file}:entry") }
+                catch (e: Exception) { wsFail("worktree-settings-invalid", detail: "${file}:entry") }
                 let text = item.asString()
-                if (text.isNone()) { wsFail("worktree-settings-invalid", "${file}:entry") }
+                if (text.isNone()) { wsFail("worktree-settings-invalid", detail: "${file}:entry") }
                 entries.add(text.getOrThrow())
             }
             return Some(entries.toArray())
@@ -93,16 +93,16 @@ func wsSymlinkDirectories(file: String): Option<Array<String>> {
 // 任何 `..` 或 `.` 段、空段、盘符与冒号、超长与过深的条目。通过核验后按段重拼，
 // 归一化分隔符——配置里 `a\b` 与 `a/b` 是同一个目录，不给两套写法留分叉。
 func wsNormaliseEntry(entry: String): String {
-    if (entry.size == 0 || entry.size > 512) { wsFail("worktree-bad-symlink-entry", entry) }
-    if (entry.contains(":") || entry.startsWith("~")) { wsFail("worktree-bad-symlink-entry", entry) }
+    if (entry.size == 0 || entry.size > 512) { wsFail("worktree-bad-symlink-entry", detail: entry) }
+    if (entry.contains(":") || entry.startsWith("~")) { wsFail("worktree-bad-symlink-entry", detail: entry) }
     let unified = entry.replace("\\", "/")
-    if (unified.startsWith("/")) { wsFail("worktree-bad-symlink-entry", entry) }
+    if (unified.startsWith("/")) { wsFail("worktree-bad-symlink-entry", detail: entry) }
     let segments = unified.split("/")
-    if (segments.size == 0 || segments.size > 16) { wsFail("worktree-bad-symlink-entry", entry) }
+    if (segments.size == 0 || segments.size > 16) { wsFail("worktree-bad-symlink-entry", detail: entry) }
     let kept = ArrayList<String>()
     for (segment in segments) {
-        if (segment.size == 0 || segment == ".." || segment == ".") { wsFail("worktree-bad-symlink-entry", entry) }
-        if (segment.contains("\n") || segment.contains("\r")) { wsFail("worktree-bad-symlink-entry", entry) }
+        if (segment.size == 0 || segment == ".." || segment == ".") { wsFail("worktree-bad-symlink-entry", detail: entry) }
+        if (segment.contains("\n") || segment.contains("\r")) { wsFail("worktree-bad-symlink-entry", detail: entry) }
         kept.add(segment)
     }
     var path = ""
@@ -116,7 +116,7 @@ func wsNormaliseEntry(entry: String): String {
 func wsCanonical(path: String): String {
     var resolved = ""
     try { resolved = canonicalize(path).toString() }
-    catch (e: Exception) { wsFail("worktree-setup-path-unavailable", path) }
+    catch (e: Exception) { wsFail("worktree-setup-path-unavailable", detail: path) }
     return resolved
 }
 
@@ -182,13 +182,13 @@ public class WorktreeSetup {
             let real = wsCanonical(source)
             // 规范路径必须仍在主仓之内：条目写得合规、但解析出去到了仓外（重解析点）也拒。
             if (!wtIsUnder(real, root) || wtNormalisedPath(real) == wtNormalisedPath(root)) {
-                wsFail("worktree-symlink-escape", entry)
+                wsFail("worktree-symlink-escape", detail: entry)
             }
             // 探针的异常只当「读不出链接位」，不能把拒装配的码一起吞掉，所以判空在外面。
             var isLink = false
             try { isLink = FileInfo(source).isSymbolicLink() }
             catch (e: Exception) { isLink = false }
-            if (isLink) { wsFail("worktree-symlink-escape", entry) }
+            if (isLink) { wsFail("worktree-symlink-escape", detail: entry) }
             let link = wsJoinRelative(worktree, relative)
             // 目标已存在 → 跳过：不覆盖工作树里真实检出的那份目录。
             if (exists(link)) { continue }
@@ -232,7 +232,7 @@ public class WorktreeSetup {
             for (path in created) {
                 try { removeIfExists(path, recursive: false) } catch (e: Exception) {}
             }
-            wsFail("worktree-symlink-denied", failure)
+            wsFail("worktree-symlink-denied", detail: failure)
         }
         return "{\"linked\":${linked},\"skipped\":${skipped}}"
     }
