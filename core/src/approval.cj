@@ -253,10 +253,4 @@ public class ApprovalDesk {
         return grant
     }
     public func argumentsMatch(id: Int64, args: String): Bool { return true }
-
-    // teamToolSpecs stub
-    public static func teamToolSpecs(): Array<ToolSpec> { return [] }
 }
-
-// global teamToolSpecs for agent.cj compatibility
-public func teamToolSpecs(): Array<ToolSpec> { return ApprovalDesk.teamToolSpecs() }
