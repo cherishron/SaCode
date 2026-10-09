@@ -34,6 +34,25 @@
 | e572a78 | 三模块 34 条 Cangjie 单测真跑绿（daemon 侧运行，绕开 core 链接 40 分钟卡）；补 jsonEscape 后 escaped 禁词检测 | cjpm test --target-dir daemon-fix：**TOTAL 34 / PASSED 34 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0** | auditRejectsValueContainingBannedKey 首跑红（漏检 `\"credential\"`）→ 加 bannedEscaped 分支后绿；authz 未知方法变异（默认拒改默认允）→ 只 authzUnknownMethodRejected 一条红，其余 33 条绿；还原回绿 | 已入库 |
 | c619910 | 任务 6 第二批：远程接入 HTTP 面接线。dispatchRpc→dispatchRpcWithAuth 贯通 Authorization 头与 params 顶层归属；/sse 建立即认证；/health 本机匿名最小存活 + 非本机认证；新增 remote_access.cj（/auth/enroll + /auth/token 两面、16KiB 认证体、每来源 10/分、每票据 5 次锁定、实例身份文件跨重启稳定、生产 FileAuditSink、按契约表逐行装策略且坏行整体拒启动）；启动校验缺项即拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 58 / PASSED 58 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**；新增 `test/remote-auth.test.mjs` 真 HTTP socket：**15/15 rc=0**；`remote-capability-contract` **12/12 rc=0** | 三组变异各杀指定受害后还原回绿：① 撤 dispatch 层 gate 检查 → 仅 `dispatchWithGateRejectsMissingBearer`(FAILED) + `dispatchWithGateExtractsWorkspaceSessionOperationId`(ERROR) 两条红，`dispatchWithoutGateKeepsLegacyPath` 仍绿；② denied 归属写回空串 → `gateDeniedAuditsAttemptedWorkspaceAndSession` / `gatePoisonedIdentifierCannotBlankAudit` / dispatch 归属用例三条红；③ sanitizeId 改透传 → `gatePoisonedIdentifierCannotBlankAudit` / `gateSanitizeIdAcceptsIdentifierShapesAndCapsLength` 两条红。还原用 cp 备份 + `diff` 空输出证逐字一致 | 已入库 |
 
+### 8278245 身份摘要键 + 设备跨重启保持
+
+| SHA | 范围 | 测试计数与 rc | 变异反证 | 状态 |
+| --- | --- | --- | --- | --- |
+| 8278245 | `enrollments`/`tokens` 由**原文键**改 **sha256Hex 摘要键**（修「文件头自述只存摘要」与实现不一致）；新增设备快照面：`snapshotText` / `saveSnapshot`（临时文件 + rename 原子落位）/ `loadSnapshot`（缺文件或坏 JSON 返 false，不假装恢复、不洗掉已有设备），令牌与 5 分钟一次性票据明确不落盘；daemon 启动加载 `<identity>.devices.json`、`/auth/enroll` 成功后落盘 | `cjpm test`（daemon）：**TOTAL 63 / PASSED 63 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（+5 条持久面用例）；Node 侧 `remote-auth` 15/15 + `remote-capability-contract` 12/12 rc=0；`host-proxy` + `team-host` 仍 17/21（4 条既有红，用例名与条数与本批前一致） | 变异 `saveSnapshot` 改成 `return true` 但不写盘 → 恰好 `devicesSurviveSnapshotRoundTrip` / `enrollmentTicketsAndTokensAreNotPersisted` / `revokedDeviceAndWatermarkSurviveReload` 三条红、其余 60 条绿；cp 备份还原后 `diff` 空输出证逐字一致，回跑 63/63 绿 | 已入库 |
+
+两处诚实标注：
+
+- **登记秘密的本地创建/确认入口仍未定。** 设计 §4.2 把网络身份引导面限定为
+  `/auth/enroll` + `/auth/token` 两端点，而票据须由「目标端本地管理入口」创建；
+  当前 store 只在 daemon 进程内存里，没有任何从 daemon 之外触达的入口。
+  因此**正向登记链路（建票→登记→换令牌→Bearer 过关）只在 Cangjie 侧证过**
+  （`tokenExchangeThenBearerPassesGate`），HTTP 端到端仍缺，不记 PASS。
+  待定的是显示通道：把秘密打到 daemon stdout 会被桌面壳日志捕获，
+  与设计「秘密不得长期保存在日志里」冲突，属产品口径裁决，不自作主张。
+- **core 侧测试副本未同步。** 新 5 条持久面用例只落进 `apps/daemon/src/remote_identity_test.cj`
+  这份可运行副本；`core/src/remote_identity_test.cj` 暂不同步——core 的 `cjpm test`
+  链接段仍 BLOCKED，镜像过去等于提交一份本机编译不到、验证不到的代码。
+
 ### c619910 首跑抓到的两处真实缺陷
 
 1. **denied 审计丢归属**：`recordDenied` 把 `workspaceId`/`sessionId` 写死空串，
@@ -72,8 +91,8 @@
 **桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 7、
 `target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **90** 条断言全绿。
 **daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **15/15** rc=0。
-**daemon Cangjie 侧**：`cjpm test` **TOTAL 58 / PASSED 58 / FAILED 0 rc=0**
-（身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15）。
+**daemon Cangjie 侧**：`cjpm test` **TOTAL 63 / PASSED 63 / FAILED 0 rc=0**
+（身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15 + 设备持久面 5）。
 
 ## 在飞未完成
 
