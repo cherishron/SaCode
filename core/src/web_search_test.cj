@@ -100,3 +100,37 @@ func webSearchQueryBoundsPrecedeDeduplication() {
     try { webParseQueries([" "]) } catch (_: Exception) { rejected = true }
     @Expect(rejected, true)
 }
+
+@Test
+func webSearchParallelRequestBody() {
+    let body = JsonValue.fromStr(webSearchRequestBody("parallel", "测试查询")).asObject()
+    @Expect(body["objective"].asString().getValue(), "测试查询")
+    @Expect(body["search_queries"].asArray().size(), 1)
+    @Expect(body["search_queries"].asArray()[0].asString().getValue(), "测试查询")
+}
+
+@Test
+func webSearchParallelMcpBuildAndParse() {
+    let req = buildParallelMcpRequest("查询")
+    @Expect(req.contains("jsonrpc"), true)
+    @Expect(req.contains("tools/call"), true)
+    @Expect(req.contains("web_search"), true)
+    let resp = "{\"jsonrpc\":\"2.0\",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"结果\"}]}}"
+    let result = parseParallelMcpResponse(resp)
+    @Expect(result.content, "结果")
+}
+
+@Test
+func webSearchTinyfishRequestBody() {
+    // TinyFish 使用 GET 参数，body 为空
+    let body = webSearchRequestBody("tinyfish", "测试")
+    @Expect(body.size, 0)
+}
+
+@Test
+func webSearchTinyfishResponseParsing() {
+    let resp = "{\"results\":[{\"url\":\"https://example.com\",\"title\":\"标题\",\"content\":\"片段\"}]}"
+    let result = webParseSearchResponse("tinyfish", resp)
+    @Expect(result.sources.size, Int64(1))
+    @Expect(result.sources[0].url, "https://example.com")
+}

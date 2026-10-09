@@ -22,16 +22,25 @@ public class WebProviderSettings {
         model!: String = "", maxTokens!: Int64 = 0, maxUses!: Int64 = 5,
         searchType!: String = "auto", highlights!: Int64 = 1, recency!: String = "") {
         this.id = id
-        if (id != "exa" && id != "perplexity" && id != "deepseek-official") { throw Exception("web-provider-unknown") }
+        if (id != "exa" && id != "perplexity" && id != "deepseek-official" && id != "tavily" && id != "firecrawl" && id != "parallel" && id != "tinyfish") { throw Exception("web-provider-unknown") }
         this.enabled = enabled
         this.endpoint = if (endpoint.size > 0) { endpoint } else {
             if (id == "exa") { "https://api.exa.ai" }
             else if (id == "perplexity") { "https://api.perplexity.ai" }
+            else if (id == "tavily") { "https://api.tavily.com" }
+            else if (id == "firecrawl") { "https://api.firecrawl.dev" }
+            else if (id == "parallel") { "https://search.parallel.ai" }
+            else if (id == "tinyfish") { "https://api.search.tinyfish.ai" }
             else { "https://api.deepseek.com/anthropic/v1" }
         }
         this.credentialRef = if (credentialRef.size > 0) { credentialRef } else {
             if (id == "exa") { "EXA_API_KEY" }
-            else if (id == "perplexity") { "PERPLEXITY_API_KEY" } else { "DEEPSEEK_API_KEY" }
+            else if (id == "perplexity") { "PERPLEXITY_API_KEY" }
+            else if (id == "tavily") { "TAVILY_API_KEY" }
+            else if (id == "firecrawl") { "FIRECRAWL_API_KEY" }
+            else if (id == "parallel") { "PARALLEL_API_KEY" }
+            else if (id == "tinyfish") { "TINYFISH_API_KEY" }
+            else { "DEEPSEEK_API_KEY" }
         }
         for (byte in this.credentialRef.toArray()) {
             if (!((byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) ||
@@ -107,7 +116,7 @@ public class WebSettings {
     }
     public func snapshot(): WebSettingsSnapshot {
         if (!exists(file)) {
-            return WebSettingsSnapshot(0, false, "", [WebProviderSettings("exa"), WebProviderSettings("perplexity"), WebProviderSettings("deepseek-official")])
+            return WebSettingsSnapshot(0, false, "", [WebProviderSettings("exa"), WebProviderSettings("perplexity"), WebProviderSettings("deepseek-official"), WebProviderSettings("tavily"), WebProviderSettings("firecrawl"), WebProviderSettings("parallel")])
         }
         let object = JsonValue.fromStr(String.fromUtf8(File.readFrom(file))).asObject()
         return parse(object, None)
@@ -117,10 +126,11 @@ public class WebSettings {
         webSettingsCheckKeys(object, ["revision", "enabled", "selectedProvider", "providers"])
         let revision = object["revision"].asInt().getValue()
         if (revision < 0) { throw Exception("web-bad-revision") }
-        let fallback = previous ?? WebSettingsSnapshot(0, false, "", [WebProviderSettings("exa"), WebProviderSettings("perplexity"), WebProviderSettings("deepseek-official")])
+        let fallback = previous ?? WebSettingsSnapshot(0, false, "", [WebProviderSettings("exa"), WebProviderSettings("perplexity"), WebProviderSettings("deepseek-official"), WebProviderSettings("tavily"), WebProviderSettings("firecrawl"), WebProviderSettings("parallel"), WebProviderSettings("tinyfish")])
         let enabled = if (let Some(value) <- object.get("enabled")) { value.asBool().getValue() } else { fallback.enabled }
         let selected = if (let Some(value) <- object.get("selectedProvider")) { value.asString().getValue() } else { fallback.selectedProvider }
-        if (selected.size > 0 && selected != "exa" && selected != "perplexity" && selected != "deepseek-official") {
+        if (selected.size > 0 && selected != "exa" && selected != "perplexity" && selected != "deepseek-official" &&
+            selected != "tavily" && selected != "firecrawl" && selected != "parallel" && selected != "tinyfish" && selected != "random") {
             throw Exception("web-provider-unknown")
         }
         var providers = fallback.providers

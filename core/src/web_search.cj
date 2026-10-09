@@ -168,6 +168,56 @@ public func webSearchRequestBody(provider: String, query: String, model!: String
         }
         messages.add(message)
         object.put("messages", messages)
+    } else if (provider == "perplexity" || provider == "deepseek-official") {
+        let deepseek = provider == "deepseek-official"
+        object.put("model", JsonString(if (model.size > 0) { model }
+            else { if (deepseek) { "deepseek-v4-flash" } else { "sonar" } }))
+        object.put("max_tokens", JsonInt(if (maxTokens > 0) { maxTokens }
+            else { if (deepseek) { Int64(4096) } else { Int64(1024) } }))
+        let messages = JsonArray()
+        let message = JsonObject()
+        message.put("role", JsonString("user"))
+        if (deepseek) {
+            let blocks = JsonArray()
+            let block = JsonObject()
+            block.put("type", JsonString("text"))
+            block.put("text", JsonString("Perform a web search for the query: ${query}"))
+            blocks.add(block)
+            message.put("content", blocks)
+            let tools = JsonArray()
+            let tool = JsonObject()
+            tool.put("type", JsonString("web_search_20250305"))
+            tool.put("name", JsonString("web_search"))
+            tool.put("max_uses", JsonInt(maxUses))
+            tools.add(tool)
+            object.put("tools", tools)
+        } else {
+            message.put("content", JsonString(query))
+            if (recency.size > 0) {
+                if (recency != "day" && recency != "week" && recency != "month" && recency != "year") {
+                    throw Exception("web-bad-recency")
+                }
+                object.put("search_recency_filter", JsonString(recency))
+            }
+        }
+        messages.add(message)
+        object.put("messages", messages)
+    } else if (provider == "tavily") {
+        object.put("query", JsonString(query))
+        object.put("max_results", JsonInt(maxResults))
+        object.put("search_depth", JsonString("basic"))
+        object.put("include_answer", JsonBool(true))
+    } else if (provider == "firecrawl") {
+        object.put("query", JsonString(query))
+        object.put("limit", JsonInt(maxResults))
+        object.put("scrapeOptions", JsonObject())
+    } else if (provider == "parallel") {
+        object.put("objective", JsonString(query))
+        let queries = JsonArray()
+        queries.add(JsonString(query))
+        object.put("search_queries", queries)
+    } else if (provider == "tinyfish") {
+        // GET 参数在 searchWithProvider 里单独处理
     } else { throw Exception("web-provider-unknown") }
     return object.toString()
 }
@@ -238,6 +288,31 @@ public func webParseSearchResponse(provider: String, body: String): WebSearchRes
             }
         }
         if (!hasResultBlock) { throw Exception("web-provider-no-search-result") }
+    } else if (provider == "tavily") {
+        content = webStringField(object, "answer")
+        for (entry in webArrayField(object, "results")) {
+            let row = entry.asObject()
+            sources.add(WebSearchSource(webStringField(row, "url"), title: webStringField(row, "title"),
+                snippet: webStringField(row, "content")))
+        }
+    } else if (provider == "firecrawl") {
+        for (entry in webArrayField(object, "data")) {
+            let row = entry.asObject()
+            sources.add(WebSearchSource(webStringField(row, "url"), title: webStringField(row, "title"),
+                snippet: webStringField(row, "description")))
+        }
+    } else if (provider == "parallel") {
+        for (entry in webArrayField(object, "results")) {
+            let row = entry.asObject()
+            sources.add(WebSearchSource(webStringField(row, "url"), title: webStringField(row, "title"),
+                snippet: webStringField(row, "content")))
+        }
+    } else if (provider == "tinyfish") {
+        for (entry in webArrayField(object, "results")) {
+            let row = entry.asObject()
+            sources.add(WebSearchSource(webStringField(row, "url"), title: webStringField(row, "title"),
+                snippet: webStringField(row, "content")))
+        }
     } else { throw Exception("web-provider-unknown") }
     return WebSearchResult(sources.toArray(), content: content)
 }

@@ -13,9 +13,10 @@ public class WebHttpResponse {
     public let location: String
     public let bytes: Array<Byte>
     public let truncated: Bool
-    public init(status: Int64, contentType: String, location: String, bytes: Array<Byte>, truncated: Bool) {
+    public let retryAfter: Int64
+    public init(status: Int64, contentType: String, location: String, bytes: Array<Byte>, truncated: Bool, retryAfter!: Int64 = 0) {
         this.status = status; this.contentType = contentType; this.location = location
-        this.bytes = bytes; this.truncated = truncated
+        this.bytes = bytes; this.truncated = truncated; this.retryAfter = retryAfter
     }
 }
 
@@ -104,7 +105,7 @@ public class WebHttpTransport {
                 if (count > take) { truncated = true; break }
             }
             return WebHttpResponse(Int64(received.status), received.headers.getFirst("content-type") ?? "",
-                received.headers.getFirst("location") ?? "", bytes.toArray(), truncated)
+                received.headers.getFirst("location") ?? "", bytes.toArray(), truncated, retryAfter: 0)
         } catch (error: Exception) {
             if (token.cancelled()) { throw Exception("web-cancelled") }
             if (expired.load()) { throw Exception("web-timeout") }
