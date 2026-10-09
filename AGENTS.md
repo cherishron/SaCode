@@ -49,3 +49,4 @@ JS 扩展宿主：`cd extjs && node --test`
 - `apps/desktop/test/bridge.test.mjs` 在仓库根使用 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
 - 注释、文档、commit 一律中文；commit 形如 `feat(core,host): 描述`，scope 用 `core/host/cli/desktop/extjs/scripts/docs`。
 - 不要提交构建产物：`target/`、`apps/desktop/dist/`、`npm/dsh-cli-*/bin/`、`*.log` 均已在 `.gitignore`。主包的 `npm/dsh-cli/bin/cli.js` 是源码，必须入库。
+- **仓库根目录只允许已入库的源码、文档与配置**：任何临时/验证/测试产物（夹具、私有源码副本、日志、快照、探针输出）**严禁**散落在仓库根或任意源码目录，**一律**放进 `apps/desktop/.tmp-test/`（已在 `.gitignore` 忽略）或做完即删。提交前 `git status` 只要出现**未跟踪、未忽略**的顶层目录或文件，即视为违规，必须先清理干净。**禁止 `git add -A` / `git add .`**——只按文件路径精确 `git add`，杜绝把游离产物误带进提交。
