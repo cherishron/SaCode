@@ -70,7 +70,10 @@ test('worktree 四个通道按动作命名，参数与负载逐字段校验', as
     { name: 'feature-x', action: 'delete', discardChanges: false },
     { name: 'feature-x', action: 'remove' }, { name: 'feature-x', action: 'remove', discardChanges: 'true' },
     { name: 'feature-x', action: 'remove', discardChanges: false, force: true },
-    { name: '../x', action: 'remove', discardChanges: false }]) {
+    { name: '../x', action: 'remove', discardChanges: false },
+    // keep 不删任何东西，discardChanges 挂在它身上就是形状错误：不能让它安静通过，
+    // 否则「免审批档把 keep 当成带 discard 的删除」这条路没人拦。
+    { name: 'feature-x', action: 'keep', discardChanges: true }]) {
     await assert.rejects(() => exit(null, bad), /bad-worktree-arguments/, JSON.stringify(bad));
   }
   for (const bad of [null, { directory: 'D:/x' }, { force: true }]) {

@@ -30,6 +30,8 @@
 
 回补来源：`.qoder/wtverify/src/agent.cj`（09:54 的接线前副本，含 15 行 worktree 接线），按 hunk 打回当前文件，不整份覆盖（当前文件另有别路 `computer.*` 在飞改动）。回补清单：`agent.cj` 构造形参 `worktree!`、两条执行器登记、`worktreeStep`、`execute()` 里 exit 的精确工单守卫、`executeWithApproval()` 的 `exactApproval`、`runCodeStep` 传 `cwd: workingPath("")`；`model_tool_runtime.cj` 形参 + 声明面登记 + 透传；`ptc_exec.cj` 的 `cwd!` 形参与 `resolvedCwd` 取序；`apps/daemon/src/daemon.cj` 的 `hostProxy` 字段、能力登记、分派拆支、shutdown。
 
+回补过程中自己引入并已改掉的一处类型错配：`HostProxyBridge.forward(method, params, clientId: JsonValue)`（`host_proxy.cj:421`）与分派层只持有的 `idText: String` 不匹配（同文件里别路的 `TeamHostBridge.forward` 收的是 `String`，`team_host_bridge.cj:164`），已改为 `JsonValue.fromStr(idText)` 显式还原。**这条尚未过编译器**（`apps/daemon` 要等核心编译通过才能构建），先记为待证。
+
 ## 4. 编译级取证（仓外副本）
 
 通道：`git worktree add --detach D:/Temp/wtfp-20261009 HEAD`（主仓外），再把主树 `core/src/*.cj` 整份拷入，只把别路在飞且当前编不过的三份文件钉回提交态：`web_search_service.cj`、`web_http.cj`、`web_network.cj`。**主树一行未动**。私有 `TMP=D:/Temp/wtfp-tmp`，独立 `--target-dir D:/Temp/wtfp-tg`。
@@ -39,6 +41,7 @@
 ## 5. 双入口与桌面
 
 - 桌面 JS（工作区取证态）：`cd apps/desktop && node --test test/worktree.test.mjs test/worktree-render.test.mjs` → `# tests 22 / # pass 22 / # fail 0`。
+- **变异反证（桌面形状守卫）**：`worktree-ipc.cjs` 的 `if (action === 'keep' && discardChanges) throw bad()` 原先**没有任何用例钉着**——把这条检查删掉后 `test/worktree.test.mjs` 仍 `# pass 15 / # fail 0`（假绿实测）。已在 `test/worktree.test.mjs` 的 bad 形参表里补 `{ name: 'feature-x', action: 'keep', discardChanges: true }`，三步闭环实测：①实现在线 15/15 绿；②施加变异体 → 恰好 `not ok 2 - worktree 四个通道按动作命名，参数与负载逐字段校验`（本批那条）变红，`# pass 14 / # fail 1`；③`cp` 还原后 `diff` 空输出证逐字一致、复跑回 15/15，`git status --short worktree-ipc.cjs` 为空（变异实验没留痕迹）。合跑两份仍是 `22/22`。
 - `apps/daemon/test/host-proxy.test.mjs`（12 条）与 `apps/cli/test/worktree.test.mjs`（54 条）当前红，失败原文是宿主/守护进程二进制未产出（`Cannot read properties of undefined (reading 'method')`）→ **BLOCKED-on-build**，不计入本批缺陷。解锁动作：核心编译通过后重编 `apps/host`/`apps/daemon`/`apps/cli`，再用 `scripts/pack-host.mjs` 重打桌面宿主（现 `apps/desktop/dist/host/bin/sacode-host.exe` 是上一轮坏产物，首行 `PASS overflow` 且无 `run_code`）。
 - 核心全量 `cjpm test` 的 Summary 计数见 §7（补数中）。
 
@@ -46,7 +49,7 @@
 
 本批 hunk 与另外两条线的未提交改动在同一区域，且依赖 HEAD 不存在的 API：
 
-- `ApprovalDesk.consumeExactForCall` / `argumentsMatch` / `stateOf` 只存在于别路**未提交**的 `core/src/approval.cj`：把该文件钉回 HEAD 后编译器直接报 `'consumeExactForCall' is not a member of class 'ApprovalDesk'`（实测于仓外副本）。因此 `exit_worktree` 的精确工单审批**无法**单独落在 HEAD 之上。
+- `ApprovalDesk.consumeExactForCall` / `argumentsMatch` / `stateOf` 只存在于别路**未提交**的 `core/src/approval.cj`：把该文件钉回 HEAD 后编译器直接报 `'consumeExactForCall' is not a member of class 'ApprovalDesk'`（实测于仓外副本）。因此 `exit_worktree` 的精确工单审批**无法**单独落在 HEAD 之上。被这条依赖卡住的已入库用例是 `worktree_tools_test.cj` 的 17（免审批档必须拒：期望 `approval-not-granted:unknown` 且 `stage="approval-denied"`）与 18（批给 keep 的票不能放行 remove：期望 `approval-arguments-mismatch`，且挪用不烧票）——它们要的正是「精确工单」语义，而该语义的 API 还没进版本库。
 - `core/src/agent.cj` 的 `worktree!` 形参与别路未提交的 `computer!: ?ComputerToolExecutor` 同一行（HEAD 该文件 `computer` 命中 0）。
 - `apps/daemon/src/daemon.cj` 的 hostProxy 分派接在别路未提交的 `teamHost`/`acceptsTeamMethod` 结构上（HEAD `teamHost` 命中 0）。
 - 共享 dirty 文件按行数分诊（`git diff -U0 HEAD` 的改动行 / 其中非 worktree 字面行）：`apps/desktop/main.cjs` 261/231、`renderer/app.js` 438/428、`apps/host/src/main.cj` 383/364、`apps/cli/src/remote.cj` 332/305、`preload.cjs` 43/38、`host-bridge.cjs` 50/49。整文件 `git add` 会把别路几百行按本批名义带走，故不做。
