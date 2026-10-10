@@ -51,11 +51,17 @@ public class CapabilitySpec {
     public let permission: String
     public let needsWorkspace: Bool
     public let needsSession: Bool
-    public init(method!: String, permission!: String, needsWorkspace!: Bool, needsSession!: Bool) {
+    // durable=true 表示这条写操作有外部副作用，远程面必须带 operationId 建幂等账
+    // （设计 §5）。默认 false：读方法与「重放无害」的写不建账，
+    // 免得账本被只读请求灌满、把真正需要防重放的记录挤出去。
+    public let durable: Bool
+    public init(method!: String, permission!: String, needsWorkspace!: Bool, needsSession!: Bool,
+                durable!: Bool = false) {
         this.method = method
         this.permission = permission
         this.needsWorkspace = needsWorkspace
         this.needsSession = needsSession
+        this.durable = durable
     }
 }
 
@@ -137,6 +143,16 @@ public class RemoteAccessAuthorizer {
         let n = Int64(table.size)
         lock.unlock()
         return n
+    }
+
+    // 分派层问「这个方法要不要建幂等账」只能回到登记它的那张表。
+    // 若 daemon 另持一份 durable 名单，两份清单迟早漂移——契约里 59 条 durable
+    // 就是靠这条通道一次加载生效的。
+    public func specOf(method: String): Option<CapabilitySpec> {
+        lock.lock()
+        let spec = table.get(method)
+        lock.unlock()
+        return spec
     }
 
     // 判定：先按方法查表；再核 scope；最后核 workspace/session 归属。

@@ -2,6 +2,7 @@ package daemon
 
 import core.*
 import std.collection.*
+import std.time.*
 import std.unittest.*
 
 // RemoteRequestGate 落 daemon/src 后第一批行为测试。
@@ -26,7 +27,11 @@ class GateFixture {
     let goodToken: String
     let deviceId: String
 
-    init() {
+    // initializeDurable 只给幂等账那组用例用：initialize 是 daemon 自有分支，
+    // 每执行一次必然 publish 一条总线事件，「重放没有再执行」当场数得出来。
+    // 真契约里 initialize 是 durable:false，这里翻旗只为把账本挂在一个有可观测
+    // 副作用的方法上，不代表生产把它当写操作。
+    init(initializeDurable!: Bool = false) {
         store = RemoteIdentityStore()
         sink = GateCollectSink()
         audit = RemoteAuditLog(sink)
@@ -35,7 +40,7 @@ class GateFixture {
         // 夹具不登记就等于「认证过但方法未登记」，走不到业务分支，也占不到槽。
         authorizer.register(CapabilitySpec(
             method: "initialize", permission: AUTHZ_PERM_READ,
-            needsWorkspace: false, needsSession: false))
+            needsWorkspace: false, needsSession: false, durable: initializeDurable))
         authorizer.register(CapabilitySpec(
             method: "session/submit", permission: AUTHZ_PERM_WRITE,
             needsWorkspace: true, needsSession: true))
@@ -49,6 +54,14 @@ class GateFixture {
         goodToken = token.value
         deviceId = device.deviceId
         gate = RemoteRequestGate(store, authorizer, audit, "inst-test")
+    }
+
+    // 另一台设备 = 另一个 principalId。幂等账按 principal 分键，
+    // 跨设备共享回执会把 A 的结果发给 B。
+    func tokenForPrincipal(principal: String, name: String): String {
+        let secret = store.createEnrollmentSecret(principal)
+        let device = store.enroll(secret.value, name, "mobile")
+        return store.exchangeToken(device.deviceId, device.credential).value
     }
 }
 
@@ -233,4 +246,121 @@ func dispatchRejectsWhenDeviceRpcSlotsAreExhausted() {
     @Expect(remoteLimiter.rpcHeldBy(f.deviceId), RPC_PER_DEVICE_LIMIT)
     for (i in 0..8) { remoteLimiter.releaseRpc(f.deviceId) }
     setRemoteGate(None)
+}
+
+// ---------------------------------------------------------------------------
+// 服务端幂等账（设计 §5「所有写操作使用 operationId；服务端按
+// instanceId/principalId/workspaceId/sessionId/method/operationId 建幂等账，
+// 同键同规范化内容返回原回执，同键不同内容拒绝；超时返回结果未知及查询标识」）。
+// 这里的可观测副作用是 initialize 那一条总线事件：帧数就是执行次数。
+// ---------------------------------------------------------------------------
+
+func drainedInitEvents(sub: EventSubscription): Int64 {
+    var n: Int64 = 0
+    var guard: Int64 = 0
+    while (guard < Int64(8)) {
+        if (let Some(frame) <- sub.poll(200 * Duration.millisecond)) {
+            if ((frame.indexOf("daemon/client-initialized") ?? Int64(-1)) >= Int64(0)) { n += 1 }
+        } else {
+            return n
+        }
+        guard += 1
+    }
+    return n
+}
+
+func initBody(id: Int64, params: String): String {
+    return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"initialize\",\"params\":${params}}"
+}
+
+@Test
+func durableRejectsWithoutOperationIdAndDoesNotExecute() {
+    let f = GateFixture(initializeDurable: true)
+    setRemoteGate(Some(f.gate))
+    let sub = bus.subscribe()
+    let r = dispatchRpcWithAuth(initBody(41, "{}"), bearer(f.goodToken))
+    @Expect((r.indexOf("-32017") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((r.indexOf("operation-id-required") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((r.indexOf("protocolVersion") ?? Int64(-1)) == Int64(-1), true)
+    @Expect(drainedInitEvents(sub), Int64(0))
+    bus.unsubscribe(sub.id)
+    setRemoteGate(None)
+}
+
+@Test
+func sameOperationIdReplaysWithoutSecondExecution() {
+    let f = GateFixture(initializeDurable: true)
+    setRemoteGate(Some(f.gate))
+    let sub = bus.subscribe()
+    let first = dispatchRpcWithAuth(
+        initBody(42, "{\"operationId\":\"op-replay-1\",\"expectedRevision\":\"8\"}"), bearer(f.goodToken))
+    // 同一份内容只换了字段顺序：规范化摘要相同，必须算重放而不是冲突。
+    let again = dispatchRpcWithAuth(
+        initBody(43, "{\"expectedRevision\":\"8\",\"operationId\":\"op-replay-1\"}"), bearer(f.goodToken))
+    @Expect((first.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((again.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((again.indexOf("-32018") ?? Int64(-1)) == Int64(-1), true)
+    // 回执带本次请求的 id：留着第一次的 id，客户端的 id 配对就永远等不到应答。
+    @Expect((again.indexOf("\"id\":43") ?? Int64(-1)) >= Int64(0), true)
+    @Expect(drainedInitEvents(sub), Int64(1))
+    bus.unsubscribe(sub.id)
+    setRemoteGate(None)
+}
+
+@Test
+func sameOperationIdDifferentContentIsConflictNotReplay() {
+    let f = GateFixture(initializeDurable: true)
+    setRemoteGate(Some(f.gate))
+    let sub = bus.subscribe()
+    let first = dispatchRpcWithAuth(
+        initBody(44, "{\"operationId\":\"op-conflict-1\",\"expectedRevision\":\"8\"}"), bearer(f.goodToken))
+    let second = dispatchRpcWithAuth(
+        initBody(45, "{\"operationId\":\"op-conflict-1\",\"expectedRevision\":\"9\"}"), bearer(f.goodToken))
+    @Expect((first.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((second.indexOf("-32018") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((second.indexOf("idempotency-conflict") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((second.indexOf("protocolVersion") ?? Int64(-1)) == Int64(-1), true)
+    @Expect(drainedInitEvents(sub), Int64(1))
+    bus.unsubscribe(sub.id)
+    setRemoteGate(None)
+}
+
+@Test
+func ledgerKeyCarriesAttributionAndPrincipal() {
+    // 键里少了 workspaceId → 两个会话的同名操作共享回执；少了 principalId →
+    // A 设备的回执发给 B 设备。两种都只能靠「各自都真执行了一次」当场证。
+    let f = GateFixture(initializeDurable: true)
+    setRemoteGate(Some(f.gate))
+    let sub = bus.subscribe()
+    let other = f.tokenForPrincipal("p-2", "other-dev")
+    let a = dispatchRpcWithAuth(
+        initBody(46, "{\"operationId\":\"op-shared-1\",\"workspaceId\":\"ws-a\"}"), bearer(f.goodToken))
+    let b = dispatchRpcWithAuth(
+        initBody(47, "{\"operationId\":\"op-shared-1\",\"workspaceId\":\"ws-b\"}"), bearer(f.goodToken))
+    let c = dispatchRpcWithAuth(
+        initBody(48, "{\"operationId\":\"op-shared-1\",\"workspaceId\":\"ws-a\"}"), bearer(other))
+    @Expect((a.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((b.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((c.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0), true)
+    @Expect(drainedInitEvents(sub), Int64(3))
+    bus.unsubscribe(sub.id)
+    setRemoteGate(None)
+}
+
+@Test
+func ledgerDispositionRoutesTimeoutToUnknownAndNeverReachedToUnrecorded() {
+    // 记账策略必须是可单列出来的判定，否则「超时算不算业务失败」只能靠真起一个
+    // 会卡的宿主才能验。三类各一条：
+    //   record   —— 结果确定（成功，或宿主自己返回的业务错误）
+    //   unknown  —— 请求可能已经落到宿主，副作用不确定（超时/宿主中途退出/分派异常）
+    //   none     —— 请求确证没到宿主（未配置/转发前置失败/正在关停）：不建账，
+    //               同一条操作在宿主配好之后必须还能真跑一次。
+    @Expect(ledgerDisposition(okRpc("1", "{\"a\":1}")), "record")
+    @Expect(ledgerDisposition(errRpc("1", -32601, "method not found")), "record")
+    @Expect(ledgerDisposition(errRpc("1", -32011, "host request timed out")), "unknown")
+    @Expect(ledgerDisposition(errRpc("1", -32012, "host exited")), "unknown")
+    @Expect(ledgerDisposition(errRpc("1", -32003, "dispatch exception")), "unknown")
+    @Expect(ledgerDisposition(errRpc("1", -32010, "host not configured")), "none")
+    @Expect(ledgerDisposition(errRpc("1", -32013, "pre-forward failure")), "none")
+    @Expect(ledgerDisposition(errRpc("1", -32002, "daemon is shutting down")), "none")
 }

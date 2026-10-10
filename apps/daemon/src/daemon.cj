@@ -66,6 +66,112 @@ func currentRemoteGate(): Option<RemoteRequestGate> {
     return g
 }
 
+// 幂等账自己的三条拒绝码。放在宿主与传输带之外另起一段，是为了让客户端
+// 一眼分得清「账本没放行」和「宿主答了个业务错」：宿主本人已经用到
+// -32001..-32004 与 -32010..-32016，daemon 传输占 -32010..-32013，
+// 所以这里取上面第一条空闲连续段 -32017..-32019。
+let LEDGER_ERR_OPERATION_ID_REQUIRED: Int64 = -32017
+let LEDGER_ERR_CONFLICT: Int64 = -32018
+let LEDGER_ERR_UNKNOWN: Int64 = -32019
+
+// 服务端幂等账（设计 §5）：进程级一本。键里带了 instanceId 与 principalId，
+// 多台设备共用同一本不会串号；有界与按插入序淘汰的语义在 IdempotencyLedger 里，
+// 上限取 §7 那条实例级额度常量，不用类自己的默认值。
+let idempotencyLedger = IdempotencyLedger(cap: IDEMPOTENCY_LEDGER_LIMIT)
+
+let LEDGER_DISPOSITION_RECORD: String = "record"
+let LEDGER_DISPOSITION_UNKNOWN: String = "unknown"
+let LEDGER_DISPOSITION_NONE: String = "none"
+// 这几条码意味着「请求可能已经落到宿主」，副作用不确定，只能记 unknown：
+// 超时、宿主中途退出、以及分派支自己抛的异常都可能是做了一半。
+let LEDGER_UNCERTAIN_ERRORS: Array<Int64> = [-32003, -32011, -32012]
+// 这几条确证请求没到宿主（正在关停、宿主未配置、转发前置失败）：不建账，
+// 同一条操作在宿主配好之后必须还能真跑一次——把「没配宿主」永久钉进账里，
+// 等于让客户端的重试永远拿到一条过期错误。
+let LEDGER_NEVER_REACHED_ERRORS: Array<Int64> = [-32002, -32010, -32013]
+
+// 一条写请求的六元组键。放在一个持有者里是为了让「执行后记账」这一步
+// 只传一个对象，而不是把六个裸串按位置传来传去。
+class LedgerKeyOf {
+    var instanceId = ""
+    var principalId = ""
+    var workspaceId = ""
+    var sessionId = ""
+    var method = ""
+    var operationId = ""
+}
+
+func errorCodePresent(list: Array<Int64>, code: Int64): Bool {
+    for (v in list) { if (v == code) { return true } }
+    return false
+}
+
+// 一条业务响应该怎么记账。判定单独成函数，是因为「超时算不算业务失败」这条
+// 不该等到真起一个会卡的宿主才能验。
+func ledgerDisposition(response: String): String {
+    var obj = JsonObject()
+    let parsed = try { obj = JsonValue.fromStr(response).asObject(); true }
+        catch (_: Exception) { false }
+    // 读不出信封按「结果确定」记：宁可留一条可重放的回执，
+    // 也不把一次可能已经发生的副作用标成 unknown。
+    if (!parsed) { return LEDGER_DISPOSITION_RECORD }
+    if (obj.get("result").isSome()) { return LEDGER_DISPOSITION_RECORD }
+    var code = Int64(0)
+    let coded = try {
+        code = obj.get("error").getOrThrow().asObject().get("code").getOrThrow().asInt().getValue()
+        true
+    } catch (_: Exception) { false }
+    if (!coded) { return LEDGER_DISPOSITION_RECORD }
+    if (errorCodePresent(LEDGER_UNCERTAIN_ERRORS, code)) { return LEDGER_DISPOSITION_UNKNOWN }
+    if (errorCodePresent(LEDGER_NEVER_REACHED_ERRORS, code)) { return LEDGER_DISPOSITION_NONE }
+    return LEDGER_DISPOSITION_RECORD
+}
+
+// 重放要换成本次请求的 id：留着第一次的 id，客户端的 id 配对就永远等不到应答。
+func replayReceipt(receipt: String, idText: String): String {
+    if (ledgerIsUnknown(receipt)) {
+        return errRpc(idText, LEDGER_ERR_UNKNOWN, "idempotency-unknown:${ledgerUnknownQueryId(receipt)}")
+    }
+    var obj = JsonObject()
+    let parsed = try { obj = JsonValue.fromStr(receipt).asObject(); true }
+        catch (_: Exception) { false }
+    if (parsed && obj.get("result").isSome()) {
+        return okRpc(idText, obj.get("result").getOrThrow().toString())
+    }
+    var code = Int64(0)
+    var msg = ""
+    let coded = try {
+        let e = obj.get("error").getOrThrow().asObject()
+        code = e.get("code").getOrThrow().asInt().getValue()
+        msg = e.get("message").getOrThrow().asString().getValue()
+        true
+    } catch (_: Exception) { false }
+    if (coded) { return errRpc(idText, code, msg) }
+    // 走到这里说明账里那条连信封都不是，那是本模块自己的 bug：如实报错，不假成功。
+    return errRpc(idText, -32003, "idempotency-receipt-unreadable")
+}
+
+// 执行完的去向：记原回执 / 记 unknown 并把响应换成「结果未知 + 查询标识」/ 不建账。
+func ledgerAfterExecution(response: String, idText: String, ledgerOn: Bool,
+                          k: LedgerKeyOf, contentDigest: String): String {
+    if (!ledgerOn) { return response }
+    let disposition = ledgerDisposition(response)
+    if (disposition == LEDGER_DISPOSITION_NONE) { return response }
+    if (disposition == LEDGER_DISPOSITION_UNKNOWN) {
+        // queryId 就用客户端自己的 operationId：§5 要求「通过状态核实」，而核实面
+        // （session/projection、task/describe）认的是这些既有标识符，
+        // 再造一个不透明 id 反而没地方查。
+        idempotencyLedger.recordUnknown(instanceId: k.instanceId, principalId: k.principalId,
+            workspaceId: k.workspaceId, sessionId: k.sessionId, method: k.method,
+            operationId: k.operationId, contentDigest: contentDigest, queryId: k.operationId)
+        return errRpc(idText, LEDGER_ERR_UNKNOWN, "idempotency-unknown:${k.operationId}")
+    }
+    idempotencyLedger.recordDone(instanceId: k.instanceId, principalId: k.principalId,
+        workspaceId: k.workspaceId, sessionId: k.sessionId, method: k.method,
+        operationId: k.operationId, contentDigest: contentDigest, receipt: response)
+    return response
+}
+
 // 身份引导端点（POST /auth/enroll、POST /auth/token）。接入未启用时为 None，
 // 两个路由根本不注册——不是「注册了但返回 404」，免得留下可探测的面。
 let remoteEndpointsSlot = Mutex()
@@ -153,6 +259,12 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
         }
     } catch (_: Exception) { return errRpc(idText, -32600, "invalid request") }
     var slotDevice = ""
+    var authCtx: Option<AuthenticationContext> = None
+    // 幂等账的键在认证之后才凑得齐：principalId 只能来自认证上下文，
+    // 客户端自报的归属字段要过 gate 的资源校验才算数。
+    let k = LedgerKeyOf()
+    var ledgerOn = false
+    var contentDigest = ""
     if (let Some(gate) <- currentRemoteGate()) {
         let outcome = gate.check(authHeader, method, workspaceId, sessionId, operationId)
         if (!outcome.allowed) {
@@ -165,9 +277,45 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
                 return errRpc(idText, -32005, "concurrency-denied:${slot.reason}")
             }
             slotDevice = c.deviceId
+            authCtx = Some(c)
+            k.instanceId = gate.instanceId
+            // 只有策略表里标了 durable 的写操作才建账；判定回到登记它的那张表，
+            // daemon 不维护第二份写操作名单。被限额拒掉的请求走不到这里，
+            // 所以拒掉的请求也不会在账本里留下半个键。
+            if (let Some(spec) <- gate.authorizer.specOf(method)) { ledgerOn = spec.durable }
         }
     }
     try {
+        if (ledgerOn) {
+            // 建账前必须拿到 operationId：没有它就没有键，也就没有「同一次操作」这件事。
+            if (operationId.size == 0) { return errRpc(idText, LEDGER_ERR_OPERATION_ID_REQUIRED, "operation-id-required") }
+            // 三个归属字段按审计同一套净化规则取值，账本与审计说的是同一个资源；
+            // 内容摘要覆盖整个 params——万一两条请求净化后撞进同一个键而内容不同，
+            // 只会得到 -32018 拒绝，不会互相顶掉回执（fail-closed）。
+            k.method = method
+            k.operationId = RemoteRequestGate.sanitizeId(operationId)
+            k.workspaceId = RemoteRequestGate.sanitizeId(workspaceId)
+            k.sessionId = RemoteRequestGate.sanitizeId(sessionId)
+            if (let Some(c) <- authCtx) { k.principalId = c.principalId }
+            contentDigest = canonicalDigest(JsonValue.fromStr(params))
+            let prior = idempotencyLedger.consult(instanceId: k.instanceId, principalId: k.principalId,
+                workspaceId: k.workspaceId, sessionId: k.sessionId, method: k.method,
+                operationId: k.operationId, contentDigest: contentDigest)
+            if (prior.kind == LEDGER_KIND_REPLAY) { return replayReceipt(prior.receipt, idText) }
+            if (prior.kind == LEDGER_KIND_CONFLICT) { return errRpc(idText, LEDGER_ERR_CONFLICT, "idempotency-conflict") }
+        }
+        return ledgerAfterExecution(dispatchBusiness(method, params, idText), idText, ledgerOn, k, contentDigest)
+    } catch (e: Exception) { return errRpc(idText, -32003, e.message) }
+    finally {
+        // 早退（业务分支里的 return）也必须归还槽位，否则跑几轮就把 8 个槽吃干。
+        if (slotDevice.size > 0) { remoteLimiter.releaseRpc(slotDevice) }
+    }
+}
+
+// 业务分派支：认证与限额都过了才走到这里。整段是从 dispatchRpcWithAuth
+// 原样搬出来的，一条分支都没改——搬出来只为了让幂等账能在它前后各插一步
+// （执行前 consult，执行后按去向记账），不是为了顺手重写这段分派。
+func dispatchBusiness(method: String, params: String, idText: String): String {
         if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
         if (method == "initialize") {
             var capabilities = INIT_CAPS
@@ -216,11 +364,6 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
             return okRpc(idText, "{\"ok\":true}")
         }
         return errRpc(idText, -32601, "method not found")
-    } catch (e: Exception) { return errRpc(idText, -32003, e.message) }
-    finally {
-        // 早退（业务分支里的 return）也必须归还槽位，否则跑几轮就把 8 个槽吃干。
-        if (slotDevice.size > 0) { remoteLimiter.releaseRpc(slotDevice) }
-    }
 }
 
 // 本地管理入口（设计 §4.2「首次登记由目标端本地管理入口创建一次性登记秘密」，
@@ -318,6 +461,10 @@ main(args: Array<String>): Int64 {
             getStdErr().flush()
             return 78
         }
+        // 幂等账接盘（§5「副作用与幂等账不能仅靠内存锁」）：路径与实例身份同处，
+        // 进程换了以后同一条 operationId 仍认得出「做过」，不会替客户端重下副作用。
+        // 接入没启用就完全不接——0.1 无认证旧路径不写任何新文件。
+        idempotencyLedger.attachStore(path: "${accessConfig.identityPath}.ledger.jsonl")
         setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId,
             snapshotPath: deviceSnapshot)))
         setRemoteEndpoints(Some(RemoteAccessEndpoints(

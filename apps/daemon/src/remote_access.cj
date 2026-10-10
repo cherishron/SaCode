@@ -384,6 +384,17 @@ public class RemotePolicyLoader {
         return false
     }
 
+    // durable 必须显式写成 true/false。缺键或写成字符串一律让整表装载失败：
+    // 「漏配就当这条写操作不需要幂等」正是一条操作被重放两次的入口，
+    // 和本文件开头那条「漏配 resourceKeys 不能默认放行」是同一种错。
+    static func durableOf(row: JsonObject): Option<Bool> {
+        var out: Option<Bool> = None
+        let read = try { out = Some(row.get("durable").getOrThrow().asBool().getValue()); true }
+            catch (_: Exception) { false }
+        if (read) { return out }
+        return None
+    }
+
     // 返回 Some(原因) 即调用方必须拒绝启动。
     static public func load(policyPath: String, authorizer: RemoteAccessAuthorizer): Option<String> {
         let p = Path(policyPath)
@@ -408,10 +419,13 @@ public class RemotePolicyLoader {
                     catch (_: Exception) { "" }
                 if (method.size == 0) { return Some("policy-row-${i}-missing-method") }
                 if (!knownPermission(permission)) { return Some("policy-row-${i}-unknown-permission") }
+                let durable = durableOf(row)
+                if (!durable.isSome()) { return Some("policy-row-${i}-durable-missing-or-not-bool") }
                 authorizer.register(CapabilitySpec(
                     method: method, permission: permission,
                     needsWorkspace: resourcePresent(row, "workspaceId"),
-                    needsSession: resourcePresent(row, "sessionId")))
+                    needsSession: resourcePresent(row, "sessionId"),
+                    durable: durable.getOrThrow()))
             }
             i += 1
         }

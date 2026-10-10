@@ -9,6 +9,10 @@ import std.sync.*
 public let RPC_PER_DEVICE_LIMIT: Int64 = 8
 public let SSE_PER_DEVICE_LIMIT: Int64 = 2
 public let SSE_INSTANCE_LIMIT: Int64 = 64
+// 幂等账必须有界：每条写操作留一条记录，长跑 daemon 不设上限就是内存泄漏。
+// 与上面三条同层，是因为它们都是「一个实例能容纳多少在途/历史」的实例级额度；
+// 超限按插入序淘汰最早那条（代价：被淘汰的键会重新执行，这在账本头部写明）。
+public let IDEMPOTENCY_LEDGER_LIMIT: Int64 = 4096
 
 public let CONCURRENCY_DENY_RPC: String = "rpc-per-device"
 public let CONCURRENCY_DENY_SSE_DEVICE: String = "sse-per-device"

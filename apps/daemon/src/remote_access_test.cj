@@ -298,3 +298,36 @@ func configDefaultsToDisabledLoopback() {
     @Expect(cfg.bind == "127.0.0.1", true)
     @Expect(cfg.isLoopback(), true)
 }
+
+@Test
+func policyLoadCarriesDurableOntoTheRegisteredSpec() {
+    // 幂等账只对契约里标了 durable 的写操作建账。daemon 不再自己维护第二份
+    // 写操作名单——两份清单迟早漂移（契约 59 条 durable 就是靠这一条通道生效的）。
+    let policy = tmpPath("policy-durable.json")
+    let rows = "[{\"method\":\"task/start\",\"permission\":\"execute\"," +
+        "\"resourceKeys\":[\"workspaceId\",\"sessionId\"],\"durable\":true}," +
+        "{\"method\":\"session/projection\",\"permission\":\"read\"," +
+        "\"resourceKeys\":[\"workspaceId\",\"sessionId\"],\"durable\":false}]"
+    @Expect(try { File.writeTo(Path(policy), rows.toArray()); true } catch (_: Exception) { false }, true)
+    let authorizer = RemoteAccessAuthorizer()
+    @Expect(RemotePolicyLoader.load(policy, authorizer).isNone(), true)
+    @Expect(authorizer.specOf("task/start").getOrThrow().durable, true)
+    @Expect(authorizer.specOf("session/projection").getOrThrow().durable, false)
+    @Expect(authorizer.specOf("nope/nope").isNone(), true)
+    dropFile("policy-durable.json")
+}
+
+@Test
+func policyLoadRejectsRowWithoutExplicitDurable() {
+    // 漏配 durable 不能当成「这条不需要幂等」：那正是一条写操作被重放两次的路径，
+    // 和「漏配 resourceKeys 就默认放行」是同一类错，所以按整表启动失败处理。
+    let policy = tmpPath("policy-nodurable.json")
+    let rows = "[{\"method\":\"task/start\",\"permission\":\"execute\"," +
+        "\"resourceKeys\":[\"workspaceId\"],\"durable\":true}," +
+        "{\"method\":\"session/submit\",\"permission\":\"write\",\"resourceKeys\":[\"workspaceId\"]}]"
+    @Expect(try { File.writeTo(Path(policy), rows.toArray()); true } catch (_: Exception) { false }, true)
+    let authorizer = RemoteAccessAuthorizer()
+    let reason = RemotePolicyLoader.load(policy, authorizer)
+    @Expect((reason.isSome()) && ((reason.getOrThrow().indexOf("durable") ?? Int64(-1)) >= Int64(0)), true)
+    dropFile("policy-nodurable.json")
+}

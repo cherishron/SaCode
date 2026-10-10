@@ -93,3 +93,10 @@ func sseReleaseFreesBothDeviceAndInstanceCounters() {
     @Expect(lm.sseHeldBy("dev-a"), SSE_PER_DEVICE_LIMIT)
     @Expect(lm.sseTotalHeld(), SSE_PER_DEVICE_LIMIT)
 }
+
+@Test
+func daemonLedgerUsesInstanceLevelBound() {
+    // 这条只钉「daemon 传的是 §7 那个实例级额度常量」这一层接线；
+    // 「有界 + 超限按插入序淘汰最早一条」的行为由 idempotency_test.cj 的 cap:3 用例钉。
+    @Expect(idempotencyLedger.cap, IDEMPOTENCY_LEDGER_LIMIT)
+}
