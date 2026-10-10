@@ -248,5 +248,41 @@ wrong[1 unrelated anchor] longcat        -> http-status:404
 
 一条本批欠账如实挂着：`core/src/sse.cj:6` 的 `warning: unused import 'stdx.net.tls.*'` 是批次 A 把 TLS 配置收敛到 `defaultTlsClientConfig()` 后的残留，但该文件此刻带着并发会话未落库的 +21 行改动，用 pathspec 提交会一起吞掉，故不在此刻清；等它落库后单独收。
 
+### 13.5 未核销账本断言收口、A3 目标模型名落点核查、批次 D 复跑（2026-10-11 06:01–06:05 实测）
+
+**A3 目标里的模型名先核落点，不靠改名凑通过。** 批次 A3 写的 `dots3-note-prev` 在本仓库全文检索 **0 个文件**（`dots3` 大小写不敏感同样 **0 命中**），在 `~/.sacode` 下 `grep -rl dots3` 也是 **0 个文件**——这个名字在本机没有任何代码或配置落点。所以 A3 按「实测可达的入口」跑（§13.2：`https://api.stepfun.com/v1` + `step-3.7-flash`，界面里敲键），四条判据逐条成立；这里同时如实记一句：**没有**保存过名为 `dots3-note-prev` 的模型，它不算已验项。
+
+**§13.3 那条 1✖ 的收口方式**：把「账本里必须出现 `usage-unspecified` 字面量」换成按账本行结构取记录、再钉**蕴含关系**的断言（`apps/desktop/test/host-routing-real.test.mjs:39-44`）：
+
+- 按「序号 \t 事件 \t JSON」切行，筛 `ledger/unsettled` 且含该模型名的最后一条，取不到即红，并把账本前 160 字节打印进错误信息；
+- `rec.result` 必须是 `unsettled`；
+- `rec.reason` 必须等于「`rec.input > 0` ? `rate-unregistered:input` : `usage-unspecified`」——用量未知与费率未登记两种契约态被同一条断言各钉一半，随包宿主与 HEAD 谁在位都不可能假装通过；
+- 凭据材料不得出现在 `usage-ledger.log`。
+
+读数（键从 `~/.sacode/user/credentials.env` 只读进内存，未打印、未进任何落盘回执；宿主固定 `apps/desktop/dist/host/bin/sacode-host.exe`）：
+
+| 轮 | 配置 | 读数 | rc |
+| --- | --- | --- | --- |
+| 真模型 4 文件 | `real-provider-e2e` + `real-provider-enhance` + `host-routing-real` + `host-startup-recovery` | **8 tests / 8 pass / fail 0 / cancelled 0 / skipped 0**，§13.3 那条 ✖ 变成 `ok 1 - 真实 StepFun：自定义模型请求完成且进入待核算账本` | 0 |
+| 变异 1 | true 分支期望值改成 `bogus-marker` | `not ok 1 - 真实 StepFun…`，`未核销原因与用量不自洽：input=72 reason=rate-unregistered:input`（`+ 'rate-unregistered:input'` / `- 'bogus-marker'`），1 pass 0 / fail 1 | 1 |
+| 变异 2 | 事件名筛选项改成 `ledger/absent-event` | 同一条用例 ✖，红在取记录那步，错误信息带出真实首行 `0\tattempt/dispatched\t{"logicalRequestId":"current-…` | 1 |
+| 还原 | `cp` 备份回写 | `cmp` 逐字节一致，残留扫描 `bogus-marker` 与 `absent-event` **0 处**，复跑 **1/1 pass** | 0 |
+
+两个变异体各由同一条用例杀掉，所以这条断言不是假绿；但它只钉住**未核销契约的两个分支**，没钉费率本身。
+
+**批次 D 在这个测试文件改动之后复跑**：
+
+| 轮 | 读数 | rc |
+| --- | --- | --- |
+| run#1 | 671 tests / 662 pass / **1 fail** / cancelled 0 / skipped 8 | 1 |
+| 独占复跑那条 ×3 | 三次各自 `ok 1 - 成员消息进入真实Provider与独立持久日志，正文结束不能自动完成任务`，每次 1/1 pass | 0 |
+| run#2 | 671 / 663 / **fail 0** / cancelled 0 / skipped 8 | 0 |
+
+run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.test.mjs:46`，窗口是 `host-bridge.cjs:85` 的 `timeoutMs = 5000` 默认值），同配置第二轮不再复现、独占三连全绿——判为并发负载压穿有界窗口的**间歇性失败**，按原样记录而不抹平。归属：`team-host.test.mjs` 带着并发会话未落库的 +11 行（`withProvider` 夹具把 settings 路径 `.replaceAll('\\','/')`、`rmSync` 加 `maxRetries:10`），不是本批改的文件，本批不动它；也没有靠抬高全局窗口来「治」它——`host-bridge.cjs:82-84` 的注释写明抬高默认值会同时把真卡死的调用放更久，天生更慢的调用应由调用方给有界值。**未证实**的部分挂着：没测出当时具体哪一路负载压住了 `team/member/create`。
+
+顺带复核批次 C 的行数门槛：`apps/desktop/renderer/app.js` 实测 **953 行**（< 1000）。
+
+结束后残留：`tasklist //FI "IMAGENAME eq sacode-host.exe"` → `No tasks are running which match the specified criteria`。
+
 
 

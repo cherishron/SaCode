@@ -33,6 +33,14 @@ test('真实 StepFun：自定义模型请求完成且进入待核算账本',{tim
   for(let i=0;i<850;i++){result=await b.request('turn/poll');if(result.settled)break;await new Promise(r=>setTimeout(r,200));}
   assert.equal(result?.settled,true);assert.equal(result.interrupted,false);assert.ok(result.text.length>0);
   const stats=await b.request('ledger/stats');assert.ok(stats.unsettledAttempts.length>=1);assert.equal(stats.pendingReservations.length,0);
-  const ledger=readFileSync(join(settings,'usage-ledger.log'),'utf8');assert.ok(ledger.includes(MODEL));assert.ok(ledger.includes('usage-unspecified'));assert.ok(!ledger.includes(key));
+  const ledger=readFileSync(join(settings,'usage-ledger.log'),'utf8');
+  // 账本行是「序号 \t 事件 \t JSON」。钉三件事：这条模型确实进了未核销；未核销原因必须与
+  // 用量读数自洽（用量已知→只能是费率未登记，用量未知→才是 usage-unspecified）；凭据材料不落账本。
+  const row=ledger.split(/\r?\n/).map(l=>l.split('\t')).filter(c=>c[1]==='ledger/unsettled'&&c[2]&&c[2].includes(MODEL)).pop();
+  assert.ok(row,`账本里没有该模型的未核销记录（实测 ${JSON.stringify(ledger).slice(0,160)}）`);
+  const rec=JSON.parse(row[2]);
+  assert.equal(rec.result,'unsettled');
+  assert.equal(rec.reason,rec.input>0?'rate-unregistered:input':'usage-unspecified',`未核销原因与用量不自洽：input=${rec.input} reason=${rec.reason}`);
+  assert.ok(!ledger.includes(key));
  } finally {await b.stop();}
 });
