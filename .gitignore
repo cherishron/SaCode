@@ -114,6 +114,7 @@ npm/sacode-cli-*/extjs/
 protocol-bridge-dbg/
 apps/desktop/dist/
 dualtest/
+.superpowers/
 apps/desktop/renderer/vendor/
 
 # pack-tinyvue 的临时折叠入口（esbuild 解析要靠它待在 apps/desktop 下）
