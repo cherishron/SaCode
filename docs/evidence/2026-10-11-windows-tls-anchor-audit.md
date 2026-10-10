@@ -197,4 +197,56 @@ wrong[1 unrelated anchor] longcat        -> http-status:404
 
 取证态：本节全部读数为**工作树态**（含并发改动的他人文件）。core 侧 `cjpm test` 整仓计数与 A3 完整口径（供应商经模型中心界面保存）见 §13。
 
+## 13. A3 完整口径成立、§9/§11 凭据归因更正、core 整仓计数仍第三态（2026-10-11 05:38–05:49 实测）
+
+### 13.1 更正：§9/§11 把「缺可用凭据」写错了作用域
+
+§11 那三条负向探的是本机网关 `sa-ai`（`000`）、`providers.json` 里的空 key、以及记忆里的 `freeapi.dgbmc.top`（12 s 无状态码）。**这三条都没探 `~/.sacode/user/credentials.env`**，而那里躺着的 `SA_CODE_STEPFUN_API_KEY` 实测可用（本轮两次真答复都出自它）。所以「A3 缺的是可用凭据」这句归因只对 §11 探过的三条路成立，对本机整体不成立——原文保留，判据以本节为准。
+
+### 13.2 A3 完整口径：模型中心界面保存 → 选模型 → 发送 → 出真答复
+
+临时脚本 `apps/desktop/.tmp-test/a3-ui-fullpath.cjs`（不入库）。全程真点击：`#open-settings` → 模型中心 → `[data-model-center-tab="provider-settings"]` → `[aria-label="添加供应商"]` → 填 `Provider ID`/`显示名称`/`API 地址`/`模型 ID 1`/`模型名称 1`/`API 密钥` → 点 `.ps-actions` 里那颗 `保存`；再点开 `.model-select-trigger`、钻进模型面板、点 `[data-model-id="step-3.7-flash"]`；最后 `#composer` + `#send`。环境里**不给** `SSL_CERT_FILE`（显式 delete），锚走随包 sidecar `dist/host/bin/ca-bundle.pem`。
+
+| 步 | 读数 |
+| --- | --- |
+| 界面保存 | `.ps-error` 为空，列表出现 `编辑 StepFun 真模型` |
+| 通道复查 | `providers: ["stepfun:step-3.7-flash"]` |
+| 选模型 | 面板 1 条 `step-3.7-flash`，选后 caption=`真实模型`，aria=`选择模型，当前 真实模型` |
+| 发送 | `#send.disabled=false`，点击后界面出 `助手 · 1 条消息 ⏎ 收到就好` |
+| 用量 | `用量 3406/200000 · 已计量` |
+| 会话日志 | 9 行；含 `assistant/message`：**true**；含密钥：**false** |
+| 残留 | `tasklist` 对 `sacode-host.exe`、`electron.exe` 均 `No tasks are running` |
+
+**PASS**。
+
+顺带钉出两条界面形状（都不是缺陷，但会决定下一次怎么跑）：
+
+1. 新增供应商时密钥留空会被界面自己拒：`.ps-error` = `新增供应商需填写 API 密钥`；同形状的 `modelsSave(draft,'',0)` 直接打宿主却回 `OK rev=1`——**这道校验在页面层，不在宿主**。上一轮「留空靠 credentialRef 兜住」的假设只对已声明式供应商成立。
+2. 环境里已经有 `SA_CODE_STEPFUN_API_KEY` 时，界面里再敲同一把键会回 `-32020 credential-read-only`（供应商记录本身已落库，rev=1）。真实用户形状必须是「环境不给键、界面里敲键」，§13.2 就是这么跑的。另记一条粗糙点：这条 `-32020` 是整串 `Error invoking remote method 'sacode:modelsSave': …` 直接甩进 `.ps-error`，人话化没做到。
+
+安全侧如实一条：界面敲进去的键由宿主写进**设置目录里的 `credentials.env`（90 字节，明文）**——该目录 4 个文件里只有这 1 个含键，`session.log`、`providers.log`、`installation-id`、`tips-history.log` 都不含。A3 的判据（会话日志无密钥）成立，但「凭据落盘为明文」是产品现状，不是本轮引入，也不是可以当成已加密来宣布的。
+
+### 13.3 仓内真模型用例第一次真的执行
+
+`STEPFUN_API_KEY` + `SACODE_HOST` 一起给，跑 `test/real-provider-e2e.test.mjs`、`test/real-provider-enhance.test.mjs`、`test/host-routing-real.test.mjs`、`test/host-startup-recovery.test.mjs`：**8 条，7 ✔ 1 ✖，rc=1**（逐条实名打印，非计数推断）：
+
+- ✔ 真实提供商往返：配置面登记的模型能出真答复（1124 ms）
+- ✔ 真模型增强：当前会话的模型把草稿改写得更清楚，且不落进会话消息（20974 ms）
+- ✔ 未启动宿主时请求明确拒绝 / 真实 stdin 错误事件拒绝全部在途请求 / 真实宿主退出后不再向死管道写入 / 实际 Host 首次启动读取默认通用设置 / 实际 Host 设置文件读取失败返回协议错误
+- ✖ 真实 StepFun：自定义模型请求完成且进入待核算账本——`assert.ok(ledger.includes('usage-unspecified'))` 为假。实读账本：`result:"unsettled"`、`reason:"rate-unregistered:input"`、`meterSource:"vendor"`、`input:72,output:109,cacheRead:3264`。归因：`usage-unspecified` 是 HEAD 的 `core/src/ledger.cj:1071` 在「用量未知」时写的标记，而随包宿主（03:34 构建）里带着并发会话**尚未落库**的 `sse.cj` `reportedUsage = LedgerUsage(...,"vendor")`，用量已知就改走 `rate-unregistered:*`。**这是夹具与产物之间的口径漂移，不是产品缺陷**，所以不改断言掩盖——等 `sse.cj` 那批落库后再复判该标记。
+
+这 3 个用例的夹具端点本轮换成实测可达的那对（`/v1` + `step-3.7-flash`），并按壳层生产位置补 `SACODE_CA_BUNDLE`（缺锚仍在 TLS 层如实失败，不降级校验）；断言一字未改。换端点与补锚之后，不带任何环境变量重跑全套仍是 **671 tests / 663 pass / fail 0 / cancelled 0 / skipped 8, rc=0**（无凭据时那 6 条继续 skip，不会被换成假绿）。
+
+### 13.4 core 整仓 `cjpm test`：仍是第三态「根本没跑」，本批未引入红灯
+
+`cd core && cjpm test` 落盘后按固定流程剥码读：**rc=1，剥码后 `Summary: TOTAL` 计数 0，`^error` 8 条**，末行 `Error: cjpm test failed`——不是「0 条失败」，是测试没跑。8 条落在：
+
+- `core/src/cmds_test.cj:76/77/86/96/108`（`registerBuiltinCommands` 未声明等 5 条）——该文件是并发会话在途未提交的 TDD 红灯，实现还没落地；
+- `core/src/worktree_setup_test.cj:160/181/217`（3 条 `mismatched types`）——已入库、归属他人。
+
+本批 A 的 `core/src/tls_roots.cj` / `tls_roots_test.cj` / `sse.cj` 一条都不在错单上。库层替代读数：`cd core && cjpm build` **rc=0、`cjpm build success`、0 条 error、168 warning**，指名 `tls_roots` 的诊断 0 条。解锁动作不变：等 `cmds.cj`/`cmds_test.cj`/`worktree_setup_test.cj` 那条线落库后重跑 `cd core && cjpm test`。
+
+一条本批欠账如实挂着：`core/src/sse.cj:6` 的 `warning: unused import 'stdx.net.tls.*'` 是批次 A 把 TLS 配置收敛到 `defaultTlsClientConfig()` 后的残留，但该文件此刻带着并发会话未落库的 +21 行改动，用 pathspec 提交会一起吞掉，故不在此刻清；等它落库后单独收。
+
+
 
