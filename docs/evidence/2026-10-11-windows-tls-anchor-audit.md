@@ -154,3 +154,47 @@ wrong[1 unrelated anchor] longcat        -> http-status:404
 
 所以 §9 那句判据保持不变、也不复述为新事实：**A3 缺的是可用凭据或一个可达的兼容端点，不是代码**。TLS 锚那一半已按 §10 的双向对照验过（不带 `SSL_CERT_FILE` 的新宿主拿得到真实 HTTP 状态码）；「界面出现 assistant/message、usage 落账、session.log 无密钥」这一条要到用户提供任一可用入口后才能成立。解锁动作（任选其一）：给一个能用于 `/chat/completions` 的键，或把 `providers.json` 里 `sa-ai` 指向的本机网关起起来。
 
+## 12. 模型目录自愈、批次 D 复验与批次 E 重打（2026-10-11 05:04–05:30 实测）
+
+### 12.1 一条被自己的探针骗出来的「缺陷」，以及它现在的真实形状
+
+上一轮把「界面选不到模型」归因成渲染层竞态（`app.js` 只在启动时 `load()` 一次）。本轮复核证明**那条归因不成立**，错在探针：`SaCodeModelSelect` 的 root 面板按设计只有一条「模型 · …」根行，模型行要钻进 `pane=model` 才渲染（`renderer/vendor/model-select.iife.js:293-306`），而当时那条探针只数了 root 面板的 `.model-select-row`，读到 `menuRows:1` 就判成「目录是空的」。同一份 A/B 实测（把 `renderer/model-directory-state.js` 临时换回 HEAD 的单发版本再换回来，其余一字未动）：
+
+| 实现 | 界面里能否钻出模型行 | 选模型后 caption | 发一条出答复 | rc |
+| --- | --- | --- | --- | --- |
+| HEAD 单发（`git show HEAD:` 逐字节换入） | 能，1 条 `step-3.7-flash` | 「选择模型，当前 真实模型」 | 「收到就好」 | 0 |
+| 本轮重试版 | 能，1 条 `step-3.7-flash` | 同上 | 同上 | 0 |
+
+**所以界面实测不能充当「自愈生效」的证据**——两轮都没复现竞态。重试最终仍留下，但口径改小：它钉的是两个**可达的失败形状**，不是实跑观察到的现象——`apps/desktop/host-bridge.cjs:85` 的 5 秒请求窗口（`timeout: model/registry/describe`）与同文件 `:88` 的 `host-unavailable`；目录是发送键唯一的路由依据，这两种落空原先没人再扫。先红后绿的红灯是当场看的：两条新用例分别败在 `'error' !== 'ready'` 与 `至少试过一次重试`（`# tests 6 / # pass 4 / # fail 2`），实现后 `6/6, fail 0, rc=0`。有界性钉在 5 次尝试、间隔 `[500,1000,2000,3000]` ms，重试之间必须走定时器（断言 `ticks[0] > 0`，防空转打满宿主）。
+
+### 12.2 批次 D 在新代码上重跑
+
+| 项 | 命令 | 读数 | rc |
+| --- | --- | --- | --- |
+| 桌面单测 | `TMP=TEMP=apps/desktop/.tmp-test/t2 node --test` | tests 671、suites 1、pass 663、**fail 0、cancelled 0**、skipped 8 | 0 |
+| 开发态界面冒烟 | `npm run ui-smoke -- --no-sandbox` | `UI_SMOKE PASS`；报告 `checks 296 / failed 0 / packaged false` | 0 |
+| 布局冒烟 | `npm run layout-smoke -- --no-sandbox` | `LAYOUT PASS` 192 行、`LAYOUT FAIL` 0 行 | 0 |
+| 宿主残留 | `tasklist //FI "IMAGENAME eq sacode-host.exe"`、`... electron.exe` | 两次都 `No tasks are running` | — |
+
+本机前提照旧两条，缺一条就拿不到上面这些数：`TMP/TEMP` 必须指向仓内已授权写的目录（`%TEMP%` 对 `sacode-host.exe`/`electron.exe` 拒写，见 `2026-10-11-renderer-decoupling-and-full-regression-batchCD.md`），Electron 必须 `--no-sandbox`（Chromium 沙箱初始化在本机 rc=3）。**默认沙箱态仍是 BLOCKED**，解锁动作是本机 Chromium 沙箱能起来，不是改断言。
+
+8 条 skipped 逐条认过，不是本批新造的洞：6 条真模型集成用例（`test/real-provider-e2e.test.mjs`、`test/real-provider-enhance.test.mjs`、`test/host-routing-real.test.mjs`）的门禁读 `STEPFUN_API_KEY` 环境变量或 gitignore 的 `target/step.key`；另 2 条（`test/host-startup-recovery.test.mjs:38/…`）门禁是 `const host = process.env.SACODE_HOST`，光跑 `node --test` 时没设就不执行。这 6 条此前被 §9/§11 记成「缺可用凭据」，本轮发现那把键其实在 `~/.sacode/user/credentials.env` 里且实测可用——归因要在 §13 里更正。
+
+### 12.3 批次 E 因渲染层改动重打并复验
+
+渲染层动了，上一轮的「产物含最新渲染层」不再成立，故整条重打（`dist/host` 未动，仓颉侧零改动）：
+
+- `TMP` 重定向 + `npx electron-builder --config.electronDist=node_modules/electron/dist`，rc=0；产物时间戳全部落在本轮：`SaCode Setup 0.1.0.exe` 84420001 字节、`sacode-portable.exe` 84267967 字节、`win-unpacked/`（05:22–05:24）。
+- 新模块确实在包里：`resources/app.asar` 内含 `retryWaits`（单测文件不在 `build.files` 里，因此不出现，属预期）。
+- 载荷对账（`7za` 从两个安装器里抽 `resources/app.asar`）：win-unpacked / NSIS / portable 三份 asar **同一个 sha256** `ddee3cb7b90d98d2e08c353e704cdc13ee4eaf56b3f21903bd271f5b374fb439`；NSIS 内 `sacode-host.exe` 与源 `dist/host/bin/sacode-host.exe` **同一个 sha256** `6e71a371fb8303df290572dc087a533465572426061bace0b84ae6382163340a`。
+- 打包态界面冒烟（都要设 `SACODE_SSE_FIXTURE` 指到真 `scripts/sse-contract-server.cjs`，否则增强夹具在包内找不到模块）：
+  * win-unpacked：`UI_SMOKE PASS`，报告 `checks 296 / failed 0 / packaged true`，rc=0。
+  * portable 第 1 轮：报告 `checks 296 / failed 1`，rc=1，唯一非绿是「增强在途时仍能切到另一个会话」（`test-support/ui-smoke.cjs:1141`，等 `.catalog-dialog` 失去 `[open]`，`waitFor` 默认 120×50 ms = 6 秒）。launcher stdout 0 字节，不能拿来判读，判据只有那份报告。
+  * portable 第 2 轮（独占跑，`Win32_PerfFormattedData_PerfOS_Processor` 空闲率 89%，无 `cjc/cjpm` 在跑）：报告 `checks 296 / failed 0`，rc=0。
+  * **判读**：这条是间歇性的，portable 态 1 红 1 绿；不写成「portable 296/296 通过」，也不靠调大 `waitFor` 掩盖——它是时序脆弱点，落「待运行验证/待查」类，未定位到产品缺陷的证据（同一条在 win-unpacked 与开发态都稳定绿）。
+- 签名逐个实测（`powershell -NoProfile -Command Get-AuthenticodeSignature`）：`win-unpacked/SaCode.exe`、`sacode-portable.exe`、`SaCode Setup 0.1.0.exe`、`dist/host/bin/sacode-host.exe` **四条全 `NotSigned`**。这是本轮主动选择（`build.win.signExecutable:false`），「安装包已产出」不等于「已签名可分发」。
+- NSIS 真机安装/卸载：仍 **BLOCKED**（无授权，不擅自动用户已装应用）。解锁动作：用户点头后跑一次装→启动→卸，并核 `Get-AuthenticodeSignature` 与卸载残留。
+
+取证态：本节全部读数为**工作树态**（含并发改动的他人文件）。core 侧 `cjpm test` 整仓计数与 A3 完整口径（供应商经模型中心界面保存）见 §13。
+
+
