@@ -161,6 +161,45 @@ AA 归档完之后的两个 turn（`b1dd816` + `4875df8`）在 daemon 二进制�
 
 **推进后未勾项计数**：仍是 70——本批修的是 §6c 里那条 B 档实现缺口，不是计划第 142 行的字面验收（第 142 行本身仍等 AA.1 门禁半 + 「过期凭据/跨证书」两个 B 档项）；§7 解锁顺序里的 B 档 13 项少了一项（per-ticket 并发漏锁已从 B 档移走），其余不动。
 
+## 6e. AD 归档后的 A 档穷尽扫描 + 全套回归基线（本轮补记，2026-10-10 15:36 UTC）
+
+AD 提交后本会话把**能被本会话独立推进的所有 A 档候选**再扫一遍，结论是：A 档已穷尽，回归基线稳态，剩余项分档不再变化。
+
+**A 档候选再扫描（本轮读到的四个 daemon 模块）**
+
+- `apps/daemon/src/idempotency.cj`（297 行）：`consult()` 与 `store()` 分两次拿锁是幂等的**正确**语义——副作用必须发生在 check 与 record 之间；`lock`/`evictToMakeRoomLocked`/`persistLocked`/`loadFromStore`/`compactLocked` 全部持锁正确。**无漏锁**。
+- `apps/daemon/src/remote_limits.cj`（127 行）：`acquireRpc`/`acquireSse`/`releaseRpc`/`releaseSse` 的判-写都在**同一个 `lock` 段内**——`held >= LIMIT → reason` 或 `add(held+1)` 都是原子。**无 AD 那种读-判-写拆两次的窗口**。
+- `apps/daemon/src/event_replay.cj`（175 行）：只读 `SessionLog`，无共享可变状态。**不适用并发扫描**。
+- `apps/daemon/src/eventbus.cj`（145 行）：`EventSubscription.offer/close/closeWith/closeReason` 与 `EventBus.publish/subscribe/unsubscribe/closeFor/subscriberCount` 全部在 `synchronized(mtx)` 内完成判-写组合；`offer` 的「查关闭原因 → 查字节 → tryAdd → 累计字节」在一个同步段。**无漏锁**。
+- `apps/daemon/src/remote_management.cj`（88 行）：`requireManagement → revokeDevice → saveSnapshot` 三步都是纯读/纯写，锁都在 `RemoteIdentityStore` 内部；本层不持锁。**不是漏锁位置**。
+
+**结论**：本会话能改的 daemon 模块里已无「读-判-写跨锁」的并发破口。剩下 70 项未勾都属 B/C/D 三档，无新 A 档入口。
+
+**回归基线读数（daemon 二进制 2026-10-10 23:21，真宿主 10999808 B）**
+
+19 个 `remote-*.test.mjs` 逐套件跑：
+
+```
+remote-audit-integrity  8/8    remote-management-rpc     5/5
+remote-auth            19/19    remote-method-surface     6/6
+remote-capability-contract 15/15  remote-mobile-client     2/2
+remote-concurrent-enroll   3/3  remote-ownership           5/5
+remote-enroll-gate        3/3   remote-product             4/5 (fail 1)
+remote-events             7/7   remote-protocol-version    4/4
+remote-execution-gate     5/5   remote-request-limits      6/6
+remote-host-guard         9/9   remote-sse-recovery        4/4
+remote-idempotency        5/5   remote-tls                 2/2
+                                    remote-utf8-boundary     3/3
+```
+
+汇总：**pass=116 fail=1 cancelled=0**（115 个独立测试通过 + 1 条保留红）。分套件 rc：18 条 rc=0、1 条 rc=1（`remote-product`）。
+
+唯一红是**批次 K 明写保留的撤销事故半径红**：`test/remote-product.test.mjs:238` 「带外撤销一台：只砍被撤那台的在途流与新请求，另一台不受影响」。该条注释里已钉住根因——`core/src/remote_identity.cj:274` 撤销时抬**全局** `revocationVersion += 1`，`:301` 用「token 版本 < 全局版本」判过期，因此撤销任意一台作废了全部在途令牌；规格 §5 要求的是 per-device。该文件正被并发会话持有（工作区 `core/src/remote_identity.cj` 未落库），本批不改它、只保留红。
+
+**推进后未勾项计数**：仍是 70。A 档候选在本轮扫描中已穷尽——没有新的独立可推进项。B 档 12 项、C 档 6 项、D 档 4 项与 §7 解锁顺序不变。
+
+**回归稳态说明**：本节读数与批次 AD 提交（a555b07）时的读数一致——AD 引入的 3 条 `remote-concurrent-enroll` 用例在套件级 rc=0，全套唯一红仍是 K 保留的同一根因（`revocationVersion` 全局 bump）。没有新红、没有静默变绿、也没有把「另一台被误伤」伪装成「只影响被撤那台」。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。
