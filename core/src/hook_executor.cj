@@ -261,7 +261,7 @@ func hookHttp(rawUrl: String, headers: HashMap<String, String>, allowedEnv: Arra
             return socket
         }
         let connection = ClientBuilder().noProxy().autoRedirect(false).cookieJar(None)
-            .connector(connector).tlsConfig(TlsClientConfig()).readTimeout(Duration.millisecond * timeout)
+            .connector(connector).tlsConfig(defaultTlsClientConfig()).readTimeout(Duration.millisecond * timeout)
             .writeTimeout(Duration.millisecond * timeout).build()
         client = Some(connection)
         let request = HttpRequestBuilder().url(url).method("POST").header("content-type", "application/json").body(hookInputJson(input))

@@ -90,7 +90,7 @@ public class RealSseProvider <: Provider & Resource {
     // 于是「遵守供应商恢复时间」只能由夹具喂绿。
     public static func open(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
         readTimeout!: Duration = Duration.second * 30): SseOpenResult {
-        let c = ClientBuilder().tlsConfig(TlsClientConfig()).autoRedirect(false).build()
+        let c = ClientBuilder().tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()
         var opened: Option<HttpResponse> = None
         try {
             let req = HttpRequestBuilder().post().url("${baseUrl}/chat/completions")

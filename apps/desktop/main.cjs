@@ -9,7 +9,7 @@ const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
 const { HostBridge } = require("./host-bridge.cjs");
-const { hostExePath, computerUsePaths } = require("./paths.cjs");
+const { hostExePath, computerUsePaths, caBundleSidecar, hostEnvWithCaBundle } = require("./paths.cjs");
 
 // 自包含宿主：exe 与全部依赖 DLL 同目录，因此不需要设置 PATH。
 // 打包态下必须从 resourcesPath 取（extraResources 落点），__dirname 那时在 asar 里。
@@ -51,7 +51,12 @@ if (!WILL_SMOKE && hostEnvironment.SACODE_COMPUTER_USE === '1') {
   hostEnvironment.SACODE_COMPUTER_NODE = computerPaths.nodePath;
   hostEnvironment.SACODE_COMPUTER_PROVIDER = computerPaths.providerPath;
 }
-const bridge = new HostBridge(HOST, hostEnvironment);
+// 随包信任锚：宿主同目录里有 ca-bundle.pem 就把它交给宿主（核心只认 SACODE_CA_BUNDLE，
+// 不猜自己的安装布局）；没有则不动环境，让核心留在 Default 如实报错，绝不退到不校验。
+const bridge = new HostBridge(
+  HOST,
+  hostEnvWithCaBundle(hostEnvironment, { sidecarPath: caBundleSidecar(HOST), exists: existsSync })
+);
 let win = null;
 // 关闭守卫的两次闸门：worktreeGuardRunning 防重入（连点关闭只走一次确认），
 // worktreeClosed 是「已结算」标记——只有守卫放行后自己重开关闭时才不再拦。

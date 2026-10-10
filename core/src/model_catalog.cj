@@ -102,7 +102,7 @@ public class ModelCatalog {
         if (apiKey.size == 0) {
             throw Exception("model-credential-unavailable")
         }
-        let client = ClientBuilder().tlsConfig(TlsClientConfig()).autoRedirect(false).build()
+        let client = ClientBuilder().tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()
         var body = ""
         try {
             let req = HttpRequestBuilder().get().url("${baseUrl}/models")

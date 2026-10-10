@@ -183,7 +183,7 @@ public class WebExecutor {
             return fail(started, normMethod, url, "not-allowed", "web-host-not-allowed")
         }
 
-        let c = ClientBuilder().tlsConfig(TlsClientConfig()).autoRedirect(false).build()
+        let c = ClientBuilder().tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()
         var opened: Option<HttpResponse> = None
         try {
             let base = HttpRequestBuilder().url(url).readTimeout(Duration.millisecond * timeoutMs)

@@ -1,4 +1,5 @@
 package core
+import std.collection.ArrayList
 import std.unittest.*
 
 // AcpEnvProbe 单测（任务 5.3）。

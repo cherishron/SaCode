@@ -77,7 +77,7 @@ public class WebHttpTransport {
                 return socket
             }
             let connection = ClientBuilder().noProxy().cookieJar(None).autoRedirect(false)
-                .connector(connector).tlsConfig(TlsClientConfig())
+                .connector(connector).tlsConfig(defaultTlsClientConfig())
                 .readTimeout(Duration.millisecond * timeoutMs).writeTimeout(Duration.millisecond * timeoutMs).build()
             client = Some(connection)
             let builder = HttpRequestBuilder().url(url).method(method)
