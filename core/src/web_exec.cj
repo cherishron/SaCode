@@ -4,7 +4,6 @@ import std.collection.ArrayList
 import std.io.*
 import std.time.MonoTime
 import stdx.net.http.*
-import stdx.net.tls.*
 
 // Web 真实驱动（H/W70）：上游 `ctx.web.fetch(url, method)` 的「真 HTTP」实现。
 //

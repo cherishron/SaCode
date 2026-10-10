@@ -11,7 +11,6 @@ import std.time.*
 import std.convert.*
 import stdx.encoding.json.*
 import stdx.net.http.*
-import stdx.net.tls.*
 
 public class HookSecurityPolicy {
     public let allowedHookUrls: Array<String>

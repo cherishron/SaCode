@@ -5,7 +5,6 @@ import std.net.*
 import std.sync.*
 import std.time.*
 import stdx.net.http.*
-import stdx.net.tls.*
 
 public class WebHttpResponse {
     public let status: Int64
