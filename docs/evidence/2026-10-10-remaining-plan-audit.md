@@ -132,6 +132,17 @@ A/B 是「等谁的时机」的问题，C/D 是「时机到了也未必解锁」
 - 本文件（新增）：`docs/evidence/2026-10-10-remaining-plan-audit.md`。
 - `docs/evidence/2026-10-10-remote-batch-progress.md` 末尾追加一段「批次 AA」索引本文件的引用与解锁顺序。
 
+## 6b. AA 归档后的实际推进（本轮补记，2026-10-10 14:45 UTC）
+
+AA 归档完之后的两个 turn（`b1dd816` + `4875df8`）在 daemon 二进制解锁后（`cjpm build` 现编现取 11 MB）实际推进了 AA.1 与 AA.2 的**取证半**：
+
+- **AA.2 完整交付**（`b1dd816`）：`apps/daemon/test/remote-audit-integrity.test.mjs` 加 2 条——真 access token 走完 `/rpc` 全流程后遍历审计不含原文（反向锁=判定记录至少一条在盘）；modelApiKey 字段当前不在 `AUDIT_BANNED_KEYS` 白名单的原样落盘事实（棘轮：日后扩白名单本用例自动变红）。计划第 147 行整行仍不勾——「遍历模型 key 类秘密」这个原句因脱敏白名单不覆盖 `modelApiKey` 而仍未通过。
+- **AA.1 只交付取证半**（`4875df8`，批次 AB）：新增 `apps/daemon/test/remote-protocol-version.test.mjs` 4 条——锁「今天 initialize 仍宣告 0.1」+「请求侧 envelope 顶层带 0.1/0.2 都不被拒」+「缺顶层字段仍通过」。门禁与客户端升级**仍不做**，理由在批次 AB 节写清：规格 §5 的门禁前置条件是宿主显式归属分派到 HEAD，今天 `host_proxy.cj` 与 `main.cj` 都是并发会话硬持有；加门禁要动 15 份测试 65 处 envelope + 3 处客户端，属 B 档解锁链。计划第 71 行整行仍不勾。
+
+**推进后未勾项计数**：仍是 70（AA.1 与 AA.2 各只落一半或一字面下限，都不足以把计划整行勾掉）。
+
+**本轮未动**：A4-A7（B 档）、B 档 13 项、C 档 6 项、D 档 4 项。所有卡点与前一节解锁顺序一致，本轮只把 AA.1 与 AA.2 从「等解锁」推进到「一半已落 + 另一半明确等解锁」的更清晰状态。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。
