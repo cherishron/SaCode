@@ -21,6 +21,16 @@ func errRpc(id: String, code: Int64, msg: String): String {
     "{\"jsonrpc\":\"2.0\",\"id\":${id},\"error\":{\"code\":${code},\"message\":\"${jsonEscapeText(msg)}\"}}"
 }
 
+// 游标类字段允许调用方写字符串或数字两种形状，取出十进制文本后统一交给
+// parseDecimal 判法——语义只有一个真源，不在分派层再复制一套「什么算合法游标」。
+func scalarText(node: JsonValue): String {
+    return match (node.kind()) {
+        case JsString => node.asString().getValue()
+        case JsInt => node.asInt().getValue().toString()
+        case _ => ""
+    }
+}
+
 // HTTP 请求体不是 Seekable，按块读取后交给真正的 JSON 解析器。
 func readBody(stream: InputStream): String {
     let out = ArrayList<Byte>()
@@ -35,7 +45,7 @@ func readBody(stream: InputStream): String {
     return String.fromUtf8(out.toArray())
 }
 
-let INIT_CAPS = "[\"initialize\",\"session/catalog\"]"
+let INIT_CAPS = "[\"initialize\",\"session/catalog\",\"session/events\"]"
 let bus = EventBus()
 let teamHost = TeamHostBridge(bus)
 let hostProxy = HostProxyBridge(bus)
@@ -347,6 +357,24 @@ func dispatchBusiness(method: String, params: String, idText: String): String {
             items += "]"
             let root = jsonEscapeText(canonicalize(".").toString())
             return okRpc(idText, "{\"root\":\"${root}\",\"entries\":${items}}")
+        } else if (method == "session/events") {
+            // 持久事件补读面在 daemon 自己手里（契约锚点 apps/daemon/src/event_replay.cj）：
+            // 转给宿主只会拿到 -32601，宿主本人不声明这个方法。
+            // afterSeq/limit 允许字符串或数字两种写法，语义都由 parseDecimal 收口；
+            // afterSeq 不传就是「从头读，含 seq 0」，第一条持久事件对新客户端必须可达。
+            let obj = JsonValue.fromStr(params).asObject()
+            var sessionIdText = ""
+            var afterSeq = ""
+            var limit = "50"
+            var wantedGeneration = ""
+            if (let Some(v) <- obj.get("sessionId")) { sessionIdText = v.asString().getValue() }
+            if (let Some(v) <- obj.get("afterSeq")) { afterSeq = scalarText(v) }
+            if (let Some(v) <- obj.get("limit")) { limit = scalarText(v) }
+            if (let Some(v) <- obj.get("generation")) { wantedGeneration = v.asString().getValue() }
+            let page = SessionEventReplay(root: ".").page(sessionId: sessionIdText,
+                afterSeq: afterSeq, limit: limit, generation: wantedGeneration)
+            if (page.kind == REPLAY_KIND_REJECTED) { return errRpc(idText, -32602, page.reason) }
+            return okRpc(idText, page.toJson())
         } else if (acceptsTeamMethod(method)) {
             return teamHost.forward(method, params, idText)
         } else if (forwarded(method)) {

@@ -364,3 +364,37 @@ func ledgerDispositionRoutesTimeoutToUnknownAndNeverReachedToUnrecorded() {
     @Expect(ledgerDisposition(errRpc("1", -32013, "pre-forward failure")), "none")
     @Expect(ledgerDisposition(errRpc("1", -32002, "daemon is shutting down")), "none")
 }
+
+@Test
+func sessionEventsIsAnsweredByDaemonLocallyAndNotForwarded() {
+    // 契约里 session/events 的实现锚点是 daemon 自有补读面：它必须走 daemon 那一支。
+    // 转给宿主只会拿到 -32601（宿主本人不声明这个方法），所以「不是 -32601」
+    // 加「拿到补读面自己的拒绝原因」就是这一支真被接上的证据。
+    let f = GateFixture()
+    f.authorizer.register(CapabilitySpec(
+        method: "session/events", permission: AUTHZ_PERM_READ,
+        needsWorkspace: true, needsSession: true))
+    setRemoteGate(Some(f.gate))
+    let r = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":61,\"method\":\"session/events\",\"params\":{\"workspaceId\":\"ws-1\",\"sessionId\":\"sessions/nope\",\"afterSeq\":\"0\",\"limit\":50}}",
+        bearer(f.goodToken))
+    @Expect((r.indexOf("-32601") ?? Int64(-1)) == Int64(-1), true)
+    @Expect((r.indexOf("-32602") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((r.indexOf("unknown-session") ?? Int64(-1)) >= Int64(0), true)
+    // 资源归属仍然由 gate 说了算：缺 sessionId 时在补读面之前就被拒。
+    let denied = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":62,\"method\":\"session/events\",\"params\":{\"workspaceId\":\"ws-1\"}}",
+        bearer(f.goodToken))
+    @Expect((denied.indexOf("-32001") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((denied.indexOf("session-required") ?? Int64(-1)) >= Int64(0), true)
+    setRemoteGate(None)
+}
+
+@Test
+func initializeAdvertisesSessionEventsBecauseDaemonAnswersIt() {
+    // 能力面只能宣告这一层真答得出的方法。session/events 由 daemon 补读面作答，
+    // 所以它进 INIT_CAPS；同一批里宿主不声明它，转发白名单也不该有它。
+    let r = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":63,\"method\":\"initialize\",\"params\":{}}", "")
+    @Expect((r.indexOf("session/events") ?? Int64(-1)) >= Int64(0), true)
+}

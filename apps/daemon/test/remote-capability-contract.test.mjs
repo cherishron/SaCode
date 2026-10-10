@@ -169,8 +169,10 @@ const forwarded = (forwardMatch[1].match(/"[^"]+"/g) || []).map(s => s.slice(1, 
 const forwardedSet = new Set(forwarded);
 
 // daemon 自己实现、不经宿主的方法：这些不在转发白名单里是对的。
+// session/events 自 50633ef 起属于这一类：宿主本人不声明它，补读面在
+// apps/daemon/src/event_replay.cj 里按会话日志的持久前缀回答。
 const DAEMON_LOCAL = new Set([
-  'initialize', 'session/catalog', 'daemon/shutdown',
+  'initialize', 'session/catalog', 'session/events', 'daemon/shutdown',
   'auth/enroll', 'auth/token', 'auth/devices', 'auth/revoke',
 ]);
 

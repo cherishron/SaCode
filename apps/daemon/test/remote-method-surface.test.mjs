@@ -179,7 +179,9 @@ test('远程 initialize 的能力面宣告新铺开的家族，且不宣告宿�
       'lsp/diagnostics', 'attachment/upload', 'global/appearance/get', 'custom/describe', 'binding/upsert']) {
       assert.ok(caps.includes(m), `能力面应宣告 ${m}（宿主已声明、契约已实现、远程可消费）`);
     }
-    assert.ok(!caps.includes('session/events'), '锚点为「拟新增」的方法不得进能力面');
+    // session/events 的锚点已落地成 daemon 自有补读面，所以它现在*应该*被宣告；
+    // 登记面仍然不靠能力宣称。
+    assert.ok(caps.includes('session/events'), 'session/events 已由 daemon 作答，能力面要宣告它');
     assert.ok(!caps.includes('auth/enroll'), '登记面不靠 RPC 能力宣称');
   } finally {
     await d.stop();
@@ -239,16 +241,22 @@ test('铺开转发不等于放开授权：management 权限方法可达但按 sc
   }
 });
 
-test('session/events 锚点是拟新增：既不转发也不宣告', async () => {
+test('session/events 是 daemon 自有面：不转发，但由补读面作答并对外宣告', async () => {
   const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-events-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
     const r = await rpcCall(url, bearer, 'session/events',
-      { workspaceId: 'ws-1', sessionId: 's-1' }, 'e-1');
-    assert.match(r.text, /-32601/, `未实现的方法必须回 -32601：${r.text}`);
+      { workspaceId: 'ws-1', sessionId: 'sessions/nope' }, 'e-1');
+    // -32601 意味着它掉进了「没人接」的默认支；这一支必须由 daemon 的补读面接住，
+    // 拿到的是补读面自己的非法参数原因。
+    assert.ok(!/-32601/.test(r.text), `session/events 不该再落到「方法不存在」：${r.text}`);
+    assert.match(r.text, /-32602/, r.text);
+    assert.match(r.text, /unknown-session/, r.text);
+    const fwd = forwardedNames();
+    assert.equal(fwd.includes('session/events'), false, '宿主不声明它，转发白名单里不能有它');
     const init = await rpcCall(url, bearer, 'initialize', {}, 'e-2');
-    assert.ok(!init.json.result.capabilities.includes('session/events'));
+    assert.ok(init.json.result.capabilities.includes('session/events'));
   } finally {
     await d.stop();
     await rmBounded(cwd);
