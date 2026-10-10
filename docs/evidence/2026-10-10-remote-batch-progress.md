@@ -35,7 +35,24 @@
 | c619910 | 任务 6 第二批：远程接入 HTTP 面接线。dispatchRpc→dispatchRpcWithAuth 贯通 Authorization 头与 params 顶层归属；/sse 建立即认证；/health 本机匿名最小存活 + 非本机认证；新增 remote_access.cj（/auth/enroll + /auth/token 两面、16KiB 认证体、每来源 10/分、每票据 5 次锁定、实例身份文件跨重启稳定、生产 FileAuditSink、按契约表逐行装策略且坏行整体拒启动）；启动校验缺项即拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 58 / PASSED 58 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**；新增 `test/remote-auth.test.mjs` 真 HTTP socket：**15/15 rc=0**；`remote-capability-contract` **12/12 rc=0** | 三组变异各杀指定受害后还原回绿：① 撤 dispatch 层 gate 检查 → 仅 `dispatchWithGateRejectsMissingBearer`(FAILED) + `dispatchWithGateExtractsWorkspaceSessionOperationId`(ERROR) 两条红，`dispatchWithoutGateKeepsLegacyPath` 仍绿；② denied 归属写回空串 → `gateDeniedAuditsAttemptedWorkspaceAndSession` / `gatePoisonedIdentifierCannotBlankAudit` / dispatch 归属用例三条红；③ sanitizeId 改透传 → `gatePoisonedIdentifierCannotBlankAudit` / `gateSanitizeIdAcceptsIdentifierShapesAndCapsLength` 两条红。还原用 cp 备份 + `diff` 空输出证逐字一致 | 已入库 |
 | ca3d698 | 任务 6 第三批：登记票据跨进程可见 + 本地管理入口。快照升 `snapshotVersion:2` 带票据摘要与**绝对 unix 毫秒**到期；`reloadTicketsFrom` 在受理登记前合入磁盘新票；daemon 二进制加 `--manage enroll-ticket <storePath> <principalId>` 子命令（网络面仍只两面）；`/auth/token` 的 `expiresInMs` 改由 store 钟算并夹 0 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 67 / PASSED 67 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（63→67）；`remote-auth` **17/17 rc=0**（含新建票→HTTP 登记→兑换→Bearer 过授权面端到端 + 管理入口参数形状两条）；`remote-capability-contract` **12/12 rc=0** | 两个语义变异同一轮施加、受害者互不重叠：① 撤 `enroll()` 里的 `reloadTicketsFrom` → 端到端用例红（401 `invalid-enrollment`）；② `toStoreRelative` 改成原样返回（把绝对 unix 毫秒当相对刻度）→ 仅 `crossProcessTicketUsesAbsoluteExpiryNotStoreRelativeClock` 红，其余 66 条绿。还原 cp + `diff` 空输出，两侧各自复跑回绿（67/67、17/17、12/12）。**首轮 ① 是存活的**，见下节 | 已入库 |
 | 92d565b | 任务 6 第四批：TLS 真装配 + 带外撤销吸收 + §7 并发限额 + 管理入口补齐。`ServerBuilder` 接 `.tlsConfig(TlsServerConfig(...))`，证书/密钥解码失败即拒启动 78，`readHeaderTimeout`/`readTimeout` 配 10 秒；`RemoteIdentityStore.refreshFromDisk`（磁盘文本未变短路）+ gate 在 `check`/`checkStreamAuth` 认证前吸收，`listDevices`/`revokeDevice` 公开且不外泄摘要；新增 `remote_limits.cj`（每设备 8 RPC / 2 SSE、实例 64 SSE，授权后才占槽、`finally` 归还、被拒不占槽）；`--manage` 增 `list-devices`/`revoke-device` 并把 arity 与未知子命令统一拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 80 / PASSED 80 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（67→80）；`remote-tls` **2/2 rc=0**（新建套件）；`remote-auth` **19/19 rc=0**；`remote-capability-contract` **12/12 rc=0** | 两轮施加、受害者互不重叠。轮 1（Cangjie）：① 撤 `/rpc` 的 `finally` 归还 → `dispatchReleasesRpcSlotAfterEachRequest` 红；② `acquireRpc` 上限改恒真 → `dispatchRejectsWhenDeviceRpcSlotsAreExhausted`/`rpcSlotsAllowEightPerDeviceThenDenyNinth`/`rpcSlotReleaseFreesCapacityAgain` 红；该轮 **TOTAL 80 / PASSED 76 / FAILED 4 rc=1**，红集合不越出 RPC 槽位族。轮 2（Node，重打二进制）：③ 撤 gate 的 `refreshFromDisk` → 仅「管理入口列设备与撤销对在跑的 daemon 生效」红；④ 注释 `.tlsConfig(...)`（启动行仍打 `https://`）→ 仅 TLS 第 1 条红、坏证书拒启动那条仍绿；⑤ `acquireSse` 设备上限改恒假 → 仅「每设备第 3 条 SSE 被限额拒回」红；该轮 auth **17/19**、tls **1/2**。两轮各自 cp 备份 + `diff -q` 空输出证逐字还原（还原后 `MUTANT-` 标记计数 0），再全链复跑回绿（80/80、19/19、2/2、12/12） | 已入库 |
+| fc7e5b6 | 任务 7 第一批：远程方法面铺开。`hostMethods` 由 16 条推到 98 条，推导式 = 契约表 ∩ 宿主 initialize 声明能力（新增 `docs/plans/host-capabilities.json`，120 条，取自已提交宿主源码并与本机打包宿主实跑回包核对）− daemon 自有 − 代理自留长连接 `session/subscribe` − `team/*`；契约检查加三条对账（转发 ⊆ 契约 ∧ ⊆ 宿主声明 / 远程消费的已实现方法不得漏 / 等于推导集）；新增 `remote-method-surface.test.mjs` 用**真实宿主 exe** 端到端反证 | 红先记录：三条契约对账先落在**仍是 16 条**的白名单上 → `remote-capability-contract` **13/15 rc=1**（红的正是新增的两条要求与推导集）；`remote-method-surface` 首跑 0/6 全红是我把 `mkdtemp` 从 `node:fs`（回调 API）而非 `node:fs/promises` 引来的夹具错，**不构成有效红灯**。铺开前的有效行为红来自一次性探针：`tips/get`/`model/list`/`queue/describe` 在 16 条白名单下全部 `-32601 method not found`。铺开后该套 5/6（仅余 SIGKILL 未等退出导致的 EBUSY 清理红）→ 修好后 **contract 15/15 rc=0**、**surface 6/6 rc=0**、`remote-auth` **19/19 rc=0**、`remote-tls` **2/2 rc=0**、`cjpm build` rc=0；`cjpm test` **TOTAL 80 / PASSED 80 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（工作区态：= 本批提交内容 + 他人一行未落库的 `host_proxy.cj` H-14 转义改动，提交态未单独复跑）。`host-proxy` + `team-host` 仍是 **17/21（同 4 条既有红，用例名与 92d565b 轮记录一致）** | 三个语义变异同一轮施加、独占受害互不重叠：① 从白名单删 `tips/get` → 契约规则 B 与 surface 第 3 条红；② 加一条宿主不认的 `not-a-real-host-method` → 契约规则 A 与 surface 第 1 条红；③ `INIT_CAPS` 里塞 `session/events` → surface 第 6 条红。共享用例「推导集相等」(#15) 与 「initialize 能力面」(surface #2) 显式排除出归因集。变异轮读数 contract **12/15**、surface **2/6**；cp 备份 + `diff` 空输出还原，`MUTANT-` 标记计数 0，复跑 15/15 与 6/6 回绿 | 已入库 |
 
+### fc7e5b6 的分母与两处又一次自己造的假红
+
+- **两个分母各司其职，不能混**：契约表 119 行是「远程面应当能打到什么」的产品分母；
+  `docs/plans/host-capabilities.json` 120 条是「宿主本人承认什么」的实现分母。转发面取二者交集
+  再减 daemon 自有 / 代理自留长连接 / `team/*`，得 98 条。宿主声明但契约没有的 10 条
+  （`turn/start`、`extension/host/*` 七条、`appearance/set-theme`）是宿主内部管道或历史别名，
+  刻意不进远程面；契约有而宿主未声明的 9 条（`session/events`、`approval/set-mode`、
+  `approval/get-mode`、`team/approval/answer`、`daemon/shutdown`、`auth/*` 四条）走本地/团队/未发布，
+  同样不转发。对账写成**子集极性**，所以别人以后给宿主加能力不会把我这条门禁弄红。
+- **打包宿主与提交态核对**：`apps/desktop/dist/host/bin/sacode-host.exe` 实跑 initialize 回 120 条，
+  与 HEAD 的宿主源码字面量同集，含 `global/settings/get`、`model/list`，不含 `session/events`——
+  所以端到端断言打的是这份产物，而不是我以为的产物。
+- **两处假红都在夹具**：`mkdtemp` 我按 `node:fs` 引（回调 API），用例第一步就
+  `The "cb" argument must be of type function`；改成 `node:fs/promises` 后一次过 5 条。
+  剩下 1 条是 `EBUSY: rmdir`——SIGKILL 之后没等 `close` 就删夹具目录，加了有界重试与等待退出。
+  两条都是 0 秒级失败，长得像被测面炸，实际与被测面无关；这已经是本轮第二次犯同一类错。
 ### 92d565b 的两处夹具红与一处被关掉的真实缺口
 
 - **两条红都是我自己写的夹具，不是被测面**。① `remote-tls.test.mjs` 用
@@ -124,7 +141,7 @@
 
 **桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 7、
 `target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **90** 条断言全绿。
-**daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **19/19** + `remote-tls` **2/2** rc=0（92d565b 轮）。
+**daemon Node 侧**：`remote-capability-contract` **15/15** + `remote-method-surface` **6/6** + `remote-auth` **19/19** + `remote-tls` **2/2** rc=0（fc7e5b6 轮）。
 **daemon Cangjie 侧**：`cjpm test` **TOTAL 80 / PASSED 80 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（92d565b 轮）
 （身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15 + 设备持久面 4
  + 票据跨进程与管理入口 5；上一轮 63 条里的 `enrollmentTicketsAndTokensAreNotPersisted` 与「票据不落盘」
@@ -136,7 +153,7 @@
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
 | 设备凭据轮换，以及撤销后关闭**在途** SSE | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），但 `remote_identity.cj` 仍无按 deviceId 轮换凭据的公开方法；契约里的认证 RPC 面 `auth/devices`/`auth/revoke` 也未接 | 设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」目前只到请求粒度（下一个请求被拒），已建立的流不会被打断；轮换与 RPC 管理面属任务 7 授权分派。 |
-| 远程方法面只有 16 条可转发（契约表 119 行，其中 116 行在 host/core/daemon 非测试源码里能找到实现字面量） | `apps/daemon/src/host_proxy.cj:38` 的 `hostMethods` 硬编 16 条，白名单外一律 -32601；`initialize` 对客户端宣称的能力面就是这份表 | 契约里 `clientConsumers` 含 mobile/cli 的 84 条中，`goal/*`、`tips/*`、`execution/*`、`model/*`、`lsp/*`、`global/*`、`attachment/*`、`credential/*` 等家族到不了远程面。下一批按「契约 ∩ Host 实际可分派」扩白名单，并用契约检查双向钉住：不得转发无实现锚点的方法，已实现的远程方法不得漏转发。 |
+| 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
 | `session/events`（断线恢复事件回放）与服务端幂等落库 | 契约表里 `session/events` 的实现锚点是「拟新增: apps/daemon/src/event_replay.cj」，全仓无该文件；`operation_store.cj` 同理未落 | 客户端面已交付（d66aae8/34b5cfe 的 Idempotency-Key 与 Last-Event-ID 透传），服务端面属任务 8。这是 119 行里唯一一条锚点尚不存在的转发候选，必须保持「不宣称能力」。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 

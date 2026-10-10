@@ -50,8 +50,8 @@
 
 - [ ] 记录 `git rev-parse HEAD`、`git status --short`、`git worktree list`；逐 hunk 识别本计划涉及文件的在途实现，尤其 durable_checkpoint 与 execution 文件。
 - [ ] 获取用户已有 AgentLink 所在工程的准确路径并直读。若不可访问，记录其 /task 等结论为用户提供证据；不声称源码复核通过。无既有工程才使用 apps/mobile。
-- [ ] 从 Host 分派及 initialize 实际提取方法，按 PRD F01–F21 和移动功能逐项映射；审批采用现有 approval/answer、取消采用 turn/cancel，不创造已有能力别名。
-- [ ] 新增零依赖契约检查，断言远程方法没有无实现 capability、每写方法有权限和资源归属；第一次在缺映射时应红。
+- [ ] 从 Host 分派及 initialize 实际提取方法，按 PRD F01–F21 和移动功能逐项映射；审批采用现有 approval/answer、取消采用 turn/cancel，不创造已有能力别名。（fc7e5b6 已交前半：`docs/plans/host-capabilities.json` 逐字取自宿主 initialize 的 120 条声明，并与本机打包宿主实跑回包核对同集；转发面 = 契约 ∩ 该清单 − 本地 − 代理自留长连接 − team/*。别名纪律保持：审批仍走 `approval/answer`、取消仍走 `turn/cancel`，`turn/start` 与 `extension/host/*` 这 10 条宿主内部名刻意不进远程面。PRD F01–F21 的逐项映射表仍待补，故本行不整体打勾）
+- [x] 新增零依赖契约检查，断言远程方法没有无实现 capability、每写方法有权限和资源归属；第一次在缺映射时应红。（fc7e5b6：三条对账落在 `remote-capability-contract.test.mjs`——转发 ⊆ 契约 ∧ ⊆ 宿主声明能力、远程消费的已实现方法不得漏转发、转发面 == 推导集；写方法权限与资源归属由 4be823d 的「全局无资源动作」白名单棘轮钉住。红先记录 13/15 rc=1，铺开后 15/15 rc=0）
 
 ```javascript
 import assert from 'node:assert/strict';
@@ -154,7 +154,7 @@ for (const row of rows) {
 
 - [ ] 写两设备并发选择不同会话提交、团队/普通共享归属、跨项目读/写拒绝的测试；当前 global select 与两桥差异不得忽略。
 - [ ] 移除远程先 session/select 后 execute 的契约；按会话定位服务并隔离执行上下文。桌面本机远程接入开启时接同协调器，不另启私有写入 Host。
-- [ ] 逐项实现方法表的真实核心/Host分派：会话/消息/队列、目标/计划/待办、审批/问题、取消、文件/差异/Git、执行输出、模型/用量、扩展/连接/设置及团队。
+- [ ] 逐项实现方法表的真实核心/Host分派：会话/消息/队列、目标/计划/待办、审批/问题、取消、文件/差异/Git、执行输出、模型/用量、扩展/连接/设置及团队。（fc7e5b6 把「打得到」这一层铺完：98 条可转发 + `initialize` 能力面同步宣告 + 真实宿主端到端抽验 `tips/get`/`model/list`/`credential/set` 三条代表。剩下的真缺口是「打到了按不按显式归属执行」——见下两行，未做）
 - [ ] 每项缺后端实现时在对应核心模块补完整契约与测试，不仅添白名单。取消使用独立控制路径，不被长任务占用等待锁堵住。
 - [ ] 审批应答核主体/资源/有效期/修订/单次消费，执行前再次核服务端策略；禁止伪造 role 或 allowed-once。
 - [ ] 三设备不同权限跑正反矩阵；管理员能力不默认包含在普通设备token中；无权限catalog与SSE都不泄漏资源。
