@@ -200,6 +200,26 @@ remote-idempotency        5/5   remote-tls                 2/2
 
 **回归稳态说明**：本节读数与批次 AD 提交（a555b07）时的读数一致——AD 引入的 3 条 `remote-concurrent-enroll` 用例在套件级 rc=0，全套唯一红仍是 K 保留的同一根因（`revocationVersion` 全局 bump）。没有新红、没有静默变绿、也没有把「另一台被误伤」伪装成「只影响被撤那台」。
 
+## 6f. AF 归档后的实际推进（本轮补记，2026-10-11 00:10 UTC）
+
+上一轮把 §6e 下结论「A 档已穷尽」时漏算了 plan 第 142 行的**「过期凭据」小格**：把它判为 B 档的前提是「HTTP 端到端要过期 token 就必须靠时钟注入或 `--manage expire-token` 之类的管理入口」，但那条路径其实不需要。
+
+- `snapshotText()` 只落 `devices` + `enrollments`，**不落 tokens**——令牌只存内存（`core/src/remote_identity.cj:388-424`）。所以「重启 daemon → 旧令牌找不到」是天然发生的过期形态，走的是与 `authenticate()` 里 `expiresAt <= nowMs()` **完全相同的 fall-through 分支**：`remote_gate.cj:142-145` 归因 `invalid-token`、`recordDenied` 落 `unauthenticated-invalid`。
+- core 单测 `core/src/remote_identity_test.cj:71 expiredTokenRejected` 覆盖存储层用 clock 注入直接过期；新加的 daemon 集成用例覆盖外部观感一致的等价路径——**同一响应码、同一审计归因，但测试路径不同**（不依赖时钟注入，走令牌已从内存丢失这一自然到期形态）。两条测试合起来才算把「过期凭据」这一小格完整钉住。
+
+**批次 AF 交付**：`apps/daemon/test/remote-auth.test.mjs` 新增一条用例「重启后旧令牌找不到，与过期归因同为 invalid-token，且不透露是哪种」。断言四段：
+
+1. 重启前该令牌真的可用（前置证明，避免「一开始就红」被误读成通过）；
+2. 重启后 `-32001 authz-denied:invalid-token`；
+3. **反枚举**：响应体不含 `expired` / `token-gone` / `token-not-found` / `missing` / `device` / `principal`——把「令牌丢了」和「令牌过期了」以及「哪台设备」三种信息面全部封住。将来若有人把 `remote_gate.cj:142-145` 的三合一拆开，本用例立即变红；
+4. 同一凭据能换出新令牌（凭据摘要仍在 snapshot 里），说明被拒的不是「设备」而是「这张令牌」——这条防止客户端被误导去做重新登记。
+
+**读数**：`remote-auth.test.mjs` 单跑 **20/20 rc=0**（原 19 条 + 新 1 条）。全套 `remote-*.test.mjs` 未跑完（本节只登记本批影响面），下一轮跑一次回归把 K 保留红以外的稳态再复核一遍。
+
+**推进后未勾项计数**：仍是 70——本批修的是 plan 第 142 行里「过期凭据」这一**字面小格**，同一行还剩「跨证书」一个 B 档项（依赖客户端 TLS pin 层的证书轮换面）。**plan 第 142 行整行仍不勾**——它的 8 个小格里「无凭据 initialize / 撤销凭据 / 并发登记兑换 / 拒绝发生在 Host.forward 前 / 匿名 SSE」已由前批分散覆盖、「过期凭据」本批落地，但「跨证书」是独立的第二档。
+
+**§6e A 档穷尽结论修正**：本条是 §6e 里被错判成 B 档的一处，其他 A 档穷尽结论保持。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。

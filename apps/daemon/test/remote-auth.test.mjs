@@ -449,6 +449,95 @@ test('管理入口列设备与撤销对在跑的 daemon 生效，且 stdout 不�
   }
 });
 
+// 计划第 142 行「过期凭据」这一小格的 HTTP 端到端集成用例。
+//
+// 令牌只存内存（`snapshotText()` 只落 `devices` + `enrollments`），所以重启后
+// 旧令牌必然找不到——这走的是与 `authenticate()` 里 `expiresAt <= nowMs()`
+// 完全相同的 fall-through 分支：`remote_gate.cj:142-145` 归因 `invalid-token`、
+// `recordDenied` 记 `unauthenticated-invalid`。core 单测
+// `core/src/remote_identity_test.cj:71 expiredTokenRejected` 用 clock 注入直接
+// 过期，这里覆盖的是外部观感一致的等价路径——同一响应码、同一审计归因，
+// 但**测试路径不同**：不依赖时钟注入，走「令牌已不在 daemon 内存」这个自然到期形态。
+//
+// 反枚举断言必须在这里显式钉住：如果日后有人把 `remote_gate.cj:142-145` 的三合一
+// 改成分「不存在 / 过期 / 撤销」三种原因，`invalid-token` 就变成 `expired-token` 或
+// `token-gone`，客户端可枚举出「这台 daemon 到底存没存我这个 token」——那正是
+// 注释里写的攻击面。
+test('重启后旧令牌找不到，与过期归因同为 invalid-token，且不透露是哪种', async () => {
+  const dir = await mkdtemp(path.join(root, 'target', 'sacode-remote-expire-'));
+  const identity = path.join(dir, 'instance.id');
+  const snapshot = `${identity}.devices.json`;
+  // 先建票再启 daemon：让 ticket 从 snapshot 加载而非内存注入，
+  // 这样第一次跑完的 snapshot 才是「有设备」的形状，重启才拿得到同一台设备视图。
+  const created = await manage(['--manage', 'enroll-ticket', snapshot, 'p-exp']);
+  assert.equal(created.code, 0, `管理入口建票失败：${created.err}`);
+  const ticket = created.out.replace(/\r/g, '').trim().split('\n')[1];
+
+  let d;
+  let tok = null;
+  let dev = null;
+  try {
+    d = await boot({ ...accessEnv(dir), SACODE_REMOTE_IDENTITY: identity });
+    const enroll = await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: ticket, deviceName: 'phone-e', kind: 'mobile' }));
+    dev = JSON.parse(await enroll.text());
+    assert.equal(enroll.status, 200, `登记应成功：${JSON.stringify(dev)}`);
+
+    const tokRes = await d.post('/auth/token',
+      JSON.stringify({ deviceId: dev.deviceId, credential: dev.credential }));
+    tok = JSON.parse(await tokRes.text());
+    assert.equal(tokRes.status, 200);
+    const bearer = { headers: { authorization: `Bearer ${tok.accessToken}` } };
+
+    // 前置确认：重启前这个 token 是活的——否则下面的「找不到」可能是一开始就红。
+    const before = await d.rpc('initialize', {}, bearer);
+    assert.doesNotMatch(before.body, /-32001/,
+      `令牌重启前必须可用：${before.body.slice(0, 200)}`);
+    assert.match(before.body, /protocolVersion/, 'initialize 必须真的执行');
+  } catch (e) {
+    if (d) await d.stop();
+    await rm(dir, { recursive: true, force: true });
+    throw e;
+  }
+  // 干净停机：令牌在内存里被丢，但设备行（含 credential 摘要）保留在 snapshot 里。
+  await d.stop();
+
+  // 用同一身份文件重启：设备行从磁盘回读，令牌表从零开始。
+  d = await boot({ ...accessEnv(dir), SACODE_REMOTE_IDENTITY: identity });
+  try {
+    const after = await d.rpc('initialize', {},
+      { headers: { authorization: `Bearer ${tok.accessToken}` } });
+    assert.equal(after.status, 200,
+      '拒绝也必须走 JSON-RPC error 而非 HTTP 错误：客户端拿到的是可解析的响应');
+    assert.match(after.body, /-32001/,
+      `重启后旧令牌必须被拒：${after.body.slice(0, 200)}`);
+    assert.match(after.body, /authz-denied:invalid-token/,
+      `归因必须是 invalid-token：${after.body.slice(0, 200)}`);
+    // 不透露是「令牌丢了」还是「令牌过期了」——反枚举。
+    assert.doesNotMatch(after.body, /expired|token-gone|token-not-found|missing/);
+    // 不透露是「哪台设备」——被拒条目 principalId/deviceId 空是 remote_gate.cj:144 的意图。
+    assert.doesNotMatch(after.body, /device|principal/);
+    // 被拒的请求不得真执行 initialize 业务分支——这是拒绝路径不越过 gate 的钉子。
+    assert.doesNotMatch(after.body, /protocolVersion|capabilities/);
+
+    // 同一台设备凭据仍可用（凭据摘要还在 snapshot 里），说明被拒的不是「设备」，
+    // 而只是「这张令牌」。否则客户端会被这条红误导去做重新登记。
+    const reissue = await d.post('/auth/token',
+      JSON.stringify({ deviceId: dev.deviceId, credential: dev.credential }));
+    const fresh = JSON.parse(await reissue.text());
+    assert.equal(reissue.status, 200,
+      `凭据仍在，应能换出新令牌：${JSON.stringify(fresh)}`);
+    assert.notEqual(fresh.accessToken, tok.accessToken,
+      '同凭据换出的新令牌应不同于旧令牌');
+    const ok = await d.rpc('initialize', {},
+      { headers: { authorization: `Bearer ${fresh.accessToken}` } });
+    assert.match(ok.body, /protocolVersion/, '新令牌必须真能用');
+  } finally {
+    await d.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 // 设计 §7「每设备最多 2 条 SSE」：SSE 是长连接，槽位真的被占住，
 // 所以这一条能在真实 socket 上确定性复现（不像并发 RPC 那样依赖处理器耗时）。
 test('每设备第 3 条 SSE 被限额拒回，断开一条后槽位归还', async () => {
