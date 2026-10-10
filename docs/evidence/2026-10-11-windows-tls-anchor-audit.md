@@ -469,6 +469,35 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **批次 E 判决**：`win-unpacked` 产出 PASS 但打包态断言覆盖 **FAIL（252/296，缺夹具）**；`portable` 产出 PASS、打包态冒烟 **BLOCKED（stdout 零通道）**；`NSIS` **FAIL（CANNOT_EXECUTE，且覆盖掉了上一轮产物）**；签名如实 **NotSigned**；NSIS 真机安装/卸载仍 **BLOCKED（未获授权）**。三条解锁动作：① 把打包态 ui-smoke 依赖的夹具纳入随包清单，或让该用例在打包态走已随包的等价路径（属桌面线，需改 `build.files`/`after-pack`，而 `package.json` 此刻是别人未落库的 `M` 文件，我不代改）；② 查清本机为何拒 spawn 新生成的安装器（与 §13/§14 里那条按路径按可执行文件生效的策略同族嫌疑，未定位）；③ 换用能收到 portable 子进程输出的取证方式重跑那一腿。
 
+## 19. §18 那条「拒 spawn」归因是错的：NSIS 桩能被 spawn，真因是非 MSYS 进程写不了 `AppData\Local\Temp`；换 TMP 落点后 NSIS 产出转 PASS（2026-10-11 07:44–07:55 实测）
+
+**先更正自己的旧结论**：§18 第 458 行写的「失败是 spawn 被拒而不是装完了再退」以及解锁动作②「查清本机为何拒 spawn 新生成的安装器」**已被本轮实测推翻**。桩能被正常创建进程并执行，只是它自己不退出。
+
+**链条读通了（三处都是 `node_modules` 里的实现，不是推断）**：
+1. `app-builder-lib/out/targets/nsis/NsisTarget.js` 的 `computeUninstallerData` 走**两遍编译**：第一遍带 `BUILD_UNINSTALLER` 宏把 `installerPath` 编成一个「只吐卸载器就退出」的桩——这就是 §18 里那个 153,273 B 的 `SaCode Setup 0.1.0.exe`，**它从来不是被覆盖的旧包，而是第一遍的半成品**；`Processed 1 file…Total size: 153273 / 184838 bytes (82.9%)` 是 makensis 对桩自己的体积读数。
+2. 第二遍在 `NsisTarget.js:374`：`wineVm.exec(installerPath, [], { env: { __COMPAT_LAYER: "RunAsInvoker" } })`，用桩生成 `…__uninstaller.exe`。
+3. `app-builder-lib/out/vm/WineVm.js` 的 `execWine` 在 `process.platform === "win32"` 时直接 `exec(target, appArgs, options)`，且**写死 `options.timeout = 120 * 1000`**。所以 §18 那个 `Exit code: null` + `Output:` 空的读数是「子进程弹窗挂住、120 秒被超时杀掉」的正常表现——**我把超时误读成了拒绝**。第三遍（真安装器 + block map）在此之前根本不会执行。
+
+**弹窗正文才是真因**：用 UIA 读那顆桩的错误框（`get_window_state`，标题 `NSIS Error`），正文是 `Error writing temporary file. Make sure your temp folder is valid.`——与本机早已存在的「非 MSYS 进程写不了 `C:\Users\jingg\AppData\Local\Temp`」同族（前两个独立佐证是宿主与 Electron，NSIS 桩是第三个）。
+
+**同形状 A/B（同一 spawn 形态、只差 TMP 值）**：
+
+| TMP/TEMP 落点 | 结果 |
+| --- | --- |
+| `/tmp`（Git Bash 默认注入） | 弹窗 `NSIS Error`，进程挂住，无卸载器 |
+| `C:\Users\jingg\AppData\Local\Temp`（Windows 形式，bash 内联与 `cmd.exe` 原生环境块各试一次） | **同样**弹窗、同样挂住、无卸载器 ⇒ 「MSYS 注入了 POSIX 路径」这个假设被证伪，注入方不相关 |
+| `D:\…\apps\desktop\.tmp-test\nsis-tmp` | 桩 **8 秒内自行退出并产出 `SaCode Setup 0.1.0.__uninstaller.exe` 133,785 B** ⇒ 落点是唯一变量 |
+
+**排除项实测**：`statfsSync` 读数 `C:/ freeMB=180020 totalMB=524184`、`D:/ freeMB=243340` ⇒ 不是磁盘满；node 在 `C:/Users/jingg/AppData/Local/Temp/` 下 `mkdirSync` **成功**（`MKDIR-IN-WINDOWS-TEMP=OK`）⇒ 不是笼统的目录写权限，NSIS 在该目录的失败机制未进一步定位，如实记为「未定位，但落点可绕」。
+
+**跑桩之前的安全核查**：`node_modules/app-builder-lib/templates/nsis/installer.nsi` 在 `!ifdef BUILD_UNINSTALLER` 分支里 `.onInit` 只有 `WriteUninstaller "${UNINSTALLER_OUT_FILE}"` + `quitSuccess`（第 63-65 行），并配 `SilentInstall silent` 与 `RequestExecutionLevel user`，且 `!ifndef BUILD_UNINSTALLER` 才 `include installUtil.nsh` ⇒ **桩不可能走到安装 Section**，跑它不构成「安装应用」。三次弹窗期间实查 `%LOCALAPPDATA%\Programs\` 无 SaCode/sacode 目录；我启动的桩进程全部清理（`taskkill` 或超时自灭），最后一测 `tasklist` 计数 **0**。
+
+**换落点后的 NSIS 判决（转绿）**：`cmd.exe` 批处理里 `set TMP/TEMP=D:\…\.tmp-test\nsis-tmp` 后 `npx electron-builder --win nsis --config.electronDist=node_modules/electron/dist`，外层 **`rc=0`**，日志依次出现 `building target=nsis` → `file signing skipped … SaCode Setup 0.1.0.__uninstaller.exe` → `file signing skipped … SaCode Setup 0.1.0.exe` → `building block map`，产物 **`SaCode Setup 0.1.0.exe` 93,860,235 B @07:54**、blockmap 99,338 B @07:55（与 §18 那次的 153,273 B 残件同路径，本轮是真包）。**未设任何镜像**，electron 平台二进制仍走本地官方 dist。附带一条自身缺陷披露：第一版批处理直接写 `npx …` 未加 `call`，cmd 调用 `.cmd` 后不返回，导致批内 `echo BUILDER-RC=` 永远不打印——退出码只能从外层取，已在后续脚本改用 `call`。
+
+**打包态夹具那条腿的合规解法（零产品改动）**：`test-support/ui-smoke.cjs` 里 `SACODE_SSE_FIXTURE` 覆盖口**在 HEAD 就有**（`git show HEAD` 第 926-927 行），其注释原话是「打包态从 asar 里往上爬找不到仓库 `scripts/`，由驱动用 `SACODE_SSE_FIXTURE` 指到真实那份，这一组断言在安装包里才是实跑而不是跳过」；`test-support/golden-path-smoke.cjs:10` 同一约定。所以 §18 解锁动作①里我写的「需改 `build.files`/`after-pack`」也是**不必要的**：正确做法是驱动侧设该环境变量指向仓库根 `scripts/sse-contract-server.cjs`（13,089 B @10-06 09:11，存在性已实测），**不把测试夹具塞进发布包**。开发态与打包态的历史读数分别是 `.tmp-test/b-smoke.log` 296 条 `UI OK`/0 条 `UI FAIL`、`.tmp-test/e-packed-smoke.log` 252/0。
+
+**本批判据**：§18 的「NSIS 拒 spawn」**FAIL（归因错误，本轮更正）**；NSIS 产物 **PASS（rc=0，93,860,235 B @07:54，两遍编译走通）**；「非 MSYS 进程写不了 `AppData\Local\Temp`」这条本机约束 **PASS（第三个独立佐证，机制未定位）**；打包态夹具修法 **PASS（HEAD 既有覆盖口，零产品改动，已写入驱动脚本）**；win-unpacked 与 portable 两条 296 项腿的读数和签名复核见 §20（本轮尚未结算，不在此处冒充）。
+
 
 
 
