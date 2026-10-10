@@ -10,8 +10,16 @@
 //   - 每 target 至多 8 条并发 RPC、2 条 SSE；超限拒绝。
 //   - RPC 30s 超时；SSE 空闲不关闭；服务端 keepalive 由 daemon 负责。
 //   - 拒 batch 请求；拒无 id 的业务通知；请求体硬上限 1 MiB。
+//   - TLS 侧：不 trust-all。caCertificates 非空即只信这些 CA；
+//     instanceFingerprint 非空即在握手前再做一次证书指纹钉扎（tls-pin.cjs），
+//     两个约束独立生效——没有 pin 也仍要过系统 CA 或自注入 CA 的链校验。
 
 import { Buffer } from "node:buffer";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { Agent, fetch: undiciFetch } = require("undici");
+const { checkServerIdentity, FP_RE } = require("./tls-pin.cjs");
 
 const MAX_CONCURRENT_RPC_PER_TARGET = 8;
 const MAX_CONCURRENT_SSE_PER_TARGET = 2;
@@ -31,13 +39,49 @@ function jsonEncode(obj) {
   return s;
 }
 
+// 每个 transport 一个 Agent：ca 与 pin 都是 per-target 状态，用一份共享的全局 Agent
+// 会把上一台的 CA/pin 泄漏到下一台——正是「不允许 trust-all」要堵的口子。
+function makePinnedAgent({ caCertificates, instanceFingerprint }) {
+  const connectOpts = { timeout: 10000 };
+  if (Array.isArray(caCertificates) && caCertificates.length > 0) {
+    connectOpts.ca = caCertificates;
+  }
+  if (instanceFingerprint !== undefined && instanceFingerprint !== null && instanceFingerprint !== "") {
+    if (!FP_RE.test(instanceFingerprint)) {
+      throw new TransportError("bad-config", `pin-format-invalid: ${instanceFingerprint}`);
+    }
+    // 在 Node tls 的默认主机名校验之后再做一次指纹比较；两者都必须通过。
+    // 返回 Error 会让 undici 在握手阶段直接失败，绝不落到 HTTP 层。
+    connectOpts.checkServerIdentity = (hostname, cert) =>
+      checkServerIdentity(hostname, cert, instanceFingerprint) ?? undefined;
+  }
+  return new Agent({ connect: connectOpts, pipelining: 0 });
+}
+
 export class RemoteTransport {
-  constructor({ baseUrl, tokenProvider, fetchImpl = globalThis.fetch, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout }) {
+  constructor({ baseUrl, tokenProvider, fetchImpl, dispatcher, instanceFingerprint, caCertificates, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout }) {
     if (typeof baseUrl !== "string" || baseUrl.length === 0) throw new TransportError("bad-config", "base-url-required");
     if (typeof tokenProvider !== "function") throw new TransportError("bad-config", "token-provider-required");
+    if (Array.isArray(caCertificates)) {
+      for (const c of caCertificates) {
+        if (typeof c !== "string" || c.length === 0) {
+          throw new TransportError("bad-config", "ca-certificate-empty");
+        }
+      }
+    } else if (caCertificates !== undefined && caCertificates !== null) {
+      throw new TransportError("bad-config", "ca-certificates-must-be-array");
+    }
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.tokenProvider = tokenProvider;
-    this.fetch = fetchImpl;
+    if (dispatcher !== undefined) {
+      if (typeof dispatcher.dispatch !== "function") {
+        throw new TransportError("bad-config", "dispatcher-must-have-dispatch");
+      }
+    } else {
+      dispatcher = makePinnedAgent({ caCertificates, instanceFingerprint });
+    }
+    this.dispatcher = dispatcher;
+    this.fetch = typeof fetchImpl === "function" ? fetchImpl : undiciFetch;
     this.setTimeoutImpl = setTimeoutImpl;
     this.clearTimeoutImpl = clearTimeoutImpl;
     this.nextId = 1;
@@ -96,6 +140,7 @@ export class RemoteTransport {
         // 设计 §4.2「认证请求不跟随跨主机重定向」——redirect 默认 follow 会把
         // Bearer 头带到第三方主机；这里显式 manual，并把任何 3xx 归为拒因。
         redirect: "manual",
+        dispatcher: this.dispatcher,
       });
       if (this.epoch !== epochAtSend) throw new TransportError("stale-epoch", "target-switched-before-response");
       if (res.status >= 300 && res.status < 400) {
@@ -123,6 +168,18 @@ export class RemoteTransport {
         throw new TransportError("id-mismatch", "response-id-mismatch");
       }
       return parsed.result;
+    } catch (e) {
+      // undici 在 TLS 握手阶段失败的错是 TypeError('fetch failed')，真正原因（pin-mismatch、
+      // 证书链、主机名）挂在 e.cause。这里把它归因透上来，别让上层只能看到 'fetch failed'。
+      if (e instanceof TransportError) throw e;
+      const cause = e && e.cause;
+      const causeMsg = cause && (cause.message || String(cause));
+      if (causeMsg && causeMsg.indexOf("pin-") === 0) {
+        const wrapped = new TransportError("tls-pin", causeMsg);
+        wrapped.cause = cause;
+        throw wrapped;
+      }
+      throw new TransportError("tls-transport", causeMsg || (e && e.message) || "tls-or-transport-error");
     } finally {
       this.clearTimeoutImpl(timer);
       this.inflightRpc -= 1;
@@ -153,6 +210,7 @@ export class RemoteTransport {
       headers,
       signal: controller.signal,
       redirect: "manual",
+      dispatcher: this.dispatcher,
     });
     if (this.epoch !== epochAtOpen) { controller.abort(); this.inflightSse -= 1; this.pendingSubscribers.delete(controller); throw new TransportError("stale-epoch", "target-switched-during-open"); }
     if (res.status >= 300 && res.status < 400) {
@@ -206,5 +264,6 @@ export class RemoteTransport {
     this.closed = true;
     for (const sub of this.pendingSubscribers) { try { sub.abort?.(); } catch (_e) {} }
     this.pendingSubscribers.clear();
+    try { this.dispatcher?.close?.(); } catch (_e) {}
   }
 }

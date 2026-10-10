@@ -134,5 +134,10 @@ export function makeRemoteTransportFor(descriptor, deps) {
     baseUrl: descriptor.baseUrl,
     tokenProvider: deps.tokenProvider,
     fetchImpl: deps.fetchImpl,
+    // descriptor.instanceFingerprint 由 target-store 在扫码/首次连接成功后 pinFingerprint
+    // 写入；每次 target 切换都会重新走一遍这条链路，pin 层绝不跨 target 复用。
+    instanceFingerprint: descriptor.instanceFingerprint,
+    caCertificates: deps.caCertificates,
+    dispatcher: deps.dispatcher,
   });
 }

@@ -554,6 +554,36 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 
 **第二处：把「我没预告的红」当可疑红去怀疑，而不是先去读它的代码路径。** `/health` 那条红第一次看到时，第一反应是「是不是变异外溢到别的测试」。真答案是 `daemon.cj:627` 的 `/health` 也调 `checkStreamAuth`——这条不是外溢，是 P-M1b 在第二个调用点上的表现，属于同一变异的另一个可观察面。这类「未预告的红」正确动作是先读它调用了哪个函数，再决定是外溢还是同一根因的第二现场。
 
+## 批次 Q：tls-pin 从死代码变成生产路径（计划第 147 行后半句「trust-all」）
+
+规格 §4 那句「内网允许通过扫码外带证书指纹绑定服务端，不允许 trust-all」，前半句其实 71f8725 早落了——`remote-transport.mjs` 里两处 `redirect: "manual"` 加 3xx 归因 `redirect-not-allowed`，wire 有专属受害用例钉住。后半句当时**只写了单元层**：`tls-pin.cjs` 有 9 条用例通过，但全仓 grep `tls-pin` 只命中它自己与 `test/tls-pin.test.mjs`，生产路径一次都没调用它。`RemoteTransport` 用 Node 默认 fetch、没建 dispatcher，`target-bridge.makeRemoteTransportFor` 也没把 `target-store` 的 `instanceFingerprint` 透进来——「pin 存了但从不生效」，`tls-pin.cjs` 是纯死代码。批次 Q 把三段接起来。
+
+**改动**（三个文件，纯 JS 桌面侧）：
+
+- `apps/desktop/remote-transport.mjs`：新增 `instanceFingerprint` 与 `caCertificates` 两参；内部起一个 **per-instance** `undici.Agent`（`makePinnedAgent`），CA 与 pin 都是 per-target 状态，共享全局 dispatcher 会把上一台的 CA/pin 泄漏到下一台——那正是「不允许 trust-all」要堵的口子。`connect.checkServerIdentity` 里串上 `tls-pin.checkServerIdentity`，`sendRequest` 与 `subscribeNotifications` 的 fetch init 里带 `dispatcher: this.dispatcher`；`close()` 里补一句 `dispatcher.close()`。undici 在 TLS 握手阶段失败时抛 `TypeError('fetch failed')`、真正原因（`pin-mismatch`、`certificate verify failed`）挂在 `e.cause` 上——如果不剥开，上层只能看到「fetch failed」而分不清是网络还是策略拒的，`sendRequest` 的 catch 因此把 `cause.message` 以 `pin-*` 前缀出现时归因为 `TransportError('tls-pin', ...)`，其他 transport 错误兜成 `TransportError('tls-transport', ...)`。
+- `apps/desktop/target-bridge.mjs`：`makeRemoteTransportFor(descriptor, deps)` 把 `descriptor.instanceFingerprint` 与 `deps.caCertificates` 透进 transport；`dispatcher` 也允许调用方注入以便测试替身。
+- `apps/desktop/test/remote-transport-tls-pin.test.mjs`（新，4 条）：用 `openssl req -x509` 起真 https 服务器，SAN 含 `DNS:127.0.0.1,DNS:localhost,IP:127.0.0.1`（少任何一个，客户端按 IP 或按 host 校验都会挂，那时红的是夹具）。四条各守一条不变量：① pin 匹配 → 请求打通过并拿回 `/rpc` 业务响应（证明 pin 层不覆盖真通证）；② pin 不匹配 → 归因必须是 `pin-mismatch` 而不是通用 `fetch failed`，且业务 fetch 一次都不被调、服务器 `/rpc` 从未触达（关键：**归因从「系统 CA 不认自签」退化成 `fetch failed` 就是 pin 从未接上的假绿**，两条不变量就塌成一条）；③ 不 pin 也仍拒自签证书，且归因不是 pin 层（否则「pin 是可选」会被读成「pin 可跳过 TLS」）；④ tls-pin 默认主机校验器拒绝 SAN 不匹配的锚点，把「不 trust-all」的默认姿态钉到主机名校验层。
+
+**读数**：`node --test test/remote-*.test.mjs test/target-*.test.mjs test/tls-pin.test.mjs test/multi-target-*.test.mjs`（`apps/desktop` 下）：**tests 94 / pass 94 / fail 0 / cancelled 0**。全量桌面回归因涉及 UI 冒烟的宿主租约与 dualtest 竞争未在本轮跑完，本批不宣称跨全套绿。
+
+**变异（两个，同轮各跑，`target/mut-q/mut.cjs`）**：
+
+| 变异 | 内容 | 独占受害 | 结果 |
+| --- | --- | --- | --- |
+| Q-M2 | 摘掉 `makePinnedAgent` 里 `connectOpts.checkServerIdentity = ...` 三行，保留 dispatcher | 用例 2（pin 不匹配） | 用例 1 fail=0（dispatcher.ca 让握手仍过）、用例 2 **fail=1**（归因从 `pin-mismatch` 退回 `fetch failed`，正是「pin 从未接上」的假绿）、用例 3 fail=0 |
+| Q-M1 | 摘掉 `sendRequest` 里 fetch init 的 `dispatcher: this.dispatcher` | **不独占**：用例 1 与用例 2 都受害 | 用例 1 fail=1（预期）、用例 2 fail=1（因为 pin hook 也搭在同一个 dispatcher 上，摘 dispatcher 同时摘掉了 pin hook）、用例 3 fail=0 |
+
+Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，握手本身能过，所以用例 1 依然绿；只有那条「pin 不匹配」的用例因归因退化而红，正好把「pin 从来没接上」这个假绿钉死。Q-M1 是复合反证而非独占——dispatcher.ca 与 dispatcher.checkServerIdentity 住在同一个 dispatcher 上，摘掉 dispatcher 就同时摘掉了 CA 注入与 pin hook，两条受害。这条独占性差的原因不是设计错，是 CA 与 pin 本来就属于同一份 dispatcher 状态；把它写成独占对得上，得把 CA 注入换成不通过 dispatcher 走的路径，那个改动没有产品必要性。**如实记录：Q-M1 抓的是「dispatcher 完全没接上」这个复合面，独占受害的功劳归 Q-M2。**
+
+还原：脚本用 `Buffer.compare(live, backup) === 0` 逐字节对齐，还原后各跑一遍基线用例，`fail` 全 0。因为 Windows 上 `git diff HEAD` 会报 LF↔CRLF 的 warning（`.gitattributes` 没定 core.autocrlf），本轮 `restore()` 里发现 `BYTE-IDENTICAL-RESTORE false` 时改为「强制从 backup 写回」而不是抛错——这是脚本对 CRLF 自动规整的让步，不是变异残留的证据：`grep -c "dispatcher: this.dispatcher"` 与 `git diff --stat` 都确认 live 与 backup 一致（`apps/desktop/remote-transport.mjs` 63 行改动 = 我本轮实际新增的量）。
+
+**我自己的两处取证失误**（照抄批次 P 的格式记在这里，以免下次再踩）：
+
+1. **一开始想当然认为「摘 dispatcher 就是独占受害用例 1」**。真跑出来杀伤 1+2 两条——原因是把 dispatcher.ca 与 dispatcher.connect.checkServerIdentity 当成了两件可以分开摘的事，其实它们住在同一个 dispatcher 对象上，摘了 dispatcher 两者一起消失。这类「预期受害集合比实际红集合窄」的错误动作是先去读代码确认哪些东西搭在同一个依赖上，别急着把它当外溢。
+2. **restore() 一开始写成「Buffer 不一致就抛错」**，Windows 的 CRLF 自动规整让 `live !== backup` 是常态而非异常——脚本会在 M1 之后直接崩，反而拿不到 M2 的读数。改法是把 restore 变成「先对齐检查、不一致就强制写回」，把「是否一致」与「还原后是否绿」分离成两条独立判据。这条与批次 P 那次「stamp() 相对路径导致哈希全空」是同一族错误：取证脚本要接受环境差异，先落值再断言，断言失败不能把整个台账烧掉。
+
+**仍不判通过的两件**：① 「证书更新不自动覆盖旧绑定」这条产品面还没建——`tls-pin.cjs` 只做「比对后拒」，还没做「服务器换了证书时把用户拉回来重建绑定」的交互；② 全量桌面回归本批没跑完，只在 remote/target/tls 那 94 用例范围内验证过。两件都记为 BLOCKED/TODO，不宣称完成。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
