@@ -181,6 +181,38 @@ Node 侧 **47/47**：`remote-idempotency` **5/5**、`remote-auth` 19/19、`remot
 
 **不属于本批的红**：`host-proxy.test.mjs` 11/12 红 + `team-host.test.mjs` 1/9 红。归因证据：同一批失败用 **05:37 那枚根本不含本批代码的 daemon 产物**照样复现（红名与错误行一致），主要签名是夹具宿主一起来就被判 `-32002 宿主已退出`，而 `team-host` 自己的夹具宿主能正常应答，故指向并发会话在飞的 `host_proxy.cj` 未提交 hunk 与 `core/`（session/lease/ledger/agent/cmds）改动被编进任何当轮产物。本批未改动这两个文件，也不改他人文件、不弱化断言。
 
+### 批次 E：session/events 持久补读面
+
+| 落地面 | 位置 | 说明 |
+| --- | --- | --- |
+| 补读实现 | `apps/daemon/src/event_replay.cj`（新增） | 只读盘不产生副作用，所以 `durable=false`、不进幂等账；页形状固定为 `generation/nextSeq/hasMore/gap/events`，`seq` 出线是十进制字符串 |
+| 分派支与能力宣告 | `apps/daemon/src/daemon.cj` 的 `session/events` 支 + `INIT_CAPS` | 由 daemon 本人作答，不进宿主转发白名单；契约锚点从「拟新增」改成实名两处同批落 |
+| 反向断言改写 | `remote-method-surface.test.mjs` | 原来那条「session/events 既不转发也不宣告」按锚点兑现改成「不转发、但由补读面作答并对外宣告」，`-32601` 断言换成 `-32602 unknown-session` |
+| 远程端到端 | `apps/daemon/test/remote-events.test.mjs`（新增 7 条） | flush 边界、缺省游标含 seq 0、静默轮询不跳条、分页与 catalog 持久条数对账、gap/非法参数、按 sessionId 隔离、缺 sessionId 先拒 |
+
+**两条游标口径（本批定的，附为什么）**：
+
+- `afterSeq` **不传 = 从头，含 seq 0**；传 `"0"` = 已看过 seq 0。旧实现把缺省填成 `"0"`，于是新客户端第一次补读天然丢掉第一条，而 cj 侧用例全部显式传 `"0"`，本地测试全绿也看不出来。显式 `"-1"` 仍按 `cursor-malformed` 拒——不接受我们自己发明的反值哨兵。
+- `nextSeq` 的口径是**「你确实看到的那一条」**，不是「我本来打算给你的那一条」。旧实现在无新事件时回 `cursor+1`，客户端把它当已看过再轮询，就会把之后才落盘的那条永久跳掉。空持久日志的 `nextSeq` 回空串（= 仍从头），不再回 `"0"` 冒充看过第一条。
+
+**远程消费方必须走的序列（2026-10-10 探针实测，修正了上一版夹具的假前提）**：宿主的写目标是它**当前选中**的那条会话，`session/submit` 的参数名是 `eventType`/`data`（不是 `text`）。所以远程要让正文进入某条会话的日志必须 `session/create → session/select → session/submit → session/flush`；少了 `select`，正文落进工作区根的 `session.log`，而补读面按 `sessionId` 解析到 `sessions/<id>/session.log`，于是「提交了但补读永远读不到」。探针读数：`SUBMIT {events:2,durable:1}` → 从头页只有 `seq 0 session/title`；`FLUSH {events:2,durable:2}` → 从头页出现 `seq 1 user/message 补读正文-probe`；`CATALOG` 该会话 `durable:3` 与三条事件页对账一致。**被转发方法是否真按 params 顶层的显式归属定位会话，仍属任务 7**，本批只把补读面这一侧的归属钉住。
+
+**计数**：仓颉侧 `cjpm test` **TOTAL 117 / PASSED 117 / FAILED 0 / ERROR 0 / SKIPPED 0，rc=0**（批次 D 基线 115 + 本批新增 2 条补读钉子，另有 8 条 `event_replay_test.cj` 与 2 条 gate 接线用例已在同批计入）；Node 侧远程全套 **tests 54 / pass 54 / fail 0 / cancelled 0，rc=0**（批次 D 后 47 + 本批 7），产物 `apps/daemon/target/release/bin/main.exe` 11095040 B（10:56 那次干净构建；变异产物只写进 `.tmp-test/mutant-td`，没覆盖默认路径，所以还原后源码与该产物仍逐字对应，Node 全套在还原态复跑 54/54 rc=0）。
+
+**变异反证（F+G 同轮，独占受害各一条）**：
+
+| 变异 | 施加 | 独占受害（必须红） | 共享受害（不计入归因） |
+| --- | --- | --- | --- |
+| F | `event_replay.cj` 缺省 `want` 由 `0` 改 `1`（从头也丢掉第一条） | cj `absentCursorReadsFromSeqZeroWhileExplicitZeroSkipsIt` **FAILED**；Node「缺省游标从 seq 0 起」 | Node flush 边界页与分页对账两条（页里少一条，计数对不上） |
+| G | `lastSeen` 初值由游标改 `want`（nextSeq 回「本来打算给的那一条」） | cj `quietPollReturnsSameCursorInsteadOfJumpingAhead` **ERROR**（`@Expect` 不终止，随后按下标取正文落 ERROR 桶）；Node「静默轮询原样带回游标」 | 无 |
+
+变异轮读数：cj **TOTAL 117 / PASSED 115 / FAILED 1 / ERROR 1**，红集合正好等于这 2 条新增钉子，无第三条外溢；Node **fail 4 / pass 3**，4 条红的 `error:` 原文分别是「从头读必须含 seq 0」「补读页条数与 catalog 持久条数不一致」「静默轮询必须原样带回游标（实测 `nextSeq":"2"`）」「单页取回的就是全部持久事件」——都指向前两行声称的语义，不是夹具抖动。还原用 `cp` 备份 + `diff` 空输出（rc=0、`MUTANT` 标记计数 0）证明逐字一致，还原后 `touch` 源文件破掉 mtime 增量缓存再跑回绿。
+
+**本批自己踩的两颗假绿/假红**：
+
+1. 探针把 daemon 产物路径写死成 `apps/daemon/target/release/bin/main.exe` 的历史副本，`--manage enroll-ticket` 返回 **rc=64**，一度被读成「新桥接坏了」。真因是 05:37 那枚产物早于 `ca3d698` 的管理入口参数形状改动；同一份当前源码构建的产物 rc=0。**教训：Node 与探针必须显式指向当轮构建产物，旧产物的读数不是被测面的读数。**
+2. heredoc 写 JS 再次吃掉正则里的 `\\/`（`/\\/g` → `/\/g`，SyntaxError）。凡含反斜杠正则的脚本改用文件写入，不走 shell heredoc。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -188,7 +220,8 @@ Node 侧 **47/47**：`remote-idempotency` **5/5**、`remote-auth` 19/19、`remot
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
 | 设备凭据轮换，以及撤销后关闭**在途** SSE | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），但 `remote_identity.cj` 仍无按 deviceId 轮换凭据的公开方法；契约里的认证 RPC 面 `auth/devices`/`auth/revoke` 也未接 | 设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」目前只到请求粒度（下一个请求被拒），已建立的流不会被打断；轮换与 RPC 管理面属任务 7 授权分派。 |
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
-| `session/events`（断线恢复事件回放） | 契约表里 `session/events` 的实现锚点是「拟新增: apps/daemon/src/event_replay.cj」，全仓无该文件 | 客户端面已交付（d66aae8/34b5cfe 的 Idempotency-Key 与 Last-Event-ID 透传）；服务端幂等账已在 50633ef 落地（原名 operation_store.cj，实名 `idempotency.cj` + `canonical_json.cj`），补读面仍属任务 8。这是 119 行里唯一一条锚点尚不存在的转发候选，必须保持「不宣称能力」。 |
+| `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（本批） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
+| §6 SSE 恢复面三条 | `apps/daemon/src/eventbus.cj`（已有 1024 帧上界与溢出关闭）+ `daemon.cj` 的 `/sse` 支 | **未落**：① 首订阅未按 `Last-Event-ID` 从持久面补读再丢弃缓冲重复，现在只订阅直播流；② 每连接只有帧数上界，没有 §6 要求的 4 MiB 字节上界；③ 撤销只到请求粒度，已建立的流不被打断（与上一行「设备凭据轮换」同一条线）。属批次 F。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 
 
