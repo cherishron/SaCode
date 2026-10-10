@@ -147,6 +147,40 @@
  + 票据跨进程与管理入口 5；上一轮 63 条里的 `enrollmentTicketsAndTokensAreNotPersisted` 与「票据不落盘」
  的新契约互斥，已替换为 `ticketFromAnotherProcessIsConsumableButTokensAreNotPersisted`）。
 
+### 批次 D：服务端幂等账（50633ef）
+
+| 面 | 位置 | 落点 |
+| --- | --- | --- |
+| 键与判定 | `apps/daemon/src/idempotency.cj` | 六元组键按长度前缀分帧；同键同内容重放、同键异内容拒、超时/宿主中途退出/分派异常记 unknown、确证没到宿主的错误不建账 |
+| 规范化内容 | `apps/daemon/src/canonical_json.cj` | 递归按键排序 + 类型标签 + 字节长度前缀；整值浮点与整数归一（`1` 与 `1.0` 同一份内容）；排序只用 `add` 与下标读，不依赖未证实的 `ArrayList.insert` |
+| 策略通道 | `core/src/remote_authorization.cj`、`apps/daemon/src/remote_access.cj` | `CapabilitySpec.durable` + `specOf()`；装载逐行强制显式 `durable`，漏配整表拒启动。daemon 不持有第二份写操作名单，契约 59 条 durable 全靠这一条通道生效 |
+| 分派接线 | `apps/daemon/src/daemon.cj` | 业务链整段搬进 `dispatchBusiness`（一条分支未改），账本在执行前 consult、执行后按去向记账；重放回执换成本次请求的 id |
+| 落盘 | `<identityPath>.ledger.jsonl` | `File.appendTo` 一写一条，行数超 `cap*2` 整写压实；坏行/残行只跳过，载入后仍按 cap 收口；写失败计数可读出不冒充「已提交」 |
+
+拒绝码取 **-32017 operation-id-required / -32018 idempotency-conflict / -32019 idempotency-unknown**：宿主本人已占用 `-32001..-32004`（`session/create` 的 `bad-session-title` 实测就是 -32004）与 `-32010..-32016`，所以账本另起一段，客户端才分得清「账本没放行」和「宿主答了业务错」。
+
+**运行计数**：`cjpm test` **TOTAL 105 / PASSED 105 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（上一轮 80 → 本轮 +7 账本语义 +5 规范化摘要 +5 分派接线 +2 策略装载 +1 有界额度 +5 落盘重开）。
+Node 侧 **47/47**：`remote-idempotency` **5/5**、`remote-auth` 19/19、`remote-tls` 2/2、`remote-capability-contract` 15/15、`remote-method-surface` 6/6，全部 rc=0。
+`remote-idempotency` 用**真宿主**做观测量，每条重放用例都配「换个 operationId 就 +1」的阳性对照：`session/submit` 的 `result.events` 停在 1、`session/catalog` 条目数不变，且第 5 条停掉第一个 daemon 再起第二个（同 identityPath 读到盘上账）后仍拿原回执，并用 `session/projection` 核会话日志真源也是 1 条。
+
+**变异反证**（每个变异各有一条只有它能杀的独占受害用例；`sameOperationIdReplaysWithoutSecondExecution` 是 B 与「跳过 consult」类变异的共享受害，显式排除出归因集）：
+
+| 变异 | 独占受害用例 | 结果 |
+| --- | --- | --- |
+| A 把 `-32011` 从 uncertain 名单摘掉 | `ledgerDispositionRoutesTimeoutToUnknownAndNeverReachedToUnrecorded` | 红 ✓ |
+| B 对象改按插入序出帧 | `topLevelKeyOrderDoesNotChangeTheDigest`、`nestedKeyOrderDoesNotChangeTheDigest` | 红 ✓ |
+| C 策略装载吞掉 `durable` | `policyLoadCarriesDurableOntoTheRegisteredSpec` | 红 ✓ |
+| D `persistLocked` 直接返回 | `recordedReceiptSurvivesReopeningTheStore`、`unknownReceiptSurvivesReopeningTheStore`（ERROR 桶）、`reopenedStoreDoesNotResurrectEvictedEntries`、`unwritableStoreKeepsMemorySemanticsButCountsTheFailure` | 红 ✓（一轮 4 个变异合并：FAILED 8 / ERROR 1） |
+| E 拆掉「durable 写必须有 operationId」这道闸 | `durableRejectsWithoutOperationIdAndDoesNotExecute` | 单独一轮：TOTAL 105 / FAILED **1**，红集合恰好等于这一条 ✓ |
+
+**本轮踩到的两个新坑**：
+- `shutil.copy2` 还原变异体时**连同 mtime 一起还原**，`cjpm` 增量构建看时间戳认为源文件没变，直接复用变异体的 `.cjo`，于是「已还原」的那轮仍红 1 条而用例名却对不上任何已改语义——`touch` 四个源文件后立刻 105/105。还原后必须刷 mtime，diff 空输出只证内容逐字一致，不证构建真的重编。
+- 仓颉 `stdx` 的 `JsonValue.asString()/asInt()/asBool()` 返回的是 `JsonString/JsonInt/JsonBool`，`.getValue()` 直接出值，**没有** `getOrThrow()` 也没有 `??`（官方文档那节写的 `Option` 形态在 1.1.3 编不过：`'getOrThrow' is not a member of class 'JsonString'`）；`HashMap.get`/`JsonObject.get` 才回 `Option`。`a ?? b >= c` 也要显式加括号（`??` 会把后面的比较吞进去，报 `expected 'Bool', found 'Int64'`）。
+
+**明写的窗口**：账在副作用**之后**落盘，所以「宿主已做、daemon 崩在写账之前」这一段仍会在重启后重放一次——§5 正因此不许承诺 exactly-once，这一段的收敛靠 `execution/*`、`task/*` 的状态核实，不靠账本。
+
+**不属于本批的红**：`host-proxy.test.mjs` 11/12 红 + `team-host.test.mjs` 1/9 红。归因证据：同一批失败用 **05:37 那枚根本不含本批代码的 daemon 产物**照样复现（红名与错误行一致），主要签名是夹具宿主一起来就被判 `-32002 宿主已退出`，而 `team-host` 自己的夹具宿主能正常应答，故指向并发会话在飞的 `host_proxy.cj` 未提交 hunk 与 `core/`（session/lease/ledger/agent/cmds）改动被编进任何当轮产物。本批未改动这两个文件，也不改他人文件、不弱化断言。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -154,7 +188,7 @@
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
 | 设备凭据轮换，以及撤销后关闭**在途** SSE | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），但 `remote_identity.cj` 仍无按 deviceId 轮换凭据的公开方法；契约里的认证 RPC 面 `auth/devices`/`auth/revoke` 也未接 | 设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」目前只到请求粒度（下一个请求被拒），已建立的流不会被打断；轮换与 RPC 管理面属任务 7 授权分派。 |
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
-| `session/events`（断线恢复事件回放）与服务端幂等落库 | 契约表里 `session/events` 的实现锚点是「拟新增: apps/daemon/src/event_replay.cj」，全仓无该文件；`operation_store.cj` 同理未落 | 客户端面已交付（d66aae8/34b5cfe 的 Idempotency-Key 与 Last-Event-ID 透传），服务端面属任务 8。这是 119 行里唯一一条锚点尚不存在的转发候选，必须保持「不宣称能力」。 |
+| `session/events`（断线恢复事件回放） | 契约表里 `session/events` 的实现锚点是「拟新增: apps/daemon/src/event_replay.cj」，全仓无该文件 | 客户端面已交付（d66aae8/34b5cfe 的 Idempotency-Key 与 Last-Event-ID 透传）；服务端幂等账已在 50633ef 落地（原名 operation_store.cj，实名 `idempotency.cj` + `canonical_json.cj`），补读面仍属任务 8。这是 119 行里唯一一条锚点尚不存在的转发候选，必须保持「不宣称能力」。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 
 

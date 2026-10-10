@@ -31,7 +31,8 @@
 | core/src/platform_process.cj、platform_linux.cj | 跨平台进程状态接口与 Linux 提供者 | 拟新增 |
 | core/src/sandbox.cj、sandbox_linux.cj | enforcement 报告及 Linux OS 沙箱 | 前者现存，后者拟新增 |
 | apps/daemon/src/remote_access.cj、identity.cj、authorization.cj、audit.cj | 接入生命周期、认证、请求授权、脱敏审计 | 拟新增 |
-| apps/daemon/src/runtime_router.cj、operation_store.cj、event_replay.cj | 单实例路由、幂等记录、授权补读 | 拟新增 |
+| apps/daemon/src/idempotency.cj、canonical_json.cj | 幂等账（含落盘与有界淘汰）与其内容规范化摘要；计划原名 operation_store.cj | 已落库 |
+| apps/daemon/src/runtime_router.cj、event_replay.cj | 单实例路由、授权补读 | 拟新增 |
 | apps/daemon/src/daemon.cj、host_proxy.cj、team_host_bridge.cj、eventbus.cj | 现有 HTTP/转发/事件接线 | 现存 |
 | apps/host/src/main.cj、session_rpc.cj | 显式会话归属分派，避免全局选择竞态 | 后者拟新增 |
 | apps/desktop/target-bridge.cjs、target-store.cjs | 本机/远程适配及目标元数据 | 拟新增 |
@@ -163,12 +164,14 @@ for (const row of rows) {
 
 ## 8. 持久幂等、授权 SSE 与恢复
 
-**文件：**拟新增 apps/daemon/src/operation_store.cj、event_replay.cj；修改 eventbus.cj、daemon.cj、Host通知发布；新增 remote-operation.test.mjs、remote-events.test.mjs。
+**文件：**幂等账已落 apps/daemon/src/idempotency.cj + canonical_json.cj（计划原名 operation_store.cj）；event_replay.cj 仍拟新增；修改 eventbus.cj、daemon.cj、Host通知发布；新增 remote-idempotency.test.mjs（已落，原名 remote-operation.test.mjs）、remote-events.test.mjs。
 
 **接口：**operationKey 为实例/主体/工作区/会话/方法/operationId。session/events 请求与结果固定为规格 §6；seq 使用十进制字符串，persistent/ephemeral 明确区分。
 
 - [ ] 写重复请求、同键异内容、提交后断连、服务重启、补读订阅竞态、generation gap 和撤销中扇出的红灯测试。
-- [ ] 持久幂等账与业务提交一致，外部效果无法原子化时标 unknown并可查，绝不自动重做。任务回执不等于完成。
+- [x] 持久幂等账与业务提交一致，外部效果无法原子化时标 unknown并可查，绝不自动重做。任务回执不等于完成。
+  - 已落：六元组键 + 规范化内容摘要 + 追加式盘（`<identityPath>.ledger.jsonl`，与实例身份同处）+ 有界淘汰；超时/宿主中途退出/分派异常记 unknown 并回 `-32019 idempotency-unknown:<operationId>`，queryId 复用客户端自己的 operationId（核实面认既有标识符）。
+  - 明写的窗口：账在副作用**之后**落盘，所以「宿主已做、daemon 崩在写账之前」这一小段仍会在重启后重放一次。§5 正因此不许承诺 exactly-once；这一段的收敛要靠 `execution/*` 与 `task/*` 的状态核实，不靠账本本身。
 - [ ] 改EventBus订阅为身份/资源范围绑定，建立授权订阅缓冲再读取高水位，补读去重后交付；每帧重新检查授权。
 - [ ] 双限额1024帧/4MiB，支持过期/撤销/溢出关闭原因；补读limit 1..200，快照与generation的变化显式处理。
 - [ ] 真实网络测试UTF-8分片、半帧、空闲断连、睡眠恢复；最终持久结果替代丢失瞬时文本，不编造回放。
