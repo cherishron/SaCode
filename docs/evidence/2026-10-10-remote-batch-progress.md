@@ -840,6 +840,37 @@ if (decision.allowed
 
 **自证边界**：本批只做了**静态锚点审计**——纯 Node 侧的文件读取与正则匹配，没有跑任何编译/测试，没有触及仓颉编译产物。每一条 anchor-stale-but-implemented 的**分派行号**都是从源码逐行 grep 直读后写下的，不是靠探针盲归。**BLOCKED**：契约表元数据的实际修正属文档维护工作，非本批授权范围；本批仅出证据。取证全文见 `docs/evidence/2026-10-10-remote-method-anchor-audit.md`。
 
+## 批次 W：契约表 26 条锚点元数据修正（承接批次 Z）
+
+**目标**：批次 Z 指认了 22 条契约表元数据过期（其中 20 条 `anchor-broken` + 2 条 `proposed-but-implemented`）+ 2 条 auth 管理面的 anchor 缺入口行 = **26 条需要修**，本批把这 26 条一次改到位。
+
+**改法**：只改 `docs/plans/remote-capability-contract.json` 的 `implementationAnchor` 字段值，不改任何源码、不改任何测试文件、不改任何测试的期望集。
+
+**测试前置核查**：先读两份测试文件确认它们的检查项：
+- `apps/daemon/test/remote-capability-contract.test.mjs` 只校验锚点**前缀**属于 `core/` 或 `apps/(host|cli|daemon)/`（先剥掉「拟新增:」前缀），不校验具体值；resourceKeys 值域严格 ⊂ `{workspaceId, sessionId}`。
+- `apps/daemon/test/remote-method-surface.test.mjs` 只把 `拟新增:` 前缀视为未实现，其他锚点不检查。
+
+所以修正 26 条锚点值不牵动任何测试期望集。契约表与测试文件的耦合面比批次 Z 判断的窄。
+
+**修法清单（26 条，见 `docs/plans/remote-capability-contract.json`）**：
+
+- 6 条 caps-suffix → 具体分派行：`workspace/files:2191` / `workspace/git-status|git-diff:2149` / `attachment/upload:1639` / `ledger/stats:1685` / `workspace/set-directory:2256 + host_proxy.cj:40`
+- 5 条 `goal/*` → `core/src/goal_control.cj:7/8 + main.cj:1063`
+- 4 条 `tips/*` → `apps/host/src/tips_surface.cj:13/14 + main.cj:953`
+- 4 条 `execution/*` → `core/src/execution_api.cj:13/16 + main.cj:1024`
+- 4 条 auth → `auth/enroll: remote_access.cj:258 + daemon.cj:762` / `auth/token: remote_access.cj:315 + daemon.cj:769` / `auth/devices: remote_management.cj:51 + daemon.cj:441` / `auth/revoke: remote_management.cj:78 + daemon.cj:441`（去掉两条「拟新增:」前缀）
+- 5 条 `worktree/*` → `apps/host/src/worktree_rpc.cj:14/15/16 + main.cj:2295`
+
+**测试复跑**：`node --test apps/daemon/test/remote-capability-contract.test.mjs` → **15/15 pass, rc=0**。
+
+**审计脚本复跑**：`node scripts/check_contract_anchor_audit.cjs` → TALLY `implemented-locally:119, anchor-broken:0`（从 `91/20` 起步，中间态 `117/2`）。
+
+**未跑**：`remote-method-surface.test.mjs` 需真实宿主 exe（本机未构建 `apps/desktop/dist/host/bin/sacode-host.exe`），BLOCKED；但那份测试只读 `hostMethods` 数组与宿主 caps blob、不读锚点字符串，本批改动不影响它的期望集。
+
+**结论**：批次 Z 里那句「契约表与三份测试文件强耦合，本批无独立编辑通道」是**过度谨慎**——测试文件只校验锚点前缀，不校验具体值，本批能直接改。取证与修法见 `docs/evidence/2026-10-10-remote-method-anchor-audit.md` §5（已由本批更新）。
+
+**自证边界**：本轮只改 `docs/plans/remote-capability-contract.json` 一份文件的 26 处 `implementationAnchor` 值，没有改任何源码、没有改任何测试。`node --test` 复跑 15/15 是契约测试的完整期望集，非缩小版。审计脚本 TALLY 从 91/20 到 117/2 再到 119/0 是连续三步可复跑。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |

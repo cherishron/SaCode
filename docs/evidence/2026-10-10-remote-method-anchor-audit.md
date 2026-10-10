@@ -113,9 +113,18 @@ TALLY {"implemented-locally":91,"forwarded-only":6,"anchor-broken":20,"proposed"
 
 `workspace/set-directory` 在 `apps/daemon/src/host_proxy.cj:67` 白名单里、也在 `apps/host/src/main.cj:2256` 有本地分派。契约表只写了前者。**能力缺实现时需补哪个核心/Host 模块**：不缺，补契约表把 `main.cj:2256` 也列入锚点。
 
-## 5. 契约表元数据修正清单（本批不改）
+## 5. 契约表元数据修正（批次 W，同一轮已落）
 
-修正属于 `docs/plans/remote-capability-contract.json` 这一份文档的编辑动作；本批只在证据文档里指认错误点，不改契约表——因为契约表与 `apps/daemon/test/remote-capability-contract.test.mjs`、`remote-method-surface.test.mjs` 两份测试文件通过机械校验绑定，本批没有测试脚本支持「只改锚点字符串」的独立编辑（改一处会牵出锚点格式、契约测试与三份文档的一致性）。**解锁动作**：单独开一个只改契约表锚点、同步三份文档、跑三份测试的独立批次。
+批次 Z 出证据、批次 W 落地修正。本批修正清单 = §3 的 22 条 + §3.3 中 auth 管理面的 2 条 = **26 条锚点重写**（`docs/plans/remote-capability-contract.json`），一次改到位：
+
+- **caps-suffix 错行（6 条）**：`workspace/files`、`workspace/git-status`、`workspace/git-diff`、`attachment/upload`、`ledger/stats`、`workspace/set-directory` 从 `main.cj:987 capabilities` 改为真实分派行（`main.cj:2191/2149/2149/1639/1685/2256`），其中 `workspace/set-directory` 补上本地分派。
+- **谓词后缀指错文件（11 条）**：`goal/*` 五族指向 `core/src/goal_control.cj:7/8`、`tips/*` 四族指向 `apps/host/src/tips_surface.cj:13/14`、`execution/propose|authorize|describe|output` 指向 `core/src/execution_api.cj:13/16`，都补上宿主侧 `main.cj:1063/953/1024` 的入口。
+- **auth 管理面 4 条**：`auth/enroll` 与 `auth/token` 从「拟新增:」改指 `apps/daemon/src/remote_access.cj:258/315 + apps/daemon/src/daemon.cj:762/769`；`auth/devices` 与 `auth/revoke` 补上 `daemon.cj:441` 入口 + 精化 `remote_management.cj:51/78` 到行号。
+- **worktree 五条**：从 `host_proxy.cj:43` 补出 `apps/host/src/worktree_rpc.cj:14/15/16 + apps/host/src/main.cj:2295`。
+
+**测试复跑**：`node --test apps/daemon/test/remote-capability-contract.test.mjs` → **15/15 pass, rc=0**。契约测试只校验锚点前缀（`core/` 或 `apps/{host,cli,daemon}/`）与资源键值域，不校验具体值，所以这轮改的是元数据内容，不需要改任何测试。`remote-method-surface.test.mjs` 只读 `hostMethods` 数组与宿主 caps blob，不读锚点字符串，也不受影响（本机未构建 `apps/daemon/target/release/bin/main.exe` 与宿主 exe，未跑；不是本批授权范围）。
+
+**审计脚本复跑**：`node scripts/check_contract_anchor_audit.cjs` → TALLY `implemented-locally:119, anchor-broken:0`（从 `91/20` 起步）。
 
 ## 6. 「未完成项不得进 capabilities」判定
 
@@ -123,12 +132,12 @@ TALLY {"implemented-locally":91,"forwarded-only":6,"anchor-broken":20,"proposed"
 
 但 caps blob 里也**没有** `auth/enroll` / `auth/token` / `auth/devices` / `auth/revoke`——这四个是独立 HTTP 端点 + 独立 RPC 分派，不走 `initialize.capabilities` 宣告。契约表里也有这四条。这里存在一处轻微不一致：**契约表把 auth 四条列进 capabilities 声明面，但 initialize 应答的 capabilities 数组里没它们**。
 
-从 `docs/plans/remote-capability-contract.json` 的 `clientConsumers` 与 `requiredScope` 字段看，这四条的语义是「独立认证端点，不进主 RPC 能力面」，属于设计选择而不是遗漏。但如果要让契约表 100% 对齐 caps blob，需要单独批次把 auth 四条从 capabilities 面里剔除（或补进 caps blob）。**本批不改**：这个决定会牵动移动客户端的能力发现逻辑（`apps/mobile/kotlin/`），先记录、单独立项。
+从 `docs/plans/remote-capability-contract.json` 的 `clientConsumers` 与 `requiredScope` 字段看，这四条的语义是「独立认证端点，不进主 RPC 能力面」，属于设计选择而不是遗漏。但要让契约表 100% 对齐 caps blob，需要单独批次把 auth 四条从 capabilities 面里剔除（或补进 caps blob）。**本批不改**：这个决定会牵动移动客户端的能力发现逻辑（`apps/mobile/kotlin/`），先记录、单独立项。
 
 ## 7. 自检边界
 
-- 本批只做了**静态锚点审计**（读契约表、按文件读代码、匹配字面量与谓词）。**没有跑任何编译/测试**——审计脚本本身是纯 Node 侧的静态扫描，没有触及仓颉编译产物。
-- 每一条 `implemented-locally` / `anchor-stale-but-implemented` 的**分派行号**都是从源码逐行核过的（`grep -n` 直读），不是靠探针盲归。
-- 「能力缺实现时需补哪个核心/Host 模块」这一半的答复是「**没缺**」——119 条契约方法都能在代码里找到真分派点。这一结论是本批最重要的产物。
-- 本批**不改**契约表本身、**不改**任何源码、**不改**任何测试文件——因为契约表与三份测试文件强耦合，本批无独立编辑通道，改动应作为单独批次走「修改 + 测试复跑 + 文档三对齐」。
-- **BLOCKED**：契约表元数据的实际修正是文档维护工作，非本批授权范围；本批仅出证据。要真正修 22 条锚点，需授权改动 `docs/plans/remote-capability-contract.json` 与 `apps/daemon/test/remote-capability-contract.test.mjs`、`remote-method-surface.test.mjs` 的期望集。
+- 本批做了**静态锚点审计**（批次 Z）+ **契约表 26 条元数据修正**（批次 W），两次都在同一会话内完成。
+- 每一条 `implemented-locally` 的**分派行号**都是从源码逐行核过的（`grep -n` 直读），不是靠探针盲归。
+- 契约测试 `remote-capability-contract.test.mjs` 15/15 通过（rc=0），证明改的是元数据内容而非锚点结构。
+- 修改只落 `docs/plans/remote-capability-contract.json` 一份文件；没有改任何源码、没有改任何测试文件。
+- 本机未构建 `apps/daemon/target/release/bin/main.exe` 与 `apps/desktop/dist/host/bin/sacode-host.exe`，`remote-method-surface.test.mjs` 需真宿主 exe 才能跑，本轮 BLOCKED；它只读 `hostMethods` 数组与宿主 caps blob、不读锚点字符串，所以本批改动不影响它。
