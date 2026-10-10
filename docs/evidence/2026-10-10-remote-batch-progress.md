@@ -490,6 +490,21 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 
 另一件是裸 socket 实测出来的分层：HTTP/1.1 缺 Host、Host 空值、两个 Host 头、单头堆两值这四种**都是 stdx 在解析层就 400 掉**（原文分别是 `Host should be and only one.` / `Host should be only one.` / `Malformed host header.`），本仓代码根本没被调用；唯一走到本仓的是 **HTTP/1.0 不带 Host**——它被解析器接受，回的是 `host-not-allowed` 且未进分派。所以用例对前四种只断言「没走到分派」（不出现 `"result"` / `"protocolVersion"`），不钉那句英文，免得 stdx 换措辞就红。顺带纠正我自己的一处夹具错：第一版用 Node 的 `http` 客户端发 `headers.host = ''` 想测缺 Host，实测 Node 会回退填连接地址，那条用例拿到的是 initialize 成功回包——看着像门禁失效，其实是形态压根没发出去。
 
+### 批次 N：审计从「整条丢弃」改成字段级脱敏，并抓出 deviceId 这条没有第一道的洞（提交 `a184dc8`）
+
+规格 §7 第 125 行那句「审计保存时间、主体、设备、实例、资源、方法、operationId、结果类别与审批引用；不保存 token、登记秘密、任意请求正文或模型密钥」是**两条要同时成立**的要求。旧实现只满足了后一半：`RemoteAuditLog.record()` 在序列化产物里撞上禁用键串就抛异常且整条不落盘，于是任何调用方把字段写成含 `"credential"` 的内容，这次授权判定在审计里就**不存在**——fail-closed 的外壳，包着「谁在试什么」可被对方一键删除的内核。本批改成只把出问题的那一个字段换成 `audit-redacted:<字段名>`、事件照记，`record()` 的整串检查保留但降级为兜底断言（正常情况下不该触发，触发即说明出现了脱敏没覆盖的新字段）。
+
+**本批最该留的一条是我原本的前提是错的，而且错向有价值的方向。** 起初我按「所有自由文本字段都在 wire 上裸奔」写断言，实测两处推翻：
+
+- `/rpc` 面早有第一道——`RemoteRequestGate.sanitizeId`（`remote_gate.cj:65`）在 `AuditEntry` 构造之前把越字符集的 id 整串换成 `sanitized-invalid`，所以盘上根本不会出现 `audit-redacted:operationId`。那两条 Node 断言当时就是错的，改写成「净化生效 + 判定留痕 + 不许出现值级脱敏标记」（后半边是分层哨兵：它变红说明第一道被撤了）。
+- 真正没有第一道的是我原先划进「服务端产生、不用脱敏」那栏的 `deviceId`：它由 `${deviceName}-${nextDeviceId}` 拼出（`remote_identity.cj:215`，`deviceName` 是 `/auth/enroll` 请求体字段），而 `/auth/token` 的失败条目把请求体 `deviceId` **原文**直接写进审计（`remote_access.cj:291`）。`method` 也确实有第一道（`daemon.cj:299` 的 `methodViolation` 在 `gate.check` 之前），`principalId`/`instanceId` 分别来自本地管理入口与服务端随机数——这三条构成「不脱敏」的实测依据，写进注释而不是靠分类直觉。
+
+修复前在同一台 daemon 上拿到的三个后果：那条认证失败审计整条消失；应答体回显 `{"error":"audit-serialization-leak"}`（一台「我这发注入奏效了吗」的探针机）；用含 `"credential"` 的 `deviceName` 登记时应答被拖成 400，客户端永远拿不到凭据，而设备记录此刻已进内存表、`persistAfterEnroll()` 排在审计那一行之后——留下一台「服务端有、盘上没有、客户端不知道」的孤儿设备。第三让 Node 用例 5 的失败点比预期更靠前，也是唯一能看见它的断言形态是给登记应答补 `deviceId`/`credential` 存在性断言。
+
+读数：cj **TOTAL 167 / PASSED 165 / SKIPPED 0 / ERROR 0 / FAILED 2 / rc=1**（那 2 条仍是并发会话的 `scopeGrantSurvivesSnapshotRoundTrip` 与 `gatePassesDeviceScopeIntoAuthorizationSoManagementMethodIsReachable`，与本批开始前 165/163 相比 +2 恰为本批新增两条；13 条 `TestCase_audit*` 全在 PASSED 名单里，所以不是「用例没跑」换来的绿）；wire 侧 `remote-audit-integrity.test.mjs` 6 条，修复前 **4 过 2 红 / rc=1**、修复后 **6/6 / rc=0**；还原后重跑 cj 仍 167/165/ERROR 0/FAILED 2。全量 daemon Node 回归（`test/*.mjs` 15 套）**112 用例 / pass 97 / fail 15 / cancelled 0 / skipped 0**：11 条 `host-proxy` + 3 条 `team-host`（形态是宿主 initialize 帧缺失的 `TypeError: reading 'method'` 与 `team_task_claim` 帧为空，不是断言不匹配）归因并发会话在飞的 `apps/daemon/src/host_proxy.cj`（工作区 +2/−1 未落库，本轮 exe 就带着它构建），这两套都不开远程接入、审计模块不进执行路径；第 15 条是批次 K 刻意保留的撤销事故半径。
+
+变异轮两条，各带独占受害用例：M1 把 `deviceId` 退回不脱敏——单独轮 cj `167/162/ERROR 3/FAILED 2`（三条 ERROR 正是本批三条 deviceId 用例，落 ERROR 桶的形状就是旧实现「抛异常整条带走」），wire 侧 `6/pass 4/fail 2` 且失败文本与修复前逐字相同；M2 把 `auditRedact` 改成无条件替换——由「合并轮 15 红」减「M1 单独轮 3 红」的差集 10 条定案。**合并轮里抓到一种新的假绿形状**：`auditRedactsBannedValueButStillRecordsTheDecision` 在两个变异同时施加时是**绿的**，因为 M2 会把它那条 `"deviceId":"dev-1"` 打成占位符、而同轮 M1 恰好让 deviceId 退回裸序列化，两个方向相反的变异在同一处调用上互相抵消——合并轮的红集合既非充分也非必要证据，至少要有一轮单独施加来建立差集。另记两次自伤：第一版变异脚本在 `cjpm test` 刚结束、编译器还持有源文件句柄时 `writeFileSync` 抛 `UNKNOWN (errno -4094)`，try 与 finally 各抛一次导致**两个变异体留在工作区**（靠「第 3 轮日志文件根本没出现」+ `grep` 当前盘面形态才发现，改法是写重试 40 次 + 每步 `whichVariant()` 自证 + finally 再自证）；还原后第一轮 `cjpm test` 把 TMP 目录 `mkdir` 建错地方，整轮只出一句 `Temporary directory path ... does not exist.` 加 rc=1、**零 Summary**，这既不是绿也不是测试红。取证与逐条表见 `docs/evidence/2026-10-10-audit-redaction-vs-discard.md`。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -515,6 +530,9 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | 安装态只验到「包能装、daemon 能答 `/health`、CLI 自测能跑」，远程面与 Host 未在包内复验 | `scripts/verify-service-install.mjs` 第 10/11 步 | 未做且非缩水：① 安装态没跑 `SACODE_REMOTE_ACCESS=1` + TLS + 建票 + `/rpc` 那套（开发态有 4 个测试文件覆盖，包内等价证据仍缺）；② `sacode-host.exe` 进了包、摘要对上，但没有在剥 SDK 的环境下被真实 spawn 并完成一次 `initialize`；③ registry 上按 `os/cpu` 自动挑平台包这条真实分发路径未验（需 `npm publish`，未获授权）；④ 只在单一 Node 版本（v24）上跑过 |
 | TLS 证书 SAN 与 Host 允许集不联动（批次 M 遗留的运维面） | `apps/daemon/src/remote_schema.cj` 的 `allowedHosts` 与 `remote_access.cj` 的 `certPath` 是两条互不校验的配置 | LAN 场景要在两处各配一次：证书加 SAN、`SACODE_REMOTE_ALLOWED_HOSTS` 加同名。本批**没有**擅自加「SAN 必须覆盖允许集」这类交叉校验（规格未要求，且会改变既有启动失败码的语义），只把坑记在 `docs/evidence/2026-10-10-host-allowlist-dns-rebinding.md` §5。要么后续按规格补校验，要么在文档里给一条可复制的自签命令 |
 | Host 门禁在 Linux 上的等价性未测 | `apps/daemon/test/remote-host-guard.test.mjs` 的分层表（哪些形态由 stdx 解析层挡）取自本机 Windows 构建 | 实测四种畸形 Host 由 stdx 挡、只有 HTTP/1.0 走到本仓——这个分布是**当平台当版本**的读数，不是跨平台不变量。Linux 的 stdx 若放行更多无 Host 形态，本仓 `hostViolation` 仍兜底，但分层表要重测。属任务 2/3 的 Linux 半（BLOCKED：本机无 Linux，Windows→Linux 交叉编译探针 rc=1） |
+| `deviceName` 没有字符集与长度门禁（批次 N 抓出的上游面，**未修**） | `core/src/remote_identity.cj:215`（`let deviceId = "${deviceName}-${nextDeviceId}"`）在 HEAD；`/auth/enroll` 侧不校验 `deviceName` | 批次 N 只把后果挡在审计层（注入串在审计里变成 `audit-redacted:deviceId`），但设备记录仍带原文进身份存储与快照文件，且设备名可以任意长。正解是在登记入口净化 `deviceName`——该文件正被并发会话持有（工作区 +62/−5 未提交，`rotateCredential` 那条线），本批不动。解锁动作：其落库后在 `enroll` 前加字符集/长度门禁，并补一条「注入设备名登记后 `listDevices` 与快照都不带原文」的用例 |
+| 审计写入失败到底该不该放行请求（批次 N 遗留的决策） | `apps/daemon/src/remote_gate.cj` 头注释写着「写失败（sink 落盘 false）不能把请求放行」，但只覆盖 sink 返回 false；`record()` 抛异常那条分支未覆盖 | 实测清楚的一半：`/auth/*` 两条路由把异常 `catch` 成 400 并**回显异常名**（红态原文 `{"error":"audit-serialization-leak"}`），本批让正常情况下不再抛，没改「真抛时怎么应答」。没测的一半：`/rpc` 面抛会走成什么——M1 单独轮里那条 wire 用例在登记一步就失败，`/rpc` 分支只产生一条 `deviceId` 为空的未认证记录，压根没触达。要一起定的是错误面契约（不回显内部名）与「审计写不进就不放行」是否同等适用于异常分支 |
+| 登记成功但落盘失败时的内存/快照分叉（批次 N 顺带定位，未修） | `apps/daemon/src/remote_access.cj`：`auditBootstrap(record.deviceId, …)` 在 `persistAfterEnroll()` **之前**，且 `devices.add` 更早 | 旧实现下这条被放大成孤儿设备（审计抛异常→应答变 400→客户端拿不到凭据，但内存表里那台设备已经存在且没落盘）。现在异常不再发生，分叉窗口照旧：落盘失败只往 stderr 记，登记不回滚。改法要么把 persist 提前到审计之前，要么明确「登记以落盘成功为条件」——两种都改既有语义，本批未擅动 |
 
 ## 后续批次依赖
 
