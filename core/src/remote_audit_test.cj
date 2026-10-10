@@ -88,7 +88,13 @@ func auditNeverContainsForbiddenKeyNames() {
 }
 
 @Test
-func auditRejectsValueContainingBannedKey() {
+func auditRedactsValueContainingBannedKeyButKeepsTheEvent() {
+    // 语义变更（批次 N）：以前遇到嵌了禁用键串的值是「整条抛异常不落盘」，
+    // 那等于让调用方自选一个 operationId 就能把自己的授权尝试从审计里抹掉。
+    // 现在改成「值脱敏、事件照记」：规格的两条要求同时成立——日志里没有秘密，
+    // 但 who/when/what/result 一条都不能少。
+    // 同一批不变量的**可运行**读数在 apps/daemon/src/remote_audit_guard_test.cj
+    // （core 侧链接段本机 40 分钟出不来 unittest_bin/core.exe，既有记录）。
     let sink = MemoryAuditSink()
     let log = RemoteAuditLog(sink)
     let entry = AuditEntry(
@@ -103,10 +109,51 @@ func auditRejectsValueContainingBannedKey() {
     } catch (_: Exception) {
         threw = true
     }
-    @Expect(threw, true)
-    @Expect(log.rejectedCount(), Int64(1))
-    @Expect(log.count(), Int64(0))
-    @Expect(Int64(sink.snapshot().size), Int64(0))
+    @Expect(threw, false)
+    @Expect(log.rejectedCount(), Int64(0))
+    @Expect(log.count(), Int64(1))
+    @Expect(Int64(sink.snapshot().size), Int64(1))
+    let line = sink.snapshot()[0]
+    // 秘密不能落盘……
+    @Expect(lineContains(line, "leak"), false)
+    @Expect(lineContains(line, "\\\"credential\\\""), false)
+    // ……但判定必须留痕，且看得出是哪个字段被脱了。
+    @Expect(lineContains(line, "\"denyReason\":\"audit-redacted:denyReason\""), true)
+    @Expect(lineContains(line, "\"outcome\":\"denied\""), true)
+    @Expect(lineContains(line, "\"deviceId\":\"d\""), true)
+    @Expect(lineContains(line, "\"operationId\":\"op\""), true)
+}
+
+@Test
+func auditRedactsInjectedDeviceIdButKeepsServerSideFields() {
+    // deviceId 不是「服务端产生的安全字段」：它由登记请求体里的 deviceName 拼出来
+    // （remote_identity.cj:215），/auth/token 的失败条目还把请求体的 deviceId 原文
+    // 直接写进审计（remote_access.cj:291）。这条钉住两侧：注入的 deviceId 被脱，
+    // 而同一行里的真信息一个都不能少——脱敏是字段级的，不是整行丢弃。
+    let sink = MemoryAuditSink()
+    let log = RemoteAuditLog(sink)
+    let entry = AuditEntry(
+        ts: Int64(2), principalId: "p", deviceId: "d{\"credential\":\"leak\"}", instanceId: "i",
+        workspaceId: "w", sessionId: "s", method: "m",
+        operationId: "op", outcome: AUDIT_OUTCOME_DENIED, approvalRef: "", denyReason: "invalid-credential"
+    )
+    var threw = false
+    try {
+        let _r = log.record(entry)
+    } catch (_: Exception) {
+        threw = true
+    }
+    @Expect(threw, false)
+    @Expect(log.rejectedCount(), Int64(0))
+    @Expect(log.count(), Int64(1))
+    let line = sink.snapshot()[0]
+    @Expect(lineContains(line, "leak"), false)
+    @Expect(lineContains(line, "\\\"credential\\\""), false)
+    @Expect(lineContains(line, "\"deviceId\":\"audit-redacted:deviceId\""), true)
+    @Expect(lineContains(line, "\"principalId\":\"p\""), true)
+    @Expect(lineContains(line, "\"instanceId\":\"i\""), true)
+    @Expect(lineContains(line, "\"denyReason\":\"invalid-credential\""), true)
+    @Expect(lineContains(line, "\"outcome\":\"denied\""), true)
 }
 
 @Test

@@ -89,7 +89,12 @@ func auditNeverContainsForbiddenKeyNames() {
 }
 
 @Test
-func auditRejectsValueContainingBannedKey() {
+func auditRedactsValueContainingBannedKeyButKeepsTheEvent() {
+    // 与 core/src/remote_audit_test.cj 同名同断言的可运行副本（core 侧链接段本机出不来）。
+    // 语义变更（批次 N）：嵌了禁用键串的值不再让整条审计消失，而是只把那个字段的值
+    // 换成 audit-redacted:<字段名>。规格要求「审计保存 who/when/what/result」与
+    // 「日志不含登记秘密」同时成立——原来的丢弃只守住了后半句，
+    // 并让调用方可以自选一个 operationId 把自己的授权尝试抹掉。
     let sink = MemoryAuditSink()
     let log = RemoteAuditLog(sink)
     let entry = AuditEntry(
@@ -104,10 +109,49 @@ func auditRejectsValueContainingBannedKey() {
     } catch (_: Exception) {
         threw = true
     }
-    @Expect(threw, true)
-    @Expect(log.rejectedCount(), Int64(1))
-    @Expect(log.count(), Int64(0))
-    @Expect(Int64(sink.snapshot().size), Int64(0))
+    @Expect(threw, false)
+    @Expect(log.rejectedCount(), Int64(0))
+    @Expect(log.count(), Int64(1))
+    @Expect(Int64(sink.snapshot().size), Int64(1))
+    let line = sink.snapshot()[0]
+    @Expect(lineContains(line, "leak"), false)
+    @Expect(lineContains(line, "\\\"credential\\\""), false)
+    @Expect(lineContains(line, "\"denyReason\":\"audit-redacted:denyReason\""), true)
+    @Expect(lineContains(line, "\"outcome\":\"denied\""), true)
+    @Expect(lineContains(line, "\"deviceId\":\"d\""), true)
+    @Expect(lineContains(line, "\"operationId\":\"op\""), true)
+}
+
+@Test
+func auditRedactsInjectedDeviceIdButKeepsServerSideFields() {
+    // deviceId 不是「服务端产生的安全字段」：它由登记请求体里的 deviceName 拼出来
+    // （remote_identity.cj:215），/auth/token 的失败条目还把请求体的 deviceId 原文
+    // 直接写进审计（remote_access.cj:291）。这条钉住两侧：注入的 deviceId 被脱，
+    // 而同一行里的真信息一个都不能少——脱敏是字段级的，不是整行丢弃。
+    let sink = MemoryAuditSink()
+    let log = RemoteAuditLog(sink)
+    let entry = AuditEntry(
+        ts: Int64(2), principalId: "p", deviceId: "d{\"credential\":\"leak\"}", instanceId: "i",
+        workspaceId: "w", sessionId: "s", method: "m",
+        operationId: "op", outcome: AUDIT_OUTCOME_DENIED, approvalRef: "", denyReason: "invalid-credential"
+    )
+    var threw = false
+    try {
+        let _r = log.record(entry)
+    } catch (_: Exception) {
+        threw = true
+    }
+    @Expect(threw, false)
+    @Expect(log.rejectedCount(), Int64(0))
+    @Expect(log.count(), Int64(1))
+    let line = sink.snapshot()[0]
+    @Expect(lineContains(line, "leak"), false)
+    @Expect(lineContains(line, "\\\"credential\\\""), false)
+    @Expect(lineContains(line, "\"deviceId\":\"audit-redacted:deviceId\""), true)
+    @Expect(lineContains(line, "\"principalId\":\"p\""), true)
+    @Expect(lineContains(line, "\"instanceId\":\"i\""), true)
+    @Expect(lineContains(line, "\"denyReason\":\"invalid-credential\""), true)
+    @Expect(lineContains(line, "\"outcome\":\"denied\""), true)
 }
 
 @Test
