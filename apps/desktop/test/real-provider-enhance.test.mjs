@@ -14,8 +14,16 @@ const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
 const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
-const BASE_URL = 'https://api.stepfun.com/step_plan/v1';
-const MODEL = 'step-5-preview';
+// 随包信任锚与宿主 exe 同目录，生产由壳层经 SACODE_CA_BUNDLE 传入；测试直接 spawn 宿主时按同一位置补上，
+// 缺锚仍然会在 TLS 层如实失败，不降级校验。
+if (!process.env.SACODE_CA_BUNDLE) {
+  const side = join(dirname(HOST), 'ca-bundle.pem');
+  if (existsSync(side)) process.env.SACODE_CA_BUNDLE = side;
+}
+// 2026-10-11 实测：/step_plan/v1 + step-5-preview 对本账号回 403 real_name_required（账号侧限制，
+// 不是解析器缺陷），同一条键打 /v1 + step-3.7-flash 能出真答复，故夹具换成后者。
+const BASE_URL = 'https://api.stepfun.com/v1';
+const MODEL = 'step-3.7-flash';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function readKey() {
