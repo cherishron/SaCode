@@ -182,6 +182,13 @@ func attPng(width: Int64, height: Int64): Array<Byte> {
 
 // 装配计划的拒绝面拼成一行，供 expect 做包含判断。
 // 断言写成「包含哪条码」而不是「rejected.size 是几」，是因为码本身才是用户下一步的依据。
+func planPosOf(arr: Array<String>, name: String): Int64 {
+    for (i in 0..arr.size) {
+        if (arr[i] == name) { return i }
+    }
+    return Int64(-1)
+}
+
 func planRejectedText(p: PluginAssemblyPlan): String {
     var out = ""
     for (r in p.rejected) {
@@ -499,11 +506,13 @@ main(args: Array<String>) {
             PluginUnit("@local/upper", "tool", true, ["@local/base"]),
             PluginUnit("@local/base", "tool", true, []),
             PluginUnit("@local/orphan", "tool", true, ["@local/absent"]),
-            PluginUnit("@local/panel", "ui", true, [])
+            PluginUnit("@local/panel", "ui", true, []),
+            PluginUnit("@local/weird", "magic", true, [])
         ]).resolve()
-        expect("装配序把依赖排在前面（第二入口同一套核心）", planA.units.size == Int64(2) && planA.units[0] == "@local/base" && planA.units[1] == "@local/upper")
+        expect("装配序把依赖排在前面（第二入口同一套核心）", planA.units.size == Int64(3) && planPosOf(planA.units, "@local/base") >= Int64(0) && planPosOf(planA.units, "@local/base") < planPosOf(planA.units, "@local/upper"))
+        expect("已接通的种类照样进装配序，不因新加一类就静默漏装", planPosOf(planA.units, "@local/panel") >= Int64(0))
         expect("缺依赖只坏它自己，不牵连别的包", planRejectedText(planA).contains("missing-dependency:@local/absent") && planRejectedText(planA).contains("@local/base=cycle") == false)
-        expect("未接的种类如实拒成 kind-not-wired 而不是静默不装", planRejectedText(planA).contains("@local/panel=kind-not-wired"))
+        expect("未接的种类如实拒成 kind-not-wired 而不是静默不装", planRejectedText(planA).contains("@local/weird=kind-not-wired"))
 
         let planB = PluginAssembly([
             PluginUnit("@local/upper", "tool", true, ["@local/off"]),
