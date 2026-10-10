@@ -207,14 +207,14 @@ for (const row of rows) {
 
 **接口：**RpcClient发送JSON-RPC0.2，区分HTTP错误与error对象；SseClient交付授权帧与关闭原因；统一使用instanceId与connectionEpoch隔离。原生模块不执行远程工具，只处理网络/TLS/安全存储。
 
-- [ ] 在任务1真实工程或新工程先写以下行为测试，旧REST请求应红：initialize命中/rpc，session/catalog解析、approval/answer、turn/cancel及授权拒绝。
-- [ ] RPC优先使用经验证的NetworkModule JSON字节与header；SSE/取消/证书绑定缺能力通过同应用原生Module补齐，不引入中转部署。
-- [ ] 实现目标管理、登记/登录、持续目标标识、分目标草稿与会话视图、断网恢复/重新认证及后台前台恢复。
-- [ ] 完整实现消息/队列、目标/计划/待办、审批/问题、Agent/团队、取消、文件/差异/Git、执行输出、模型/用量、扩展/连接/设置；按任务1方法表逐项标UI入口/后端/失败/恢复证据。
-- [ ] 必填协议字段缺失拒绝，不能用optString空默认冒充合法session/approval/instance；只对可选显示字段使用默认值。
-- [ ] 按Android/iOS/鸿蒙真实构建与设备执行测试；没有设备/SDK记BLOCKED，保留范围，不用共享Kotlin测试冒充全平台支持。
-- [ ] 证书不匹配、撤销、过期、切换迟到、草稿保留、重复提交、审批竞态与后台恢复逐项验收；不自动转连另一目标。
-- [ ] 授权后提交应用源码与测试，不提交密钥、SDK或产物。
+- [ ] 在任务1真实工程或新工程先写以下行为测试，旧REST请求应红：initialize命中/rpc，session/catalog解析、approval/answer、turn/cancel及授权拒绝。（批次 I 落在 `apps/mobile/kotlin/`＋`apps/mobile/kotlin-test/`＋`apps/daemon/test/remote-mobile-client.test.mjs`：18 条常驻用例对着真 daemon（TLS）跑通，含 initialize 命中 /rpc、目录解析、审批/取消参数、缺认证的归因。**工程落点说明**：任务 1 定位的外部工程始终没有路径，本仓按计划的新建分支处理，但**没有**按 Kuikly 模板建源集——本机无 gradle/Android SDK，模板路径无从冻结，所以现在是「接入逻辑层 + JVM 编译执行」，不是 Kuikly 工程。旧 REST 那条无从谈：这一层从未发过 REST 请求）
+- [ ] RPC优先使用经验证的NetworkModule JSON字节与header；SSE/取消/证书绑定缺能力通过同应用原生Module补齐，不引入中转部署。（**BLOCKED**：Kuikly `NetworkModule` 需要 gradle + Android SDK 才能验证其 JSON 字节与 header 能力，本机都没有。批次 I 用 JDK `java.net.http` 顶替的是「逻辑层可执行」，不等于这条通过；证书绑定与 Last-Event-ID 已在批次 I 实测（含对本机 HTTPS 探针的请求头直读））
+- [ ] 实现目标管理、登记/登录、持续目标标识、分目标草稿与会话视图、断网恢复/重新认证及后台前台恢复。（批次 I 落了非 UI 的那半：TargetStore 多目标 + 分目标草稿 + instanceId 绑定 + 票据登记/兑换 + 过期拒发 + epoch 隔离。会话视图与后台/前台恢复属渲染层，未做）
+- [ ] 完整实现消息/队列、目标/计划/待办、审批/问题、Agent/团队、取消、文件/差异/Git、执行输出、模型/用量、扩展/连接/设置；按任务1方法表逐项标UI入口/后端/失败/恢复证据。（未做，范围保留：这一条的主体是页面与逐项证据，缺 Kuikly 工程即无从落 UI 入口。**不以此为由缩范围**——接入逻辑层的完整方法面仍按批次 C 的 119 条契约走，移动侧目前只铺了 initialize/session-catalog/approval-cancel 代表面）
+- [ ] 必填协议字段缺失拒绝，不能用optString空默认冒充合法session/approval/instance；只对可选显示字段使用默认值。（批次 I 已落并加变异反证：`SessionModel` 对 `id`/`durable`/`status` 缺失或类型不符即抛，`title`/`workspaceDirectory` 才允许默认；M4「缺字段返回空串」被 `requiredFieldsAreRejectedNotDefaulted` 与 `sessionCatalogEntriesParseWithExplicitOwnership` 两条杀掉。审批面按工单号唯一通路，自报审批串没有通道——M9 反证已红）
+- [ ] 按Android/iOS/鸿蒙真实构建与设备执行测试；没有设备/SDK记BLOCKED，保留范围，不用共享Kotlin测试冒充全平台支持。（**BLOCKED**，且如实按这条的告诫标注：批次 I 的读数是 JVM 单平台，不冒充三平台。缺 gradle、Android SDK、iOS/鸿蒙工具链与真机；安装系统依赖不在本次授权范围）
+- [ ] 证书不匹配、撤销、过期、切换迟到、草稿保留、重复提交、审批竞态与后台恢复逐项验收；不自动转连另一目标。（批次 I 覆盖五项：证书指纹不匹配在握手期拒（M2 反证）、令牌过期拒发、旧 epoch 迟到帧丢弃（M6 反证）、分目标草稿隔离、故障不自动转连（M7 反证）。未覆盖三项：设备撤销后移动侧的重连行为、重复提交幂等（客户端侧待发 id 已有 Node 面，Kotlin 侧未接）、审批竞态与后台恢复）
+- [ ] 授权后提交应用源码与测试，不提交密钥、SDK或产物。（批次 I 提交 Kotlin 源码与 Node 夹具；编译产物落 `target/sacode-mobile-classes`（gitignore），票据与令牌只存在于运行期环境变量）
 
 ## 11. 固定提交双平台、多客户端交付验收
 

@@ -320,6 +320,58 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 3. 包内 Host 与扩展宿主只到「在包里且摘要对」：`sacode-daemon` 在包态经宿主跑一条真实方法没测（宿主侧那几个被并发会话持有的文件仍未落库）。
 4. 顺带查到一条**提交态就存在**的 IPC 悬挂：`apps/desktop/preload.cjs`（HEAD 里）invoke `sacode:executionPropose`，而 HEAD 的 `main.cjs` 那 88 条 `ipcMain.handle` 没有它（HEAD 计数 0、工作区计数 0）。工作区里并发会话正以未入库的 `apps/desktop/execution-ipc.cjs` + `main.cjs`（+16/−273）用表驱动方式补这个 handler，注册形态是 `ipcMain.handle` 配模板串通道名，而那条命名测试只扫字面 `ipcMain.handle('…')`，所以工作区态与提交态**都红**。`scripts/sacode-naming.test.mjs` 全套 **tests 3 / pass 2 / fail 1**，唯一红即此条，且与本批新增的 bin/files 那条无关（本批那条为绿）。这条线的实现与测试扫描口径都不归本会话改，本批未碰、也未弱化那条断言。
 
+### 批次 I：移动客户端接入逻辑层（Kotlin 编译 + 真 daemon TLS 互通）
+
+先说清这一批**不是** Kuikly 工程：本机有 JDK 17（`openjdk 17.0.2`）与 Kotlin 2.3.20，但 `gradle`、`adb`、`ANDROID_HOME`/`ANDROID_SDK_ROOT` 全部缺失（当轮实测：`command -v gradle` 空、`adb` 不在 PATH、两个 SDK 变量 unset）。没有 gradle 就没有依赖解析通道，也没有 Kuikly 模板源集可冻结（任务 2 那条前提未兑现）。所以本批落的是**计划里命名的那批文件名的接入逻辑层**，用 kotlinc 直接编译成 class 后对着真 daemon 跑；三平台构建与真机验收按计划第 6 条记 BLOCKED，且这条告诫（「不用共享 Kotlin 测试冒充全平台支持」）在本批读数里逐字成立——**18 条全部是 JVM 单平台**。
+
+| 落地面 | 位置 | 说明 |
+| --- | --- | --- |
+| 传输与证书绑定 | `apps/mobile/kotlin/sacode/SecureTransport.kt`（81 行） | `validatedBase` 只放 https，缺 scheme、带 userinfo 都拒（后者是凭据泄漏面）；`PinnedTrustManager` 按**服务端实际出示的叶子证书**算 SHA-256 与目标指纹比对，不看 CA 链——换一张受信 CA 签的证书也一样被挡。`fingerprintOfPem` 从 PEM 直接算，夹具与客户端用同一条算法，避免「夹具自己算错了却判客户端红」 |
+| RPC 面 | `RpcClient.kt`（82 行）+ `Json.kt`（168 行） | 信封是 `{"jsonrpc":"2.0","id":N,"method":…,"params":…}`，归属字段（workspaceId/sessionId/operationId）并进 params 顶层。结果分三档：`Ok` / `Protocol(code,message)` / `Http(status,body)`。JSON 是自己写的递归下降解析器——没有 gradle 就没有库可引，而这一层将来进 Kuikly 也只依赖 stdlib+JDK，两边依赖面一致 |
+| SSE 面 | `SseClient.kt`（107 行） | 先看状态码与 `content-type`，不是 200/不是 `text/event-stream` 就抛，**不把「连上了但一帧没有」当成功流**；`Last-Event-ID` 走请求头（与 daemon `requestHeader(ctx.request, "Last-Event-ID")` 同口径）；读循环在守护线程里投有界队列，`next(timeoutMs)` 给等待上界，EOF 出一帧 `close{reason}` |
+| 凭据面 | `CredentialStore.kt`（63 行） | 票据→登记→兑换→只在内存持有 Bearer，过期后 `bearer()` 抛。异常里只带 HTTP 状态，**不带响应正文**：登记响应正文就是那 32 字节凭据明文，拼进错误消息等于把凭据写进日志 |
+| 目标与迟到数据 | `TargetStore.kt`（73 行） | `failoverCandidateFor` 恒回 null 是产品裁决而非空缺：允许用户显式切换，禁止故障后自动换目标（会话不迁移）。`EpochGate` 按连接代次丢旧帧 + 同代次重复游标也丢 |
+| 必填字段 | `SessionModel.kt`（77 行） | 照 daemon 的**线格式**读：条目是 `id`/`durable`/`status`（必填，缺失或类型不符即抛）、`title`/`workspaceDirectory`（可选才默认空串）。审批面只认工单号：`approvalId` 缺失拒、决策值不在 approve/deny 闭集拒、带自报审批串直接抛 |
+| 交付验证夹具 | `apps/daemon/test/remote-mobile-client.test.mjs`（213 行）+ `apps/mobile/kotlin-test/sacode/TlsProbeServer.kt`（67 行） | Node 侧出证书、算指纹、起 TLS daemon、`--manage enroll-ticket` 建票、调 kotlinc 编译、跑 JVM，再按 `^PASS/^FAIL` 计数；**用例名集合逐条比对**（只比条数的话删掉一条 check 也能过）。`TlsProbeServer` 是本机 HTTPS 服务，用来直读客户端真发出去的 `Last-Event-ID`/`Authorization` 头 |
+
+**三条实测到的契约事实**（都是从真 daemon 拿的，不是文档推断）：
+1. `/rpc` 上的认证拒绝是 **HTTP 200 + JSON-RPC error `-32001`**（`authz-denied:missing-bearer`），不是 401；未登记方法同样落在 `-32001`（`method-not-registered`），**不是 -32601**。我最初按 401/-32601 写的三条断言当场红，改成照真实契约归因——客户端如果把这条读成「HTTP 层不通」就会去重连，而缺的是认证。
+2. `initialize` 回的仍是 `"protocolVersion":"0.1"`（capabilities 三条：initialize/session/catalog/session/events）。计划与批次 G 的措辞按 0.2 显式归属走，**宣告位还没跟上**，本批没改 daemon 侧（该面正被并发会话持有），只在此记录。
+3. `session/catalog` 请求不带 `workspaceId` 时吃到 `authz-denied:workspace-required`，而**回的条目里没有 `workspaceId`**（是 `root` + `entries[{id,title,durable,status,workspaceDirectory,current}]`）。请求侧归属键与响应侧条目字段不对称，客户端必须按各自名字读；这条不对称正是「Host 侧接受 0.2 显式归属字段」那条在飞项的具体形状。
+
+**计数**：
+- 红先：只编测试主文件（实现未进编译单元）→ `unresolved reference` 分布为 `SecureTransport` 12 / `SessionModel` 8 / `RpcResult` 7 / `RpcClient` 6 / `Json` 6 / `validatedBase` 4 / `ApprovalDraft` 4 / `TurnOps` 3 / `SseClient` 3（另有 `status`/`result`/`greeting` 各 2 条，是被这些类型的智能链拖累的次生错误）。这条流水线唯一可行的红灯就是「新命名的符号未声明」，形状与批次 G 一致。
+- 中间读数（三轮，每轮都留着）：第一次真 daemon 联跑 **3 红**（上面事实 1、3 造成的期望错）；改成线格式后 **1 红**（`响应缺字段 sessions` → 事实 3 的 `entries`）；修完 **18/18 全绿**。**这三条红全是客户端的期望错，不是 daemon 拒服务**——所以每次红都先去看服务端实际回了什么再改断言，没有一条是靠放宽断言消掉的。
+- 绿：`node --test apps/daemon/test/remote-mobile-client.test.mjs` **tests 2 / pass 2 / fail 0，rc=0**，且连跑两次复现（第二次是修收尾缺陷后）；Kotlin 侧 **18 条 PASS、0 FAIL**，用例名集合与夹具内 `EXPECTED` 逐条相等。
+- 全量远程 Node 回归（9 个文件）：**tests 66 / pass 66 / fail 0 / cancelled 0 / skipped 0，rc=0**（批次 G 基线 64 + 本批 2）。
+- 被测 daemon 二进制**本批未重编**：`apps/daemon/target/release/bin/main.exe` 11146240 B，mtime 12:07，md5 `31793519fb187702ee6472aaec5bed7b`——就是批次 G 那次 `cjpm build` 的产物。取证态为工作区态（编译里含并发会话未落库的 core 与 host_proxy 改动），但本批 Kotlin 侧不依赖那些改动：它只走 HTTP/TLS 面。
+- 工具链读数：`java -version` = openjdk 17.0.2；`kotlin -version` = 2.3.20-release-208；编译走 `java -cp <kotlinHome>/lib/kotlin-compiler.jar org.jetbrains.kotlin.cli.jvm.K2JVMCompiler`（不经 `.bat`，Node 侧可无 shell 调用）。Kotlin home 与 daemon、openssl、SDK DLL 目录一样是**可被环境变量覆盖的本机默认值**（`SACODE_KOTLIN_HOME`/`SACODE_JAVA`/`SACODE_DAEMON`/`SACODE_OPENSSL`）。
+
+**变异反证（2 轮 × 4 变异，各一条独占受害）**：
+
+| 变异 | 施加 | 独占受害 | 读数 |
+| --- | --- | --- | --- |
+| M1 | `validatedBase` 的 https 判定改成只拒 `ftp`（即明文照放） | `plaintextBearerIsRefusedBeforeAnyRequest` | R1 该条红：`应当拒绝，却放行通过：http:// 也必须过 validatedBase` |
+| M3 | `SseClient.open` 里 `Last-Event-ID` 头改 `if (false)` 不发 | `sseResumeSendsLastEventIdOverTheWire` | R1 该条红：`Last-Event-ID 要真在请求头上，实得 null`——这条红的来源是探针直读，不是自证 |
+| M7 | `failoverCandidateFor` 改成返回另一台目标 | `noAutoFailoverToAnotherTarget` | R1 该条红：`故障时不许自动换到另一台目标` |
+| M8 | `StoredCredential.toString` 把 `<redacted>` 换成真令牌 | `credentialStoreNeverSerializesTheToken` | R1 该条红，且失败原文里真的把 64 位令牌打印了出来（这条日志在 gitignore 的 `target/` 里，**证据文档不粘贴其内容**）——正因为打印了，这条断言才有牙 |
+| R1 合计 | — | — | `tests 2 / pass 1 / fail 1`，Kotlin 侧 **恰好 4 条 FAIL**，与四个变异一对一，无越界红 |
+| M2 | `PinnedTrustManager` 的指纹比对改 `if (false)`（信任任何证书） | `pinMismatchAbortsTheHandshakeInsteadOfFallingBack` | R2 该条红。其余 TLS 用例保持绿是**期望内**的：它们本来就用正确指纹，撤比对不会让它们变红 |
+| M4 | `requiredString` 缺字段时返回空串 | `requiredFieldsAreRejectedNotDefaulted` + `sessionCatalogEntriesParseWithExplicitOwnership` | 两条红属同一变异（后者是我为「目录真是空的」准备的夹具对照），写明不遮蔽 |
+| M6 | `EpochGate.accepts` 的代次判定撤掉 | `lateFramesFromOlderEpochAreDropped` | R2 该条红：`旧 epoch 的迟到帧要丢` |
+| M9 | `ApprovalDraft` 的自报审批串守卫改 `if (false)` | `approvalAnswerUsesTicketIdOnly` | R2 该条红：`自报审批字符串没有通路` |
+| R2 合计 | — | — | Kotlin 侧 **5 条 FAIL = 4 个变异**（M4 两条），其余 13 条保持绿 |
+
+施加方式：变异由 `target/apply-mutants.mjs` 做**唯一命中**的字符串替换（任一条命中数不是 1 就整体退出），每条都带 `MUTANT-R<n>-M<x>` 注释；只用于破坏实现，不用于写实现。还原：`cp` 六份 `.bak` 回去后逐文件 `diff` 空输出、`grep -rc MUTANT apps/mobile/kotlin/sacode/` 无带标记文件，还原后复跑即上面的 2/2 rc=0。
+
+**本批明确没做到的（不缩范围，逐条记归属）**：
+1. Kuikly 工程本体（`ConnectionsPage.kt`/`WorkspacePage.kt`/`ApprovalPage.kt`、`SecureTransportModule`/`CredentialStoreModule` 的 Kuikly 侧接线）与 Android/iOS/鸿蒙真实构建、真机执行：**BLOCKED**。缺 gradle、Android SDK、iOS/鸿蒙工具链与设备；安装系统依赖不在本次授权范围。本批的 JVM 读数不代替这条。
+2. Kuikly `NetworkModule` 的 JSON 字节与 header 能力未验证（同上前缺失），所以计划里「RPC 优先使用 NetworkModule」那条仍空。
+3. 移动侧完整方法面：119 条契约里 Kotlin 只铺了 `initialize`/`session/catalog` 与审批/取消的**参数面**，其余家族未接；页面层没有，UI 入口证据也无从标。
+4. 幂等与恢复在移动侧未接：客户端待发 id 那套此前只有 Node 桌面实现，Kotlin 侧没落；设备撤销后的移动侧重连行为、审批竞态、后台/前台恢复三条未验。
+5. 会话视图、断网恢复/重新认证、后台前台恢复（计划第 3 条的 UI 半）未做。
+6. 收尾缺陷是我自己的夹具：第一次真联跑 18 条全过、整条用例却因为 `rm` 撞 `EBUSY` 而红（daemon 的 cwd 就是那份临时目录，`kill` 是异步的）。已改成 kill→有界等 close→带 EBUSY 重试的删除，并连跑两次确认可复现，而不是把清理步骤删掉了事。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -332,6 +384,8 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 | 任务 5 的 Linux 半与「发布态」验证 | `scripts/pack-service.mjs` + `scripts/verify-service-package.mjs` + `npm/sacode-cli/bin/daemon.js`（Windows 半见批次 H） | 未做且非缩水：① Linux 收 `.so`、ELF ABI 与可执行位、`readelf`/`ldd` 依赖核对——本机无 Linux 且装系统依赖不在本次授权范围，**BLOCKED**；② 真出 tarball 并在剥 SDK、无仓库的环境里 `npm install` 后逐子命令跑——本批的合成 node_modules 布局只验了包装脚本的解析与失败码；③ 包内 Host/扩展宿主的端到端一条方法调用。**FAIL/BLOCKED 分档：① BLOCKED，②③ 未做。** |
+| 任务 10 的 Kuikly 工程与三平台真实运行 | `apps/mobile/kotlin/`＋`apps/mobile/kotlin-test/`＋`apps/daemon/test/remote-mobile-client.test.mjs`（批次 I 落的接入逻辑层） | **BLOCKED**：本机有 JDK 17 与 Kotlin 2.3.20，但缺 gradle、`ANDROID_HOME`/`ANDROID_SDK_ROOT`、`adb` 与真机/模拟器，iOS 与鸿蒙工具链也没有。缺 gradle 就没有依赖解析通道，Kuikly 模板源集路径无从冻结（任务 2 前提未兑现），所以计划命名的 `ConnectionsPage.kt`/`WorkspacePage.kt`/`ApprovalPage.kt` 与 `SecureTransportModule`/`CredentialStoreModule` 的 Kuikly 侧接线仍未落。批次 I 的 18 条**全是 JVM 单平台读数**，按计划第 6 条的告诫不冒充三平台。解锁动作：装 gradle + Android SDK（需另行授权）或提供已配好的 Kuikly 工程路径。 |
+| daemon 宣告的 protocolVersion 仍是 0.1 | `apps/daemon/src/daemon.cj` 的 `initialize` 结果位（实测回 `"protocolVersion":"0.1"`） | 批次 I 真机读数记录的不对称：请求侧已按 0.2 的显式归属（params 顶层 workspaceId/sessionId/operationId）被 gate 检查，但**宣告位没跟上**，capabilities 仍只列三条。改这一处会同时影响 `remote-capability-contract.test.mjs` 与桌面/CLI 两个客户端的版本协商，且该文件正被并发会话持有，本批未动。属任务 7 编号对齐（与 `docs/plans/sacode-product-interfaces` §8 编号待对齐同源）。 |
 
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
@@ -350,4 +404,4 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | --- | --- |
 | cjpm test 链接段无 Summary 且时长 >30 分钟 | 观察至 60 分钟；届时按死锁处理：kill 后改分模块 `cjpm build` 拿库层通过，再走 `cjpm test --target-dir` 私有目录单跑一次 |
 | 本机 WSL2 未装 Linux 发行版 | 用户执行 `wsl --install -d Ubuntu`；本会话不安装系统依赖 |
-| Kuikly 移动工程定位 | 用户提供绝对路径，或明确同意本仓新建 `apps/mobile/` |
+| Kuikly 移动工程定位与三平台构建 | 用户提供外部 Kuikly 工程绝对路径；或授权本仓在 `apps/mobile/` 建 Kuikly 工程**并**安装 gradle + Android SDK（2026-10-10 批次 I 实测：JDK 17 与 Kotlin 2.3.20 已在位，`gradle`/`adb`/`ANDROID_HOME`/`ANDROID_SDK_ROOT` 全缺）。接入逻辑层已按批次 I 落并跑绿，缺的是工程本体与真机 |
