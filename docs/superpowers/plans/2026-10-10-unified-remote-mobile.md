@@ -143,7 +143,7 @@ for (const row of rows) {
 - [x] 接入开关默认关闭、回环监听；外部开启缺 TLS/身份/策略均启动失败。实现两条最小 auth 端点及安全本地登记确认。（c619910 + ca3d698 + 92d565b：`--manage enroll-ticket` 建票落盘只存摘要，运行中新建的票可被 `/auth/enroll` 消费；TLS 已真接进 `ServerBuilder.tlsConfig`，解码失败拒启动 78，`remote-tls` 2/2 rc=0、`remote-auth` 19/19 rc=0）
 - [ ] 使用经过任务 2 验证的 CSPRNG/摘要/常数时间校验和安全存储；凭据至少256bit、登记至少128bit/5分钟单次、token至多15分钟。禁止自行写密码学算法。
 - [ ] 添加设备轮换、撤销、每RPC认证、SSE到期/撤销关闭。无header回包不泄漏证书秘密、目录与用户列表。（92d565b 已落：每 RPC 认证 + `-32001/-32005` 归因、`--manage list-devices`/`revoke-device` 本机入口、`refreshFromDisk` 让带外撤销在下一个请求生效、`listDevices` 输出不含摘要与凭据；仍缺：按 deviceId 轮换凭据、撤销后关闭**已建立**的 SSE 流、契约里的 `auth/devices`/`auth/revoke` 认证 RPC 面）
-- [ ] 加入16KiB认证体、1MiB RPC体、方法/深度/并发/连接数/超时/认证限速；保留当前白名单及明确错误。（92d565b 已落：16KiB 认证体与每来源 10/分、每票据 5 次（c619910）、1MiB RPC 体、`readHeaderTimeout`/`readTimeout` 10 秒、每设备 8 RPC / 2 SSE 与实例 64 SSE 且授权后才占槽；仍缺：方法名与 JSON 嵌套深度的上界）
+- [ ] 加入16KiB认证体、1MiB RPC体、方法/深度/并发/连接数/超时/认证限速；保留当前白名单及明确错误。（92d565b 已落：16KiB 认证体与每来源 10/分、每票据 5 次（c619910）、1MiB RPC 体、`readHeaderTimeout`/`readTimeout` 10 秒、每设备 8 RPC / 2 SSE 与实例 64 SSE 且授权后才占槽。批次 G 补齐结构档：JSON 深度 32 在 stdx 解析**之前**按字节扫描且字符串与转义感知、方法名 1..64 字节加 `[A-Za-z0-9._/-]` 字符集、顶层 batch 与无 id 通知各回自己的归因、Origin 出现即拒（`/rpc` 回 JSON-RPC error、`/auth/*` 回 400、`/sse` 回 403）。仍缺：Host 头与 DNS rebinding 校验——缺一个主机名白名单配置面，`--bind` 只给地址）
 - [ ] 审计保存 who/when/what/result；遍历日志断言无登记秘密/token/模型key。禁跨主机认证重定向与trust-all。
 - [ ] 变异删请求级认证时越权测试必须红；撤销只改存储不关连接时专属SSE测试必须红；还原回绿。
 - [ ] 授权后提交本任务文件，不开放真实防火墙或公网服务。

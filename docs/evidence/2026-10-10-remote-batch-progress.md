@@ -247,12 +247,51 @@ Node 侧 **47/47**：`remote-idempotency` **5/5**、`remote-auth` 19/19、`remot
 2. 补读去重的**生产通路**目前是空转：真实宿主的通知帧不带持久 `seq`，`SseFrame.idOf` 取回空串，所以「丢弃缓冲里同游标的帧」这条分支在真机上不会命中。分支本身有 cj 单测钉着（`deliveredLookupOnlyDropsExactlyTheSameCursor` + `liveFrameIdMatchesBackfillIdSoDuplicatesCanBeDropped`），兑现要等宿主给通知打上 seq。
 3. `overflow` / `byte-overflow` 的**关闭帧送达**只由 `revoked`/`expired` 这条真实路径在 Node 侧验过同一 writer 分支；从真实宿主打出 1024 帧/4 MiB 需要量级太大的夹具，本批改用 cj 层验语义，并在此如实标注为「传输证据只到 revoked/expired」。`expired` 的**关流**同理只有 cj 层证据：真实 token TTL 是 15 分钟，Node 侧无法在合理时长内等到它自然到期，而带外改写 `expiresAt` 需要动 core 的存储格式。
 
+### 批次 G：请求结构门禁（§7 深度 32、方法名上界、批量与通知归因、Origin）
+
+| 落地面 | 位置 | 说明 |
+| --- | --- | --- |
+| 深度上界 32 | `apps/daemon/src/remote_schema.cj`（新增）的 `depthExceeded` | **解析之前**按字节扫描：stdx 的 JSON 解析器按递归下降建树，50 万层的 `[[[[` 会先在解析器里把栈炸掉，轮不到 daemon 给拒绝原因。字符串态与转义态都跟进——字符串里的花括号不是容器，`\"` 不算串结束；一旦越界立刻早退，工作量与正文长度同阶 |
+| 批量与通知归因 | 同上 `startsWithArray` + `daemon.cj` 的 `dispatchRpcWithAuth` | §7 明写「拒绝 JSON-RPC batch 与无 id 的业务通知」。这两条**原本就会**被拒（`asObject()` 抛 -32700、缺 id 走 `get("id").getOrThrow()` 落含糊的 -32600 invalid request），但那套归因把「这个面不支持的用法」说成「你的 JSON 写坏了」。本批拆成 `batch-not-allowed` 与 `notification-not-allowed` |
+| 方法名上界与字符集 | `methodViolation` | 1..64 字节且只允许 `[A-Za-z0-9._/-]`。64 的取法：契约 119 条里最长是 `global/settings/set-transcript-view`（35 字节），留一倍余量。字符集那一半不是装饰——未登记的方法名照样要落进审计行，允许引号与换行等于让调用方在日志里插字段。长度按字节算，所以非 ASCII 一律拒（同一个数不能既当字符数又当字节数） |
+| Origin 出现即拒 | `originViolation` + `jsonBodyOf` + `/sse` 首位 | §7「外部 CORS 默认不开放」。本产品没有浏览器客户端，所以不配 allowlist、不看值：有 Origin 就拒——`/rpc` 回 JSON-RPC error、`/auth/*` 回 400、`/sse` 回 403 且挡在订阅与抢槽之前。**没有 Origin 不是放行理由**：非浏览器客户端本来就不发它，那条仍由认证与授权挡 |
+| 排序 | `dispatchRpcWithAuth` 第一处判定 | 结构门禁在 `gate.check` 之前：200 字节的方法名进不了授权表也进不了审计；匿名请求也只能拿到结构结论，拿不到「哪台设备被拒」 |
+
+**三个客户端面核对过不被新门禁误伤**（静态直读，不是推断）：`apps/cli/src/remote.cj` 的信封恒带 `id`（`envelope.put("id", JsonInt(sent))`）、逐条发对象、只设 `Content-Type`；`apps/desktop/remote-transport.mjs` 同形状；两者都在 Node 侧发请求，不带 `Origin`。另实测 undici 会把手工设置的 `origin` 头原样发出，所以 Node 侧那条门禁是真命中，不是被客户端库吃掉。契约 119 条方法名全部落在允许字符集内，最长 35 字节。
+
+**计数**：
+- 红先：`cjpm test`（daemon，私有 target-dir）**rc=1，53 errors generated / 8 printed**，打印出的 8 条全是 `undeclared identifier 'RemoteRequestSchema'`、`'REQUEST_DEPTH_LIMIT'`、`'SCHEMA_DENY_DEPTH'`，位置逐条指 `remote_schema_test.cj`——本批新命名符号未声明，正是这条流水线的红灯形状。
+- 取证态说明：以上读数都是**工作区态**，编译里含并发会话未落库的 `core/src` 改动（按当轮 `git status`：18 个已跟踪文件被改、13 份新文件未入库）与 `apps/daemon/src/host_proxy.cj`，以及那份未入 HEAD 的 `remote_identity_scope_test.cj`。提交态未单独复跑；判读不受影响的原因是三轮变异的红集合都恰好等于「本批新增断言 ∪ 该线的 2 条红」，没有第三条线被本批代码带走。
+- 绿：`cjpm test` **TOTAL 149 / PASSED 147 / FAILED 2 / SKIPPED 0 / ERROR 0**；`cjpm build` **rc=0**（`main.exe` 11146240 B，12:07，md5 `31793519fb187702ee6472aaec5bed7b`）；新增 `test/remote-request-limits.test.mjs` **6/6 rc=0**；daemon 远程 Node 全套 8 个文件 **tests 64 / pass 64 / fail 0 / cancelled 0 / skipped 0，rc=0**（批次 F 基线 58 加本批 6）。
+- **不属于本批的 2 条红**：`scopeGrantSurvivesSnapshotRoundTrip` 与 `gatePassesDeviceScopeIntoAuthorizationSoManagementMethodIsReachable`。归因证据：两条都落在**未入 HEAD** 的 `apps/daemon/src/remote_identity_scope_test.cj`（并发会话 11:43 写，本会话未碰），失败原文是 `Expect Failed: (ctx.getOrThrow().scopes.contains(AUTHZ_SCOPE_MANAGEMENT) == true) left: false`——设备授权范围跨快照保持，属任务 6 的凭据轮换与管理范围面（同线的 `core/src/remote_identity.cj` 那份 +62 未提交 hunk 也在给这条能力补实现）。本批既不改那两个文件，也不弱化这两条断言。
+
+**变异反证（9 个变异，三轮归因）**：
+
+| 变异 | 施加 | 独占受害 | 备注 |
+| --- | --- | --- | --- |
+| A | 扫描器不进字符串态，容器一律计数 | cj `bracesInsideStringsDoNotCountAsDepth` | 顺带杀 B 那条（见 B 行） |
+| C | `originViolation` 恒放行 | cj `originHeaderPresenceIsDeniedWithoutParsingItsValue` | 独占 |
+| D | 撤方法名长度上界，只留非空 | cj `methodNameAcceptsHostShapeAndRejectsOverlong` | 与 E 同轮不串：E 撤的是字符集，而 D 的用例名很短，长度判定仍在位杀不到它 |
+| E | 撤方法名字符集判定 | cj `methodNameRejectsCharactersThatCouldForgeAuditLine` | 与 D 同轮，同理：65 字节纯字母名仍被长度拒 |
+| F | 撤批量归因 | cj `topLevelArrayIsAttributedToBatchNotParseError` | 第二受害者是本批自己加在 `depthLimitCutsAtThirtyThreeNotWider` 里那条「32 层裸数组落到批量归因」的断言，写明不遮蔽 |
+| B | 不跟转义态，`\"` 当字符串结束 | cj `escapedQuoteKeepsTheScannerInsideTheString` | **单独一轮**：A 已经把这条用例杀掉，同轮施加 B 拿不到它自己的红。单独轮读数 **TOTAL 149 / PASSED 146 / FAILED 3**（含 2 条非本批红），且该轮 `bracesInsideStrings` 保持绿——两道守卫各自独立才算清楚 |
+| G | 结构结论照算但不在原位回，整段挪到 `gate.check` 之后 | Node「超长方法名进不了审计」+ Node「结构门禁在认证之前」 | 附带杀 Node 批量那条：挪位后 `asObject()` 先抛，批量重新退化成 -32700——这恰好是「批量归因必须在解析之前」的直接证据 |
+| H | 撤通知判定，缺 id 退回含糊的 invalid request | Node「无 id 的业务通知」 | 与 G 同轮，两者受害者不重叠 |
+
+M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本批 + 2 条非本批），Node **tests 6 / pass 2 / fail 4**；M2 轮（仅 B）cj **PASSED 146 / FAILED 3**；M3 轮（G+H，重打二进制）Node **tests 6 / pass 2 / fail 4，rc=1**，绿的两条（深度界内对照、Origin）正是 M3 没碰的守卫——G 只改顺序不改判定，所以「深度仍能拒」必须仍绿。还原：`cp` 备份 + `diff` 空输出（两文件 diff-rc 均为 0、`MUTANT` 标记计数 0），还原后 `touch` 破 mtime 再跑最终回归（149 / PASSED 147 / FAILED 2、Node 64/64 rc=0）。
+
+**本批明确没做到的三条（不缩范围，记下归属）**：
+1. §7 那句里的 **Host 头校验（防 DNS rebinding）** 没做。它需要「本实例允许被哪些主机名访问」的配置面：`--bind` 只给地址不给主机名，硬编码回环名会在合法的内网 IP 访问上误拒。留在任务 6，与管理 RPC 面同批。
+2. `/health` 没挂 Origin 门禁。该面在 gate 在位且非本机时要求认证，而浏览器发不出 `Authorization`，匿名跨源读只会拿 401；本批把改动收在 `/rpc`、`/auth/*`、`/sse` 三面，没有顺手扩第四个面。
+3. 结构门禁只判骨架：`params` 的字段数、除方法名以外的字符串字段值长度仍无上界。§7 给的分母是 1 MiB 总体加深度 32，本批按它落，没有自行加码。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
-| 设备凭据轮换，以及认证 RPC 管理面 | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），撤销关闭在途 SSE 已在批次 F 落地（`EventBus.closeFor` + 空闲 tick 重认） | 仍缺：`remote_identity.cj` 无按 deviceId 轮换凭据的公开方法；契约里的 `auth/devices`/`auth/revoke` RPC 面未接。属任务 7 授权分派。 |
+| 设备凭据轮换，以及认证 RPC 管理面 | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），撤销关闭在途 SSE 已在批次 F 落地（`EventBus.closeFor` + 空闲 tick 重认） | 仍缺：**HEAD 里**`remote_identity.cj` 无按 deviceId 轮换凭据的公开方法；契约里的 `auth/devices`/`auth/revoke` RPC 面未接。属任务 7 授权分派。2026-10-10 04:00 复核：工作区已出现 `rotateCredential` 与 `remote_identity_scope_test.cj`（前者 +62 行未提交、后者未入 HEAD，同属并发会话那条线，且该文件两条用例当轮为红），本会话未改这两个文件，故这条**不判已交付**。 |
+| §7 请求结构上界里的 Host 头校验 | `apps/daemon/src/remote_schema.cj` 只判深度、方法名形状、批量与 Origin | 深度 32、方法名 1..64 字节加字符集、batch 与通知显式归因、Origin 出现即拒已在批次 G 落地；**Host/DNS rebinding 校验未做**，缺一个「本实例允许被哪些主机名访问」的配置面（`--bind` 只有地址没有主机名）。与 `auth/devices` 管理面同批补。 |
 | §6 逐帧授权过滤与补读去重的生产通路 | `apps/daemon/src/sse_frames.cj` 的 `idOf`/`delivered` 分支 + `daemon.cj` 的 `/sse` | **未兑现**：真实宿主的通知帧不带持久 `seq`，去重分支在真机上不命中；逐帧资源过滤要求通知自带归属键。两条都卡在被并发会话持有的 `host_proxy.cj`/`apps/host/src/main.cj`（任务 7）。分支语义已由 cj 单测钉住，宿主打上 seq 后即可兑现。 |
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
 | `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
