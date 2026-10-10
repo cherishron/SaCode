@@ -399,6 +399,27 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 - 所以批次 B「从当前源码重建双入口」里的「当前源码」在本机**只能是工作区态**，不等于提交态；`docs/evidence/2026-10-11-package-and-packed-verification-batchE.md` 那批产物的可复现性以此为前提，需在该文档补一句（下批做）。
 - 批次 A/B 的验收项「core cjpm test 计数与 rc」在提交态**取不到**，判决 BLOCKED；解锁动作是**唯一且明确的一条**：让并发会话把上述 7 个实现文件落库（不是测试夹具——这是本轮相对 §13/§15 的实质更正）。
 
+### 16.5 测试层读数：库层转绿后仍 49 条，且与工作区那次同数（2026-10-11 07:07–07:16 实测）
+
+在同一副本（库层已 `cjpm build` rc=0）继续跑 `cjpm test`：**rc=1，`49 errors generated, 8 errors printed`，剥码后 `Summary: TOTAL` 计数 0** —— 仍是第三态，但这次红的位置换了一层：打印出的 8 条是 `3 × missing argument for parameter list '(Struct-String, Struct-String, Int64)' in call`（全在 `core/src/team_model_runtime_test.cj`）+ `5 × mismatched types`（全在 `core/src/worktree_setup_test.cj`），两个文件都是 **HEAD 已入库的测试**。也就是说：**§15 那 49 条不是「未落库的测试夹具自己写坏了」，而是「已入库的测试调用方」对不上「未落库的实现签名迁移」**——同一批 49 在工作区态与「HEAD+7 实现文件」态各测到一次，两次数字相同，这个等式本身就是归因的证据。
+
+顺带记一条方法性事实：`cjc-option = [..., "--error-count-limit", "all"]` 对 `cjpm build` 生效（§16.3 的 8 条是全量），对 `cjpm test` 的测试编译**不生效**（仍然「49 生成 / 8 打印」）。所以测试层的完整清单只能靠 §15 那种从 `cjpm test -V` 里抄出原样 cjc 命令再手工插 flag 的办法拿，不能指望配置文件。
+
+### 16.6 本批判决（五种状态各有独立读数，不许互相顶替）
+
+| 状态 | 命令 | 读数 | 判决 |
+| --- | --- | --- | --- |
+| HEAD 单独 | `cjpm test` | rc=1，4 条 error（全在 `cmds.cj`），Summary 0 | FAIL（根本没跑） |
+| HEAD + cmds.cj 语法修正 | `cjpm build` | rc=1，8 条 error（悬空引用），Summary 0 | FAIL（根本没跑） |
+| HEAD + 7 个未落库实现文件 | `cjpm build` | **rc=0、`cjpm build success`、0 error、170 warning** | PASS（仅库层） |
+| 同上 + 测试面 | `cjpm test` | rc=1，49 error / 8 打印，Summary 0 | FAIL（根本没跑） |
+| 主工作区（他人实现+测试全在飞） | `cjpm test` | rc=1，49 error（§15 已逐文件归因） | FAIL（根本没跑） |
+
+结论按口径写死：**core 全套 `cjpm test` 计数在今日无任何一种状态下可得**，故批次 A/B 验收项「core cjpm test 计数与 rc」= **BLOCKED**；库层 rc=0 只是「补齐集充分」的证据，不冒充测试通过。解锁清单是两层合一：7 个实现文件 **加上** 迁到新 `SessionLog` 签名的测试文件（至少 `team_model_runtime_test.cj`、`worktree_setup_test.cj`），由各自文件主责落库；落库后重跑 `cd core && cjpm test` 即可取数，本批不代改他人文件。
+
+副本处置：取证完成后 `git worktree remove --force D:/Temp/SaCode-head-core-count-20261011`（该副本为本批所建，含本批的 8 处偏差，不留存）；主仓 `git status` 在本批全程未因取证发生改动。
+
+
 
 
 
