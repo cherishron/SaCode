@@ -213,15 +213,49 @@ Node 侧 **47/47**：`remote-idempotency` **5/5**、`remote-auth` 19/19、`remot
 1. 探针把 daemon 产物路径写死成 `apps/daemon/target/release/bin/main.exe` 的历史副本，`--manage enroll-ticket` 返回 **rc=64**，一度被读成「新桥接坏了」。真因是 05:37 那枚产物早于 `ca3d698` 的管理入口参数形状改动；同一份当前源码构建的产物 rc=0。**教训：Node 与探针必须显式指向当轮构建产物，旧产物的读数不是被测面的读数。**
 2. heredoc 写 JS 再次吃掉正则里的 `\\/`（`/\\/g` → `/\/g`，SyntaxError）。凡含反斜杠正则的脚本改用文件写入，不走 shell heredoc。
 
+### 批次 F：SSE 双限额、按设备关在途流与首订阅补读
+
+| 落地面 | 位置 | 说明 |
+| --- | --- | --- |
+| 每连接双限额 | `apps/daemon/src/eventbus.cj` + `remote_limits.cj` 的 `SSE_FRAME_LIMIT`/`SSE_BYTE_LIMIT` | 1024 帧与 4 MiB 各给各的关闭原因（`overflow` / `byte-overflow`）；字节只数**还在队列里的**，取走即归还 |
+| 按设备关流 | `EventBus.closeFor(device!:reason!)` | 撤销一台设备只断它自己的两条 SSE；空 deviceId（本机开发态）不参与匹配，撤销不会顺带打断本机桌面 |
+| 在途流重认 | `RemoteRequestGate.revalidateStreamEndReason(authHeader, deviceId!)` + `daemon.cj` 的 `/sse` 空闲 tick | 成功返回空串且不落审计（这是每秒级心跳）；失败返回关流原因并落一条 `sse/stream-revalidate` + `stream-<原因>` 的 denied，带上当初认证到的设备。**到期与撤销分开**（`SSE_CLOSE_EXPIRED` / `SSE_CLOSE_REVOKED`）：客户端对这两者的恢复动作相反 |
+| 首订阅补读 | `apps/daemon/src/sse_frames.cj`（新增）+ `/sse` 建流路径 | 顺序按 §6：先建立缓冲订阅，再读持久高水位，补 `游标之后` 的 durable 帧并记下已交付游标，之后才消费直播；缓冲里同游标的帧丢弃 |
+| 帧形状 | 同上 | 持久帧 `id: <sessionId>` + 竖线 + `<seq>`、`event: durable`、带归属的 data；瞬时帧 `event: ephemeral` 且**不带 id**；关闭帧 `event: close` + `data:{"reason":...}` |
+| 运行验收 | `apps/daemon/test/remote-sse-recovery.test.mjs`（新增 4 条） | 带游标重连马上拿到 seq 1/2 且不重交 seq 0；不带游标只给直播；撤销后在途流自己结束且流里带 `"reason":"revoked"`，同一 token 再建流拿 401 |
+
+**游标形状为什么这么定**：`<sessionId>|<seq>` 由服务端写进 `id:`、客户端原样回带 `Last-Event-ID`（`apps/desktop/remote-transport.mjs:149` 早就在透传，只是此前服务端从不写 `id:`，所以这条恢复链在两端都是断的）。坏游标一律按「没有游标」处理，**绝不**升成启动失败——否则任何远程客户端发一个坏 `Last-Event-ID` 就能拒掉自己这条连接，把恢复面变成 DoS 面。
+
+**计数**：仓颉侧 `cjpm test` **TOTAL 133 / PASSED 133 / FAILED 0 / ERROR 0 / SKIPPED 0，rc=0**（批次 E 基线 117 + `eventbus_test.cj` 6 + `sse_frames_test.cj` 8 + `remote_gate_test.cj` 2）；daemon Node 远程全套 **tests 58 / pass 58 / fail 0 / cancelled 0，rc=0**；因帧形状改动另跑客户端回归 **apps/desktop** `remote-transport` + `target-bridge` **tests 43 / pass 43 / fail 0，rc=0**（客户端按行过滤 `data:`，多出的 `event:` 行不影响解析，这条是实测而非推断）。还原后最终读数：`cjpm test` **133 / 133 / FAILED 0 / ERROR 0，rc=0**；daemon Node 远程全套 **58 / 58，rc=0**；产物 `main.exe` 11129856 B（11:36 干净构建）。
+
+**变异反证（四个变异，两轮归因）**：
+
+| 变异 | 施加 | 独占受害 | 备注 |
+| --- | --- | --- | --- |
+| H | 整段撤掉 `offer` 里的字节上界判断 | cj `byteLimitClosesWithItsOwnReasonNotTheFrameOne` FAILED | 第一轮与 J、K 同批 |
+| J | `closeFor` 不看 deviceId，整实例关 | cj `closeForDeviceOnlyClosesThatDeviceAndReportsHowMany` + `untaggedSubscriptionIsNotClosedByDeviceRevocation` FAILED | 两条都是它独占 |
+| K | `/sse` 首订阅不写补读帧 | Node「带 Last-Event-ID 重连」红，同一 build 下另外 3 条（含不带游标的正向对照）保持绿 | Node 侧 **tests 4 / pass 3 / fail 1，rc=1** |
+| I | `poll` 不归还已取字节 | cj `consumedBytesAreGivenBackSoASlowDrainingClientIsNotKilled` FAILED（**单独一轮**：TOTAL 133 / FAILED 1） | 见下面的遮蔽教训 |
+| L | `revalidateStreamEndReason` 把到期与撤销合并成一个原因 | cj `streamEndReasonSeparatesExpiredFromRevoked` FAILED（与 M 同轮，TOTAL 133 / PASSED 132 / FAILED 1） | 独占 |
+| M | 重认失败后不调 `closeFor`（§4 退化成只挡下一个请求） | Node「撤销设备会关掉它在途的 SSE」红，同一 build 下另外 3 条绿（**tests 4 / pass 3 / fail 1，rc=1**） | 独占，且那 3 条正是它的正向对照 |
+
+**H 遮蔽 I —— 这对变异不能同轮**：第一轮同时施加 H+I+J+K 时，红集合只有 3 条，`consumedBytesAreGivenBack...` 居然绿。原因不是用例假绿，而是 H 把字节上界整段撤掉之后，I 的「记账不归还」在这条用例的观察点（第 7 次 offer 该不该被拒）上根本不可观测——两个变异在同一条判断上串味。按「独占受害 + 显式排除共享」的规则，H 与 I 必须分轮；补跑 I 单独一轮才拿到它自己那条红。**同文件相邻两行的变异，先问「后一个变异会不会让前一个的观察点消失」。**
+还原：`cp` 备份 + `diff` 空输出（两文件 diff-rc 均为 0、`MUTANT` 标记计数 0），还原后 `touch` 破 mtime 再跑回 133/133 绿。
+
+**本批明确没做到的两条（不缩范围，记下归属）**：
+1. 「每帧重新检查授权」只做到**空闲 tick 重认身份**这一层；逐帧的资源级过滤（按 workspace/session 判这条帧能不能发给这台设备）还没做——它要求通知帧自带归属键，而宿主通知的形状属并发会话在飞的 `host_proxy.cj` / `apps/host/src/main.cj`（任务 7）。
+2. 补读去重的**生产通路**目前是空转：真实宿主的通知帧不带持久 `seq`，`SseFrame.idOf` 取回空串，所以「丢弃缓冲里同游标的帧」这条分支在真机上不会命中。分支本身有 cj 单测钉着（`deliveredLookupOnlyDropsExactlyTheSameCursor` + `liveFrameIdMatchesBackfillIdSoDuplicatesCanBeDropped`），兑现要等宿主给通知打上 seq。
+3. `overflow` / `byte-overflow` 的**关闭帧送达**只由 `revoked`/`expired` 这条真实路径在 Node 侧验过同一 writer 分支；从真实宿主打出 1024 帧/4 MiB 需要量级太大的夹具，本批改用 cj 层验语义，并在此如实标注为「传输证据只到 revoked/expired」。`expired` 的**关流**同理只有 cj 层证据：真实 token TTL 是 15 分钟，Node 侧无法在合理时长内等到它自然到期，而带外改写 `expiresAt` 需要动 core 的存储格式。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
-| 设备凭据轮换，以及撤销后关闭**在途** SSE | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），但 `remote_identity.cj` 仍无按 deviceId 轮换凭据的公开方法；契约里的认证 RPC 面 `auth/devices`/`auth/revoke` 也未接 | 设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」目前只到请求粒度（下一个请求被拒），已建立的流不会被打断；轮换与 RPC 管理面属任务 7 授权分派。 |
+| 设备凭据轮换，以及认证 RPC 管理面 | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），撤销关闭在途 SSE 已在批次 F 落地（`EventBus.closeFor` + 空闲 tick 重认） | 仍缺：`remote_identity.cj` 无按 deviceId 轮换凭据的公开方法；契约里的 `auth/devices`/`auth/revoke` RPC 面未接。属任务 7 授权分派。 |
+| §6 逐帧授权过滤与补读去重的生产通路 | `apps/daemon/src/sse_frames.cj` 的 `idOf`/`delivered` 分支 + `daemon.cj` 的 `/sse` | **未兑现**：真实宿主的通知帧不带持久 `seq`，去重分支在真机上不命中；逐帧资源过滤要求通知自带归属键。两条都卡在被并发会话持有的 `host_proxy.cj`/`apps/host/src/main.cj`（任务 7）。分支语义已由 cj 单测钉住，宿主打上 seq 后即可兑现。 |
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
-| `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（本批） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
-| §6 SSE 恢复面三条 | `apps/daemon/src/eventbus.cj`（已有 1024 帧上界与溢出关闭）+ `daemon.cj` 的 `/sse` 支 | **未落**：① 首订阅未按 `Last-Event-ID` 从持久面补读再丢弃缓冲重复，现在只订阅直播流；② 每连接只有帧数上界，没有 §6 要求的 4 MiB 字节上界；③ 撤销只到请求粒度，已建立的流不被打断（与上一行「设备凭据轮换」同一条线）。属批次 F。 |
+| `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 
 
