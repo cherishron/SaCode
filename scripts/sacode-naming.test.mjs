@@ -4,12 +4,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 const text = relative => readFileSync(new URL('../' + relative, import.meta.url), 'utf8');
 
-test('npm CLI 只注册 sacode 命令，跨平台入口使用同一名称', () => {
+test('npm CLI 入口全部用 sacode 品牌，注册表与包内文件一致', () => {
   const pkg = JSON.parse(text('npm/sacode-cli/package.json'));
-  assert.deepEqual(pkg.bin, { sacode: 'bin/cli.js' });
+  // 穷尽比对（不是「至少有一个」）：新增入口要同时改这张表与这条断言，品牌漂移才会被钉住。
+  assert.deepEqual(pkg.bin, { sacode: 'bin/cli.js', 'sacode-daemon': 'bin/daemon.js' });
+  for (const name of Object.keys(pkg.bin)) {
+    assert.ok(name === 'sacode' || name.startsWith('sacode-'), `入口名不在品牌集里：${name}`);
+  }
+  assert.deepEqual([...pkg.files].sort(), Object.values(pkg.bin).sort(), 'files 清单必须与入口脚本集合一致');
   const cli = text('npm/sacode-cli/bin/cli.js');
   assert.match(cli, /process\.platform === "win32" \? "sacode\.exe" : "sacode"/);
   assert.ok(cli.includes('SACODE_EXTJS_DIR'));
+  const daemon = text('npm/sacode-cli/bin/daemon.js');
+  assert.match(daemon, /process\.platform === "win32" \? "sacode-daemon\.exe" : "sacode-daemon"/);
 });
 
 test('桌面有限 IPC 的 preload 与主进程均使用 sacode 前缀', () => {
