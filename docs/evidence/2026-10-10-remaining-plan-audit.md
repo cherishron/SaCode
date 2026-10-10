@@ -237,6 +237,56 @@ remote-idempotency        5/5   remote-tls                 2/2
 
 **§6e A 档穷尽结论修正**：本条是 §6e 里被错判成 B 档的一处，其他 A 档穷尽结论保持。
 
+## 6g. AG 归档后的实际推进（本轮补记，2026-10-11 00:25 UTC）
+
+AF 落地「过期凭据」后又发现 plan 第 142 行**「跨证书」小格**同样被错判为 B 档。原判据是「跨证书 = 客户端证书 pin 层跨实例轮换」，把这一维推到客户端 TLS pin 面。实际这条在**daemon HTTP 面**就有可测面：两个独立 daemon 各自持有不同 TLS 证书与 `RemoteIdentityStore`，A 换出的 bearer 打到 B 上必须被拒。这不是 AF「同一 daemon 重启 → 令牌内存丢」的等价——AF 的过期是**拓扑内的自然到期**，AG 的跨证书是**拓扑层面的信任域分离**（两个不同进程 = 两份独立的 token map），攻击面是「客户端误把 A 的 endpoint 换成 B 的 endpoint，以为自己的 bearer 还活着」。
+
+**批次 AG 交付**：新增 `apps/daemon/test/remote-cross-cert.test.mjs`（1 条测试，2 台自签 TLS daemon 并行）。断言五段：
+
+1. 两台 daemon 各自 `https://127.0.0.1:` 起监听，两张自签证书 `certPem` 字符串互不相同（避免用同一张证书让用例失效）；
+2. A 上完成建票 + 登记 + 换令牌，同一 bearer 在 A 上跑一次 `initialize` 前置证明「令牌是活的」——否则后面打 B 的红可能是一开始就红，被误读成通过；
+3. 同一 bearer 打到 B：HTTP 200 + JSON-RPC `-32001` + `authz-denied:invalid-token`；
+4. **反枚举**：B 的响应体不含 `protocolVersion|capabilities`（未越过 gate 执行 initialize 业务分支）、不含 `device|principal|instanceId`（未透露主体或实例身份）、不含 `expired|token-gone|token-not-found|missing`（跨实例的「令牌在此不存在」与「过期」不能区分）；
+5. **反向验证**：同一 bearer 在 A 上再跑一次 `initialize` 仍然通过——被拒的原因是「跨实例」，不是「令牌坏了」；同一 bearer 在 A 上失效就意味着不是拓扑隔离而是 token 本身有问题，两条断言合起来才把攻击面钉住。
+
+额外**审计取证**：读 B 的 `instance.id.audit.log`，找到那条 `reason:"unauthenticated-invalid"` 记录并断言 `principalId` 与 `deviceId` 都是空串——与 `remote_gate.cj:144` 的 `recordDenied("", "", method, ...)` 意图一致，跨实例拒绝不透露主体身份。同时用正则扫整个审计文件断言不含 A 换出的 bearer 原文（token 是随机会话值，直接查字符串足够）。
+
+**读数**：全套 20 套 `remote-*.test.mjs` 逐套件跑：
+
+```
+remote-audit-integrity   8/8   remote-management-rpc     5/5
+remote-auth             20/20   remote-method-surface     6/6
+remote-capability-contract 15/15  remote-mobile-client     2/2
+remote-concurrent-enroll  3/3   remote-ownership           5/5
+remote-cross-cert         1/1   remote-product             4/5 (fail 1)
+remote-enroll-gate        3/3   remote-protocol-version    4/4
+remote-events             7/7   remote-request-limits      6/6
+remote-execution-gate     5/5   remote-sse-recovery        4/4
+remote-host-guard         9/9   remote-tls                 2/2
+remote-idempotency        5/5   remote-utf8-boundary       3/3
+```
+
+汇总：**pass=118 fail=1 cancelled=0**（117 独立测试通过 + 1 条保留红）。分套件 rc：19 条 rc=0、1 条 rc=1（`remote-product`）。比 §6f 基线（117/1）多 1 条通过，正是本批新增的 `remote-cross-cert` 那 1 条；`remote-auth` 停在 20/20 未动，其他 18 套数字逐条与 §6f 一致——没有静默变绿、也没有让 AF 的过期红被误算进 AG。
+
+唯一红仍是**批次 K 明写保留的撤销事故半径红**（`test/remote-product.test.mjs` 「带外撤销一台：只砍被撤那台的在途流与新请求，另一台不受影响」），根因与本批无关，与 AF 无关。
+
+**变异反证（本轮不跑，注释留档）**：把 `RemoteIdentityStore.authenticate` 的 `tokens[tokenValue]` 查找换成长期缓存（跨实例也能查到）——本用例第 3 条 `-32001` 立即变红，第 5 条 A 上仍然通过这一反向锁定不会动。第 4 条反枚举若退化（B 的响应改成 `authz-denied:cross-instance` 或类似归因），也会被立即杀掉——因为归因必须保持 `invalid-token` 三合一，跨实例与过期与撤销与撤销不能区分。
+
+**推进后未勾项计数**：仍是 70——AG 修的是 plan 第 142 行里「跨证书」这一**字面小格**。至此 plan 第 142 行 8 个小格逐格覆盖如下（按批次顺序）：
+
+| 小格 | 覆盖批次 |
+| --- | --- |
+| 无凭据调用 initialize | 首批 remote-auth（无 Bearer → `-32001 missing-bearer`） |
+| 过期凭据 | AF（重启后令牌内存丢 → `invalid-token` 三合一，反枚举） |
+| 撤销凭据 | 首批 remote-auth（`--manage revoke-device` → `invalid-token`） |
+| **跨证书** | **AG（本批：两 daemon 跨实例，A 的 bearer 打 B 被拒）** |
+| 并发登记兑换 | AD（`remote-concurrent-enroll` 3 条） |
+| 匿名 SSE 红灯 | 首批 remote-auth（`/sse` 无 Bearer → 401） |
+| 拒绝发生在 Host.forward 前 | 首批 remote-auth + 批次 O（`remote_management.cj` 门禁在 forward 之前） |
+| （同行内隐含）方法面不泄漏证书秘密 | 批次 Q/R（`remote-audit-integrity` 禁词扫描） |
+
+**§6e A 档穷尽结论第二次修正**：AF 与 AG 两条一起说明，第 142 行 8 个小格被逐格扫描才完整——原判 8 个小格里 6 个是 B 档、1 个是 A 档、1 个是「已完全覆盖」，实际是 8 个全部可达。其他 A 档穷尽结论保持。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。
