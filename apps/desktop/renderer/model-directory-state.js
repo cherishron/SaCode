@@ -17,18 +17,29 @@
         && groups.find(g => g.id === chosen.provider).models.find(m => m.id === chosen.model);
       publish({ current: chosen, groups, failures: [], status: 'ready', pending: null, error: null, routable, contextWindow: chosenModel ? chosenModel.contextWindow : '' });
     };
+    // modelsDescribe 有两种可达的落空形状（宿主 5 秒应答窗口、宿主进程不在），落空后没人再扫
+    // 界面就停在「请选择模型」；目录是发送键唯一的路由依据，自愈只能长在自己身上，且必须收敛。
+    const retryWaits = [500, 1000, 2000, 3000];
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     return {
       getSnapshot: () => snapshot,
       subscribe(invalidate) { listeners.add(invalidate); return () => listeners.delete(invalidate); },
       async load() {
         const generation = ++seq;
         publish({ ...snapshot, status: 'loading' });
-        try {
-          const view = await api.modelsDescribe();
-          if (generation === seq) apply(view);
-        } catch (e) {
-          if (generation === seq) publish({ ...snapshot, status: 'error', error: String((e && e.message) || e) });
+        let lastError = null;
+        for (let attempt = 0; attempt <= retryWaits.length; attempt++) {
+          if (attempt > 0) await wait(retryWaits[attempt - 1]);
+          if (generation !== seq) return;
+          try {
+            const view = await api.modelsDescribe();
+            if (generation === seq) apply(view);
+            return;
+          } catch (e) {
+            lastError = e;
+          }
         }
+        if (generation === seq) publish({ ...snapshot, status: 'error', error: String((lastError && lastError.message) || lastError) });
       },
       async select(value) {
         if (!value || !value.provider || !value.model) throw Error('bad-model-selection');

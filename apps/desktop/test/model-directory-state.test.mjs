@@ -34,3 +34,31 @@ test('失效默认指针不能声明可路由', async () => {
   const state = create({modelsDescribe:async()=>({...view,defaultModel:'missing'})}); await state.load();
   assert.equal(state.getSnapshot().routable,false); assert.equal(state.getSnapshot().contextWindow,'');
 });
+
+// 目录是发送键唯一的路由依据，而 modelsDescribe 有两条真实可达的失败形状：
+// host-bridge.cjs 的 5 秒请求窗口（timeout: model/registry/describe）与宿主进程不在时的 host-unavailable。
+// 落空后若没人再扫一遍，选择器就一直停在「请选择模型」——所以自愈要长在目录自己身上，且必须有界。
+// 注：桌面实跑两轮都没复现这个竞态（宿主在首扫前就应答了），本用例钉的是契约形状而不是实跑观察。
+function createWithTimers(api, ticks) {
+  assert.ok(existsSync(path), '模型目录状态尚未提取');
+  const ctx = vm.createContext({ setTimeout: (fn, ms) => { ticks.push(ms); return setTimeout(fn, 0); } });
+  vm.runInContext(readFileSync(path, 'utf8'), ctx);
+  return ctx.SaCodeModelDirectory.createModelDirectory(api);
+}
+test('首扫赶上宿主未就绪时自愈，不留在空目录', async () => {
+  const ticks = []; let n = 0;
+  const state = createWithTimers({ modelsDescribe: async () => { if (++n === 1) throw Error('-32002 host-not-ready'); return view; } }, ticks);
+  await state.load();
+  const s = state.getSnapshot();
+  assert.equal(s.status, 'ready'); assert.equal(s.groups.length, 1);
+  assert.equal(s.groups[0].models[0].id, 'm'); assert.equal(n, 2);
+  assert.ok(ticks.length === 1 && ticks[0] > 0, '重试之间必须有间隔，不能空转打满宿主');
+});
+test('宿主一直不应答时如实报错且重试有界', async () => {
+  const ticks = []; let n = 0;
+  const state = createWithTimers({ modelsDescribe: async () => { n++; throw Error('host-down-' + n); } }, ticks);
+  await state.load();
+  const s = state.getSnapshot();
+  assert.equal(s.status, 'error'); assert.match(s.error, /host-down-/);
+  assert.ok(n >= 2, '至少试过一次重试'); assert.ok(n <= 5, '重试必须收敛，实测次数=' + n);
+});
