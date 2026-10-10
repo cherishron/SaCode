@@ -52,7 +52,7 @@
 
 - [ ] 记录 `git rev-parse HEAD`、`git status --short`、`git worktree list`；逐 hunk 识别本计划涉及文件的在途实现，尤其 durable_checkpoint 与 execution 文件。
 - [ ] 获取用户已有 AgentLink 所在工程的准确路径并直读。若不可访问，记录其 /task 等结论为用户提供证据；不声称源码复核通过。无既有工程才使用 apps/mobile。
-- [ ] 从 Host 分派及 initialize 实际提取方法，按 PRD F01–F21 和移动功能逐项映射；审批采用现有 approval/answer、取消采用 turn/cancel，不创造已有能力别名。（fc7e5b6 已交前半：`docs/plans/host-capabilities.json` 逐字取自宿主 initialize 的 120 条声明，并与本机打包宿主实跑回包核对同集；转发面 = 契约 ∩ 该清单 − 本地 − 代理自留长连接 − team/*。别名纪律保持：审批仍走 `approval/answer`、取消仍走 `turn/cancel`，`turn/start` 与 `extension/host/*` 这 10 条宿主内部名刻意不进远程面。PRD F01–F21 的逐项映射表仍待补，故本行不整体打勾）
+- [ ] 从 Host 分派及 initialize 实际提取方法，按 PRD F01–F21 和移动功能逐项映射；审批采用现有 approval/answer、取消采用 turn/cancel，不创造已有能力别名。（fc7e5b6 已交前半：`docs/plans/host-capabilities.json` 逐字取自宿主 initialize 的 120 条声明，并与本机打包宿主实跑回包核对同集；转发面 = 契约 ∩ 该清单 − 本地 − 代理自留长连接 − team/*。别名纪律保持：审批仍走 `approval/answer`、取消仍走 `turn/cancel`，`turn/start` 与 `extension/host/*` 这 10 条宿主内部名刻意不进远程面。批次 X 补完「PRD F01-F21 的逐项映射表」这一半：`docs/evidence/2026-10-10-remote-method-prd-crosswalk.md` 按契约 119 条方法机械点名——F01-F20 每域至少 2 条方法（PASS），F21 有远程入口但产品面未收口（7 个 verb 是文本 grep 占位、L1 契约待 Phase 2），F11/F13-F17 六格上游契约未建（BLOCKED，本文件不越权补方法名），Kuikly 移动 UI 全部 BLOCKED（`apps/mobile/` 只有 Kotlin 接入逻辑层，无 Kuikly 工程本体）；双向差集 99 条 F 域 + 20 条基础设施面（auth/* + team/* + initialize + tips/* + daemon/shutdown）合 119 条无重叠无遗漏。**整行仍不勾**：本行要求「按 F01-F21 和移动功能逐项映射」，其中移动功能与 F11/F13-F17 六格都是 BLOCKED，把「有入口」当「有验收」是本计划明确禁止的）
 - [x] 新增零依赖契约检查，断言远程方法没有无实现 capability、每写方法有权限和资源归属；第一次在缺映射时应红。（fc7e5b6：三条对账落在 `remote-capability-contract.test.mjs`——转发 ⊆ 契约 ∧ ⊆ 宿主声明能力、远程消费的已实现方法不得漏转发、转发面 == 推导集；写方法权限与资源归属由 4be823d 的「全局无资源动作」白名单棘轮钉住。红先记录 13/15 rc=1，铺开后 15/15 rc=0）
 
 ```javascript

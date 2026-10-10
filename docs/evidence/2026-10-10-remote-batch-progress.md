@@ -761,6 +761,23 @@ if (decision.allowed
 
 **仍没落的两件**：① **会话级**归属核验——`sessionId` 是否真属于这个 workspace 仍无检查（`DeviceAuthzView.allowedSessions` 恒为 `None`）；这属于任务 7 的宿主契约变更（宿主要回传 `sessionId|workspaceId`），本批不动。② 生产默认——`SACODE_WORKSPACE_ID` 未设时门禁仍空转，属运维部署问题；本批只在测试里 opt-in，把「跨工作区必须拒」的形状与实现都落进仓库，但没替用户决定哪台生产实例要绑定。
 
+## 批次 X：PRD F01-F21 → 远程方法逐项映射表（plan §1 第 55 行后半）
+
+**目标**：plan §1 第 55 行原话「PRD F01–F21 的逐项映射表仍待补，故本行不整体打勾」——本批补那半。不新增方法、不改契约 JSON、不改别名纪律（审批走 `approval/answer`、取消走 `turn/cancel`、`turn/start` 与 `extension/host/*` 这 10 条宿主内部名不进远程面，fc7e5b6 已锁定）。
+
+**做法**：从 `docs/plans/remote-capability-contract.json`（119 条，八字段完整）机械化按方法名把 F01-F21 每个能力域点名，同时用两个集合差集证「无遗漏、无越权」：
+
+- **正向差集**：F01-F21 表里的每一条方法名都必须在契约 JSON 里能 grep 到——实测 99 条命中、0 条缺失。
+- **反向差集**：契约 JSON 里的方法名不在 F 域表里的 20 条属于基础设施面（`auth/enroll|token|devices|revoke` 四条 + `team/*` 十条 + `initialize|tips/*|daemon/shutdown` 六条），不是产品能力域。
+- **权限聚合**：每域从契约字段机械聚合 permission 并集与 requiredScope 并集，不猜。
+- **执行族分布**：契约里 `permission=execute` 的方法恰 8 条（`task/start` `execution/start` `worktree/enter` `worktree/agent-prepare` `worktree/agent-finish` `model/pull` `extension/call` `prompt/enhance`），分布在 F02 / F08 / F12 / F18 四个域，批次 J 门禁按方法级 permission 拦这 8 条（`remote-execution-gate.test.mjs` 五条真 HTTP 用例已钉住）；`execution/authorize|describe|output|stop` 与 `worktree/cleanup|exit` 与 `custom/import/*` 与 `prompt/poll|cancel` 不在 execute 族，走 write/approval/management，不受批次 J 拒绝面影响。
+
+**产物**：`docs/evidence/2026-10-10-remote-method-prd-crosswalk.md`——按 F01-F21 每行点名、双向差集脚本、授权面聚合表、移动端消费面（Kuikly UI BLOCKED）与桌面端消费面（33+42 preload 通道已实测，F21 桌面消费见 `lsp-l1-entry-wiring-2026-10-07.md`）、验收出口表。
+
+**结论**：F01-F20 有远程入口（PASS）；F21 有远程入口但产品面未完成（7 个 verb 是文本 grep 占位，L1 契约待 Phase 2）；F11 / F13-F17 六格 BLOCKED（上游契约本身未建，本文件不越权补方法名）；Kuikly 移动 UI 全部 BLOCKED（`apps/mobile/` 只有 Kotlin 接入逻辑层，无 Kuikly 工程本体）。
+
+**仍不整体打勾**：plan §1 第 55 行整行不勾——本文件只是把 F01-F21 映射表这半补上，其余半（Kuikly 移动 UI、F11/F13-F17 上游契约缺口）都是 BLOCKED，把「有入口」当「有验收」正是本文件不判通过的口径。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
