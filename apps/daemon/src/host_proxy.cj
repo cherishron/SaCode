@@ -30,18 +30,43 @@ import stdx.encoding.json.*
 //   -32010 宿主未配置      -32011 宿主请求超时       -32013 转发前置失败
 // ---------------------------------------------------------------------------
 
-// 白名单只开放本批会话与工作树产品链；不提供任意 Host 方法通道。
-// 方法名逐字取自宿主 initialize 的能力清单（apps/host/src/main.cj），不在此之外造名；
-// session/catalog 不在这里——它由 daemon 自己按本地会话根回答，转调只会得到两个真源。
-// session/subscribe 也不在这里：宿主的长连接通知由本代理读线程统一收帧后送 bus，
+// 白名单是「远程面能打到的方法」这一有限集合，不提供任意 Host 方法通道。
+// 名单按固定推导生成：契约表（docs/plans/remote-capability-contract.json）
+// ∩ 宿主 initialize 声明的能力（docs/plans/host-capabilities.json）
+// − daemon 自有 − 代理自留长连接 − team/*（团队面走 TeamHostBridge 另一条分派支）。
+// 三方一致性由 apps/daemon/test/remote-capability-contract.test.mjs 与
+// remote-method-surface.test.mjs 钉住：漏一条远程消费的方法会红，
+// 转发一条宿主本人不认的名字也会红。
+// 放开转发不等于放开授权——能不能真做仍由策略表逐请求判定（scope/资源归属）。
+// session/catalog 不在这里：它由 daemon 自己按本地会话根回答，转调只会得到两个真源。
+// session/subscribe 不在这里：宿主的长连接通知由本代理读线程统一收帧后送 bus，
 // 一次性 HTTP RPC 转它只会等到一个永远不来的应答。
 let hostMethods = [
-    "session/create", "session/select", "session/projection", "session/submit", "session/flush",
-    "workspace/get", "workspace/set-directory",
-    "task/start", "turn/poll", "turn/cancel",
-    "worktree/enter", "worktree/describe", "worktree/exit",
-    "worktree/agent-prepare", "worktree/agent-finish", "worktree/cleanup"
-]
+    "appearance/get", "approval/answer", "approval/ask", "approval/status",
+    "attachment/image-read", "attachment/upload", "binding/remove", "binding/reorder",
+    "binding/upsert", "credential/describe", "credential/set", "credential/unset",
+    "custom/describe", "custom/import/into", "custom/import/new", "custom/remove",
+    "custom/upsert", "execution/authorize", "execution/describe", "execution/output",
+    "execution/propose", "execution/start", "execution/stop", "extension/call",
+    "extension/dispose", "extension/list", "global/appearance/get", "global/appearance/set-busy-send",
+    "global/appearance/set-font-size", "global/appearance/set-theme", "global/settings/get", "global/settings/set-composer-enter",
+    "global/settings/set-session-log", "global/settings/set-transcript-view", "goal/clear", "goal/create",
+    "goal/describe", "goal/edit", "goal/pause", "goal/resume",
+    "ledger/stats", "lsp/call-hierarchy", "lsp/define", "lsp/diagnostics",
+    "lsp/implementation", "lsp/lookup", "lsp/references", "lsp/rename",
+    "model/configure", "model/get", "model/list", "model/pull",
+    "model/registry/add-catalog", "model/registry/catalog", "model/registry/describe", "model/registry/remove",
+    "model/registry/set-default", "model/registry/set-enabled", "model/registry/sort", "model/registry/update",
+    "model/upstream/upsert", "model/use-key", "plugin/describe", "plugin/set-enabled",
+    "plugin/uninstall", "prompt/cancel", "prompt/enhance", "prompt/poll",
+    "queue/describe", "queue/enqueue", "queue/update", "session/append",
+    "session/create", "session/flush", "session/projection", "session/select",
+    "session/submit", "session/terminal-output", "task/start", "tips/after-reply",
+    "tips/get", "tips/set-hidden", "tips/startup", "turn/cancel",
+    "turn/poll", "usage/set-budget", "usage/status", "workspace/files",
+    "workspace/get", "workspace/git-diff", "workspace/git-status", "workspace/set-directory",
+    "worktree/agent-finish", "worktree/agent-prepare", "worktree/cleanup", "worktree/describe",
+    "worktree/enter", "worktree/exit"]
 
 func forwarded(method: String): Bool {
     for (value in hostMethods) {

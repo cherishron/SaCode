@@ -152,3 +152,65 @@ test('management/write 且 resourceKeys 为空的动作，只允许白名单里�
   );
 });
 
+
+// 转发面与两份清单的三方对账（契约表 / 宿主能力清单 / daemon 白名单）。
+// 这一组检查的存在理由：白名单此前只有 16 条硬编名字，与契约表 119 行、
+// 宿主实际声明的 120 条能力各自漂移，远程客户端能打到什么面完全靠人记。
+// 「宿主声明但契约没有」的名字（turn/start、extension/host/*、appearance/set-theme）
+// 是宿主内部管道或历史别名，刻意不进远程面；这里用子集极性写，将来宿主新增能力
+// 不会让本仓现有断言变红，只有「我转发了宿主不认的名字」才会红。
+const hostCaps = JSON.parse(
+  readFileSync(path.join(root, 'docs/plans/host-capabilities.json'), 'utf8'));
+const hostCapSet = new Set(hostCaps);
+const proxySource = readFileSync(path.join(root, 'apps/daemon/src/host_proxy.cj'), 'utf8');
+const forwardMatch = proxySource.match(/let hostMethods = \[([\s\S]*?)\]/);
+assert.ok(forwardMatch, '解析不到 host_proxy.cj 里的 hostMethods 数组');
+const forwarded = (forwardMatch[1].match(/"[^"]+"/g) || []).map(s => s.slice(1, -1));
+const forwardedSet = new Set(forwarded);
+
+// daemon 自己实现、不经宿主的方法：这些不在转发白名单里是对的。
+const DAEMON_LOCAL = new Set([
+  'initialize', 'session/catalog', 'daemon/shutdown',
+  'auth/enroll', 'auth/token', 'auth/devices', 'auth/revoke',
+]);
+
+// 宿主有这条方法，但它的语义是「长连接通知」：本代理的读线程统一收帧后送 bus，
+// 一次性 HTTP RPC 转过去只会等到一个永远不来的应答。host_proxy.cj 的注释是权威，
+// 这里只是把同一条例外写进推导，别让白名单被机械地"补全"回一条死路。
+const PROXY_OWNED_STREAM = new Set(['session/subscribe']);
+
+test('转发白名单里每条方法都必须同时出现在契约表与宿主能力清单', () => {
+  const notInContract = forwarded.filter(m => !rows.some(r => r.method === m));
+  const notInHostCaps = forwarded.filter(m => !hostCapSet.has(m));
+  const shouldNotForward = forwarded.filter(m => DAEMON_LOCAL.has(m) || PROXY_OWNED_STREAM.has(m));
+  assert.deepEqual(notInContract, [], '转发了契约里没有的方法（过度宣称）：' + notInContract.join(','));
+  assert.deepEqual(notInHostCaps, [], '转发了宿主能力清单里没有的方法（宿主会回 method not found）：' + notInHostCaps.join(','));
+  assert.deepEqual(shouldNotForward, [], '转发了 daemon 自有或代理自留长连接的方法：' + shouldNotForward.join(','));
+  assert.equal(forwarded.length, forwardedSet.size, '白名单不得有重名');
+});
+
+test('契约里已实现、需经宿主且非桌面专属的方法必须在转发白名单内', () => {
+  const missing = [];
+  for (const row of rows) {
+    if (DAEMON_LOCAL.has(row.method)) continue;
+    if (PROXY_OWNED_STREAM.has(row.method)) continue;
+    if (row.method.startsWith('team/')) continue;   // 团队面由 TeamHost 承接，另有一条分派支
+    if (/^拟新增/.test(row.implementationAnchor)) continue;
+    if (!hostCapSet.has(row.method)) continue;      // 宿主尚未声明的属未发布能力，不得转发
+    const remoteFacing = (row.clientConsumers || []).some(c => c === 'mobile' || c === 'cli');
+    if (!remoteFacing) continue;
+    if (!forwardedSet.has(row.method)) missing.push(row.method);
+  }
+  assert.deepEqual(missing, [], '以下远程消费的方法宿主已声明、契约已实现，却打不进远程面：\n  ' + missing.join('\n  '));
+});
+
+test('转发白名单等于「契约 ∩ 宿主能力 − 本地 − 团队」这一推导集', () => {
+  const expected = rows
+    .filter(r => !DAEMON_LOCAL.has(r.method) && !PROXY_OWNED_STREAM.has(r.method)
+      && !r.method.startsWith('team/') && hostCapSet.has(r.method))
+    .map(r => r.method)
+    .sort();
+  assert.deepEqual([...forwardedSet].sort(), expected,
+    '白名单与推导集不一致（多出的或缺失的都会在这里现形）');
+  assert.ok(expected.length > 60, '推导集过小说明契约或能力清单被误删，实得 ' + expected.length);
+});
