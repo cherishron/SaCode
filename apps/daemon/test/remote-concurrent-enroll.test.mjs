@@ -166,3 +166,45 @@ test('并发兑换令牌：同一设备凭据同时投两次，两个请求各�
 // 因为「11 个并发请求分几波到服务端」的计数曲线取决于 Node fetch 的微批边界，
 // 精确到「恰好 1 个 429」的断言会随微批漂移、误伤测试。这里刻意不放这条，把并发维度
 // 集中钉在真正的**并发不变量**上：登记秘密一次消费、令牌各自独立。
+
+// 每票据 5 次失败后锁死是设计里的防登记秘密重放机制（`AUTH_PER_TICKET_MAX_FAILS = 5`）。
+// 顺序路径在 remote-access_test.cj 的 ticketFailuresLockAfterFiveAttempts 里钉死。这里钉的是
+// **并发路径**：`enroll()` 内先前用「先读阈值再写计数」的分离调用，两个并发请求可以同时
+// 读到「没到 5」再各自 +1——攻击者用一波并发就能把锁死阈值从 5 拉到 6、7、甚至更高。
+// 6 个并发假票应该至少有 1 个拿到 429 ticket-locked；顺序路径的第 6 次也是 429，
+// 只是顺序里是「第 5 次已经写进 5」，并发下必须靠 check-and-increment 的原子段
+// 才能保证 6 个并发里有一个真的读到 5。用「至少 1 个 429」而不是「恰好 1 个 429」，
+// 是因为 Node fetch 会把 6 个请求分几波微批打到 daemon，落不到单一 5/6 边界。
+test('并发投同一张假票：至少一次拿到 429 ticket-locked，不是全部 401 漏锁', async () => {
+  const { d, ticket: unused, stop } = await bootWithTicket('cn-lock');
+  try {
+    const fakeSecret = 'ab'.repeat(16);
+    const reqBody = JSON.stringify({ enrollmentSecret: fakeSecret, deviceName: 'd', kind: 'mobile' });
+    const responses = await Promise.all([
+      d.post('/auth/enroll', reqBody),
+      d.post('/auth/enroll', reqBody),
+      d.post('/auth/enroll', reqBody),
+      d.post('/auth/enroll', reqBody),
+      d.post('/auth/enroll', reqBody),
+      d.post('/auth/enroll', reqBody),
+    ]);
+    const texts = await Promise.all(responses.map(r => r.text()));
+    const statuses = responses.map(r => r.status);
+    const counts = { 401: 0, 429: 0, other: 0 };
+    statuses.forEach((s, i) => {
+      if (s === 401) counts[401]++;
+      else if (s === 429) counts[429]++;
+      else counts.other++;
+    });
+    assert.equal(counts.other, 0,
+      `不该出现 200 或 400：所有 6 次都是假票，实得 ${statuses.join(',')} / ${texts.join(' | ')}`);
+    assert.ok(counts[429] >= 1,
+      `并发 6 次假票必须至少出现 1 次 429 ticket-locked：实得 ${counts}`);
+    const lockedIdx = statuses.findIndex(s => s === 429);
+    assert.match(texts[lockedIdx], /ticket-locked/,
+      `429 的响应体必须是 ticket-locked：${texts[lockedIdx]}`);
+    void unused;
+  } finally {
+    await stop();
+  }
+});

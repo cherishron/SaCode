@@ -105,20 +105,20 @@ public class RemoteAuthRateLimiter {
         return ok
     }
 
-    public func ticketFailures(secretDigest: String): Int64 {
+    // 读-判定-写组合在一个锁段内：分开两次调用会有并发窗口
+    // （多个请求同时读到「没到 5」，然后各自 +1，直到下一批才看得见锁），
+    // 那等于让攻击者能用并发把锁死次数拉高。返回 true 表示本次失败已到阈值。
+    public func checkAndRecordTicketFailure(secretDigest: String, threshold: Int64): Bool {
         lock.lock()
         var n = Int64(0)
         if (let Some(v) <- perTicketFails.get(secretDigest)) { n = v }
-        lock.unlock()
-        return n
-    }
-
-    public func recordTicketFailure(secretDigest: String): Unit {
-        lock.lock()
-        var n = Int64(0)
-        if (let Some(v) <- perTicketFails.get(secretDigest)) { n = v }
+        if (n >= threshold) {
+            lock.unlock()
+            return true
+        }
         perTicketFails[secretDigest] = n + 1
         lock.unlock()
+        return false
     }
 
     public func clearTicket(secretDigest: String): Unit {
@@ -284,7 +284,12 @@ public class RemoteAccessEndpoints {
         // 不做这步的话 /auth/enroll 永远查不到刚创建的票据。
         if (snapshotPath.size > 0) { store.reloadTicketsFrom(snapshotPath) }
         let digest = sha256Hex(secret.toArray())
-        if (limiter.ticketFailures(digest) >= AUTH_PER_TICKET_MAX_FAILS) {
+        // 一次尝试记一次失败，登记成功再清账——用 check-and-increment 的原子形态
+        // 而不是先读后写：并发下分开两次调用会让所有并到锁边界的请求都通过检查
+        // （多个请求同时读到 0，然后各自 +1，第 N+1 个请求读到的仍是 0 因此被放行），
+        // 攻击者能用一波并发把锁死的阈值从 5 拉到 6、7、甚至更多。
+        // 成功路径末尾会 clearTicket，让「先失败几次再拿对」这条正常序列仍可通过。
+        if (limiter.checkAndRecordTicketFailure(digest, AUTH_PER_TICKET_MAX_FAILS)) {
             auditBootstrap("", "", "auth/enroll", "denied", "ticket-failures-exceeded")
             return AuthResponse.deny(429, "ticket-locked")
         }
@@ -295,7 +300,6 @@ public class RemoteAccessEndpoints {
             enrolled = Some(store.enroll(secret, deviceName, kind))
             true
         } catch (_: Exception) {
-            limiter.recordTicketFailure(digest)
             auditBootstrap("", "", "auth/enroll", "denied", "invalid-enrollment")
             false
         }

@@ -151,6 +151,16 @@ AA 归档完之后的两个 turn（`b1dd816` + `4875df8`）在 daemon 二进制�
 
 **推进后未勾项计数**：仍是 70。批次 AC 交付的 2 条测试是 plan 第 142 行的**其中一个小格**的字面验收，不是整行——同行还有「过期凭据」「跨证书」「拒绝发生在 Host.forward 前」等小格，前几项分别由批次 D/P/M 分散覆盖，未在「一行」口径下合并判过。per-ticket 并发漏锁这条新发现的实现缺口是**新的 B 档**——等 `remote_identity.cj` 与 `remote_access.cj` 在同一批一起动锁粒度时再一并落。
 
+## 6d. AD 归档后的实际推进（本轮补记，2026-10-10 15:25 UTC）
+
+批次 AD（本轮提交）把 §6c 归为 B 档的 **per-ticket 并发漏锁** 从「等解锁」推进到「已交付」——推翻了「必须等 `remote_identity.cj` 落库再动」这个前提：
+
+- `apps/daemon/src/remote_access.cj` 与 `core/src/remote_identity.cj` 是**两个进程内独立对象**：`RemoteAuthRateLimiter` 用自己的锁管 per-ticket 计数，`RemoteIdentityStore.enroll` 用自己的锁管 consumed/set/record 序列；两段之间没有嵌套，一个的锁粒度调整不会撞另一个的锁序。
+- 因此本轮直接把 `ticketFailures()` 与 `recordTicketFailure()` 两个分离的 public 方法合并成 `checkAndRecordTicketFailure(secretDigest, threshold): Bool`——读、判定、写三步在一个锁段内；enroll() 里原来的「先读阈值 → 尝试 store.enroll → catch 里再写计数」的三段改成「先原子段判定 → 尝试 store.enroll → 成功才 clearTicket」的三段，语义与顺序路径逐位等价（顺序 n=0..4 时每次返回 false 并 +1、n=5 时返回 true 拒，与旧 `ticketFailures>=5` + `recordTicketFailure` 两调用完全一致）。
+- 保留顺序路径的 wire 覆盖由既有 `ticketFailuresLockAfterFiveAttempts` 单测承接（HEAD 里已通过，本批未动）；本批新增的 `并发投同一张假票` 用例在修复前是红（6 个 401、0 个 429），修复后绿，是本轮的**变异反证**：把 `checkAndRecordTicketFailure` 展开回读-写分离形态，本条立即变回全 401。
+
+**推进后未勾项计数**：仍是 70——本批修的是 §6c 里那条 B 档实现缺口，不是计划第 142 行的字面验收（第 142 行本身仍等 AA.1 门禁半 + 「过期凭据/跨证书」两个 B 档项）；§7 解锁顺序里的 B 档 13 项少了一项（per-ticket 并发漏锁已从 B 档移走），其余不动。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。

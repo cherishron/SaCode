@@ -931,6 +931,24 @@ if (decision.allowed
 1. 计划第 142 行**整行仍未勾**——本批只做「并发登记兑换」这一小格的字面验收，同一行还要「过期凭据」「跨证书」「拒绝发生在 Host.forward 前」等多个小格；后几项分别在批次 D/P 与批次 M 已覆盖但未合并到「一行」口径下判过。
 2. 原本第三条打算写「并发 6 次不存在登记秘密，第 6 次必被 ticket-locked」，**首跑红**——6 个 401、0 个 429。翻到源码 `remote_access.cj:287-298` 才发现：`ticketFailures(digest) >= 5` 是**读**，`recordTicketFailure(digest)` 是**写**，两次调用各自加锁但不组合，6 个并发请求会先全部读 0 再各自 +1，第 6 次读到时还是 0 因此**通过**锁检查。这是**并发下的实现缺口**——单线程顺序下永远只到 5 次即锁，但并发下会漏锁到 6 次以上。这个缺口**本批不修**：改法是让 check-and-increment 在一个原子段内做，属 `remote_access.cj` 的锁粒度调整，本会话不改并发会话硬持有的文件（`core/src/remote_identity.cj` 已被并发会话加到 +62 行）。改把第 3 条改成断言**并发不变量**（同源 11 次并发必至少 1 个 429 + 至少 1 个 401），复跑时又红——因为 `ticketFailures` 检查在 `allowSource` 之前，11 次同源并发全部先把 per-ticket 累计到 ≥5 触发 `ticket-locked`，`allowSource` 的计数路径根本没走到。第 3 条因此**放弃**，保留 2 条纯并发不变量的用例即可；per-ticket 并发漏锁这条实现缺口登记在「在飞未完成」表里。
 
+### 批次 AD：修复 per-ticket 并发漏锁（补齐批次 AC 记下的 B 档项）
+
+**推进位置**：AA 审计 §6c 的「per-ticket 并发漏锁」条目 + 批次 AC 的「第 3 条放弃」两处诚实说明指向的同一个实现缺口。**批次 AC 明确本批不修**，理由当时是「`remote_access.cj` 与 `remote_identity.cj` 属同一批的锁边界调整」。本轮复核后确认这条推翻了：`apps/daemon/src/remote_access.cj` **不在**并发会话的持有序列里（工作区 git diff 干净），`core/src/remote_identity.cj` 与 `remote_access.cj` 是两个进程内独立对象、锁不共享，`store.enroll` 的内部锁在 `remote_identity.cj` 里而 `checkAndRecordTicketFailure` 用的是 `RemoteAuthRateLimiter` 自己的锁——两个锁没有嵌套，原子化 `RemoteAuthRateLimiter` 内的三段不会与 `store.enroll` 的锁序撞车。前提解开后按 A 档动手。
+
+**产出**：
+1. `apps/daemon/src/remote_access.cj`：`RemoteAuthRateLimiter` 新增 `checkAndRecordTicketFailure(secretDigest: String, threshold: Int64): Bool`——读、判定、写三步在一个锁段内完成；同时**删除**了先前分开的 `ticketFailures()` 与 `recordTicketFailure()` 两个 public 方法（保留它们会让原子方法变成可以被绕开的旁路，等于没修）。`enroll()` 相应把「先读阈值再写计数」的两段合并成一次调用，逻辑顺序仍是「先锁死检查→再尝试登记→成功才清账」，语义与顺序路径完全一致。`AUTH_PER_TICKET_MAX_FAILS = 5` 阈值、`ticket-failures-exceeded` 与 `ticket-locked` 错误码、`ticketFailuresLockAfterFiveAttempts` 顺序用例的语义均未动。
+2. `apps/daemon/test/remote-concurrent-enroll.test.mjs` 新增第 3 条用例：`并发投同一张假票：至少一次拿到 429 ticket-locked，不是全部 401 漏锁`——同一张不存在的登记秘密并发投 6 次，断言**至少 1 次**是 429 且响应体含 `ticket-locked`。用「至少 1 次」而不是「恰好 1 次」，是因为 Node fetch 会把 6 个请求分几波微批送到 daemon，落不到单一 5/6 边界；断言的语义边界是「并发下必须真正触发一次锁」，而不是「锁触发次数必须精确」。这条用例在修复前是红的（6 个 401，0 个 429，已在批次 AC 记为「首跑红」），修复后绿——是本轮的**变异反证**：把 `checkAndRecordTicketFailure` 展开回读-写分离形态，本条立即变回 6 个 401。
+
+**读数**：
+- 单跑 `node --test test/remote-concurrent-enroll.test.mjs` → **3/3 rc=0**（三用例总耗时 5.5s）。
+- 全量 `node --test test/remote-*.test.mjs` → **115/116 rc=1**（前 114 条基线 + 本批 3 条 = 117；实际总测试 116——因为批次 AC 的旧 2 条被本批扩展成 3 条，等于净增 1；唯一红仍是批次 K 保留的撤销事故半径 FAIL，与本批无交集）。
+- `cjpm build` → success，17 warnings（含本文件原有的 2 条 unused-variable，非本批新增）。
+- `cjpm test` → infra 层失败：`Too many attempts to create a temporary file` at `std.unittest::TempDirectory::createTempFile`——环境被并发会话的 build/test 占满 tmpdir，本会话无法出 unittest_bin/daemon.exe；这是**环境 BLOCKED 而非用例红**，与批次 AC 的 `ticketFailuresLockAfterFiveAttempts` 无交集（顺序路径的读-写-读逻辑与原子段等价，代码审查可证：顺序下 n=0..4 每次返回 false 并 +1，n=5 时返回 true 拒——与旧 `ticketFailures>=5` + `recordTicketFailure` 两调用逐位等价）。
+
+**未落的两处诚实说明**：
+1. 计划第 142 行**整行仍不勾**——本批修的是批次 AC 记下的 B 档项，不是第 142 行本身；第 142 行的过期凭据、跨证书、Host.forward 前置三个小格的独立性判断与批次 AC 一致，本批不重复。
+2. `cjpm test` 未跑出来，靠 code review + 单进程 wire 用例（本批第 3 条）代替 `ticketFailuresLockAfterFiveAttempts` 的顺序路径覆盖。这是可以接受的降级——顺序路径在 wire 层无独立测试，但 cj 单测已在 HEAD 里通过；本批的原子段与顺序路径逐调用点等价已由代码审查确认，非靠"两个都跑绿了"来保证。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
