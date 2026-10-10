@@ -5,16 +5,25 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-// 批次 U：显式会话归属的跨工作区行为（计划 §7 第 157 行前半「跨项目读/写拒绝」）。
-// 2026-10-10 探针结论：当前 daemon 的授权面只检查 method-level 的 permission/scope，
-// 客户端可以把 workspaceId 参数写成任何字符串，宿主的写目标是它启动时固定的那一个
-// 工作区目录。所以「跨工作区」在当前架构下不是被拒绝，而是被**接受并落到唯一工作区**。
-// 这四条现状用例把现状钉死——今天必须全绿，证明「客户端可控的 workspaceId
-// 参数不会让 daemon 崩」。同时把「应该拒但没拒」的形状如实记录下来：
-// 未来一旦按规格 §7 补了「按 sessionId 查它真实所属工作区再和请求参数对齐」的核对，
-// 前三条会立刻翻红——那是**正确的红灯**：它们会变成验证「显式归属真的被核了」的
-// 独占受害用例。届时这条测试文件不需要重写，只需把「今天允许」的判据反转到断言 error。
-// 第五条（approval/answer scope 门禁）是**已经生效的**语义，独立于 workspaceId 参数。
+// 批次 U+V：显式会话归属的跨工作区行为（计划 §7 第 157 行后半「跨项目读/写拒绝」）。
+// 2026-10-10 批次 U 探针结论：daemon 的授权面只检查 method-level 的 permission/scope，
+// 客户端可以把 workspaceId 参数写成任何字符串。批次 V 在 `remote_gate.cj` 里加了
+// 一条显式门禁：`SACODE_WORKSPACE_ID` 环境变量非空时，请求里的 workspaceId 必须
+// 与它逐字一致，否则拒 `workspace-not-bound`。这样「跨工作区」从「被接受」变成
+// 「被明确拒绝」，符合规格 §7「按会话定位服务并隔离执行上下文」。
+//
+// 这一批做的四件事：
+//   1. 本测试文件 boot 时显式设 SACODE_WORKSPACE_ID=ws，把门禁开起来——
+//      前四条断言从「今天居然被拒了」翻成「必须拒」，即批次 U 的「未来红灯」
+//      现在**是红**。
+//   2. 变异反证（MUT-V）：注释掉 remote_gate.cj 里 workspace-not-bound 分支，
+//      这四条应该立刻变绿——证明测试真的在测这条门禁，不是假绿。
+//   3. approval/answer 的 scope 门禁仍是**当下就生效的语义**，独立于 workspaceId
+//      参数——它的独占变异仍由批次 U 那一半反证。
+//   4. 审计面与脱敏面（remote-audit-integrity.test.mjs）的 `ws-1` 用法不在这批改
+//      ——那些测试不开 SACODE_WORKSPACE_ID，走的是「归属核验关闭」的历史路径，
+//      语义上就是「不启用归属检查时参数是自由串」，与门禁的默认空值语义一致。
+//      若将来审计面也被纳入归属核验，得同步换那些夹具里的 ws-1 为 d.ws。
 const root = path.resolve(import.meta.dirname, '../../..');
 const daemonExe = process.env.SACODE_DAEMON || path.join(root, 'apps/daemon/target/release/bin/main.exe');
 const hostExe = process.env.SACODE_HOST_EXE || path.join(root, 'apps/desktop/dist/host/bin/sacode-host.exe');
@@ -51,6 +60,7 @@ async function boot(cwd) {
       SACODE_REMOTE_POLICY: policyFile,
       SACODE_HOST: hostExe,
       SACODE_HOST_ARGS: JSON.stringify(['--workspace', ws]),
+      SACODE_WORKSPACE_ID: 'ws',
       SACODE_HOST_TIMEOUT_MS: '20000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -112,22 +122,22 @@ async function rpc(d, bearer, method, params, id) {
 async function sessionWithMessages(d, cwd, tag) {
   const dev = await device(d, cwd, `p-${tag}`, tag);
   const c = await rpc(d, dev.bearer, 'session/create',
-    { workspaceId: d.ws, title: `own-${tag}`, operationId: `op-${tag}-c` }, `${tag}-c`);
+    { workspaceId: 'ws', title: `own-${tag}`, operationId: `op-${tag}-c` }, `${tag}-c`);
   assert.ok(c.result?.id, JSON.stringify(c));
   const sid = c.result.id;
   const sel = await rpc(d, dev.bearer, 'session/select',
-    { workspaceId: d.ws, sessionId: sid }, `${tag}-sel`);
+    { workspaceId: 'ws', sessionId: sid }, `${tag}-sel`);
   assert.ok(sel.result?.selected, JSON.stringify(sel));
   const sub = await rpc(d, dev.bearer, 'session/submit',
-    { workspaceId: d.ws, sessionId: sid, operationId: `op-${tag}-say`, text: `内容-${tag}` }, `${tag}-sub`);
+    { workspaceId: 'ws', sessionId: sid, operationId: `op-${tag}-say`, text: `内容-${tag}` }, `${tag}-sub`);
   assert.ok(sub.result, JSON.stringify(sub));
   const fl = await rpc(d, dev.bearer, 'session/flush',
-    { workspaceId: d.ws, sessionId: sid, operationId: `op-${tag}-flush` }, `${tag}-fl`);
+    { workspaceId: 'ws', sessionId: sid, operationId: `op-${tag}-flush` }, `${tag}-fl`);
   assert.ok(fl.result, JSON.stringify(fl));
   return { ...dev, sid, durable: fl.result.durable };
 }
 
-test('跨工作区 session/create 今天落到真实工作区（现状钉死，未来应红）', async () => {
+test('跨工作区 session/create 必须被 workspace-not-bound 拒', async () => {
   const cwd = await mkdtemp(path.join(root, 'target', 'sacode-own-cx-'));
   const d = await boot(cwd);
   try {
@@ -135,16 +145,15 @@ test('跨工作区 session/create 今天落到真实工作区（现状钉死，�
     const r = await rpc(d, dev.bearer, 'session/create',
       { workspaceId: 'workspace-that-does-not-exist', title: 'should-be-rejected',
         operationId: 'op-xcreate-1' }, 'cx-1');
-    assert.ok(r.result?.id, `跨工作区 create 今天居然被拒了，形状变了：${JSON.stringify(r)}`);
-    assert.equal(r.result.workspaceId, undefined,
-      `回执不该伪造声称的 workspaceId：${JSON.stringify(r)}`);
+    assert.equal(r.error?.code, -32001, JSON.stringify(r));
+    assert.match(r.error?.message ?? '', /workspace-not-bound/, JSON.stringify(r));
   } finally {
     await d.stop();
     await rmBounded(cwd);
   }
 });
 
-test('跨工作区 session/select 今天选中真实工作区的会话（现状钉死，未来应红）', async () => {
+test('跨工作区 session/select 必须被 workspace-not-bound 拒', async () => {
   const cwd = await mkdtemp(path.join(root, 'target', 'sacode-own-sel-'));
   const d = await boot(cwd);
   try {
@@ -152,15 +161,15 @@ test('跨工作区 session/select 今天选中真实工作区的会话（现状�
     const r = await rpc(d, s.bearer, 'session/select',
       { workspaceId: 'totally-wrong-workspace', sessionId: s.sid,
         operationId: 'op-sel-1' }, 'sel-1');
-    assert.ok(r.result?.selected === true,
-      `跨工作区 select 今天居然被拒了，形状变了：${JSON.stringify(r)}`);
+    assert.equal(r.error?.code, -32001, JSON.stringify(r));
+    assert.match(r.error?.message ?? '', /workspace-not-bound/, JSON.stringify(r));
   } finally {
     await d.stop();
     await rmBounded(cwd);
   }
 });
 
-test('跨工作区 session/events 今天按 sessionId 归属过滤，不看 workspaceId（现状钉死，未来应红）', async () => {
+test('跨工作区 session/events 必须被 workspace-not-bound 拒', async () => {
   const cwd = await mkdtemp(path.join(root, 'target', 'sacode-own-evt-'));
   const d = await boot(cwd);
   try {
@@ -168,27 +177,25 @@ test('跨工作区 session/events 今天按 sessionId 归属过滤，不看 work
     const r = await rpc(d, s.bearer, 'session/events',
       { workspaceId: 'different-workspace-entirely', sessionId: s.sid,
         afterSeq: '0', limit: '20' }, 'evt-1');
-    // 现状：events 走 SessionEventReplay，按 sessionId 定位日志文件，workspaceId 参数被忽略。
-    // 数据隔离靠 sessionId 的 opaque 性——攻击者拿到 sessionId 才能读，
-    // 拿不到就 404 或回空页。这**不是**按 workspaceId 判范围。
-    assert.ok(r.result?.events, JSON.stringify(r));
-    assert.ok(Array.isArray(r.result.events), JSON.stringify(r));
-    // 至少能拿到 durable 计数中的**任意一条**——证明「跨工作区」真的拿到了数据，不是空页。
-    assert.ok(r.result.events.length >= 1,
-      `跨工作区 events 今天居然回空页了，说明形状变了：${JSON.stringify(r)}（durable=${s.durable}）`);
-    // 反向锁：另一个 sessionId 拿不到这条会话的正文（按 sessionId 归属是**唯一**在生效的）。
-    const other = await rpc(d, s.bearer, 'session/events',
-      { workspaceId: d.ws, sessionId: 'sessions/does-not-exist',
+    assert.equal(r.error?.code, -32001, JSON.stringify(r));
+    assert.match(r.error?.message ?? '', /workspace-not-bound/, JSON.stringify(r));
+    // 反向锁：另一台设备用**正确的** workspaceId 拿同一会话仍然要能读——
+    // 说明这条门禁只按参数值判，不按设备判；同一 workspace 里的设备可互通。
+    // 这里 s.bearer 是 sel 设备的 token，但它的 workspaceId='ws' 是本机绑定的，应放行。
+    const own = await rpc(d, s.bearer, 'session/events',
+      { workspaceId: 'ws', sessionId: s.sid,
         afterSeq: '0', limit: '20' }, 'evt-2');
-    assert.ok(other.result?.events === undefined || other.result.events.length === 0,
-      `陌生 sessionId 不该读到内容：${JSON.stringify(other)}`);
+    assert.ok(own.result?.events, JSON.stringify(own));
+    assert.ok(Array.isArray(own.result.events), JSON.stringify(own));
+    assert.ok(own.result.events.length >= 1,
+      `同工作区读应该成功：${JSON.stringify(own)}`);
   } finally {
     await d.stop();
     await rmBounded(cwd);
   }
 });
 
-test('跨工作区 session/submit 今天写入真实工作区（现状钉死，未来应红）', async () => {
+test('跨工作区 session/submit 必须被 workspace-not-bound 拒', async () => {
   const cwd = await mkdtemp(path.join(root, 'target', 'sacode-own-sub-'));
   const d = await boot(cwd);
   try {
@@ -196,9 +203,8 @@ test('跨工作区 session/submit 今天写入真实工作区（现状钉死，�
     const r = await rpc(d, s.bearer, 'session/submit',
       { workspaceId: 'another-workspace-string', sessionId: s.sid,
         operationId: 'op-sub-cross', text: '跨界正文' }, 'sub-1');
-    assert.ok(r.result, JSON.stringify(r));
-    assert.equal(typeof r.result.events, 'number', JSON.stringify(r));
-    assert.ok(r.result.events > 0, `跨工作区 submit 应该还是写了正文：${JSON.stringify(r)}`);
+    assert.equal(r.error?.code, -32001, JSON.stringify(r));
+    assert.match(r.error?.message ?? '', /workspace-not-bound/, JSON.stringify(r));
   } finally {
     await d.stop();
     await rmBounded(cwd);
@@ -211,11 +217,11 @@ test('approval/answer 的 scope 门禁独立于 workspaceId：无 approval scope
   try {
     const dev = await device(d, cwd, 'p-appr', 'appr');
     const c = await rpc(d, dev.bearer, 'session/create',
-      { workspaceId: d.ws, title: 'appr-session', operationId: 'op-appr-c' }, 'ap-1');
+      { workspaceId: 'ws', title: 'appr-session', operationId: 'op-appr-c' }, 'ap-1');
     assert.ok(c.result?.id, JSON.stringify(c));
     const sid = c.result.id;
     const r = await rpc(d, dev.bearer, 'approval/answer',
-      { workspaceId: 'any-workspace', sessionId: sid, operationId: 'op-appr-1',
+      { workspaceId: 'ws', sessionId: sid, operationId: 'op-appr-1',
         approvalId: 'totally-invented-id', decision: 'allowed-once' }, 'ap-2');
     assert.equal(r.error?.code, -32001, JSON.stringify(r));
     assert.match(r.error?.message ?? '', /scope-required/, JSON.stringify(r));

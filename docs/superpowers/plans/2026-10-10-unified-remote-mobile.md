@@ -154,7 +154,7 @@ for (const row of rows) {
 
 **接口：**所有会话操作消费 AuthenticationContext 和显式 workspaceId/sessionId。运行协调器为普通与团队提供同一实例/根目录/会话路由；capabilities 来自任务1方法表与当前授权交集。
 
-- [ ] 写两设备并发选择不同会话提交、团队/普通共享归属、跨项目读/写拒绝的测试；当前 global select 与两桥差异不得忽略。（批次 U 落了「跨项目」这一半的**现状钉死**：`apps/daemon/test/remote-ownership.test.mjs` 五条里前四条把「今天跨工作区 create/select/events/submit 都被接受、落到宿主启动目录」的形状写成断言。今天必须全绿，等 §7 补上「按 sessionId 查它真实所属工作区再对齐请求参数」的核对后这四条会立刻翻红，成为**正确的独占受害用例**——测试文件不需要重写，只需把「今天允许」的判据反转到断言 error。未做：两设备并发选择不同会话提交、团队/普通共享归属（这三条要跑双设备 + 团队桥差异，属任务 7 的宿主契约变更落地后一并补））
+- [ ] 写两设备并发选择不同会话提交、团队/普通共享归属、跨项目读/写拒绝的测试；当前 global select 与两桥差异不得忽略。（批次 U 落了「跨项目」这一半的**现状钉死**；批次 V 已经把「跨工作区」这一维从「今天允许」升级为「必须被 workspace-not-bound 拒」——`apps/daemon/test/remote-ownership.test.mjs` 前四条用例已翻转为断言 error.code=-32001 / message matches /workspace-not-bound/，#3 还额外锁死「同工作区读仍能成功」的反向不变量。仍缺「按 sessionId 查它真实所属工作区、对齐请求参数」的会话级核对，那属于任务 7 的宿主契约变更；未做：两设备并发选择不同会话提交、团队/普通共享归属（这三条要跑双设备 + 团队桥差异，属任务 7 的宿主契约变更落地后一并补））
 - [ ] 移除远程先 session/select 后 execute 的契约；按会话定位服务并隔离执行上下文。桌面本机远程接入开启时接同协调器，不另启私有写入 Host。
 - [ ] 逐项实现方法表的真实核心/Host分派：会话/消息/队列、目标/计划/待办、审批/问题、取消、文件/差异/Git、执行输出、模型/用量、扩展/连接/设置及团队。（fc7e5b6 把「打得到」这一层铺完：98 条可转发 + `initialize` 能力面同步宣告 + 真实宿主端到端抽验 `tips/get`/`model/list`/`credential/set` 三条代表。剩下的真缺口是「打到了按不按显式归属执行」——见下两行，未做）
 - [ ] 每项缺后端实现时在对应核心模块补完整契约与测试，不仅添白名单。取消使用独立控制路径，不被长任务占用等待锁堵住。
@@ -162,7 +162,8 @@ for (const row of rows) {
 - [ ] 三设备不同权限跑正反矩阵；管理员能力不默认包含在普通设备token中；无权限catalog与SSE都不泄漏资源。
 - [ ] 变异取消session归属、改成信任客户端审批字符串，指定独占受害用例必须红；还原全量回绿。
   - 已落（批次 U，2026-10-10）：`remote_gate.cj:113` 一行赋值把 `authorizer.check` 短路成 `AuthzDecision(true, AUTHZ_REASON_OK)`——这是「信任客户端」的最强形态（同时跳过 scope、workspace 白名单、session 白名单）。指定受害用例 `apps/daemon/test/remote-ownership.test.mjs` #5「approval/answer 的 scope 门禁独立于 workspaceId」独占变红：`r.error?.code` 从 `-32001 scope-required` 变成 `undefined`，实际响应是穿到 `host_proxy.forward` 后宿主收到的 `approvalId='totally-invented-id'` 回执 `{"accepted":false,"state":"unknown"}`。红表 tests 5 / pass 4 / fail 1；还原后 tests 5 / pass 5 / fail 0。cp 备份 + `diff` 空输出证逐字一致。全量回归 tests 107 / pass 106 / fail 1（唯一红是批次 K 保留的「带外撤销一台」，属并发会话文件）。
-  - **未落（诚实边界）**：「取消 session 归属」这一半在**当前架构下没法产生受害用例**——`core/src/remote_authorization.cj:180-189` 的归属分支要求 `view.allowedWorkspaces`/`allowedSessions` 是 `Some`，但 `DeviceAuthzView` 当前恒为 `None`（设备白名单为空），所以整段 `contains` 检查是空转。任何变异「删掉归属检查」在本仓现状下都不会让任何用例变红——因为**没有一条测试依赖归属检查存在**。这四条跨工作区现状用例（#1–#4）把「今天不检查归属」的形状钉死为今天的全绿；等 §7 补上「按 sessionId 反查真实工作区、对齐请求参数」的实现后，这四条会立刻翻红成为**正确的独占受害用例**——测试文件不需要重写，只需把「今天允许」的判据反转到断言 error。
+  - 已落（批次 V，2026-10-10）：「取消 session 归属」这一半**真的关掉了**。`remote_gate.cj` 加 `boundWorkspace` 字段与一条 `workspace-not-bound` 分支（位置在 `authorizer.check` 之后，让 scope/白名单先暴露）；`daemon.cj` 加 `boundWorkspaceId()` 只读 `SACODE_WORKSPACE_ID`（opt-in，避免自动派生把审计/脱敏夹具翻红）；`remote-ownership.test.mjs` 前四条断言从「今天允许」翻成「必须被拒 `-32001 workspace-not-bound`」，#3 还加了一条同工作区读仍成功的反向锁；#5 用 `workspaceId='ws'` 让它穿过新门禁继续独占地被 `scope-required` 杀死。基线 tests 5 / pass 5 / fail 0；变异 M-V 把 workspace 分支的 `decision.allowed && boundWorkspace.size != 0` 里的 `decision.allowed` 换成字面 `false`，红表 tests 5 / pass 1 / fail 4，四条独占受害正是 #1–#4，#5 approval scope 独立不动。还原后 tests 5 / pass 5 / fail 0；全量回归 tests 107 / pass 106 / fail 1（同一红）。
+  - **仍缺（诚实边界）**：① 会话级归属核验——`sessionId` 是否真属于这个 workspace 仍无检查（`DeviceAuthzView.allowedSessions` 恒为 `None`）；② 生产默认——`SACODE_WORKSPACE_ID` 未设时门禁仍空转，属运维部署决策，本批只在测试里 opt-in。任务 7 的宿主契约落地后按同一条 mutation 节奏再验。
 - [ ] 授权后按方法族精确提交，所有PRD需求在表中有真实入口与验收指针。
 
 ## 8. 持久幂等、授权 SSE 与恢复

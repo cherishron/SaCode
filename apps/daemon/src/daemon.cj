@@ -225,6 +225,17 @@ func requestHeader(request: HttpRequest, name: String): String {
     return ""
 }
 
+// 解析门禁绑定的工作区标识。只在 SACODE_WORKSPACE_ID 环境变量显式非空时启用
+// （opt-in）；空串表示这台实例不启用归属核验。
+// 之所以不从 SACODE_HOST_ARGS 的 --workspace 自动派生：那会把「今天没检查」的
+// 默认变成「今天检查」的默认，把大量以 workspaceId='ws-1' 做审计/脱敏测试的
+// 夹具一并翻红。显式开这一开关，是把「跨工作区写入必须被拒」的语义真正
+// 落进生产路径，而不是靠约定。
+func boundWorkspaceId(): String {
+    if (let Some(v) <- getVariable("SACODE_WORKSPACE_ID")) { return v }
+    return ""
+}
+
 // 设计 §7：/rpc 与 /auth/* 仅 POST、/sse 与 /health 仅 GET；业务请求 Content-Type
 // 必须是 application/json；外部 CORS 默认不开放（Origin 出现即拒）。这四条是路由级约束，
 // 不依赖 gate，未启用接入时同样生效。
@@ -569,7 +580,7 @@ main(args: Array<String>): Int64 {
         // 接入没启用就完全不接——0.1 无认证旧路径不写任何新文件。
         idempotencyLedger.attachStore(path: "${accessConfig.identityPath}.ledger.jsonl")
         setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId,
-            snapshotPath: deviceSnapshot)))
+            snapshotPath: deviceSnapshot, boundWorkspace: boundWorkspaceId())))
         setRemoteEndpoints(Some(RemoteAccessEndpoints(
             store, audit, RemoteAuthRateLimiter(), identity.instanceId,
             snapshotPath: deviceSnapshot)))

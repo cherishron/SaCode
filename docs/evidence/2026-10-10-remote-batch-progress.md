@@ -732,6 +732,35 @@ Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，�
 
 **未落**：① 归属检查本身的实现（`authorizer.check` 里加「按 sessionId 反查真实工作区，与请求参数对齐」的分支）——属任务 7 的宿主契约变更（宿主要回传 `sessionId|workspaceId`），本批不动。② 计划第 157 行「跨项目读/写拒绝」的**真正实现**——本批只把「今天不拒」的形状钉成用例，等归属核对落地时那四条会翻红成为受害用例。本批的边际证据是**把现状钉死**，不是「实现归属」。
 
+## 批次 V：workspace-ownership 门禁（plan 第 163 行的另一半）
+
+**目标**：把批次 U 记为「今天不检查归属」的那四条跨工作区用例真的翻成「必须被拒」。批次 U 的诚实边界（`view.allowedWorkspaces`/`allowedSessions` 恒为 `None`，没有归属判定点）用一行实现关死：在门禁里加一条与 `boundWorkspace` 绑定的显式归属核验。
+
+**改法**（三个文件）：
+1. `apps/daemon/src/remote_gate.cj`：加 `boundWorkspace: String` 字段与 init 参数；`check()` 里在 `authorizer.check` 判 `allowed` 之后加一条分支——`boundWorkspace.size != 0 && ws != boundWorkspace` 时 `recordDenied(... "workspace-not-bound")` 并回 `GateOutcome(false, "workspace-not-bound", ctx)`。位置刻意放在 `authorizer.check` 之后：先让 scope/白名单/方法未登记这类更基础的原因暴露出来，然后再判「归属是不是本机」，避免同一批测试里两条不同门禁互相遮掉对方的红。空 `boundWorkspace` 表示这台实例不启用这条核验，保持向后兼容（测试夹具、未绑定工作区的开发态）。
+2. `apps/daemon/src/daemon.cj`：加 `boundWorkspaceId()` 只读 `SACODE_WORKSPACE_ID` 环境变量（opt-in）。**没**从 `SACODE_HOST_ARGS` 的 `--workspace` 自动派生：那会把「今天没检查」的默认变成「今天检查」的默认，把大量以 `workspaceId='ws-1'` 做审计/脱敏测试的夹具一并翻红。显式开这一开关，是把「跨工作区写入必须被拒」的语义真正落进生产路径，而不是靠约定。`setRemoteGate` 调用里加上 `boundWorkspace: boundWorkspaceId()`。
+3. `apps/daemon/test/remote-ownership.test.mjs`：`boot()` env 加 `SACODE_WORKSPACE_ID: 'ws'`；`sessionWithMessages` 辅助函数的 4 处 session 操作把 `workspaceId: d.ws` 全改成 `workspaceId: 'ws'`（这样本工作区路径能通过新门禁）；#1–#4 从「今天允许」翻转成「必须被拒 `workspace-not-bound`」；#3 session/events 额外加一条反向锁——同一工作区读还能成功，证明门禁没有过拒；#5 approval/answer 用 `workspaceId: 'ws'` 让它穿过新门禁、继续独占地由 `scope-required` 杀死。
+
+**基线**（`sacode-mut-v/release/bin/main.exe`）：`node --test test/remote-ownership.test.mjs` → **tests 5 / pass 5 / fail 0 / cancelled 0 / 4.6s** rc=0。
+
+**变异反证 M-V**（`remote_gate.cj:129-135` 的 workspace-not-bound 分支把 `decision.allowed` 改成字面 `false`，即整条分支永远短路、门禁不再看工作区归属；只改语义不改签名）：
+
+```cangjie
+if (decision.allowed
+    && false                 // ← M-V：把 boundWorkspace.size != 0 抹成 false
+    && ws != boundWorkspace) {
+```
+
+`sacode-mut-v2/release/bin/main.exe` 复跑同用例：**tests 5 / pass 1 / fail 4 / cancelled 0 / 4.8s** rc=1。四条独占受害：#1 session/create、#2 session/select、#3 session/events、#4 session/submit，四条返回体都从 `{"error":{"code":-32001,"message":"...workspace-not-bound..."}}` 变成业务 result（比如 `{"accepted":false,"state":"unknown"}` 或 `{"events":3,"durable":2}`），归因清楚：是门禁放行了跨工作区写入。#5 approval/answer 仍绿——它的红来自 `scope-required`，与 workspace 分支独立。
+
+**还原**：`cp /tmp/remote_gate.cj.v_backup` → `src/remote_gate.cj`，`diff` 空输出证逐字一致。
+
+**全量回归**：`SACODE_DAEMON=…/sacode-mut-v/release/bin/main.exe && node --test test/remote-*.test.mjs` → **tests 107 / pass 106 / fail 1 / cancelled 0 / duration 28s** rc=1。唯一红是批次 K 保留的「带外撤销一台」（`core/src/remote_identity.cj:274` 撤销事故半径），属并发会话持有的文件，本批不动。
+
+**结论**：计划第 163 行「变异取消 session 归属、改成信任客户端审批字符串」的**归属这一半**本批真的关掉了——`workspace-not-bound` 现在有真实的判定点，四条跨工作区用例从「今天允许」变成「必须被拒」；M-V 的独占受害正是这四条，approval scope 那条独立受害保留不动。批次 U 的诚实边界（"today has no ownership check"）至此**不再成立**，工作区归属已从「没有检查」升级为「按环境变量 opt-in 检查」。
+
+**仍没落的两件**：① **会话级**归属核验——`sessionId` 是否真属于这个 workspace 仍无检查（`DeviceAuthzView.allowedSessions` 恒为 `None`）；这属于任务 7 的宿主契约变更（宿主要回传 `sessionId|workspaceId`），本批不动。② 生产默认——`SACODE_WORKSPACE_ID` 未设时门禁仍空转，属运维部署问题；本批只在测试里 opt-in，把「跨工作区必须拒」的形状与实现都落进仓库，但没替用户决定哪台生产实例要绑定。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |

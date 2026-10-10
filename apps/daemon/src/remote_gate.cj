@@ -3,6 +3,7 @@ package daemon
 import core.*
 import std.sync.*
 import std.time.*
+import std.env.*
 
 // 远程接入的门面：把 RemoteIdentityStore / RemoteAccessAuthorizer /
 // RemoteAuditLog 三块拼成「一句请求 → 一条决定」，daemon.cj 只在 /rpc
@@ -40,16 +41,23 @@ public class RemoteRequestGate {
     // 设备快照路径：带上它时，每次认证前先看磁盘有没有被带外管理入口改过
     // （--manage revoke-device）。不带它则纯内存语义，测试夹具照旧。
     let snapshotPath: String
+    // 绑定的工作区标识（SACODE_WORKSPACE_ID）。非空时强制客户端请求的 workspaceId
+    // 与之逐字一致；空串则跳过这条（保持历史语义，测试夹具照旧）。
+    // 这条把「daemon 是单工作区」这条架构事实写进门禁，取代过去靠白名单 None 时
+    // contains 分支空转的隐式信任。规格 §7「显式会话归属」要求的就是这一层。
+    let boundWorkspace: String
     let base = MonoTime.now()
     let lock = Mutex()
 
     public init(identity: RemoteIdentityStore, authorizer: RemoteAccessAuthorizer,
-                audit: RemoteAuditLog, instanceId: String, snapshotPath!: String = "") {
+                audit: RemoteAuditLog, instanceId: String, snapshotPath!: String = "",
+                boundWorkspace!: String = "") {
         this.identity = identity
         this.authorizer = authorizer
         this.audit = audit
         this.instanceId = instanceId
         this.snapshotPath = snapshotPath
+        this.boundWorkspace = boundWorkspace
     }
 
     func nowMs(): Int64 {
@@ -112,6 +120,19 @@ public class RemoteRequestGate {
             let view = DeviceAuthzView(c)
             let decision = authorizer.check(view, method, ws, sid)
             if (decision.allowed) {
+                // 显式工作区归属：门禁绑定的那个 workspace 是唯一可寻址的，
+                // 客户端把 workspaceId 参数写成本工作区以外的任何串都要拒。
+                // 位置在 authorizer.check 之后——先让 scope/白名单/方法未登记
+                // 这类更基础的原因暴露出来，然后再判「归属是不是本机」。
+                // 空 boundWorkspace 表示这台实例不启用这条核验（测试夹具、
+                // 未绑定工作区的开发态），保持向后兼容。
+                if (decision.allowed
+                    && boundWorkspace.size != 0
+                    && ws != boundWorkspace) {
+                    recordDenied(c.deviceId, c.principalId, method, ws, sid, op,
+                        "workspace-not-bound")
+                    return GateOutcome(false, "workspace-not-bound", ctx)
+                }
                 recordAllowed(c, method, ws, sid, op)
                 return GateOutcome(true, "", ctx, view: Some(view))
             }
