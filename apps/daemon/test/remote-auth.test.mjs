@@ -383,7 +383,135 @@ test('管理入口参数不合形状一律拒绝，不落半张票据', async ()
   const short = await manage(['--manage', 'enroll-ticket', snapshot]);
   assert.equal(short.code, 64, `参数不足必须退出码 64：${short.err}`);
   assert.ok(!/^[0-9a-f]{32}$/.test(short.out.trim()), '拒绝时不得输出票据');
-  const badVerb = await manage(['--manage', 'revoke-device', snapshot, 'p-1']);
+  const badVerb = await manage(['--manage', 'rotate-everything', snapshot, 'p-1']);
   assert.equal(badVerb.code, 64, '未实现的管理动作不能静默成功');
+  // list-devices 只接受 3 段：多给一个操作数说明调用方把动词搞混了，不能猜。
+  const extra = await manage(['--manage', 'list-devices', snapshot, 'unexpected']);
+  assert.equal(extra.code, 64);
+  assert.equal(extra.out.trim(), '', '形状不合时不得输出设备行');
   await rm(dir, { recursive: true, force: true });
+});
+
+// 把「HTTP 登记一台设备 → CLI 看见它 → CLI 撤销 → 在跑的 daemon 立刻拒它的令牌」
+// 整条带外管理链跑一遍。这一段是设计 §4「撤销只能通过本机受保护管理入口」的实处：
+// 只写磁盘而 daemon 看不见，等于撤销要等重启才生效。
+test('管理入口列设备与撤销对在跑的 daemon 生效，且 stdout 不含凭据与摘要', async () => {
+  const dir = await mkdtemp(path.join(root, 'target', 'sacode-remote-rev-'));
+  const identity = path.join(dir, 'instance.id');
+  const snapshot = `${identity}.devices.json`;
+  const d = await boot({ ...accessEnv(dir), SACODE_REMOTE_IDENTITY: identity });
+  try {
+    const created = await manage(['--manage', 'enroll-ticket', snapshot, 'p-rev']);
+    assert.equal(created.code, 0, created.err);
+    const ticket = created.out.replace(/\r/g, '').trim().split('\n')[1];
+
+    const enroll = await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: ticket, deviceName: 'phone-r', kind: 'mobile' }));
+    const dev = JSON.parse(await enroll.text());
+    assert.equal(enroll.status, 200);
+
+    const tokRes = await d.post('/auth/token',
+      JSON.stringify({ deviceId: dev.deviceId, credential: dev.credential }));
+    const tok = JSON.parse(await tokRes.text());
+
+    const listed = await manage(['--manage', 'list-devices', snapshot]);
+    assert.equal(listed.code, 0, listed.err);
+    const listing = listed.out.replace(/\r/g, '');
+    assert.match(listing, new RegExp(`^${dev.deviceId}\\s+p-rev\\s+mobile\\s+active$`, 'm'),
+      `设备行形状不对：${listing}`);
+    assert.match(listing, /device-count 1/);
+    // 列表不得泄漏凭据原文或校验摘要。
+    assert.ok(!listing.includes(dev.credential), '不得打印凭据原文');
+    assert.ok(!listing.includes(dev.credential.slice(0, 16)), '不得打印凭据片段');
+    assert.doesNotMatch(listing, /[0-9a-f]{64}/, '不得出现 64 位 hex（摘要或凭据）');
+
+    const before = await d.rpc('initialize', {}, {
+      headers: { authorization: `Bearer ${tok.accessToken}` },
+    });
+    assert.doesNotMatch(before.body, /-32001/, '撤销前应放行');
+
+    const revoked = await manage(['--manage', 'revoke-device', snapshot, dev.deviceId]);
+    assert.equal(revoked.code, 0, revoked.err);
+    assert.match(revoked.out, /revoked phone-r-1/);
+
+    const after = await d.rpc('initialize', {}, {
+      headers: { authorization: `Bearer ${tok.accessToken}` },
+    });
+    assert.match(after.body, /-32001/, '带外撤销后同一令牌必须被拒');
+    assert.doesNotMatch(after.body, /protocolVersion|capabilities/, '被拒的请求不得执行 initialize');
+
+    const again = await manage(['--manage', 'revoke-device', snapshot, 'no-such-device']);
+    assert.equal(again.code, 78, '敲错 id 必须如实报错，不能假装撤销成功');
+    assert.match(again.err, /device-not-found/);
+  } finally {
+    await d.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// 设计 §7「每设备最多 2 条 SSE」：SSE 是长连接，槽位真的被占住，
+// 所以这一条能在真实 socket 上确定性复现（不像并发 RPC 那样依赖处理器耗时）。
+test('每设备第 3 条 SSE 被限额拒回，断开一条后槽位归还', async () => {
+  const dir = await mkdtemp(path.join(root, 'target', 'sacode-remote-sse-'));
+  const identity = path.join(dir, 'instance.id');
+  const snapshot = `${identity}.devices.json`;
+  const d = await boot({ ...accessEnv(dir), SACODE_REMOTE_IDENTITY: identity });
+  const live = [];
+  try {
+    const created = await manage(['--manage', 'enroll-ticket', snapshot, 'p-sse']);
+    const ticket = created.out.replace(/\r/g, '').trim().split('\n')[1];
+    const dev = JSON.parse(await (await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: ticket, deviceName: 'phone-s', kind: 'mobile' }))).text());
+    const tok = JSON.parse(await (await d.post('/auth/token',
+      JSON.stringify({ deviceId: dev.deviceId, credential: dev.credential }))).text());
+    const headers = { authorization: `Bearer ${tok.accessToken}` };
+
+    // 长连接必须绕开 boot() 里那个 10s AbortSignal 的 get：定时器会掐掉自己打开的流，
+    // 把夹具的超时当成用例失败记（本轮就是这么红过一次）。
+    const openStream = async () => {
+      const r = await fetch(`http://127.0.0.1:${d.port}/sse`, { headers });
+      const reader = r.status === 200 ? r.body.getReader() : null;
+      let first = '';
+      if (reader) {
+        const got = await reader.read();
+        if (!got.done) first = new TextDecoder().decode(got.value);
+      }
+      if (reader) live.push(reader);
+      return { status: r.status, reader, first, ct: r.headers.get('content-type') || '', resp: r };
+    };
+
+    const a = await openStream();
+    const b = await openStream();
+    assert.equal(a.status, 200, `第一条 SSE 应建立：${a.first}`);
+    assert.equal(b.status, 200);
+    assert.match(a.ct, /event-stream/);
+    assert.match(a.first, /connected/, '200 之外还要真的收到首帧，才证明槽位是被活流占住');
+
+    // 被拒的那条是短响应，用带超时的 get 正好。
+    const third = await d.get('/sse', headers);
+    const thirdBody = await third.text();
+    assert.equal(third.status, 429, `第 3 条必须被限额拒回：${thirdBody}`);
+    assert.match(thirdBody, /concurrency-denied/);
+    assert.match(thirdBody, /sse-per-device/);
+    assert.ok((third.headers.get('content-type') || '').includes('application/json'),
+      '被拒的流不得伪装成 event-stream');
+
+    // 槽位归还：关掉其中一条后应能补上。服务端靠 1s 周期的写探测发现对端已断开，
+    // 所以这里有界轮询而不是定值 sleep——定值 sleep 在负载下会假红。
+    a.reader.cancel().catch(() => {});
+    let recovered = null;
+    const until = Date.now() + 12000;
+    while (Date.now() < until) {
+      recovered = await openStream();
+      if (recovered.status === 200) break;
+      await recovered.resp.text().catch(() => {});
+      await delay(250);
+    }
+    assert.equal(recovered?.status, 200, `释放后应能再建流，实得 ${recovered?.status}`);
+    assert.match(recovered.first, /connected/);
+  } finally {
+    for (const reader of live) reader.cancel().catch(() => {});
+    await d.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

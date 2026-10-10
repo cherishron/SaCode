@@ -75,6 +75,22 @@ public class AccessToken {
     }
 }
 
+// 设备清单的投影形状：本地管理入口要把它整段打到 stdout，所以这一层
+// 刻意不含 credentialDigest / credential——摘要进日志等于把校验面暴露给
+// 任何能看到终端回滚的人（离线字典攻击的入口）。
+public class DeviceSummary {
+    public let deviceId: String
+    public let principalId: String
+    public let kind: String
+    public let revoked: Bool
+    public init(deviceId!: String, principalId!: String, kind!: String, revoked!: Bool) {
+        this.deviceId = deviceId
+        this.principalId = principalId
+        this.kind = kind
+        this.revoked = revoked
+    }
+}
+
 public class AuthenticationContext {
     public let deviceId: String
     public let principalId: String
@@ -111,6 +127,9 @@ public class RemoteIdentityStore {
     // 撤销版本号：每次 revokeDevice 递增；旧版本令牌一律拒绝。
     var revocationVersion: Int64 = 1
     var nextDeviceId: Int64 = 1
+    // 最近一次从磁盘读到的快照原文。refreshFromDisk 用它做「有没有变」的比对，
+    // 免得每个认证请求都解析一遍 JSON。
+    var snapshotCacheText = ""
 
     public init() {}
 
@@ -242,13 +261,32 @@ public class RemoteIdentityStore {
     }
 
     // 撤销设备：标记 revoked，递增全局撤销版本；旧版本令牌立刻失效。
-    public func revokeDevice(deviceId: String): Unit {
+    // 撤销要能如实报告「这台设备不存在」：管理入口敲错 id 时，
+    // 「打印了 revoked 但什么都没发生」比报错难诊断得多。
+    // 撤销水位只在真撤销掉一台设备时递增——凭空递增会把所有在线令牌打挂。
+    public func revokeDevice(deviceId: String): Bool {
         lock.lock()
+        var hit = false
         if (let Some(d) <- devices.get(deviceId)) {
             d.revoked = true
+            hit = true
         }
-        revocationVersion += 1
+        if (hit) { revocationVersion += 1 }
         lock.unlock()
+        return hit
+    }
+
+    // 设备清单（给本地管理入口用）。只回投影，摘要与凭据原文都不出这一层。
+    public func listDevices(): ArrayList<DeviceSummary> {
+        lock.lock()
+        let out = ArrayList<DeviceSummary>()
+        for ((deviceId, d) in devices) {
+            out.add(DeviceSummary(
+                deviceId: deviceId, principalId: d.principalId,
+                kind: d.kind, revoked: d.revoked))
+        }
+        lock.unlock()
+        return out
     }
 
     // 认证：返回给请求处理器的最小上下文。任何一步不通过都返回 None，
@@ -353,36 +391,9 @@ public class RemoteIdentityStore {
         let root = try { JsonValue.fromStr(text).asObject() } catch (_: Exception) { return false }
         lock.lock()
         // 持锁段内一律不 return：早退会漏 unlock，之后整台 daemon 的认证都卡在锁上。
-        var ok = true
-        var sawDevices = false
-        if (let Some(node) <- root.get("devices")) {
-            var arr = JsonArray()
-            let isArr = try { arr = node.asArray(); true } catch (_: Exception) { false }
-            if (isArr) {
-                sawDevices = true
-                var i: Int64 = 0
-                while (i < arr.size()) {
-                    if (let Some(item) <- arr.get(i)) {
-                        let obj = RemoteIdentityStore.objectOf(item)
-                        if (let Some(o) <- obj) {
-                            let deviceId = RemoteIdentityStore.strField(o, "deviceId")
-                            let digest = RemoteIdentityStore.strField(o, "credentialDigest")
-                            if (deviceId.size > 0 && digest.size > 0) {
-                                let record = DeviceRecord(
-                                    deviceId, RemoteIdentityStore.strField(o, "principalId"), digest,
-                                    RemoteIdentityStore.strField(o, "kind"), "")
-                                record.revoked = RemoteIdentityStore.boolField(o, "revoked")
-                                devices.add(deviceId, record)
-                            }
-                        } else {
-                            ok = false
-                        }
-                    }
-                    i += 1
-                }
-            }
-        }
-        if (ok && sawDevices) {
+        let seen = mergeDevicesLocked(root, propagateRevoked: false)
+        if (seen >= Int64(0)) {
+            snapshotCacheText = text
             mergeEnrollmentsLocked(root)
             if (let Some(node) <- root.get("revocationVersion")) {
                 let v = try { node.asInt().getValue() } catch (_: Exception) { revocationVersion }
@@ -396,7 +407,69 @@ public class RemoteIdentityStore {
         lock.unlock()
         // 「没有 devices 数组」按「无可恢复历史」处理并返回 false：调用方据此知道
         // 快照形状不对，而不是拿到一个「看起来恢复成功」的空 store。
-        return ok && sawDevices
+        return seen >= Int64(0)
+    }
+
+    // 设备行合入（须持锁调用）。返回看到的设备行数；-1 表示设备节点缺失或某行形状不合，
+    // 调用方据此判「这份快照不可信」，不往里合任何状态。
+    // 设备表只增不删、revoked 只能 false→true，所以内存里刚登记、磁盘还没写的设备
+    // 不会被另一份旧快照回退掉。propagateRevoked 为 true 时磁盘上的撤销位才落到内存——
+    // 这是带外管理入口（--manage revoke-device）能在跑的 daemon 上生效的唯一通路。
+    func mergeDevicesLocked(root: JsonObject, propagateRevoked!: Bool): Int64 {
+        if (let Some(node) <- root.get("devices")) {
+            var arr = JsonArray()
+            let isArr = try { arr = node.asArray(); true } catch (_: Exception) { false }
+            if (!isArr) { return -1 }
+            var seen: Int64 = 0
+            var i: Int64 = 0
+            while (i < arr.size()) {
+                seen += 1
+                if (let Some(item) <- arr.get(i)) {
+                    if (let Some(o) <- RemoteIdentityStore.objectOf(item)) {
+                        let deviceId = RemoteIdentityStore.strField(o, "deviceId")
+                        let digest = RemoteIdentityStore.strField(o, "credentialDigest")
+                        let diskRevoked = RemoteIdentityStore.boolField(o, "revoked")
+                        if (deviceId.size > 0 && digest.size > 0) {
+                            if (let Some(existing) <- devices.get(deviceId)) {
+                                if (propagateRevoked && diskRevoked) { existing.revoked = true }
+                            } else {
+                                let record = DeviceRecord(
+                                    deviceId, RemoteIdentityStore.strField(o, "principalId"), digest,
+                                    RemoteIdentityStore.strField(o, "kind"), "")
+                                record.revoked = diskRevoked
+                                devices.add(deviceId, record)
+                            }
+                        }
+                    } else {
+                        return -1
+                    }
+                }
+                i += 1
+            }
+            return seen
+        }
+        return -1
+    }
+
+    // 带外改动后的增量刷新：磁盘快照内容真变过才解析，稳态下每次认证只多读一个小文件。
+    // 返回 true 表示「读了并合进了新内容」。
+    public func refreshFromDisk(path: String): Bool {
+        if (path.size == 0) { return false }
+        let p = Path(path)
+        if (!exists(p)) { return false }
+        let text = try { String.fromUtf8(File.readFrom(p)) } catch (_: Exception) { return false }
+        if (text == snapshotCacheText) { return false }
+        let root = try { JsonValue.fromStr(text).asObject() } catch (_: Exception) { return false }
+        lock.lock()
+        let seen = mergeDevicesLocked(root, propagateRevoked: true)
+        var diskVersion = revocationVersion
+        if (let Some(node) <- root.get("revocationVersion")) {
+            diskVersion = try { node.asInt().getValue() } catch (_: Exception) { revocationVersion }
+        }
+        if (diskVersion > revocationVersion) { revocationVersion = diskVersion }
+        if (seen >= Int64(0)) { snapshotCacheText = text }
+        lock.unlock()
+        return seen >= Int64(0)
     }
 
     // 票据合入（须持锁调用）。同键已存在时 consumed 只单调地从 false 变 true，

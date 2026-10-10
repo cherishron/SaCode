@@ -30,15 +30,19 @@ public class RemoteRequestGate {
     let authorizer: RemoteAccessAuthorizer
     let audit: RemoteAuditLog
     let instanceId: String
+    // 设备快照路径：带上它时，每次认证前先看磁盘有没有被带外管理入口改过
+    // （--manage revoke-device）。不带它则纯内存语义，测试夹具照旧。
+    let snapshotPath: String
     let base = MonoTime.now()
     let lock = Mutex()
 
     public init(identity: RemoteIdentityStore, authorizer: RemoteAccessAuthorizer,
-                audit: RemoteAuditLog, instanceId: String) {
+                audit: RemoteAuditLog, instanceId: String, snapshotPath!: String = "") {
         this.identity = identity
         this.authorizer = authorizer
         this.audit = audit
         this.instanceId = instanceId
+        this.snapshotPath = snapshotPath
     }
 
     func nowMs(): Int64 {
@@ -72,6 +76,9 @@ public class RemoteRequestGate {
     // 判定栈：认证 → 授权 → 审计；任一步失败返回拒绝并已经写完审计。
     public func check(authHeader: String, method: String, workspaceId: String,
                       sessionId: String, operationId: String): GateOutcome {
+        // 认证前吸收带外撤销：管理入口在 daemon 之外把某台设备标成 revoked 后，
+        // 它的令牌必须从下一个请求起就被拒，而不是等 daemon 重启。
+        identity.refreshFromDisk(snapshotPath)
         let ws = RemoteRequestGate.sanitizeId(workspaceId)
         let sid = RemoteRequestGate.sanitizeId(sessionId)
         let op = RemoteRequestGate.sanitizeId(operationId)
@@ -102,6 +109,7 @@ public class RemoteRequestGate {
     // 逐事件资源过滤在订阅建立后按 context 做（任务 8）。这里返回 context，
     // 让调用方持有它做后续过滤，而不是把权限判定推迟到第一帧。
     public func checkStreamAuth(authHeader: String, operationId: String): GateOutcome {
+        identity.refreshFromDisk(snapshotPath)
         let op = RemoteRequestGate.sanitizeId(operationId)
         let token = extractBearer(authHeader)
         if (token.size == 0) {

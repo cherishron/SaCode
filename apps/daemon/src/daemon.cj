@@ -2,6 +2,9 @@ package daemon
 
 import core.*
 import stdx.net.http.*
+import stdx.net.tls.*
+import stdx.crypto.x509.*
+import stdx.crypto.keys.*
 import stdx.encoding.json.*
 import std.io.*
 import std.fs.*
@@ -37,6 +40,8 @@ let bus = EventBus()
 let teamHost = TeamHostBridge(bus)
 let hostProxy = HostProxyBridge(bus)
 let daemonStopping = AtomicBool(false)
+// 限额只在接入启用（gate 在位）时 consult；未启用时它是空的，也不会有人抢槽。
+let remoteLimiter = RemoteConcurrencyLimiter()
 
 // 远程接入的门面。默认 None 表示「接入未启用」，保持 0.1 无认证旧路径不变；
 // 一旦 set，dispatchRpcWithAuth 每条请求先走 gate.check(authHeader, method, workspaceId,
@@ -147,14 +152,23 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
             if (let Some(v) <- obj.get("operationId")) { operationId = v.asString().getValue() }
         }
     } catch (_: Exception) { return errRpc(idText, -32600, "invalid request") }
+    var slotDevice = ""
     if (let Some(gate) <- currentRemoteGate()) {
         let outcome = gate.check(authHeader, method, workspaceId, sessionId, operationId)
         if (!outcome.allowed) {
             return errRpc(idText, -32001, "authz-denied:${outcome.denyReason}")
         }
+        // 认证通过才占槽：先占后认会让未认证请求把某台设备的槽位打满（限额面变成 DoS 面）。
+        if (let Some(c) <- outcome.context) {
+            let slot = remoteLimiter.acquireRpc(c.deviceId)
+            if (!slot.allowed) {
+                return errRpc(idText, -32005, "concurrency-denied:${slot.reason}")
+            }
+            slotDevice = c.deviceId
+        }
     }
-    if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
     try {
+        if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
         if (method == "initialize") {
             var capabilities = INIT_CAPS
             if (teamHost.configured()) {
@@ -203,6 +217,63 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
         }
         return errRpc(idText, -32601, "method not found")
     } catch (e: Exception) { return errRpc(idText, -32003, e.message) }
+    finally {
+        // 早退（业务分支里的 return）也必须归还槽位，否则跑几轮就把 8 个槽吃干。
+        if (slotDevice.size > 0) { remoteLimiter.releaseRpc(slotDevice) }
+    }
+}
+
+// 本地管理入口（设计 §4.2「首次登记由目标端本地管理入口创建一次性登记秘密」，
+// §4「设备列表、确认、撤销只能通过本机受保护管理入口或具有显式管理权限的认证 RPC」）。
+// 走 CLI 而不是网络端口：网络面仍然只有 /auth/enroll 与 /auth/token。
+// 形状不合一律 64（EX_USAGE），改盘失败一律 78——「打印了成功但盘上没变」最难诊断。
+func manageCommand(args: Array<String>): Int64 {
+    let verb = args[1]
+    if (verb == "list-devices") {
+        if (args.size != 3) { return 64 }
+        let listing = RemoteIdentityStore()
+        listing.loadSnapshot(args[2])
+        let listed = listing.listDevices()
+        for (d in listed) {
+            println("${d.deviceId}\t${d.principalId}\t${d.kind}\t${if (d.revoked) { "revoked" } else { "active" }}")
+        }
+        println("device-count ${listed.size}")
+        getStdOut().flush()
+        return 0
+    }
+    if (args.size != 4) { return 64 }
+    let storePath = args[2]
+    let operand = args[3]
+    let manageStore = RemoteIdentityStore()
+    manageStore.loadSnapshot(storePath)
+    if (verb == "enroll-ticket") {
+        let ticket = try { manageStore.createTicketForManagement(operand, storePath) }
+            catch (e: Exception) {
+                getStdErr().writeln("manage-failed: ${e.message}")
+                getStdErr().flush()
+                return 78
+            }
+        println("enrollment-ticket-for ${operand}")
+        println("${ticket.value}")
+        getStdOut().flush()
+        return 0
+    }
+    if (verb == "revoke-device") {
+        if (!manageStore.revokeDevice(operand)) {
+            getStdErr().writeln("manage-denied: device-not-found")
+            getStdErr().flush()
+            return 78
+        }
+        if (!manageStore.saveSnapshot(storePath)) {
+            getStdErr().writeln("manage-failed: snapshot-unwritable")
+            getStdErr().flush()
+            return 78
+        }
+        println("revoked ${operand}")
+        getStdOut().flush()
+        return 0
+    }
+    return 64
 }
 
 main(args: Array<String>): Int64 {
@@ -210,17 +281,7 @@ main(args: Array<String>): Int64 {
     // 这是 CLI 子命令，不是第三个网络端点：网络面仍只有 /auth/enroll 与 /auth/token。
     // 秘密原文只打到本命令的 stdout 给操作者（扫码/手动输入），
     // 落盘的快照里只有它的摘要。
-    if (args.size == 4 && args[0] == "--manage" && args[1] == "enroll-ticket") {
-        let storePath = args[2]
-        let principalId = args[3]
-        let manageStore = RemoteIdentityStore()
-        manageStore.loadSnapshot(storePath)
-        let ticket = manageStore.createTicketForManagement(principalId, storePath)
-        println("enrollment-ticket-for ${principalId}")
-        println("${ticket.value}")
-        getStdOut().flush()
-        return 0
-    }
+    if (args.size >= 2 && args[0] == "--manage") { return manageCommand(args) }
     var port: UInt16 = 18937
     if (args.size != 0) {
         if (args.size != 2 || args[0] != "--port" || args[1].size == 0 || args[1].size > 5) { return 64 }
@@ -257,13 +318,52 @@ main(args: Array<String>): Int64 {
             getStdErr().flush()
             return 78
         }
-        setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId)))
+        setRemoteGate(Some(RemoteRequestGate(store, authorizer, audit, identity.instanceId,
+            snapshotPath: deviceSnapshot)))
         setRemoteEndpoints(Some(RemoteAccessEndpoints(
             store, audit, RemoteAuthRateLimiter(), identity.instanceId,
             snapshotPath: deviceSnapshot)))
     }
 
-    let server = ServerBuilder().addr(accessConfig.bind).port(port).build()
+    // 限额 §7「请求头/体接收超时 10 秒」：慢启动客户端不能占着分发器不放。
+    var builder = ServerBuilder().addr(accessConfig.bind).port(port)
+        .readHeaderTimeout(10 * Duration.second)
+        .readTimeout(10 * Duration.second)
+    var scheme = "http"
+    if (accessConfig.certPath.size > 0 && accessConfig.keyPath.size > 0) {
+        // 证书存在却解析失败时必须拒启动：「配了 TLS 却实际明文服务」比启动失败危险得多
+        // ——客户端以为 bearer 走在加密通道上，整条凭据其实裸奔。
+        let certText = try { String.fromUtf8(File.readFrom(Path(accessConfig.certPath))) }
+            catch (_: Exception) { "" }
+        let keyText = try { String.fromUtf8(File.readFrom(Path(accessConfig.keyPath))) }
+            catch (_: Exception) { "" }
+        if (certText.size == 0 || keyText.size == 0) {
+            getStdErr().writeln("remote-access-startup-refused: tls-files-unreadable")
+            getStdErr().flush()
+            return 78
+        }
+        // 证书与私钥各自归因：运维拿到「解析失败」要能一眼分清是 .crt 还是 .key，
+        // 两者排查路径完全不同（链式/编码 vs 密钥类型/加密口令）。
+        var failReason = ""
+        var certs: Option<Array<X509Certificate>> = None
+        try { certs = Some(X509Certificate.decodeFromPem(certText)) }
+        catch (_: Exception) { failReason = "tls-cert-undecodable" }
+        var key: Option<RSAPrivateKey> = None
+        if (failReason.size == 0) {
+            // 本机 stdx 的 PrivateKey 是接口，decodeFromPem 只在具体密钥类上实现；
+            // RSA 之外的私钥（ECDSA/SM2）留待有需求时按同一形状补。
+            try { key = Some(RSAPrivateKey.decodeFromPem(keyText)) }
+            catch (_: Exception) { failReason = "tls-key-undecodable" }
+        }
+        if (failReason.size > 0) {
+            getStdErr().writeln("remote-access-startup-refused: ${failReason}")
+            getStdErr().flush()
+            return 78
+        }
+        builder = builder.tlsConfig(TlsServerConfig(certs.getOrThrow(), key.getOrThrow()))
+        scheme = "https"
+    }
+    let server = builder.build()
     // /health：本机无凭据只给最小存活信息；非本机要求认证，且两种口径都不出
     // 目录、能力、设备列表（设计 §4.2）。
     server.distributor.register("/health", {
@@ -306,6 +406,7 @@ main(args: Array<String>): Int64 {
                 .body("{\"error\":\"sse-requires-get\"}")
             return
         }
+        var streamDevice = ""
         if (let Some(g) <- currentRemoteGate()) {
             let outcome = g.checkStreamAuth(requestHeader(ctx.request, "Authorization"),
                 requestHeader(ctx.request, "Last-Event-ID"))
@@ -313,6 +414,15 @@ main(args: Array<String>): Int64 {
                 ctx.responseBuilder.status(401).header("Content-Type", "application/json")
                     .body("{\"error\":\"authentication-required\"}")
                 return
+            }
+            if (let Some(c) <- outcome.context) {
+                let slot = remoteLimiter.acquireSse(c.deviceId)
+                if (!slot.allowed) {
+                    ctx.responseBuilder.status(429).header("Content-Type", "application/json")
+                        .body("{\"error\":\"concurrency-denied\",\"reason\":\"${slot.reason}\"}")
+                    return
+                }
+                streamDevice = c.deviceId
             }
         }
         ctx.responseBuilder
@@ -335,7 +445,10 @@ main(args: Array<String>): Int64 {
             if (sub.closeReason() == "overflow") {
                 getStdErr().writeln("sse subscription ${sub.id} closed: overflow")
             }
-        } finally { bus.unsubscribe(sub.id) }
+        } finally {
+            bus.unsubscribe(sub.id)
+            if (streamDevice.size > 0) { remoteLimiter.releaseSse(streamDevice) }
+        }
     })
     // 身份引导面只在接入启用时注册——未启用就不存在这个面，而不是返回 404。
     if (let Some(api) <- currentRemoteEndpoints()) {
@@ -358,7 +471,7 @@ main(args: Array<String>): Int64 {
     server.afterBind({ => ready.dec() })
     spawn { server.serve() }
     ready.waitUntilZero()
-    println("daemon on http://${accessConfig.bind}:${server.port}")
+    println("daemon on ${scheme}://${accessConfig.bind}:${server.port}")
     getStdOut().flush()
     while (!daemonStopping.load()) { sleep(50 * Duration.millisecond) }
     return 0

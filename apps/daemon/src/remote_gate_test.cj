@@ -24,12 +24,18 @@ class GateFixture {
     let gate: RemoteRequestGate
     let sink: GateCollectSink
     let goodToken: String
+    let deviceId: String
 
     init() {
         store = RemoteIdentityStore()
         sink = GateCollectSink()
         audit = RemoteAuditLog(sink)
         authorizer = RemoteAccessAuthorizer()
+        // 真部署里 initialize 由策略文件登记（契约第 1 行 read/无资源键），
+        // 夹具不登记就等于「认证过但方法未登记」，走不到业务分支，也占不到槽。
+        authorizer.register(CapabilitySpec(
+            method: "initialize", permission: AUTHZ_PERM_READ,
+            needsWorkspace: false, needsSession: false))
         authorizer.register(CapabilitySpec(
             method: "session/submit", permission: AUTHZ_PERM_WRITE,
             needsWorkspace: true, needsSession: true))
@@ -41,6 +47,7 @@ class GateFixture {
         let device = store.enroll(secret.value, "test-dev", "desktop")
         let token = store.exchangeToken(device.deviceId, device.credential)
         goodToken = token.value
+        deviceId = device.deviceId
         gate = RemoteRequestGate(store, authorizer, audit, "inst-test")
     }
 }
@@ -187,5 +194,43 @@ func dispatchWithGateExtractsWorkspaceSessionOperationId() {
     @Expect((line.indexOf("\"workspaceId\":\"ws-9\"") ?? Int64(-1)) >= Int64(0), true)
     @Expect((line.indexOf("\"sessionId\":\"s-9\"") ?? Int64(-1)) >= Int64(0), true)
     @Expect((line.indexOf("\"operationId\":\"op-42\"") ?? Int64(-1)) >= Int64(0), true)
+    setRemoteGate(None)
+}
+
+@Test
+func dispatchReleasesRpcSlotAfterEachRequest() {
+    // 每设备 8 个并发槽，连打 9 次 initialize 都必须成功：
+    // 只要有一次没在 finally 里归还，第 9 次就会被自己的槽位账拦下。
+    let f = GateFixture()
+    setRemoteGate(Some(f.gate))
+    var okCount: Int64 = 0
+    for (i in 0..9) {
+        let r = dispatchRpcWithAuth(
+            "{\"jsonrpc\":\"2.0\",\"id\":${i},\"method\":\"initialize\",\"params\":{}}",
+            bearer(f.goodToken))
+        if ((r.indexOf("protocolVersion") ?? Int64(-1)) >= Int64(0)) { okCount += 1 }
+    }
+    @Expect(okCount, Int64(9))
+    @Expect(remoteLimiter.rpcHeldBy(f.deviceId), Int64(0))
+    setRemoteGate(None)
+}
+
+@Test
+func dispatchRejectsWhenDeviceRpcSlotsAreExhausted() {
+    // 槽位被这台设备自己占满时，新请求必须按限额拒，且不执行业务分支。
+    // 被拒的请求不能再占第 9 个槽——否则一轮拒绝就能把设备永久锁死。
+    let f = GateFixture()
+    setRemoteGate(Some(f.gate))
+    for (i in 0..8) {
+        @Expect(remoteLimiter.acquireRpc(f.deviceId).allowed, true)
+    }
+    let r = dispatchRpcWithAuth(
+        "{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"initialize\",\"params\":{}}",
+        bearer(f.goodToken))
+    @Expect((r.indexOf("-32005") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((r.indexOf("concurrency-denied:rpc-per-device") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((r.indexOf("protocolVersion") ?? Int64(-1)) == Int64(-1), true)
+    @Expect(remoteLimiter.rpcHeldBy(f.deviceId), RPC_PER_DEVICE_LIMIT)
+    for (i in 0..8) { remoteLimiter.releaseRpc(f.deviceId) }
     setRemoteGate(None)
 }

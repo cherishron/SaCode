@@ -379,3 +379,79 @@ func reportedTokenWindowComesFromStoreClockAndNeverExceedsTtl() {
     store.expireToken(token.value)
     @Expect(store.tokenRemainingMs(token), Int64(0))
 }
+
+@Test
+func listDevicesReportsRowsWithRevokedState() {
+    let name = "rt10"
+    dropSnap(name)
+    let store = RemoteIdentityStore()
+    let t = store.createEnrollmentSecret("p-10")
+    let d = store.enroll(t.value, "phone-10", "mobile")
+    @Expect(store.listDevices().size, Int64(1))
+    let row = store.listDevices()[0]
+    @Expect(row.deviceId == d.deviceId, true)
+    @Expect(row.principalId == "p-10", true)
+    @Expect(row.kind == "mobile", true)
+    @Expect(row.revoked, false)
+    @Expect(store.revokeDevice(d.deviceId), true)
+    @Expect(store.listDevices()[0].revoked, true)
+    dropSnap(name)
+}
+
+@Test
+func revokeUnknownDeviceReturnsFalseAndKeepsWatermark() {
+    // 敲错 id 必须如实报「没这台设备」，也不能凭空递增撤销水位——
+    // 递增会把所有在线令牌一起打挂，那是比报错严重得多的副作用。
+    let store = RemoteIdentityStore()
+    let t = store.createEnrollmentSecret("p-11")
+    let d = store.enroll(t.value, "phone-11", "mobile")
+    let tok = store.exchangeToken(d.deviceId, d.credential)
+    @Expect(store.revokeDevice("no-such-device"), false)
+    @Expect(store.authenticate(tok.value).isSome(), true)
+}
+
+@Test
+func outOfBandRevokeReachesRunningStoreByRefreshFromDisk() {
+    // 管理入口进程与 daemon 进程不是同一个 store：CLI 在磁盘上撤销后，
+    // 在跑的 daemon 必须在下一次认证前把它吸进来，否则「已撤销」要等重启才生效。
+    let name = "rt12"
+    dropSnap(name)
+    let daemonStore = RemoteIdentityStore()
+    daemonStore.loadSnapshot(snapPath(name))
+    let ticket = daemonStore.createTicketForManagement("p-12", snapPath(name))
+    let device = daemonStore.enroll(ticket.value, "phone-12", "mobile")
+    @Expect(daemonStore.saveSnapshot(snapPath(name)), true)
+    let token = daemonStore.exchangeToken(device.deviceId, device.credential)
+    @Expect(daemonStore.authenticate(token.value).isSome(), true)
+
+    let cli = RemoteIdentityStore()
+    @Expect(cli.loadSnapshot(snapPath(name)), true)
+    @Expect(cli.revokeDevice(device.deviceId), true)
+    @Expect(cli.saveSnapshot(snapPath(name)), true)
+
+    @Expect(daemonStore.refreshFromDisk(snapPath(name)), true)
+    @Expect(daemonStore.listDevices()[0].revoked, true)
+    @Expect(daemonStore.authenticate(token.value).isNone(), true)
+    dropSnap(name)
+}
+
+@Test
+func refreshFromDiskSkipsReparseWhenDiskUnchanged() {
+    // 每次认证都会调它：磁盘没变时必须短路，不能把「读一次快照」变成「解析一次 JSON」。
+    let name = "rt13"
+    dropSnap(name)
+    let a = RemoteIdentityStore()
+    let t = a.createTicketForManagement("p-13", snapPath(name))
+    let d = a.enroll(t.value, "phone-13", "mobile")
+    @Expect(a.saveSnapshot(snapPath(name)), true)
+    let b = RemoteIdentityStore()
+    b.loadSnapshot(snapPath(name))
+    @Expect(b.refreshFromDisk(snapPath(name)), false)
+    // 真变了才认：由 b 自己新登记一台设备并落盘，a 侧刷新应看到两行。
+    let t2 = b.createTicketForManagement("p-13b", snapPath(name))
+    b.enroll(t2.value, "phone-13c", "mobile")
+    @Expect(b.saveSnapshot(snapPath(name)), true)
+    @Expect(a.refreshFromDisk(snapPath(name)), true)
+    @Expect(a.listDevices().size, Int64(2))
+    dropSnap(name)
+}
