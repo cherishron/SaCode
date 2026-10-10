@@ -143,6 +143,14 @@ AA 归档完之后的两个 turn（`b1dd816` + `4875df8`）在 daemon 二进制�
 
 **本轮未动**：A4-A7（B 档）、B 档 13 项、C 档 6 项、D 档 4 项。所有卡点与前一节解锁顺序一致，本轮只把 AA.1 与 AA.2 从「等解锁」推进到「一半已落 + 另一半明确等解锁」的更清晰状态。
 
+## 6c. AC 归档后的实际推进（本轮补记，2026-10-10 15:05 UTC）
+
+批次 AC（提交待落）在 AA.1/AA.2 之外独立推进了**计划第 142 行「并发登记兑换」这一小格**：新增 `apps/daemon/test/remote-concurrent-enroll.test.mjs`，2 条并发不变量用例——「两台设备同时投同一张登记秘密，只有一台成功」+「同一设备凭据并发换两次令牌，两个令牌各自独立」。2/2 单跑 rc=0；全套 `remote-*.test.mjs` **114/115 rc=1**（唯一红仍是批次 K 保留的撤销事故半径，与本批无交集）。
+
+同批还探测出一个**并发下的实现缺口**（登记在本文件，不改代码）：`apps/daemon/src/remote_access.cj:287-298` 的 `ticketFailures(digest) >= 5` 是**读**、`recordTicketFailure(digest)` 是**写**，两次调用各自加锁但不组合——6 个并发请求会先全部读到 0 再各自 +1，第 6 次读到时还是 0 因此**通过**锁检查。单线程顺序下永远只到 5 次即锁，但并发下会漏锁到 6 次以上。修法是让 check-and-increment 在一个原子段内做，属 `remote_access.cj` 的锁粒度调整。本会话不改并发改动的文件——`core/src/remote_identity.cj` 已被并发会话加到 +62 行（`rotateCredential` + scope 线），改 `remote_access.cj` 的锁边界需要同一轮考虑 store.enroll 的锁序，属另一批。
+
+**推进后未勾项计数**：仍是 70。批次 AC 交付的 2 条测试是 plan 第 142 行的**其中一个小格**的字面验收，不是整行——同行还有「过期凭据」「跨证书」「拒绝发生在 Host.forward 前」等小格，前几项分别由批次 D/P/M 分散覆盖，未在「一行」口径下合并判过。per-ticket 并发漏锁这条新发现的实现缺口是**新的 B 档**——等 `remote_identity.cj` 与 `remote_access.cj` 在同一批一起动锁粒度时再一并落。
+
 ## 7. 解锁顺序（等并发会话落库后按此推进）
 
 1. **前置**：`core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 均提交到 HEAD 且工作区干净；`apps/daemon/target/release/bin/main.exe` 由 `cjpm build` 现编现取。

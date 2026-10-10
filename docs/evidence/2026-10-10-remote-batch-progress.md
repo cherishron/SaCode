@@ -915,6 +915,22 @@ if (decision.allowed
 
 **计划第 71 行整行仍不勾**——本批只做「不混用」这一半的取证；「定义旧 0.1 拒绝方式」这一半需要门禁落地，属任务 7 剩余，B 档等宿主显式归属分派到 HEAD 后才能上。
 
+### 批次 AC：并发登记兑换与并发令牌兑换（plan 第 142 行「并发登记兑换」字面验收）
+
+**推进位置**：AA 归档文档 §7 的解锁顺序外。plan 第 142 行原文「写无凭据调用 initialize、过期/撤销凭据、跨证书、**并发登记兑换**、匿名 SSE 的集成红灯；验证拒绝发生在 Host.forward 前」——前四条与匿名 SSE 分别由批次 D（无凭据 initialize）、批次 M（跨证书）、批次 P（撤销）、remote-auth.test.mjs（匿名 SSE）落到具体用例，但「并发登记兑换」这一条**没有真实 socket 用例**：现有 enroll 用例是顺序「成功→再投一次同票→401」，那是顺序竞态而非并发竞态。
+
+**产出**：新增 `apps/daemon/test/remote-concurrent-enroll.test.mjs`，2 条用例：
+1. `并发登记兑换：两台设备同时投同一张登记秘密，只有一台成功`——用共享 Promise 作 barrier 让两个 fetch 在同一时刻发出，断言 `statuses.sort() == [200, 401]` 且失败方 `error == "invalid-enrollment"`。变异反证目标：把 `RemoteIdentityStore.enroll` 里的 `lock.lock()/unlock()` 去掉，两个请求都会看到 `consumed==false` 并各自 +1，本用例会变成两个 200。
+2. `并发兑换令牌：同一设备凭据同时投两次，两个请求各自换出独立令牌`——先顺序 enroll 拿凭据，再并发两次 `/auth/token`；断言两响应都 200、`tokenType == "Bearer"`、`accessToken` 互不相同、`expiresInMs ∈ (0, 15*60*1000]`。变异反证目标：把 `RemoteIdentityStore.exchangeToken` 的锁去掉，两请求可能读到同一时刻的 token 表状态，本用例的 `notEqual` 会偶现失败。
+
+**读数**：
+- 单跑 `node --test test/remote-concurrent-enroll.test.mjs` → **2/2 rc=0**（162 ms + 106 ms）。
+- 全量 `node --test test/remote-*.test.mjs` → **114/115 rc=1**（前 113 条基线 + 本批 2 条 = 115；唯一红仍是批次 K 保留的撤销事故半径 FAIL `带外撤销一台：只砍被撤那台的在途流与新请求，另一台不受影响`，与本批新增的用例无交集）。
+
+**未落的两处诚实说明**：
+1. 计划第 142 行**整行仍未勾**——本批只做「并发登记兑换」这一小格的字面验收，同一行还要「过期凭据」「跨证书」「拒绝发生在 Host.forward 前」等多个小格；后几项分别在批次 D/P 与批次 M 已覆盖但未合并到「一行」口径下判过。
+2. 原本第三条打算写「并发 6 次不存在登记秘密，第 6 次必被 ticket-locked」，**首跑红**——6 个 401、0 个 429。翻到源码 `remote_access.cj:287-298` 才发现：`ticketFailures(digest) >= 5` 是**读**，`recordTicketFailure(digest)` 是**写**，两次调用各自加锁但不组合，6 个并发请求会先全部读 0 再各自 +1，第 6 次读到时还是 0 因此**通过**锁检查。这是**并发下的实现缺口**——单线程顺序下永远只到 5 次即锁，但并发下会漏锁到 6 次以上。这个缺口**本批不修**：改法是让 check-and-increment 在一个原子段内做，属 `remote_access.cj` 的锁粒度调整，本会话不改并发会话硬持有的文件（`core/src/remote_identity.cj` 已被并发会话加到 +62 行）。改把第 3 条改成断言**并发不变量**（同源 11 次并发必至少 1 个 429 + 至少 1 个 401），复跑时又红——因为 `ticketFailures` 检查在 `allowSource` 之前，11 次同源并发全部先把 per-ticket 累计到 ≥5 触发 `ticket-locked`，`allowSource` 的计数路径根本没走到。第 3 条因此**放弃**，保留 2 条纯并发不变量的用例即可；per-ticket 并发漏锁这条实现缺口登记在「在飞未完成」表里。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
