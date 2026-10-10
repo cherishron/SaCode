@@ -200,6 +200,24 @@ func currentRemoteEndpoints(): Option<RemoteAccessEndpoints> {
     return a
 }
 
+// Host 允许集（§7 的 DNS rebinding 那一档）。开服前算一次，之后只读。
+// 空串在这里是合法值而不是「未设置」——允许集为空 = 全拒，见 RemoteRequestSchema.hostViolation。
+let remoteHostsSlot = Mutex()
+var remoteHostsValue = ""
+
+func setRemoteAllowedHosts(allowed: String): Unit {
+    remoteHostsSlot.lock()
+    remoteHostsValue = allowed
+    remoteHostsSlot.unlock()
+}
+
+func currentRemoteAllowedHosts(): String {
+    remoteHostsSlot.lock()
+    let a = remoteHostsValue
+    remoteHostsSlot.unlock()
+    return a
+}
+
 // 请求头不区分大小写（HttpHeaders 内部转小写存储），缺失返空串。
 // 空串等价「未带凭据」，由 gate 归一成 missing-bearer。
 func requestHeader(request: HttpRequest, name: String): String {
@@ -220,6 +238,10 @@ func jsonBodyOf(ctx: HttpContext, wantPost: Bool): String {
     }
     if (RemoteRequestSchema.originViolation(requestHeader(ctx.request, "Origin")) != "") {
         throw Exception(SCHEMA_DENY_ORIGIN)
+    }
+    // Host 紧跟 Origin：两条挡的都是「自称在访问别的东西」，都不值得先替它读体。
+    if (RemoteRequestSchema.hostViolation(requestHeader(ctx.request, "Host"), currentRemoteAllowedHosts()) != "") {
+        throw Exception(SCHEMA_DENY_HOST)
     }
     if (!wantPost) { return "" }
     let body = readBody(ctx.request.body)
@@ -496,6 +518,10 @@ main(args: Array<String>): Int64 {
         getStdErr().flush()
         return 78
     }
+    // §7 Host 允许集：开服前算一次。未启用接入时同样生效——这条挡的是
+    // 「自称在访问别的主机」，与认证无关，所以不给它一个「只在启用时检查」的例外。
+    setRemoteAllowedHosts(RemoteRequestSchema.allowedHosts(
+        accessConfig.bind, getVariable("SACODE_REMOTE_ALLOWED_HOSTS") ?? ""))
     if (accessConfig.enabled) {
         let identity = RemoteInstanceIdentity.loadOrCreate(accessConfig.identityPath)
         let auditSink = FileAuditSink("${accessConfig.identityPath}.audit.log")
@@ -613,6 +639,12 @@ main(args: Array<String>): Int64 {
                 .body("{\"error\":\"${SCHEMA_DENY_ORIGIN}\"}")
             return
         }
+        // Host 同一条防线，也要挡在订阅与抢槽之前：重绑定出来的请求连认证都到不了。
+        if (RemoteRequestSchema.hostViolation(requestHeader(ctx.request, "Host"), currentRemoteAllowedHosts()) != "") {
+            ctx.responseBuilder.status(403).header("Content-Type", "application/json")
+                .body("{\"error\":\"${SCHEMA_DENY_HOST}\"}")
+            return
+        }
         var streamDevice = ""
         var streamAuth = ""
         var resumeCursor = ""
@@ -713,6 +745,13 @@ main(args: Array<String>): Int64 {
     ready.waitUntilZero()
     println("daemon on ${scheme}://${accessConfig.bind}:${server.port}")
     getStdOut().flush()
+    // 告警走 stderr：那行 `127.0.0.1:port` 是测试与客户端解析端口的唯一锚点，
+    // 不能因为多打一条信息就把它挪位或换格式。
+    if (accessConfig.bind == "0.0.0.0" && (getVariable("SACODE_REMOTE_ALLOWED_HOSTS") ?? "") == "") {
+        getStdErr().writeln("remote-host-warning: bind=0.0.0.0 且未配 SACODE_REMOTE_ALLOWED_HOSTS，"
+            + "只有回环主机名可用；LAN 客户端要按网卡地址显式加白")
+        getStdErr().flush()
+    }
     while (!daemonStopping.load()) { sleep(50 * Duration.millisecond) }
     return 0
 }

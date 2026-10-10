@@ -128,3 +128,71 @@ func originHeaderPresenceIsDeniedWithoutParsingItsValue() {
     @Expect(RemoteRequestSchema.originViolation("http://127.0.0.1:18080") == SCHEMA_DENY_ORIGIN, true)
     @Expect(RemoteRequestSchema.originViolation("https://evil.example") == SCHEMA_DENY_ORIGIN, true)
 }
+
+@Test
+func hostHeaderMatchesAllowlistExactlyAfterPortAndCaseNormalisation() {
+    // §7 的 DNS rebinding 那一档：Origin 出现即拒只挡得住「浏览器会带 Origin」的那类
+    // 攻击；把 attacker.example 解析到 127.0.0.1 后，Host 是唯一还留下的判据。
+    // 端口与大小写是同一个主机的两种写法，不该要求各客户端去对齐书写习惯。
+    @Expect(RemoteRequestSchema.hostViolation("127.0.0.1:51234", "127.0.0.1,localhost") == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("localhost", "127.0.0.1,localhost") == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("LOCALHOST:8443", "localhost") == "", true)
+    // IPv6 在 Host 里是带方括号的形态，去掉括号才能和 allowlist 里的 ::1 比。
+    @Expect(RemoteRequestSchema.hostViolation("[::1]:8443", "::1,localhost") == "", true)
+}
+
+@Test
+func hostHeaderRejectsForeignSuffixAndMissingWithoutSubstringMatch() {
+    // 后缀拼贴是最容易被「包含式」实现放过的一类：127.0.0.1.attacker.example 里
+    // 确实含着 127.0.0.1，但它不是那个主机。
+    @Expect(RemoteRequestSchema.hostViolation("127.0.0.1.attacker.example", "127.0.0.1") == SCHEMA_DENY_HOST, true)
+    @Expect(RemoteRequestSchema.hostViolation("evil127.0.0.1", "127.0.0.1") == SCHEMA_DENY_HOST, true)
+    @Expect(RemoteRequestSchema.hostViolation("evil.example", "127.0.0.1,localhost") == SCHEMA_DENY_HOST, true)
+    // HTTP/1.1 的 Host 是必需头；缺失等于「说不出这是在访问谁」，只能拒。
+    @Expect(RemoteRequestSchema.hostViolation("", "127.0.0.1") == SCHEMA_DENY_HOST, true)
+    // 同一字段被堆成两个值（a.com, b.com）时两个主机指向不同实例，拒掉比猜一个安全。
+    @Expect(RemoteRequestSchema.hostViolation("a.com, b.com", "a.com,b.com") == SCHEMA_DENY_HOST, true)
+}
+
+@Test
+func hostAllowlistEmptyDeniesEverythingWhileWildcardIsExplicitOptOut() {
+    // allowlist 为空必须是「全拒」而不是「全放」：配置读失败时宁可起不来也别开门。
+    @Expect(RemoteRequestSchema.hostViolation("127.0.0.1", "") == SCHEMA_DENY_HOST, true)
+    // 通配是 LAN 部署的显式退出：写了 * 就是承认「任何主机名都算我」。
+    @Expect(RemoteRequestSchema.hostViolation("nas.example", "*") == "", true)
+}
+
+@Test
+func stackedHostIsRejectedEvenWhenAllowlistIsWildcard() {
+    // 这条是「含逗号/空格即拒」唯一能被单独观察到的场景：允许集是 '*' 时，
+    // 精确比对不再起作用（任何名字都放行），只有堆叠判定本身还在挡。
+    // 变异反证记在案：把该判定改成永不触发时，上一条用例不会红（因为
+    // "a.com, b.com" 整串本来就匹配不到 allowlist 里的任何一项），只有这条会红。
+    @Expect(RemoteRequestSchema.hostViolation("a.com, b.com", "*") == SCHEMA_DENY_HOST, true)
+    @Expect(RemoteRequestSchema.hostViolation("a.com\tb.com", "*") == SCHEMA_DENY_HOST, true)
+    // 反过来，正常单值 Host 在 '*' 下必须放行——否则这条守卫就成了永久拒绝。
+    @Expect(RemoteRequestSchema.hostViolation("a.com", "*") == "", true)
+}
+
+@Test
+func defaultAllowedHostsCarriesBindAndLoopbackButNeverWildcard() {
+
+    // 默认集 = 绑定地址本身 + 回环三写法。绑到具体地址时「用它访问」天然合法，
+    // 不该要求运维再配一遍环境变量才能用。
+    let loop = RemoteRequestSchema.allowedHosts("127.0.0.1", "")
+    @Expect(RemoteRequestSchema.hostViolation("127.0.0.1:51234", loop) == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("localhost:51234", loop) == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("[::1]:51234", loop) == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("attacker.example", loop) == SCHEMA_DENY_HOST, true)
+    // 0.0.0.0 不是一个可被 Host 指名道姓的主机，不能因为它就放行任意主机名；
+    // 网卡地址由 SACODE_REMOTE_ALLOWED_HOSTS 显式给。
+    let any = RemoteRequestSchema.allowedHosts("0.0.0.0", "nas.example, phone.lan")
+    @Expect(RemoteRequestSchema.hostViolation("nas.example:8443", any) == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("PHONE.LAN", any) == "", true)
+    @Expect(RemoteRequestSchema.hostViolation("0.0.0.0", any) == SCHEMA_DENY_HOST, true)
+    @Expect(RemoteRequestSchema.hostViolation("evil.example", any) == SCHEMA_DENY_HOST, true)
+    // 默认集里永远不该出现 '*'——那等于这条防线没上。
+    @Expect(RemoteRequestSchema.allowedHosts("127.0.0.1", "").contains("*") == false, true)
+}
+
+

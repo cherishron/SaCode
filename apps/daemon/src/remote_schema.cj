@@ -2,7 +2,7 @@ package daemon
 
 import std.collection.*
 
-// 设计 §7「请求安全」里结构那一档：嵌套深度上界、方法名上界与字符集、顶层批量、Origin。
+// 设计 §7「请求安全」里结构那一档：嵌套深度上界、方法名上界与字符集、顶层批量、Origin、Host。
 // 全是无状态字节判定，不依赖身份也不依赖 gate——远程接入未启用时同样成立。
 //
 // 为什么深度要在 JSON 解析**之前**判：stdx 的解析器按递归下降建对象图，
@@ -24,6 +24,9 @@ public let SCHEMA_DENY_ORIGIN: String = "origin-not-allowed"
 // 无 id 的业务通知：判定要等信封解析出来，所以常量放在这里由分派支取用，
 // 不塞进 preParseViolation——字节扫描分不出「没有 id」和「id 是 null」。
 public let SCHEMA_DENY_NOTIFICATION: String = "notification-not-allowed"
+// Host 不在允许集里。它和前四条不是一类：前三条客户端改构造就能过，这条改的是
+// **调用方自称在访问谁**——正常客户端不会踩到，踩到基本意味着 DNS 重绑定或配置漂了。
+public let SCHEMA_DENY_HOST: String = "host-not-allowed"
 
 public class RemoteRequestSchema {
     // 解析前的结构判定，返回拒绝原因，空串表示放行。
@@ -87,5 +90,74 @@ public class RemoteRequestSchema {
     // 本来就不发它，那条要靠认证与授权挡，不是靠这个函数。
     public static func originViolation(header: String): String {
         return if (header.size > 0) { SCHEMA_DENY_ORIGIN } else { "" }
+    }
+
+    // Host 归一：转小写、剥 IPv6 方括号、去端口。
+    // 端口只能按「唯一冒号」切：裸 IPv6（`::1`）里全是冒号，按第一个冒号切会把它砍没；
+    // 而带括号的 `[::1]:8443` 必须先剥括号，否则括号内的冒号会被当成端口分隔符。
+    static func normalizeHost(value: String): String {
+        let v = value.toAsciiLower()
+        let bytes = v.toArray()
+        if (bytes.size > 0 && bytes[0] == 91) {  // '['
+            let close = v.indexOf("]") ?? Int64(-1)
+            return if (close >= 0) { v[1..close] } else { v }
+        }
+        var colons = Int64(0)
+        var at = Int64(-1)
+        var i = Int64(0)
+        for (b in bytes) {
+            if (b == 58) { colons += 1; at = i }  // ':'
+            i += 1
+        }
+        return if (colons == 1) { v[0..at] } else { v }
+    }
+
+    // §7 的 DNS rebinding 那一档。Origin「出现即拒」只挡得住浏览器会带 Origin 的路线；
+    // 攻击者把 attacker.example 解析到 127.0.0.1 之后，Host 是唯一还留下的判据——
+    // 所以它必须按 allowlist 精确比对，而不是「看着像本机」。
+    public static func hostViolation(header: String, allowed: String): String {
+        if (header.size <= 0) { return SCHEMA_DENY_HOST }
+        // 同一个字段被堆成 "a.com, b.com" 时是两个主机，指向不同实例，猜哪个都不该猜。
+        for (b in header.toArray()) {
+            if (b == 44 || b == 32 || b == 9) { return SCHEMA_DENY_HOST }  // ',' ' ' '\t'
+        }
+        let want = normalizeHost(header)
+        if (want.size <= 0) { return SCHEMA_DENY_HOST }
+        // allowlist 为空 = 全拒：配置读失败宁可拒干净，别把「没配」读成「不限」。
+        if (allowed.size <= 0) { return SCHEMA_DENY_HOST }
+        for (item in allowed.split(",")) {
+            let name = normalizeHost(item.trimAscii())
+            // '*' 是 LAN 部署的显式退出，必须写在配置里，不是默认值。
+            if (name == "*") { return "" }
+            if (name.size > 0 && name == want) { return "" }
+        }
+        return SCHEMA_DENY_HOST
+    }
+
+    // 默认允许集 = 绑定地址本身 + 回环三写法 + SACODE_REMOTE_ALLOWED_HOSTS。
+    // 绑到具体地址时「用它访问」天然合法，不该逼运维再配一遍环境变量才能用；
+    // 但 0.0.0.0 / :: 是「所有网卡」而不是一个能被 Host 指名道姓的主机，
+    // 把它们塞进集合等于放行任意主机名，所以 LAN 场景必须显式给 extra。
+    // 这里绝不产出 '*'：通配只能来自调用方写在 extra 里的决定。
+    public static func allowedHosts(bind: String, extra: String): String {
+        var names = ArrayList<String>()
+        let b = normalizeHost(bind)
+        if (b.size > 0 && b != "0.0.0.0" && b != "::") { names.add(b) }
+        names.add("127.0.0.1")
+        names.add("localhost")
+        names.add("::1")
+        if (extra.size > 0) {
+            for (item in extra.split(",")) {
+                let name = normalizeHost(item.trimAscii())
+                if (name.size > 0) { names.add(name) }
+            }
+        }
+        var joined = ""
+        var comma = ""
+        for (n in names) {
+            joined += comma + n
+            comma = ","
+        }
+        return joined
     }
 }
