@@ -126,11 +126,11 @@ for (const row of rows) {
 
 **接口：**包清单明确 cli/host/daemon/extjs、运行库、平台架构及摘要；启动包装只解析包内路径，不找全局 Host、不依赖仓库或开发 SDK。
 
-- [ ] 写清单测试，现包无 daemon/Linux 时红；检查可执行位、相对运行库搜索路径与 ELF ABI。
-- [ ] 按任务 2 真实 triple 分平台组装；Linux 收 .so，Windows 收 exe/DLL。保留官方依赖源。
-- [ ] CLI 增加同包 daemon 管理入口，参数逐字段校验，不能拼 shell。打包不把服务端秘密和本机路径带入。
-- [ ] 执行离线 npm pack/安装或等价安装包验证，在无 SDK/仓库环境运行 CLI、daemon、Host、扩展；Linux 用 readelf/ldd 检依赖，缺库要明确失败。
-- [ ] 删除测试包内一颗真依赖应启动失败；还原复跑。包内 CLI/Host/daemon 与本次源码摘要对应。
+- [ ] 写清单测试，现包无 daemon/Linux 时红；检查可执行位、相对运行库搜索路径与 ELF ABI。（批次 H 落 daemon 半边：红先记录为 `npm/sacode-cli/package.json` 的 bin 只有 `{sacode}`，该轮 8 条全红 rc=1；绿后 11 条常驻用例覆盖角色齐全、逐条摘要、等长篡改、未登记二进制、伪装密钥、缺输入即拒、剥 SDK 起 daemon 答 /health、删真依赖启动失败。可执行位与 ELF ABI 属 Linux 面，仍 BLOCKED）
+- [ ] 按任务 2 真实 triple 分平台组装；Linux 收 .so，Windows 收 exe/DLL。保留官方依赖源。（`scripts/pack-service.mjs` 的 `.so`/`.dll` 收口与按平台命名的映射已写，但**未在 Linux 上跑过**——本机无 Linux 工具链，这条不判通过）
+- [ ] CLI 增加同包 daemon 管理入口，参数逐字段校验，不能拼 shell。打包不把服务端秘密和本机路径带入。（批次 H：主包新增 `sacode-daemon` 入口 `npm/sacode-cli/bin/daemon.js`，只从 `require.resolve` 命中的平台包 bin/ 取 daemon，两档 fail-loud（79 解析不到平台包、82 装了包但缺 daemon），argv 原样透传不经 shell；清单只存相对路径与摘要，禁词检查挡掉身份/审计/私钥类文件）
+- [ ] 执行离线 npm pack/安装或等价安装包验证，在无 SDK/仓库环境运行 CLI、daemon、Host、扩展；Linux 用 readelf/ldd 检依赖，缺库要明确失败。（批次 H 做的是**等价安装态验证**：临时目录里摆出 `node_modules/@stand-alone/sacode-win32-x64` 与主包并存的布局，剥掉仓颉 SDK 的 PATH 后由入口脚本起包内 daemon 并答 /health。真离线 npm pack 安装、以及 Host 与扩展在包内的端到端仍待补；CLI 半已有 `scripts/smoke-npm-install.mjs`）
+- [ ] 删除测试包内一颗真依赖应启动失败；还原复跑。包内 CLI/Host/daemon 与本次源码摘要对应。（批次 H：删 `libcangjie-runtime.dll` 后要求 daemon **非零退出**，并显式区分「起来监听 / 挂住不动 / 非零退出」三种结局——超时不算失败证据；摘要对应靠清单 sha256 与三份构建产物逐字节比对，清单另带 gitSha）
 - [ ] 授权后仅提交源码、清单与平台包配置，不提交二进制、不发布。
 
 ## 6. TLS、设备身份和接入生命周期

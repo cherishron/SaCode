@@ -285,6 +285,41 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 2. `/health` 没挂 Origin 门禁。该面在 gate 在位且非本机时要求认证，而浏览器发不出 `Authorization`，匿名跨源读只会拿 401；本批把改动收在 `/rpc`、`/auth/*`、`/sse` 三面，没有顺手扩第四个面。
 3. 结构门禁只判骨架：`params` 的字段数、除方法名以外的字符串字段值长度仍无上界。§7 给的分母是 1 MiB 总体加深度 32，本批按它落，没有自行加码。
 
+### 批次 H：Windows 同包 CLI+Host+daemon 交付链与干净包验收（任务 5 的 Windows 半）
+
+| 落地面 | 位置 | 说明 |
+| --- | --- | --- |
+| 同包组装 | `scripts/pack-service.mjs`（新增 133 行） | 一份目录里同时放 `bin/sacode.exe` + `bin/sacode-host.exe` + `bin/sacode-daemon.exe` + 运行期库 + `extjs/`，并产 `bin/service-manifest.json`（schemaVersion 1、platform/arch/gitSha、roles 四角色、files 逐条 path/bytes/sha256/kind）。运行期库**不在这里定规则**：哪几颗 DLL 进包、哪几颗只是编译期专用，已由 `scripts/pack-cli.mjs` 用「删掉能跑 / 删掉真依赖就当场炸」反证定过档，本脚本只消费它的产物——两份规则迟早会漂。缺输入即 rc=2 并指名缺哪个路径；运行期库为 0 也拒；未知 kind 拒；`--out == --base` 有同路径守卫，重复跑幂等 |
+| 独立验收 | `scripts/verify-service-package.mjs`（新增 119 行） | 11 项检查，退出码由**失败条数**决定，不是第一条红就早退——早退会把后面几项的检查静默掉。方向是双向的：清单说的每件事盘上要成立（存在/大小/摘要），盘上每个可执行文件也必须在清单里（`no-unlisted-payload` 挡的是旧产物混包这条唯一静默通道）。清单内路径常量必须写 `/`：Windows 上 `join` 给反斜杠，会把清单自己判成「盘上有但没登记」 |
+| 包内 daemon 入口 | `npm/sacode-cli/bin/daemon.js`（新增 46 行） | 只 `require.resolve('<平台包>/package.json')` 再拼包内 `bin/sacode-daemon.exe`：不找全局 Host、不依赖仓库目录、argv 原样透传、不拼 shell。失败码按成因分立可诊断：78 平台不支持 / 79 解析不到平台包 / **82 平台包装了但包内 exe 缺失（提示该重跑 pack-service）** / 80 spawn 失败 / 81 无退出码。`SACODE_EXTJS_DIR`、`SACODE_HOST` 只在包内确实带着时才设 |
+| 主包声明 | `npm/sacode-cli/package.json` | `bin` 增 `sacode-daemon`，`files` 与 bin 值集合一致。钉它的是 `scripts/sacode-naming.test.mjs` 里改成**穷尽比对**的那条断言（`deepEqual` 整张 bin 表 + 逐个入口名在品牌集内 + `files`↔bin 值集合相等）——写成「至少有一个」就钉不住品牌漂移与漏登记的入口脚本 |
+| 不进包的东西 | 两份脚本的禁词表 | 身份/审计/幂等账/私钥按 **basename 后缀**判（`.pem .key .id .audit.log .ledger.jsonl .devices.json`），不按子串判：子串判会误杀 `sacode-daemon.exe`、`libstdx.crypto.keys.dll` 这类合法名字（本批 green1 就是一颗合法 DLL 被误杀红的） |
+
+**真包直跑读数**（命令行手跑，不是测试夹具）：`node scripts/pack-service.mjs --out target/sacode-evidence-svc` **rc=0**，输出 `packed 93 个文件（可执行 3 + 运行期库 82 + 扩展宿主 7），清单 bin/service-manifest.json 对 gitSha 7f794c4`；`node scripts/verify-service-package.mjs target/sacode-evidence-svc` **rc=0**，11 项全 PASS，末行 `checks=11 failed=0 files=92` 与 `note platform=win32 arch=x64 gitSha=7f794c4…`。93 与 92 的差是口径不是漏登记：人话计数含清单自身，而清单按规则不登记自己。产物摘要（sha256 前 16 位）：daemon `d1ac60f2389419f0` / 11146240 B、host `d8375e67fc19b40c` / 11135488 B、cli `c9fbd9c8bc4235e9` / 10960384 B、`extjs/server.cjs` `d1bdd5660a2e1c85`；包内登记总量 58952903 B。
+
+**计数与轨迹**（每一步红都留着——它们各自揭示一个缺陷，一次到位的绿反而是掩盖）：
+- 红先：**tests 8 / pass 0 / fail 8，rc=1**。两种红形状：7 条 `Cannot find module 'D:\...\scripts\pack-service.mjs'`（被测脚本还不存在），第 8 条不需要被测脚本、红在声明面 `主包必须提供 daemon 入口，否则同包交付到此为止：{"sacode":"bin/cli.js"}`。
+- green1（8 条）：#4 红 → 秘密禁用表原本按子串判，误杀合法运行期库；改成 basename 后缀判。
+- green2（10 条）：#9 红、包装脚本 rc=79 → 夹具里没放平台包 `package.json`，`require.resolve` 走的是「平台包不存在」那一支；补夹具，并把 79 与 82 拆成两个码，让两种失败各有各的诊断。
+- green3：**10 / 10 / rc=0**。加第 11 条（79 与 82 分立都要断言）后 green4：**11 / 11 / rc=0**。
+- 最终回归（变异全部还原后）：**tests 11 / pass 11 / fail 0 / cancelled 0，rc=0**。
+
+**变异反证（2 轮；P1 因测试自身假绿重跑过一次）**：
+
+| 变异 | 施加 | 独占受害 | 读数与教训 |
+| --- | --- | --- | --- |
+| P1 | `verify` 里把 `secret-and-state-denied`、`file-digests`、`no-unlisted-payload` 三项改成无条件打 `PASS … MUTANT-P1-stub`；同轮 `daemon.js` 撤掉「平台包在但包内 exe 缺失」的 `existsSync` 守卫 | 期望 #3 / #5 / #6 / #11 | 首跑只红 **#5 + #11（pass 9 / fail 2）**——红得比预期少不是变异弱，是**测试自己假绿**：#3/#6 断言写成「输出里出现那个检查名」，而桩打的 PASS 行也含那个名，变异体反而满足了断言。改成只认 `^FAIL <检查名>`（多行锚定）后重跑 P1b：**pass 7 / fail 4** = {#3 篡改, #5 未登记二进制, #6 伪装密钥, #11 包装码}，与预期逐条对上。#11 的原文顺带给出撤掉 82 守卫后的真实退路：`装了包但缺 daemon 应回 82，实际 80：… sacode-daemon.exe ENOENT` |
+| P1 的施加方式修正（不是第三条变异） | 篡改从「改文件长度」改成**等长字节翻转**（`0x63`→`0x43`） | #3 由 `file-digests` 独占 | 原方案下红的是 `file-sizes`，摘要检查等于没有受害用例。这也如实记下一条结构性事实：**`file-sizes` 本批没有独占受害者**——它是 `file-digests` 的更快子集，任何改长度的破坏都先被它接住，所以它的绿灯只能算冗余防线 |
+| P2 | `pack-service` 只给 cli 条目写假摘要（`sha256("MUTANT-P2-not-the-real-payload")`），盘上字节与真实产物逐字一致 | #2「清单逐条摘要对得上，且摘要就是本轮构建产物」 | **pass 8 / fail 3** = {#2, #9, #10}。后两条属「验收必须通过」家族：包本身没坏，坏的是清单，凡是拿 verify 当放行门禁的用例一起红——这是期望内的连带而非遮蔽，因为 #2 是唯一由摘要检查自己点名的那条；而 #3 保持绿正是 P2 与 P1 的区别（P2 没动字节，P1 撤了字节检查） |
+
+还原：`cp target/pack-service.mjs.bak scripts/pack-service.mjs` 后 `diff` 空输出（`pack-diff-rc=0`），三个被变异文件 `MUTANT` 标记计数 **0 / 0 / 0**（`pack-service.mjs`、`verify-service-package.mjs`、`npm/sacode-cli/bin/daemon.js`），还原后复跑最终回归即上面的 11/11 rc=0。
+
+**本批明确没做到的（不缩范围，逐条记归属）**：
+1. Linux 半全缺：`.so` 收集、ELF ABI 与可执行位、`readelf`/`ldd` 依赖核对、「缺库要响亮失败」都没做。本机无 Linux 环境且安装系统依赖不在本次授权范围 → **BLOCKED**（与下文任务 3-5 那条同源）。
+2. 离线 `npm pack` / 干净安装态未走：#10 是在**合成的 node_modules 布局**里跑包装脚本，没有真出 tarball、没在无 SDK 无仓库的环境里装。`npm/sacode-cli-win32-x64/bin` 里是上一轮 pack-cli 的产物，本批只读它，没重验「装出来的包与本次源码摘要对应」。
+3. 包内 Host 与扩展宿主只到「在包里且摘要对」：`sacode-daemon` 在包态经宿主跑一条真实方法没测（宿主侧那几个被并发会话持有的文件仍未落库）。
+4. 顺带查到一条**提交态就存在**的 IPC 悬挂：`apps/desktop/preload.cjs`（HEAD 里）invoke `sacode:executionPropose`，而 HEAD 的 `main.cjs` 那 88 条 `ipcMain.handle` 没有它（HEAD 计数 0、工作区计数 0）。工作区里并发会话正以未入库的 `apps/desktop/execution-ipc.cjs` + `main.cjs`（+16/−273）用表驱动方式补这个 handler，注册形态是 `ipcMain.handle` 配模板串通道名，而那条命名测试只扫字面 `ipcMain.handle('…')`，所以工作区态与提交态**都红**。`scripts/sacode-naming.test.mjs` 全套 **tests 3 / pass 2 / fail 1**，唯一红即此条，且与本批新增的 bin/files 那条无关（本批那条为绿）。这条线的实现与测试扫描口径都不归本会话改，本批未碰、也未弱化那条断言。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -296,6 +331,7 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
 | `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
+| 任务 5 的 Linux 半与「发布态」验证 | `scripts/pack-service.mjs` + `scripts/verify-service-package.mjs` + `npm/sacode-cli/bin/daemon.js`（Windows 半见批次 H） | 未做且非缩水：① Linux 收 `.so`、ELF ABI 与可执行位、`readelf`/`ldd` 依赖核对——本机无 Linux 且装系统依赖不在本次授权范围，**BLOCKED**；② 真出 tarball 并在剥 SDK、无仓库的环境里 `npm install` 后逐子命令跑——本批的合成 node_modules 布局只验了包装脚本的解析与失败码；③ 包内 Host/扩展宿主的端到端一条方法调用。**FAIL/BLOCKED 分档：① BLOCKED，②③ 未做。** |
 
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
