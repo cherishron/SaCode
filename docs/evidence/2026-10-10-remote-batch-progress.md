@@ -468,6 +468,18 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 
 顺带纠正同一批的证据口径：`node --check` 与工作区单跑都绿不代表提交态绿，反之亦然——这两句在这一批里各只成立了一半，所以证据文档里每个数字都必须写清取在哪一侧。
 
+### 批次 L：npm 发布态真 tarball 安装验收（任务 5 的 Windows 半），与被自己的判据抓出的永真检查
+
+新增 `scripts/verify-service-install.mjs`。它补的是批次 H 那套合成布局的洞：`pack-service.test.mjs` 用 `copyFile` 手工把 `package.json` 与 `bin/` 摆进 `node_modules` 位置，能证「包装脚本解析到包内那一份」，证不了「npm 自己打的 tarball 里真带齐东西」（`files` 白名单漏项在合成布局里不可见）与「npm 自己 install 真能生成 `.bin` shim」。本批改走真链条：`pack-service` 填包 → `npm pack --offline` → `tar` 读条目 + 解文本成员 → `npm install --offline` → 剥掉仓颉 SDK 的 PATH 跑包内 daemon 与 CLI。
+
+当轮 11 步读数（HEAD `cfd4b6b`，**工作区态**）：**10 PASS / 1 FAIL，rc=1**。关键几条：主包条目 3 / 平台包条目 94；运行期库 82 + 扩展宿主 7；身份/审计/密钥类文件名零命中（且判据建立在非空清单上）；`.bin` 出 `sacode` 与 `sacode-daemon` 两套 shim；剥 SDK 后 `where cjc` 非零已自证；包内 daemon 端口 22770 答 `/health` 200 `{"status":"ok","sseSubscribers":0}`。逐条读数与归因写在 `docs/evidence/2026-10-10-service-install-verification.md`。
+
+那 1 条 FAIL 是真缺陷，不是打包坏了：包内 CLI 的 `all` 自测 129 PASS / 2 FAIL（`装配序把依赖排在前面（第二入口同一套核心）`、`未接的种类如实拒成 kind-not-wired 而不是静默不装`）。归因分三层——(a) 开发态与安装态读数逐字一致，且包内 exe mtime 就是本轮 `pack-cli.mjs` 刚刷新的产物，排除旧产物；(b) `core/src/plugin_assembly.cj` 的 `pluginWiredKinds` 在工作区与 HEAD 都已是五类全接通（`ui` 在表内），`kind-not-wired` 只对表外种类触发；(c) core 侧 `assemblyActivatesEveryWiredKind` 已断言 `p.rejected.size == 0`。也就是说 CLI 那两条重复断言停在接通前的世界，**这份自测自己声明的「同一套核心在两入口必须给出同一个答案」没兑现**。修法是两行、方向是把 CLI 对齐 core（不是反过来），但 `apps/cli/src/main.cj` 此刻正被并发会话持有且其未提交 hunk 恰好覆盖这两行所在行段，本批不动、保持红。
+
+判据反证这一批第一次做在门禁脚本自己身上。`--self-test` 19 条基线全绿，一轮三变异（M1 撤空集合守卫、M2 秘密正则丢 `devices.json`、M3 绝对路径判据丢前导分隔符）要求红集合逐条点名预期受害用例——实得 **红 5 / 预期 5，多判 [] 漏判 []，还原逐字一致、复跑 rc=0**。而 M3 的引入正是因为它抓到了我原来那条检查是**永真**的：`tarball 条目名里不含本机绝对路径`——npm 条目一律以 `package/` 打头，`/^[A-Za-z]:/` 天生匹配不到，`--self-test` 基线当场把它自己的判据缺陷报成红。改成按内容扫（解出 `.js/.cjs/.mjs/.json` 成员拼语料），语料 35853 B / 12 个成员，且语料为空即判不过。误报侧留了三条反证：`https://` 与 `http://` 的冒号不能被当成盘符，`/usr/share/zoneinfo` 是运行期内嵌时区表不是本机路径。
+
+顺手抓到的第二件事是陈旧暂存产物：`scripts/pack-service.test.mjs` 的 `清单逐条摘要对得上，且摘要就是本轮构建产物` 当轮先红（包内 `c9fbd9c8…` vs 源码产物 `fd806de5…`），原因是 `pack-cli.mjs:33` 把 `apps/cli/target/release/bin/main.exe` 逐字拷成 `bin/sacode.exe`，而我 14:27 重编过 CLI 却没重跑 pack-cli。跑一次 `node scripts/pack-cli.mjs` 后两侧摘要一致、该套回 **11/11**。这条红正是那套摘要检查该干的事——它比时间戳可靠。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -489,8 +501,8 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
-
-## 后续批次依赖
+| CLI 第二入口的两条装配断言与 core 矛盾（批次 L 安装态验收抓出，**FAIL**） | `apps/cli/src/main.cj` 的 `runPluginTests`（现 `:475` / `:477`）仍要求 `planA.units.size == 2` 与 `@local/panel=kind-not-wired`；真值侧是 `core/src/plugin_assembly.cj` 的 `pluginWiredKinds`（五类含 `ui` 全接通，工作区与 HEAD 都干净）与 `core/src/plugin_assembly_test.cj` 的 `assemblyActivatesEveryWiredKind` | 效果：包内 CLI `all` 自测 129 PASS / 2 FAIL，`scripts/verify-service-install.mjs` 第 11 步判不过。已排除旧产物（开发态与安装态读数逐字一致，包内 exe mtime 是本轮 `pack-cli.mjs` 刷新后的）。**本目标未改**：该文件正被并发会话持有，其未提交 hunk 覆盖这两行所在行段。修法是两行、方向是把 CLI 对齐 core（`ui` 进装配序、未接种类改用 `magic` 这类表外名字），不许反过来改 core 语义凑绿 |
+| 安装态只验到「包能装、daemon 能答 `/health`、CLI 自测能跑」，远程面与 Host 未在包内复验 | `scripts/verify-service-install.mjs` 第 10/11 步 | 未做且非缩水：① 安装态没跑 `SACODE_REMOTE_ACCESS=1` + TLS + 建票 + `/rpc` 那套（开发态有 4 个测试文件覆盖，包内等价证据仍缺）；② `sacode-host.exe` 进了包、摘要对上，但没有在剥 SDK 的环境下被真实 spawn 并完成一次 `initialize`；③ registry 上按 `os/cpu` 自动挑平台包这条真实分发路径未验（需 `npm publish`，未获授权）；④ 只在单一 Node 版本（v24）上跑过 |
 
 - 任务 6 daemon 认证与接入生命周期：需 remote_identity/authorization/audit 三模块跑绿再动工，避免签名返工。
 - 任务 8 服务端幂等 + 授权 SSE + 恢复：客户端面已交付（d66aae8/34b5cfe），服务端面依赖任务 6。
