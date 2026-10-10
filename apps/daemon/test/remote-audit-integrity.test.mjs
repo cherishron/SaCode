@@ -228,28 +228,40 @@ test('/auth/token 用注入 deviceId 被拒时，失败留痕必须还在且不�
   });
 });
 
-test('deviceName 注入不改变审计里设备身份的可读性，也不留秘密', async () => {
+test('deviceName 注入在门禁处就被拒：审计记 denied 归因，不留登记成功痕迹', async () => {
+  // 批次 R 把 deviceName 从「允许任意串 + 靠审计脱敏」改成「入口拒绝」。
+  // 注入串 `op{"credential":"..."}` 里有 `"`、`{`、`}`、`:`——都是 deviceName
+  // 白名单外的字符。旧行为是登记成功、deviceId 变成注入串、之后每条判定里
+  // 的 deviceId 都是 audit-redacted:deviceId；新行为是登记就直接 400，
+  // 攻击者拿不到凭据，也就不会留下「成功设备带注入名」的痕迹。
+  //
+  // 这条用例的关键断言不是「审计脱敏还有效」——那由上面那条 `/auth/token`
+  // 注入用例覆盖——而是「门禁层真的挡下了注入，且拒绝本身留痕带原因码」。
   await withDaemon(async (d, dir) => {
-    const injected = await d.enrollAs(INJECTED);
-    // 这台设备能正常认证（deviceName 不参与凭据校验），但它之后每条判定里的
-    // deviceId 都是注入串——这正是「靠设备名抹掉自己全部痕迹」的通路。
-    await d.rpc('session/catalog', { workspaceId: 'ws-1', operationId: 'op-inj' }, injected.bearer);
+    const t = await createTicket(`${d.identity}.devices.json`, 'p-injected-gate');
+    const enrollResp = await d.post('/auth/enroll',
+      JSON.stringify({ enrollmentSecret: t, deviceName: INJECTED, kind: 'mobile' }));
+    assert.equal(enrollResp.status, 400, `注入 deviceName 必须被门禁拒：${enrollResp.status}`);
+    const body = await enrollResp.json();
+    assert.equal(body.error, 'device-name-invalid',
+      `归因必须精确到 deviceName 字符集：${JSON.stringify(body)}`);
 
     const text = await auditText(dir);
+    // 秘密侧：注入里的凭据原文与转义键串都不许落盘。
     assert.ok(!text.includes(SENTINEL), `设备名里的凭据原文不许落盘：${text.slice(-300)}`);
     assert.ok(!text.includes('\\"credential\\"'), `设备名注入的键串形态不许落盘：${text.slice(-300)}`);
-    const lines = text.split('\n').filter(l => l.includes('"operationId":"op-inj"'));
-    assert.equal(lines.length, 1, `这台设备的判定必须留痕，不能因设备名而整条消失：\n${text.slice(-500)}`);
-    assert.ok(lines[0].includes('"deviceId":"audit-redacted:deviceId"'),
-      `来自设备名的注入要标成脱敏，而不是原样落盘：\n${lines[0]}`);
-    assert.ok(lines[0].includes('"method":"session/catalog"'),
-      `同行其余字段必须可读：\n${lines[0]}`);
-    // 登记成功本身也留一条 allowed——同一台设备的第一条痕迹。
-    const enrollLines = text.split('\n').filter(l => l.includes('"method":"auth/enroll"')
+    // 留痕侧：拒绝事件必须留痕，且带明确归因。
+    const denied = text.split('\n').filter(l => l.includes('"method":"auth/enroll"')
+      && l.includes('"outcome":"denied"'));
+    assert.ok(denied.some(l => l.includes('"denyReason":"device-name-invalid"')),
+      `门禁拒绝必须留痕带 device-name-invalid 归因：\n${denied.join('\n')}`);
+    // 反向：这一轮不许出现「注入设备的 allowed」登记留痕——那意味着门禁被绕过。
+    const allowedEnrolls = text.split('\n').filter(l => l.includes('"method":"auth/enroll"')
       && l.includes('"outcome":"allowed"'));
-    assert.equal(enrollLines.length, 2, `两台设备各一条登记留痕：\n${text.slice(-500)}`);
-    assert.ok(enrollLines.some(l => l.includes('"deviceId":"audit-redacted:deviceId"')),
-      `注入设备名那条登记也要留痕：\n${enrollLines.join('\n')}`);
+    // 允许有一条：boot() 里预注册的 audit-phone 设备。注入设备不允许。
+    assert.equal(allowedEnrolls.length, 1,
+      `只应留下 boot() 预注册那条，注入设备的 allowed 痕迹不许存在：\n${allowedEnrolls.join('\n')}`);
+    assert.ok(!allowedEnrolls[0].includes(SENTINEL), `注入凭据原文不许进 allowed 留痕`);
   });
 });
 

@@ -41,6 +41,38 @@ public const AUTH_PER_SOURCE_PER_MIN: Int64 = 10
 public const AUTH_PER_TICKET_MAX_FAILS: Int64 = 5
 public const AUTH_WINDOW_MS: Int64 = 60000
 
+// deviceName 进 deviceId 之前要过门禁：只允许 ASCII 字母数字与「-」和「_」，
+// UTF-8 字节上界 64。deviceId 走 HTTP 头与快照 JSON 字段，字符集越界就是
+// 客户端在探测（换行拆审计、反斜杠破快照路径、非 ASCII 撑坏字节比对）。
+public const DEVICE_NAME_MAX_BYTES: Int64 = 64
+
+func deviceNameAllowed(s: String): Bool {
+    let bytes = s.toArray()
+    if (bytes.size == 0) { return false }
+    for (b in bytes) {
+        let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
+        if (!ok && b != 45 && b != 95) { return false }
+    }
+    return true
+}
+
+func deviceKindAllowed(s: String): Bool {
+    if (s == "desktop" || s == "mobile" || s == "cli" || s == "host") { return true }
+    return false
+}
+
+// 顺序钉死：先 kind（枚举），再长度，再字符集。三个错误码语义独立：
+// kind-invalid 是「枚举外」，name-too-long 是「字节数越界但字符本身没错」，
+// name-invalid 是「字符集越界但长度够」。把长度与字符集合在一起会让客户端
+// 分不清是「打太长」还是「打了不该打的字符」——错误归因模糊本身就是漏洞。
+func deviceFieldViolation(deviceName: String, kind: String): String {
+    if (!deviceKindAllowed(kind)) { return "device-kind-invalid" }
+    let bytes = deviceName.toArray()
+    if (bytes.size > DEVICE_NAME_MAX_BYTES) { return "device-name-too-long" }
+    if (!deviceNameAllowed(deviceName)) { return "device-name-invalid" }
+    return ""
+}
+
 // 固定窗口计数。刻度取真实单调钟：调用方不能 tick，协议面也推不动它，
 // 所以「窗口没过就一直 429」不会变成可被客户端利用的停摆开关。
 public class RemoteAuthRateLimiter {
@@ -237,6 +269,16 @@ public class RemoteAccessEndpoints {
         let kind = field(body, "kind")
         if (secret.size == 0 || deviceName.size == 0) {
             return AuthResponse.deny(400, "enroll-fields-missing")
+        }
+        // 字段门禁在票据校验之前：非法 shape 不消耗票据，也不动失败计数。
+        // 否则「先塞一串非法请求再抢跑合法请求」的客户端能把票据失败计数器打满，
+        // 后面连合法登记都会被 429 ticket-locked 卡住——那是把 shape 错当成
+        // 凭据错的攻击面。归因码分三类（kind-invalid / name-too-long / name-invalid）
+        // 让客户能自己区分是「枚举外」「字节越界」还是「字符集越界」。
+        let violation = deviceFieldViolation(deviceName, kind)
+        if (violation.size > 0) {
+            auditBootstrap("", "", "auth/enroll", "denied", violation)
+            return AuthResponse.deny(400, violation)
         }
         // 受理前先合入本地管理入口新建的票据：store 与建票进程不是同一个，
         // 不做这步的话 /auth/enroll 永远查不到刚创建的票据。

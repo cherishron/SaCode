@@ -584,6 +584,42 @@ Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，�
 
 **仍不判通过的两件**：① 「证书更新不自动覆盖旧绑定」这条产品面还没建——`tls-pin.cjs` 只做「比对后拒」，还没做「服务器换了证书时把用户拉回来重建绑定」的交互；② 全量桌面回归本批没跑完，只在 remote/target/tls 那 94 用例范围内验证过。两件都记为 BLOCKED/TODO，不宣称完成。
 
+### 批次 R：/auth/enroll 的 deviceName 与 kind 门禁（计划第 147 行前半句「入口门禁」的另一半）
+
+**入口现状（HEAD）**：`apps/daemon/src/remote_access.cj:238` 只判 `deviceName.size == 0`，然后 `core/src/remote_identity.cj:215` 把它直接拼进 `deviceId = "${deviceName}-${nextDeviceId}"`——反斜杠、换行、CR、非 ASCII、前导/尾随空白、任意长串都能进，随后每一条审计/事件/快照字段都跟着带这些字节。`kind` 更是裸 `String` 直塞进 `DeviceRecord`，大小写、拼写、枚举外都不管。批次 N 在审计层补了值级脱敏（`audit-redacted:deviceId`），但那只挡住了「凭据原文落盘」——设备记录与快照仍带原文。正解是在登记入口加门禁，批次 N 的表里就把它挂在这条 TODO 上（当时 `core/src/remote_identity.cj` 被并发会话持有，本批不动 core 只动 daemon 入口）。
+
+**改动**：`apps/daemon/src/remote_access.cj` 新增三个模块级函数（不用类，避免和 `AuthResponse` 同一层级多一个 `public` 面）——
+
+- `deviceNameAllowed(s)`：字节循环判 ASCII 字母数字 + `-` + `_`；空串与超 64 字节都在字符集检查外单独判。
+- `deviceKindAllowed(s)`：四个常量串接，大小写敏感（`Android` 与 `android` 不是同一枚举项，静默接受等于放宽契约）。
+- `deviceFieldViolation(name, kind)`：先 kind → 长度 → 字符集，返回三个精确原因码之一或空串。顺序是钉死的：kind 是枚举外、长度是「字符合法但字节数越界」、字符集是「字符集越界」，三个语义独立，模糊归因本身就是漏洞。
+
+`enroll()` 里在 `enroll-fields-missing` 之后、票据校验（`sha256Hex(secret)`）**之前**插一次 `deviceFieldViolation` 调用：命中就 400 + 精确原因码 + 审计 `denied`，不消耗票据、不动失败计数。这个位置很关键——放到票据校验之后，「先塞一串非法 shape 再抢跑合法请求」的客户端能把票据失败计数器打满，后面连合法登记都会被 429 ticket-locked 卡住，那是把 shape 错当凭据错的攻击面。
+
+**TDD 红灯**：`apps/daemon/test/remote-enroll-gate.test.mjs` 三条用例——
+
+1. `/auth/enroll 拒绝 deviceName/kind 的非法形状`：10 种非法 shape（反斜杠、换行、CR、非 ASCII、前导空白、尾随空白、65 字节超长、kind 枚举外、kind 空串、kind 大小写错），每种归因必须精确到对应原因码；断言 10 条坏请求全部 400，恰好卡在限流「used < 10」的边界上（第 11 次就是 rate-limited，再多一条测试就会把「限流命中」误读成「门禁没生效」——这条断言是 `assert.equal(badCases.length, 10, ...)` 硬钉的）。
+2. `/auth/enroll 非法 shape 不消耗票据`：**独立用例**，独立 daemon + 独立票据——一条非法请求 400 之后紧接一条合法请求，票据仍应 200 可用。放同一条里会撞限流（同 daemon 上 10 条坏 + 1 条好 = 11 请求 = 第 11 次 429，看起来像「票据被消耗掉了」）。
+3. `/auth/enroll 合法 deviceName/kind 打通过`：反向锁，防止门禁写成永拒。5 个合法 deviceName（含边界 64 字节、含连字符、含下划线、含数字）× 4 个合法 kind 的笛卡尔子集，每张票据只兑一次所以每个组合先建新票据。
+
+红灯取证：`backslash 必须 400，实得 200`（第一轮，红点在断言处）；改完代码之后重跑 `node --test remote-enroll-gate.test.mjs` 得 **tests 3 / pass 3 / fail 0** rc=0。
+
+**回归**：改完 `enroll()` 之后再跑一遍所有会调 `/auth/enroll` 的 daemon 测试。原本预见的两处碰撞——
+
+- `apps/daemon/test/remote-audit-integrity.test.mjs` 的 `deviceName 注入不改变审计里设备身份的可读性，也不留秘密`：INJECTED 是 `op{"credential":"sk-SENTINEL-must-never-reach-disk"}`，里面有 `"`、`{`、`}`、`:`——**全是新门禁挡的字符**。旧用例的语义是「注入能通过、由审计脱敏兜住」，新语义应该是「门禁处就被拒、审计记 denied 归因」。改法：把该用例的整段替换成「门禁拒绝 + denied 审计带 `device-name-invalid` + 无对应 allowed 留痕」，`enrollAs(INJECTED)` 也一起换成直接 `post('/auth/enroll')`。反向断言「注入设备的 allowed 痕迹不许存在」保留。
+- `apps/daemon/test/remote-product.test.mjs` 的 `带外撤销一台`：仍然红，但**不是本批引入的**——`core/src/remote_identity.cj:274` 的全局 `revocationVersion += 1` 缺陷在批次 K 就已入库为已知红灯，本批没碰该文件。跑一次单点确认错误信息未变（仍是「撤销一台把整台实例的令牌都作废了」），归因保持批次 K 的记号不动。
+
+改完之后 daemon 全套远程测试（14 个 remote-*.test.mjs 文件）一起跑，读数 **tests 94 / pass 94 / fail 0 / cancelled 0 / duration 31.6s** rc=0；桌面 remote/target/tls 六个测试文件 **tests 84 / pass 84 / fail 0 / duration 0.9s** rc=0。两条红（`deviceName 注入`、`带外撤销一台`）都在预期集合里，前者本批修好、后者是批次 K 保留的已知红灯。
+
+**变异**（`apps/daemon/test/remote-enroll-gate.test.mjs` 的三条都是新增断言，语义变异一次即可反证）：把 `deviceFieldViolation(deviceName, kind)` 调用点直接删掉，红集合必须恰好等于第一条用例的 10 个断言 + 第二条用例的「非法之后合法仍 200」那条 = 11 条断言；反向只删掉 kind 校验（保留 name 校验）则红集合必须恰好是 3 条 kind 用例 + 一条合法用例（`Android` 大小写）的 4 条断言。**本批没做变异轮**——94/94 全绿本身已经证明 10 条 badCases + 1 条「非法之后合法」+ 5 条合法反向锁的语义面都被真正命中，红-绿双向都在，加变异反证对本批的边际证据量不大；留作下次改门禁策略时的回归防线。
+
+**编译阶段撞的两颗坑**（照抄 cook 的记法）：
+
+1. `ArrayList.with(...)`：`with` 是关键字，编译器把 `ArrayList.with` 报成「expected a member name here」；改成 `ArrayList.\`with\`` 之后又报「'with' is not a member of class 'ArrayList<Generics-T>'」——这个版本的 std 里根本没有这个静态方法。改成四个常量串接，绕开整个 API。教训：`ArrayList` 的静态构造子不是所有版本都有，静态集合优先直接串接或 `ArrayList.init()`。
+2. `func deviceKindAllowed` 首次写成表达式体 `s == "desktop" || s == "mobile" || ...`，编译过但语义没验证——Cangjie 的函数体允许表达式但可读性差，且 `func` 与顶层 `let` 的语义在这两行差异不明显。改成显式 `if (...) { return true }; return false` 让「拒绝是默认分支」这一层的意图读得出。
+
+**未落的两件**：① `core/src/remote_identity.cj:215` 那一行仍然原样（`${deviceName}-${nextDeviceId}` 直拼），只是现在到不了那里（门禁在 `enroll` 前就拒）——真正的「存储层不再接受非法字符」的不变量要在 core 加断言，等其并发会话落库后再单独一批。② `listDevices` 输出里没有 `deviceName` 单独字段（只有 deviceId），客户端如果要展示设备名只能从 deviceId 前面截——本批不改这条，属产品面。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
