@@ -48,3 +48,5 @@ NSIS 那一跳与批次 D 定到的同一条本机前提有关（`%TEMP%` 对非
 - **NSIS 真机安装/卸载：BLOCKED**。未获授权，本轮没有运行 `SaCode Setup 0.1.0.exe /S`，也没有动用户已安装的应用。解锁动作：授权后在一次性会话目录里静默装→启动 `--ui-smoke`→卸载→核对注册表与安装目录无残留。
 - 残留核查：跑完后 `tasklist //FI "IMAGENAME eq sacode-host.exe"` 与 `SaCode.exe` 均回 `INFO: No tasks are running which match the specified criteria.`，**自有宿主与打包态壳零残留**。
 - 未做（不是失败，是本轮没主张）：布局冒烟没有在打包态重跑（只在开发态 192 组绿）；A3 的真模型端到端仍卡在凭据，见 `2026-10-11-windows-tls-anchor-audit.md` §9。
+
+> **本条后半句已被 2026-10-11 06:13 的复测推翻**（原文保留）：A3 的真模型端到端**不再**卡在凭据——`~/.sacode/user/credentials.env` 里的 StepFun 键实测可用，界面「新增供应商→填密钥→保存→选模型→发送」已出真答复，判据逐条成立，见同一文档 §13.1（凭据归因的作用域更正）与 §13.2（A3 完整口径 PASS 表）。本条前半句（布局冒烟未在打包态重跑）仍然成立。
