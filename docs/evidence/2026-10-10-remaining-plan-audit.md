@@ -214,7 +214,24 @@ remote-idempotency        5/5   remote-tls                 2/2
 3. **反枚举**：响应体不含 `expired` / `token-gone` / `token-not-found` / `missing` / `device` / `principal`——把「令牌丢了」和「令牌过期了」以及「哪台设备」三种信息面全部封住。将来若有人把 `remote_gate.cj:142-145` 的三合一拆开，本用例立即变红；
 4. 同一凭据能换出新令牌（凭据摘要仍在 snapshot 里），说明被拒的不是「设备」而是「这张令牌」——这条防止客户端被误导去做重新登记。
 
-**读数**：`remote-auth.test.mjs` 单跑 **20/20 rc=0**（原 19 条 + 新 1 条）。全套 `remote-*.test.mjs` 未跑完（本节只登记本批影响面），下一轮跑一次回归把 K 保留红以外的稳态再复核一遍。
+**读数**：全套 `remote-*.test.mjs` 19 套逐套件跑：
+
+```
+remote-audit-integrity  8/8    remote-management-rpc     5/5
+remote-auth            20/20    remote-method-surface     6/6
+remote-capability-contract 15/15  remote-mobile-client     2/2
+remote-concurrent-enroll   3/3  remote-ownership           5/5
+remote-enroll-gate        3/3   remote-product             4/5 (fail 1)
+remote-events             7/7   remote-protocol-version    4/4
+remote-execution-gate     5/5   remote-request-limits      6/6
+remote-host-guard         9/9   remote-sse-recovery        4/4
+remote-idempotency        5/5   remote-tls                 2/2
+                                    remote-utf8-boundary     3/3
+```
+
+汇总：**pass=117 fail=1 cancelled=0**（116 独立测试通过 + 1 条保留红）。分套件 rc：18 条 rc=0、1 条 rc=1（`remote-product`）。比 §6e 基线（116/1）多 1 条通过，正是本批新增的这条「重启后旧令牌找不到」用例；套件级 pass 增量只在 `remote-auth`（19/19 → 20/20），其它 18 套数字逐条与 §6e 一致——没有静默变绿。
+
+唯一红仍是**批次 K 明写保留的撤销事故半径红**（`test/remote-product.test.mjs` 「带外撤销一台：只砍被撤那台的在途流与新请求，另一台不受影响」），根因与本批无关。
 
 **推进后未勾项计数**：仍是 70——本批修的是 plan 第 142 行里「过期凭据」这一**字面小格**，同一行还剩「跨证书」一个 B 档项（依赖客户端 TLS pin 层的证书轮换面）。**plan 第 142 行整行仍不勾**——它的 8 个小格里「无凭据 initialize / 撤销凭据 / 并发登记兑换 / 拒绝发生在 Host.forward 前 / 匿名 SSE」已由前批分散覆盖、「过期凭据」本批落地，但「跨证书」是独立的第二档。
 
