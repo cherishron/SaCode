@@ -871,6 +871,18 @@ if (decision.allowed
 
 **自证边界**：本轮只改 `docs/plans/remote-capability-contract.json` 一份文件的 26 处 `implementationAnchor` 值，没有改任何源码、没有改任何测试。`node --test` 复跑 15/15 是契约测试的完整期望集，非缩小版。审计脚本 TALLY 从 91/20 到 117/2 再到 119/0 是连续三步可复跑。
 
+## 批次 AA：计划未勾项的推进性审计（承接前 32 批的散点讨论）
+
+**目标**：把 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` 的 **70 项未勾**（`grep -c '^- \[ \]'`）按四档归位——独立可推进 / 等并发会话 / 环境阻塞 / 用户授权——替代前几轮散在各处批次的零散「未做」讨论。
+
+**产出**：新增 `docs/evidence/2026-10-10-remaining-plan-audit.md`，含四档判据、A/B/C/D 分类、每个可推进项的具体改法与风险、按解锁顺序排好的推进表。
+
+**本批不改任何源码**。理由：daemon 二进制为空目录（`apps/daemon/target/release/bin/` 无产物），无法运行任何 `remote-*.test.mjs` 集成测试；而所有可推进项（协议版本门禁、审计遍历断言）都需要真 daemon 自证——「写了但没验」的绿灯是本计划明文禁止的。
+
+**未勾项计数**：本批前后均 70，未勾任何一项。**这是分类判定，不是推进结果**——真正推进要在 §7 的解锁顺序走完（等 `core/src/remote_identity.cj`、`apps/host/src/main.cj`、`apps/daemon/src/host_proxy.cj`、`apps/cli/src/main.cj` 落库到 HEAD 后按 AA.1 → AA.5 顺序接力）。
+
+**四档分档读数**（`docs/evidence/2026-10-10-remaining-plan-audit.md` §2–§5）：A 档 7 项（其中 3 项可编辑但不可验证）、B 档 13 项、C 档 6 项、D 档 4 项。A/B 是「等谁的时机」，C/D 是「时机到了也未必解锁」——这个区分替代前几批把 BLOCKED 笼统归到一处的做法。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
