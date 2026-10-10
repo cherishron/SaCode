@@ -142,3 +142,15 @@ wrong[1 unrelated anchor] longcat        -> http-status:404
 
 取证态：本节所有构建与测试读数都是**工作树态**（含他人在途源文件）。HEAD 纯净态能拿到的只有 §9 那条「编译即红」；解锁动作不变——等 `cmds.cj` / `lease.cj` / `session.cj` / `git_workbench.cj` 落库后重跑 `cd core && cjpm test`。
 
+## 11. A3 复探（2026-10-11 04:39，批次 E 之后补做，结论仍 BLOCKED）
+
+批次 E 打完包后回头再试一次「有没有可用的真模型入口」，三条都是负向读数，逐条可复跑：
+
+| 探的路 | 命令 | 读数 |
+| --- | --- | --- |
+| 本机网关 `sa-ai`（`providers.json` 里的 current） | `curl -s -o /dev/null -m 6 -w '%{http_code}' http://127.0.0.1:8090/v1/models` | **`000`**（无人监听；`netstat -ano` 里也查不到 8090） |
+| 同条目的凭据面 | 只看形态不看值：`api_key_len=0`、`secret_ref` 实际为空 | 配置就绪但**无凭据**，起轮会落在鉴权前 |
+| 记忆里的授权端点 `freeapi.dgbmc.top/v1` | `curl -s -o /dev/null -m 12 -w '%{http_code}' https://freeapi.dgbmc.top/v1/models` | 12 s 内**未返回状态码**（传输层未通），且仓库与 `~/.sacode/` 全文 `grep -rl freeapi.dgbmc.top` 得 0 个文件——这条端点在本机没有任何配置落点 |
+
+所以 §9 那句判据保持不变、也不复述为新事实：**A3 缺的是可用凭据或一个可达的兼容端点，不是代码**。TLS 锚那一半已按 §10 的双向对照验过（不带 `SSL_CERT_FILE` 的新宿主拿得到真实 HTTP 状态码）；「界面出现 assistant/message、usage 落账、session.log 无密钥」这一条要到用户提供任一可用入口后才能成立。解锁动作（任选其一）：给一个能用于 `/chat/completions` 的键，或把 `providers.json` 里 `sa-ai` 指向的本机网关起起来。
+
