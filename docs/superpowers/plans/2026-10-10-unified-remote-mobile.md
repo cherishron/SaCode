@@ -178,7 +178,7 @@ for (const row of rows) {
   - 已落（批次 F）：订阅按 deviceId 打标，`closeFor` 只关这台设备的流（本机开发态的空标签连接不被波及）；`/sse` 先建缓冲订阅、再读持久高水位、补 `游标之后` 的 durable 帧、再消费直播，缓冲里同游标的帧丢弃。未落：**逐帧**资源级过滤——目前只做到空闲 tick 重认身份，通知帧本身不带归属键（宿主侧形状属任务 7）。
 - [ ] 双限额1024帧/4MiB，支持过期/撤销/溢出关闭原因；补读limit 1..200，快照与generation的变化显式处理。
   - 已覆盖：补读 `limit` 只接受 1..200（越界按 `-32602 limit-out-of-range` 拒，不静默折叠）、非十进制游标按 `cursor-malformed` 拒、generation 不符与游标越界各回一种显式 gap 并带回当前代次；批次 F 补上每连接 1024 帧 + 4 MiB 双限额（两种原因 `overflow`/`byte-overflow`，字节按队列内未取走的部分计，取走即归还），以及 `revoked`/`expired` 两种关流原因与 `event: close` 送达。仍未覆盖：逐帧资源过滤（上一条）。
-- [ ] 真实网络测试UTF-8分片、半帧、空闲断连、睡眠恢复；最终持久结果替代丢失瞬时文本，不编造回放。
+- [ ] 真实网络测试UTF-8分片、半帧、空闲断连、睡眠恢复；最终持久结果替代丢失瞬时文本，不编造回放。（批次 S 落了「UTF-8 分片」的解码面这一半：`remote-utf8-boundary.test.mjs` 三种典型非法序列（0xFF 单字节保留 / 0xC3 0x28 两字节 continuation byte 落 0x28 / 0xED 0xA0 0x80 三字节 surrogate 半平面）用 `node:http` 发**原始字节**（fetch 会把 latin1 强转 UTF-8 替换成 U+FFFD，钉不住「服务端自己面对非法 UTF-8」）打到真 daemon 的 `/rpc` 与 `/auth/token`，断言 daemon 不崩、响应 JSON.parse 成功、有 error 对象、`code ∈ {-32600, -32700}`（JSON-RPC 2.0 spec §5.1 parse error 家族）、`id === null`、响应与审计里都不含 U+FFFD 与原始字节的 latin1 形态；加一条反向锁「合法多字节 UTF-8 参数」证明「拒绝」不是「所有请求都被拒」。首跑红点是判据错把 HTTP 400/500 当「拒绝」——spec §5 明确 parse error 走响应体的 error 对象、HTTP 200 合规，改判据后 3/3 通过。**本批无源码改动**：daemon 端 stdx JSON 解析已把非法 UTF-8 归成 `-32600 invalid request`（`daemon.cj:312` catch），`Invalid unicode scalar value` 原样回给客户端。取证见 `docs/evidence/2026-10-10-remote-batch-progress.md` 批次 S 节。**这一行仍不判通过**：TCP 半帧 / chunked 中间断归 stdx http 层不在本仓代码语义面；`/sse` 的非法 UTF-8 帧（每连接 1024 帧 / 4 MiB 双限额已有批次 F，UTF-8 面未加）与睡眠恢复留作下次专门打 SSE 边界时补）
 - [ ] 变异删除幂等、过滤与补读缓冲，指定重复执行/越权/丢帧测试分别红；恢复逐一回绿。
 - [ ] 授权后提交，跑全量daemon与相关核心测试。
 

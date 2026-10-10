@@ -620,6 +620,26 @@ Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，�
 
 **未落的两件**：① `core/src/remote_identity.cj:215` 那一行仍然原样（`${deviceName}-${nextDeviceId}` 直拼），只是现在到不了那里（门禁在 `enroll` 前就拒）——真正的「存储层不再接受非法字符」的不变量要在 core 加断言，等其并发会话落库后再单独一批。② `listDevices` 输出里没有 `deviceName` 单独字段（只有 deviceId），客户端如果要展示设备名只能从 deviceId 前面截——本批不改这条，属产品面。
 
+### 批次 S：daemon 端点接收非法 UTF-8 字节时的失败行为（计划第 181 行「真实网络测试 UTF-8 分片」的最小可用面）
+
+**范围界定**：计划第 181 行原话是「真实网络测试 UTF-8 分片、半帧、空闲断连、睡眠恢复；最终持久结果替代丢失瞬时文本，不编造回放」。**本批只落「UTF-8 分片」半的解码面**——三种典型非法序列在真 HTTP socket 上打到真 daemon 后的行为。TCP 半帧 / 慢流属于 Node `http` parser 已经处理的部分（Content-Length 分片、chunked 拼接），不在本仓代码的语义面；睡眠恢复与「最终持久结果」在批次 E/F 已经有游标与补读。所以本批把「真实网络测试」的最小可用面钉到「解码失败」这一种上，剩下两种明确写为不在本批范围内（不是隐藏、是明写）。
+
+**入口现状**：`apps/daemon/src/daemon.cj:8` 与 `remote_access.cj:11` 各 `import stdx.encoding.json.*`。stdx 的 JSON 解析器在遇到非法 UTF-8 时会自己抛 `Invalid unicode scalar value`，被 `dispatchRpc` 的 `try/catch` 在 `daemon.cj:312` 兜住转成 `errRpc(idText, -32600, "invalid request")`——这条路径之前没有端到端用例。也就是说「解析失败」这条**已经在生产代码里跑过**，但没有测试把它钉住：将来如果有人改解析器或换编码层，这条会静默失效，客户端会看到 200 空响应或整段原始字节回显，攻击面就出现了。
+
+**测试**：`apps/daemon/test/remote-utf8-boundary.test.mjs` 三条：
+
+1. `/rpc 收到非法 UTF-8 正文`：三种形状（`0xFF` 单字节保留 / `0xC3 0x28` 两字节序列 continuation byte 落在 0x28 / `0xED 0xA0 0x80` 三字节 surrogate 半平面）。用 `node:http` 而不是 `fetch`——fetch 会把 latin1 body 强转 UTF-8、字节被替换成 U+FFFD，我们要发**原始字节**让服务端自己面对。断言：daemon 进程 `exitCode === null`（没崩）、响应体 `JSON.parse` 成功、有 `error` 对象、`code ∈ {-32600, -32700}`（JSON-RPC 2.0 spec §5.1：parse error 走 -32700、invalid request 走 -32600，本仓实现是 -32600）、`id === null`（spec 要求）、响应里无 U+FFFD 替换字符。
+2. `/auth/token 收到非法 UTF-8 正文`：同一批三形状。断言除第 1 条外，还断言审计文件里既无 latin1 版本的原始字节、也无 U+FFFD——即请求原文**不落盘**。
+3. `/rpc 合法多字节 UTF-8 参数`：反向锁，防止「拒绝」被实现成「所有请求都被拒」。合法请求带 `会话-测试-日本語-한글-🌟` 五段多字节字符（含 CJK、CJK 扩展、Korean、Emoji）打到 `/rpc`，未认证会被 authz-denied 挡住，但**方法名识别**发生在 authz 之前——响应里能读到原始 `operationId: utf-8-ok` 就证明合法 UTF-8 走完了完整解析路径。
+
+**首跑红灯**：第 1 条一开始把 `assert.ok(r.status === 400 || r.status === 500)` 当「非法 UTF-8 应 400/500」的判据，实跑得到 `200 {"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid unicode scalar value."}}`——HTTP 层 200 是对的，JSON-RPC 2.0 spec §5 明确 parse error 走响应体的 error 对象，HTTP 状态可以是 200 也可以是 500。判据错了改成 spec 对齐的三条（error 存在 + code 是 parse error 家族 + id 是 null），三形状全过。这个修正本身是一处取证失误：JSON-RPC 的 HTTP 状态码语义在 spec 里没有强约束，只要求响应体结构化。
+
+**回归**：改完之后 `node --test test/remote-*.test.mjs` 全套 15 个 remote 测试文件 **tests 102 / pass 101 / fail 1 / cancelled 0 / duration 34.7s** rc=1。唯一红是批次 K 保留的「带外撤销一台」——`core/src/remote_identity.cj:274` 的撤销事故半径，属并发会话持有的文件，本批不动。新增 3 条全绿。
+
+**变异反证**：**本批没做变异轮**，因为本批没改任何源码——只是把已经在跑的解析失败路径钉成用例。要产生红需要真的去改 `dispatchRpc` 的 catch 行为（比如把 `errRpc` 改成返回 `{"result":null}` 让 parse error 被吞），但那是 stdx 的编码层，本批不动。留作下批改解析层时的回归防线；本批的边际证据是「把已经在跑的路径写进测试」。
+
+**未落**：① TCP 半帧 / chunked 中间断——归 stdx `http` 层，本仓代码不介入；② 睡眠恢复与「最终持久结果替代丢失瞬时文本」——属 SSE 补读面，已由批次 E/F 覆盖；③ 本批只测了 `/rpc` 与 `/auth/token` 两个端点，`/sse` 的非法 UTF-8 帧与「idle timeout」在 SSE 侧的语义面（每连接 1024 帧 / 4 MiB 双限额、`revoked`/`expired` 关流）已在批次 F 落地但未覆盖 UTF-8 面——留作下一次专门打 SSE 边界时补。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
