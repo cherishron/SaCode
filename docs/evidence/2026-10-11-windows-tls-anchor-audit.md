@@ -41,6 +41,8 @@ A1 原计划用 crypt32 的存储入口。实测（探针 `apps/desktop/.tmp-tes
 
 判读：Cangjie 侧的调用编组与 crypt32 符号可达性都没问题（前三行是正证），坏的是「系统存储提供者」在本进程内开不起来。**原因未证**，因此不把产品链路建在这条入口上。
 
+> **本节两条读数已被 §14 推翻**（2026-10-11 06:13 复测）：① 「lastErr=0」没有证据力——仓颉侧 `GetLastError` 读到的是死槽（打开必然失败的文件也回 0）；② 第 38/39 行的 `CERT_STORE_PROV_SYSTEM_W` 传的是 10，正确值是 `10+0x8000=32778`（provider 名是 `MAKEINTRESOURCE` 序号，不是字符串）。结论方向不变：§14.2 用正确的 ANSI 序号 9 加同进程正对照重做过，系统存储提供者仍开不起来。原文照留，判据以 §14 为准。
+
 注册表直读也试过（advapi32 通道正常）：`HKLM\SOFTWARE\Microsoft\SystemCertificates\ROOT\Certificates` 枚举到 12 张、`AuthRoot` 另有 41 张（合计正是 .NET 看到的 53），但 `Blob` 值是未公开的「存储头 + 属性表」复合结构（首 16 字节实测 `92 00 00 00 | 01 00 00 00 | 04 00 00 00 | …`，DER 起点不固定）。按未文档布局切片会在 Windows 改版时静默取错锚，放弃。
 
 ## 4. PEM 锚路由：可用
@@ -283,6 +285,42 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 顺带复核批次 C 的行数门槛：`apps/desktop/renderer/app.js` 实测 **953 行**（< 1000）。
 
 结束后残留：`tasklist //FI "IMAGENAME eq sacode-host.exe"` → `No tasks are running which match the specified criteria`。
+
+## 14. 复查 §3：两条读数被推翻，但 A1 运行时路线是「被参数正确地证伪」而不是可疑（2026-10-11 06:11–06:13 实测）
+
+动机：§3 把 A1 的运行时 CFFI 路线判死，却留着「原因未证」。本轮先怀疑**自己的探针**，两处都怀疑对了。探针 `apps/desktop/.tmp-test/tlsprobe/src/probe.cj`（v6→v9，临时不入库），构建 `cjpm build` rc=0，运行 rc=0。
+
+### 14.1 更正一：`GetLastError` 在仓颉侧读到的是死槽，§3 的「lastErr=0」从来不带信息
+
+同一次运行里的对照（`CreateFileA` 属 kernel32，可链接）：
+
+| 探针 | 期望 | 实测 |
+| --- | --- | --- |
+| 打开真实存在的文件 | 无错 | `GetLastError=0`（与期望一致，不构成反证） |
+| 打开 `D:/no-such-dir-9271/nope.txt` | Windows 应回 `2`（`ERROR_FILE_NOT_FOUND`） | **`GetLastError=0`** |
+
+假文件必然设置 last error，读数却是 0，说明这枚 import 回来的 `GetLastError` 与 Win32 的错误槽不是同一处。于是 §3 表格里「全部 NULL，**lastErr=0**」那一列**没有证据力**——它既不能支持「提供者拒绝了」，也不能支持「提供者没报错」。原文保留，判据以本节为准。同时 `crypt32` 专用的 `CertGetLastError` 与 `CertCreateSystemRootStore` 在本工具链的 import lib 里**根本没有**：链接期报 `ld.lld: error: undefined symbol` 两条（`build6.log`），所以想拿到真错误码，在仓颉侧眼下没有可用通道（未文档化的 `dlsym` 之类不走，不靠猜签名）。
+
+### 14.2 更正二：§3 的 `CERT_STORE_PROV_SYSTEM_W` 用错了序号；本轮按 ANSI 序号重做
+
+`wincrypt.h` 里 provider 名是 `MAKEINTRESOURCE` 序号，不是字符串：`CERT_STORE_PROV_MEMORY_A=2`、`CERT_STORE_PROV_SYSTEM_A=9`、`CERT_STORE_PROV_SYSTEM_W=(10+0x8000)=32778`。§3 第 38/39 行传的是 **10**，那两行是错的参数，不能当证据。中间还有一轮（v7）把 `"SystemStore"`/`"MemoryStore"` 当字符串传，同样自伤，那一轮的 3~6 行全部作废、不写入结论。
+
+按 ANSI 序号 9 重做，并在同一进程内放一条**正对照**（MEMORY 序号 2）：
+
+| # | 调用 | 实测 |
+| --- | --- | --- |
+| 1 | `CertOpenSystemStoreA(0, mallocCString("ROOT"))` | NULL |
+| 2 | `CertOpenSystemStoreA(hProv, "ROOT")` | NULL |
+| 3 | `CertOpenStore(9, X509_ASN_ENCODING, 0, CERT_SYSTEM_STORE_LOCAL_MACHINE, "Root")` | NULL |
+| 4 | `CertOpenStore(9, X509, 0, CERT_SYSTEM_STORE_CURRENT_USER\|INCLUDE_LOCAL_ROOT, "Root")` | NULL |
+| 5 | `CertOpenStore(9, X509, hProv, LM, "Root")` | NULL |
+| 6 | **正对照** `CertOpenStore(2, X509, 0, 0, "")` | **句柄有效，枚举=0**（新存储为空，符合预期） |
+
+判读：`CertOpenStore` 本身、crypt32 绑定、指针与整型参数的编组都在同一次运行里被正对照**当场证明可用**，坏的确实只有「系统存储提供者」这一支——这次是在序号与字符串都试对之后得到的负读数，所以 §3 的**结论不变**，但它的**证据强度**变了：从「参数可能有误的负读数」升级为「带正对照、参数正确的负读数」。A1 的运行时路线仍然不能用，交付仍走 §4/§5 的显式 PEM 锚（`scripts/gen-ca-bundle.mjs` 用 .NET `X509Store('Root'/'AuthRoot','LocalMachine')` 导出，正是 §3 那行 .NET 对照能枚举 53 张的同一批存储）。
+
+一处未决、不粉饰：本轮 `CryptAcquireContextA(..., PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)` 回 `ok=0 hProv=0`，而 §3 记的是 `ok=1 h=<非零>`。两次声明的参数形状不同，且 §14.1 已说明错误码通道不可用，**定不出原因**； rows 2/5 因此实际是在 `hProv=0` 上调的，与 rows 1/3 同形，不影响上面的判读。
+
+「为什么系统存储提供者在本进程开不起来」仍是未证项。要把它查实，缺的是错误码通道（`CertGetLastError` 需进 import lib 或走文档化的动态装载），不是再换一批序号常量试。
 
 
 
