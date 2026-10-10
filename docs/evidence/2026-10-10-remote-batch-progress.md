@@ -682,6 +682,56 @@ Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，�
 
 **结论**：计划第 182 行的三条语义里，两条（幂等、冲突）端到端受害者明确、被杀；一条（补读去重）在单元层有明确受害者，端到端受害者**在当前架构下不存在**。这是本批的诚实边界，不是「没做完」——把它写出来比伪造一条会绿的「受害用例」更好。
 
+### 批次 U：跨工作区写入与 approval scope 门禁的钉死与变异反证（计划第 157 行后半 + 第 163 行）
+
+**计划原文（两条合并看）**：
+- 第 157 行后半「跨项目读/写拒绝的测试」；
+- 第 163 行「变异取消 session 归属、改成信任客户端审批字符串，指定独占受害用例必须红；还原全量回绿。」
+
+**范围界定**：本批分两半，一半是**未来红灯**，一半是**当下红灯**。
+
+前半「跨项目读/写拒绝」在**当前架构下不成立**：探针 `apps/desktop/.tmp-test/probe-cross-ws.mjs` 打到真实 daemon（`--port 0` + `SACODE_HOST_ARGS=[--workspace,<tmp>]`）后，`session/create`、`session/select`、`session/submit`、`session/events` 四条方法收到任意 `workspaceId` 字符串都**被接受并落到宿主启动时固定的那一个工作区目录**。宿主的会话真源是启动目录，不接受运行时切换；`RemoteRequestGate.check` 在 `apps/daemon/src/remote_gate.cj:113` 只把参数原样传给 `authorizer.check`，而 `core/src/remote_authorization.cj:173-189` 的归属判定只查「设备白名单里有没有这个 workspaceId 字符串」——白名单为空时（`view.allowedWorkspaces` 是 `None`）整段 `contains` 分支直接跳过，等于**客户端想写什么 workspaceId 就写什么**。这是规格 §7 里「显式会话归属」应该拒绝但今天没拒的**真实缺口**。
+
+四条现状用例把当前行为钉死为**今天的全绿**，等将来按 §7 补上「按 sessionId 查它真实所属工作区、再和请求参数对齐」的核对后，这四条会**立刻翻红——那是正确的红灯**，它们会变成独占受害用例。判据故意写成「今天居然被拒了」而不是「今天允许」——将来只需把判据反转到断言 error，测试文件不需要重写。
+
+后半「approval/answer scope 门禁」是**当前就生效的语义**，独立于 workspaceId 参数：`core/src/remote_authorization.cj:167-170` 在 scope 检查处就 return `AUTHZ_REASON_SCOPE_REQUIRED`，压根不走后面的资源归属分支。契约 `docs/plans/remote-capability-contract.json` 里 `approval/ask` 与 `approval/answer` 都标了 `permission: approval` 与 `requiredScope: approval`，本批测试钉死「无 approval scope 的设备拿 `-32001 scope-required`，跟 workspaceId 参数长什么样没关系」。
+
+**测试**：`apps/daemon/test/remote-ownership.test.mjs` 5 条（4 条现状 + 1 条当下语义）：
+
+1. `跨工作区 session/create 今天落到真实工作区` — 断言 `r.result?.id` 存在且 `r.result.workspaceId === undefined`（回执不伪造声称的 workspaceId）。
+2. `跨工作区 session/select 今天选中真实工作区的会话` — 断言 `r.result?.selected === true`。
+3. `跨工作区 session/events 今天按 sessionId 归属过滤` — 断言 `events.length >= 1`（不是精确等于 durable，因为 durable 计数与回放返回的条数可能不等），加一条反向锁「陌生 sessionId 拿不到内容」。
+4. `跨工作区 session/submit 今天写入真实工作区` — 断言 `r.result.events > 0`。
+5. `approval/answer 的 scope 门禁独立于 workspaceId` — 断言 `r.error?.code === -32001` 且 message 匹配 `/scope-required/`。
+
+**基线**（`C:/Users/jingg/AppData/Local/Temp/sacode-mut-t3/release/bin/main.exe`，未变异）：`node --test test/remote-ownership.test.mjs` **tests 5 / pass 5 / fail 0 / cancelled 0 / duration 4.9s** rc=0。
+
+**变异施加**（`apps/daemon/src/remote_gate.cj:113` 一行，编到 `/tmp/sacode-mut-u/release/bin/main.exe`）：
+
+```diff
+- let decision = authorizer.check(view, method, ws, sid)
++ let decision = AuthzDecision(true, AUTHZ_REASON_OK) // MUT-U
+```
+
+语义：认证之后**完全跳过**授权检查（scope、workspace 白名单、session 白名单一视同仁全放行），只保留方法表命中。这是「信任客户端」的最强形态——如果只删掉 scope 检查而保留资源归属检查，那 workspaceId 参数还是会被白名单卡住；但本仓现状就是白名单为空时什么都不查，所以只删 scope 检查效果一样。选这个形态的理由是**变异面收窄到一处**（一行赋值），归因更干净。
+
+**红表**（`SACODE_DAEMON=…/sacode-mut-u/release/bin/main.exe`）：`tests 5 / pass 4 / fail 1 / cancelled 0` rc=1。
+
+| 用例 | 独占受害 | 归因 |
+| --- | --- | --- |
+| #5 `approval/answer 的 scope 门禁独立于 workspaceId` | 独占（#1–#4 走的都是 read/write 方法，`permission` 是 `read`/`write` 不是 `approval`，`scopeFor` 返回 `None`，本来就无 scope 要求） | approval scope 检查语义钉死 |
+| #1–#4 | 不变（4 条跨工作区用例全绿） | 证明变异没有连带杀非受害用例 |
+
+**变异轮的实际响应**：`{"jsonrpc":"2.0","id":"ap-2","result":{"accepted":false,"state":"unknown"}}` — 门禁放行后请求穿到 `host_proxy.forward`，宿主收到 `approval/answer` 且 `approvalId='totally-invented-id'` 是它**从来没见过的工单**，回 `accepted:false state:unknown`。测试断言 `r.error?.code === -32001` 拿到 `undefined`，红点归因清楚：**是门禁没在 `scope-required` 挡住，不是分派挂了**。
+
+**还原**（cp `/tmp/remote_gate.cj.bak` → `src/remote_gate.cj`，`diff` 空输出证逐字一致）→ 重编到 `/tmp/sacode-mut-u2/release/bin/main.exe` 复跑：**5/5 pass / 0 fail / 4.7s** rc=0。
+
+**全量回归**：`SACODE_DAEMON=…/sacode-mut-u2/release/bin/main.exe && node --test test/remote-*.test.mjs` → **tests 107 / pass 106 / fail 1 / cancelled 0 / duration 60s** rc=1。唯一红是批次 K 保留的「带外撤销一台」（`core/src/remote_identity.cj:274` 撤销事故半径），属并发会话持有的文件，本批不动。
+
+**结论**：计划第 163 行的「变异取消 session 归属、改成信任客户端审批字符串」本批只落「取消审批字符串信任」这一半（MUT-U 一行覆盖），指定受害用例 #5 被独占杀死；「取消 session 归属」这一半在**当前架构下本来就没建**（`view.allowedWorkspaces`/`allowedSessions` 恒为 `None`），变异无法杀死任何测试——因为**没有一条测试依赖归属检查存在**。这四条现状用例是把「今天没有归属检查」的形状钉死，不是把它当成不变量——一旦规格 §7 补了归属核对，它们会立刻翻红。
+
+**未落**：① 归属检查本身的实现（`authorizer.check` 里加「按 sessionId 反查真实工作区，与请求参数对齐」的分支）——属任务 7 的宿主契约变更（宿主要回传 `sessionId|workspaceId`），本批不动。② 计划第 157 行「跨项目读/写拒绝」的**真正实现**——本批只把「今天不拒」的形状钉成用例，等归属核对落地时那四条会翻红成为受害用例。本批的边际证据是**把现状钉死**，不是「实现归属」。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
