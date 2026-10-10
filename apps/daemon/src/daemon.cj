@@ -208,13 +208,18 @@ func requestHeader(request: HttpRequest, name: String): String {
 }
 
 // 设计 §7：/rpc 与 /auth/* 仅 POST、/sse 与 /health 仅 GET；业务请求 Content-Type
-// 必须是 application/json。这三条是路由级约束，不依赖 gate，未启用接入时同样生效。
-// 顺序有讲究：先按流读体（readBody 自带 1 MiB 上限），再验媒体类型——大小是传输层
+// 必须是 application/json；外部 CORS 默认不开放（Origin 出现即拒）。这四条是路由级约束，
+// 不依赖 gate，未启用接入时同样生效。
+// 顺序有讲究：Origin 最先——它拒的是「本不该存在的调用方」，不值得先替它读一整段体。
+// 之后先按流读体（readBody 自带 1 MiB 上限），再验媒体类型——大小是传输层
 // 硬限，对任何体都成立；若先验 Content-Type，一个「又长又错类型」的请求会被归因成
 // 类型问题，把体积防线显得像可有可无的语义检查。
 func jsonBodyOf(ctx: HttpContext, wantPost: Bool): String {
     if (ctx.request.method != (if (wantPost) { "POST" } else { "GET" })) {
         throw Exception(if (wantPost) { "rpc-requires-post" } else { "endpoint-requires-get" })
+    }
+    if (RemoteRequestSchema.originViolation(requestHeader(ctx.request, "Origin")) != "") {
+        throw Exception(SCHEMA_DENY_ORIGIN)
     }
     if (!wantPost) { return "" }
     let body = readBody(ctx.request.body)
@@ -236,6 +241,13 @@ func sourceAddress(request: HttpRequest): String {
 // 拒时 -32001 归 jsonrpc-error 但**不进** Host/Team/SessionCatalog 任何一支。
 // authHeader 从 stdx HttpRequest 传入；空串等价「无 Bearer」——若 gate 已开启即拒。
 func dispatchRpcWithAuth(body: String, authHeader: String): String {
+    // §7 的结构门禁排在解析与认证之前，两条理由各管一半：
+    // 深度必须在对象图建起来之前判掉（stdx 解析器递归下降，超深正文会先把栈炸掉，
+    // 轮不到我们给原因）；批量归因必须在 asObject() 抛之前判掉，否则一份合法的
+    // 批量帧会被报成 parse error，客户端以为自己的 JSON 写坏了。
+    // 拒在认证之前不泄露授权面信息——它只说这份骨架不合法，不说哪台设备、哪个会话。
+    let preViolation = RemoteRequestSchema.preParseViolation(body, REQUEST_DEPTH_LIMIT)
+    if (preViolation != "") { return errRpc("null", -32600, preViolation) }
     var idText = "null"
     var parsed: Option<JsonObject> = None
     try { parsed = Some(JsonValue.fromStr(body).asObject()) }
@@ -247,16 +259,24 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
     var sessionId = ""
     var operationId = ""
     try {
-        let id = request.get("id").getOrThrow()
-        match (id.kind()) {
-            case JsString => idText = id.toString()
-            case JsInt => idText = id.toString()
-            case _ => return errRpc("null", -32600, "id must be string or integer")
-        }
+        // 无 id 就是 JSON-RPC 通知。§7 拒它：这一面承诺「每条请求一条应答」，
+        // 让通知进来等于开一条没人收结果、却照样会打到宿主的执行路径。
+        if (let Some(id) <- request.get("id")) {
+            match (id.kind()) {
+                case JsString => idText = id.toString()
+                case JsInt => idText = id.toString()
+                case _ => return errRpc("null", -32600, "id must be string or integer")
+            }
+        } else { return errRpc("null", -32600, SCHEMA_DENY_NOTIFICATION) }
         if (request.get("jsonrpc").getOrThrow().asString().getValue() != "2.0") {
             return errRpc(idText, -32600, "invalid jsonrpc version")
         }
         method = request.get("method").getOrThrow().asString().getValue()
+        // 方法名上界与字符集要在 gate.check 之前：未登记的方法名是要原样落进审计行的，
+        // 让一条 1 MiB 或带引号的方法名进去，等于让客户端决定我们日志一行长什么样。
+        if (RemoteRequestSchema.methodViolation(method) != "") {
+            return errRpc(idText, -32600, SCHEMA_DENY_METHOD)
+        }
         if (let Some(value) <- request.get("params")) {
             params = value.asObject().toString()
             // 显式归属：设计 §5「客户端选择会话不发送全局 session/select」，
@@ -579,6 +599,13 @@ main(args: Array<String>): Int64 {
         if (ctx.request.method != "GET") {
             ctx.responseBuilder.status(405).header("Content-Type", "application/json")
                 .body("{\"error\":\"sse-requires-get\"}")
+            return
+        }
+        // §7「外部 CORS 默认不开放」：Origin 出现即拒，且要挡在订阅与抢槽之前——
+        // 一条打不开认证的浏览器请求也不该占掉这台设备的 2 条流位之一。
+        if (RemoteRequestSchema.originViolation(requestHeader(ctx.request, "Origin")) != "") {
+            ctx.responseBuilder.status(403).header("Content-Type", "application/json")
+                .body("{\"error\":\"${SCHEMA_DENY_ORIGIN}\"}")
             return
         }
         var streamDevice = ""
