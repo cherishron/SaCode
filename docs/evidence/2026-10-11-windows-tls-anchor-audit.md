@@ -419,6 +419,33 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 副本处置：取证完成后 `git worktree remove --force D:/Temp/SaCode-head-core-count-20261011`（该副本为本批所建，含本批的 8 处偏差，不留存）；主仓 `git status` 在本批全程未因取证发生改动。
 
+## 17. 批次 B 复验：b6bb886 之后从新产物重建双入口，剥掉仓颉 PATH 逐子命令读数（2026-10-11 07:18–07:23 实测）
+
+起因：§15.3 那次提交删了 core 里 4 处未用 import（源码 mtime 06:20），而随包产物是 03:34/03:45 的，按「不拿上轮冻结二进制充当证据」必须重打一遍。下表全部是本轮新读数。
+
+| 步骤 | 命令 | 实测 |
+| --- | --- | --- |
+| 宿主构建 | `cd apps/host && cjpm build` | rc=0、`cjpm build success`；`main.exe` **07:18 / 11,158,528 B** |
+| 重打随包宿主 | `node scripts/pack-host.mjs apps/host/target/release/bin/main.exe apps/desktop/dist/host <stdx动态目录> <runtime目录> --ca-bundle=apps/desktop/.tmp-test/ca-bundle-fresh.pem` | rc=0、**92 个文件** = 90 颗 DLL + `sacode-host.exe` + `ca-bundle.pem`；`sacode-host.exe` 07:18 |
+| 信任锚复现 | `node scripts/gen-ca-bundle.mjs apps/desktop/.tmp-test/ca-bundle-fresh.pem` | **53 张 / 84,105 B**，sha256 前缀 `8a7b03701e0461d8` **与 03:37 那份逐字节相同** ⇒ 锚导出可复现，不是每次随机拼一份 |
+| 桌面协议冒烟 | `npx electron . --smoke --no-sandbox` | rc=0，`SMOKE stop forced=false code=0` + `SMOKE PASS` |
+| 桌面 UI 冒烟 | `npx electron . --ui-smoke --no-sandbox` | rc=0，**296 条 `UI OK` / 0 条 `UI FAIL`**，末行 `UI_SMOKE PASS` |
+| CLI 构建 | `cd apps/cli && cjpm build` | rc=0、`cjpm build success`；`main.exe` 07:20 / 10,978,304 B |
+| npm 平台包 | `node scripts/pack-cli.mjs` | rc=0、`packed 45 个文件到 npm/sacode-cli-win32-x64/bin（其中 stdx 33 + openssl 2 + mingw 3），扩展宿主 2`；`bin/sacode.exe` 07:20 |
+
+**剥 PATH 的自证**：把 `PATH` 里匹配 `cangjie|stdx-work` 的条目整段剔掉后 `command -v cjc` / `command -v cjpm` 均回 `NO`，而 `command -v node` 仍 `YES`（扩展宿主要用）。CLI 一律在 `apps/desktop/.tmp-test/cli-run2`（干净、已忽略）里跑，避免自测产物落进源码目录。
+
+逐子命令读数（同一 exe，`^PASS`/`^FAIL` 计数）：`all` **132/0 rc=0**；`headless` 36/0；`plugin` 17/0；`tool` 16/0；`stream` 21/0；`extjs` 12/0；`goal` 10/0；`cancel` 9/0；`ext` 8/0；`sig` **6/4 rc=1**；`seed`、`projection` 是打印 `ok` 行的数据步（非断言式，0 PASS/0 FAIL rc=0）；`realstream` 打印 `skip: SACODE_PROVIDER_BASE_URL unset`（外部配置前提，不算通过）。
+
+`sig` 那 4 条红的原文是 `中断确实送达处理器` / `在途 turn 因中断收束` / `中断类型是 Ctrl+C 或 Ctrl+Break` / `取消的 turn 留下 turn/cancelled`，**与 §里旧二进制那轮的读数逐字相同**，同批其余 6 条（处理器注册、写租约取得与归还、租约文件消失、在册表清空、未落盘写入就地结算）全绿 ⇒ 判为「本机非交互会话不投递 `GenerateConsoleCtrlEvent`」这条既有限制在新产物上复现，不是本轮引入的回归；解锁动作仍是换能投递中断的交互终端（或 ConPTY）再跑。
+
+需要参数/配置的操作类子命令如实记为「未结算」，不当通过：`team describe`、`batch check`（回 `batch-config-missing`）、`goal list`、`worktree`、`remote` 均 rc=64 打 usage；未知模式 `nope-xyz` 同样 rc=64 打同一份 usage，所以 64 只说明「没给参数/不被当自测跑」，不能读成红也不能读成绿。`tips` 独立跑回 **rc=8 `tips-already-owned`**（`core/src/tips.cj:220` 的 `lease.takeoverIfStale()` 为假），且在干净目录下复现——**租约落点不在 cwd、持有者是谁本轮未查**，这条挂着待查，不编成因。
+
+残留：跑完后 `tasklist //FI "IMAGENAME eq sacode-host.exe"` 与 `electron.exe` 均 `INFO: No tasks are running which match the specified criteria.`。一处如实报备：`.tmp-test/cli-run`（第一轮用的目录）删除时报 `Device or resource busy`，按既往经验不死磕删除，留待句柄自然释放后由后续清理。
+
+**批次 B 判决**：双入口从当前工作区源码重建 **PASS**（每步 rc 与产物 mtime/体积如上，均为本轮新构建）；CLI 逐子命令自测 **PASS（除 `sig` 4 条既有限制红、`realstream` 缺外部配置、操作类子命令未结算）**；「core cjpm test 计数」仍按 §16.6 判 **BLOCKED**，本表不冒充它。
+
+
 
 
 
