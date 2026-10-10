@@ -640,6 +640,48 @@ Q-M2 是干净的独占受害对：摘掉 pin hook 而 dispatcher.ca 还在，�
 
 **未落**：① TCP 半帧 / chunked 中间断——归 stdx `http` 层，本仓代码不介入；② 睡眠恢复与「最终持久结果替代丢失瞬时文本」——属 SSE 补读面，已由批次 E/F 覆盖；③ 本批只测了 `/rpc` 与 `/auth/token` 两个端点，`/sse` 的非法 UTF-8 帧与「idle timeout」在 SSE 侧的语义面（每连接 1024 帧 / 4 MiB 双限额、`revoked`/`expired` 关流）已在批次 F 落地但未覆盖 UTF-8 面——留作下一次专门打 SSE 边界时补。
 
+### 批次 T：幂等 / 冲突 / 补读去重的变异反证（计划第 182 行）
+
+**计划原文**：「变异删除幂等、过滤与补读缓冲，指定重复执行 / 越权 / 丢帧测试分别红；恢复逐一回绿。」
+
+**范围界定**：这一条只针对 `apps/daemon/src/daemon.cj` 里三条独立语义守卫：M1 是幂等 ledger 命中 replay 短路、M2 是 ledger 判到 conflict 立即回 `-32018`、M3 是 SSE 循环里「补读交付过的游标，缓冲里再取到同一条就丢」。三条各改一行、只关注释、只改语义不改签名，一轮编译一次施加、指定受害用例互不重叠。
+
+**基线**（`C:/Users/jingg/AppData/Local/Temp/sacode-mut-t/release/bin/main.exe`，未变异）：`remote-idempotency + remote-sse-recovery + remote-events` **tests 16 / pass 16 / fail 0 / cancelled 0 / duration 6.5s** rc=0。
+
+**变异施加**（同一版编译到 `/tmp/sacode-mut-t2/release/bin/main.exe`）：
+
+```diff
+- if (prior.kind == LEDGER_KIND_REPLAY) { return replayReceipt(prior.receipt, idText) }
+- if (prior.kind == LEDGER_KIND_CONFLICT) { return errRpc(idText, LEDGER_ERR_CONFLICT, "idempotency-conflict") }
++ // MUT-T-M1: 删除 replay 短路
++ // MUT-T-M2: 删除冲突拒
+
+- if (SseFrame.delivered(ids: delivered, id: SseFrame.idOf(frame))) { continue }
++ // MUT-T-M3: 删除补读/直播去重
+```
+
+**红表**（同一轮，`SACODE_DAEMON=…/sacode-mut-t2/release/bin/main.exe`）：`tests 16 / pass 13 / fail 3 / cancelled 0` rc=1。
+
+| 用例 | 变异 | 独占受害 | 归因 |
+| --- | --- | --- | --- |
+| `remote-idempotency.test.mjs` #9 「同 operationId 只换了字段顺序：重放原回执，宿主的事件计数没有再加」 | M1 | 独占（M2 / M3 都杀不了它——第一次执行走不到幂等分支；`events` 变成 2 而断言写的是 1） | 幂等语义钉死 |
+| `remote-idempotency.test.mjs` #10 「同 operationId 换内容按冲突拒，且不落第二次副作用」 | M2 | 独占（M1 只删 replay 短路，M2 删除的正是冲突拒） | 冲突拒绝对语义钉死 |
+| `remote-idempotency.test.mjs` #12 「账本跨进程重启仍在：同一条 operationId 换一个新 daemon 也不会第二次落副作用」 | M1 | 独占（跨进程账本也是 replay 短路命中；删除后 events 变 2） | 幂等跨进程语义钉死 |
+
+**还原**（cp `/tmp/daemon.cj.bak` → `src/daemon.cj`，`diff` 空输出证逐字一致）→ 重编到 `/tmp/sacode-mut-t3/…` 复跑同三条测试：**16/16 pass / 0 fail / 6.5s** rc=0。
+
+**M3 是这一轮的诚实结论，也是本批唯一没落地的半条**：`SseFrame.delivered` 守卫在本仓**没有端到端受害用例**。三条 SSE 循环里的守卫要真起作用，前提是「同一条持久游标（`sessionId|seq`）会从 bus 上出现第二次」。但持久游标只由补读页 `SseResume.build` 生产（`sse_frames.cj:129`），而 bus 上的直播帧来自 `host_proxy.cj:241` 的宿主通知（`{"method":..., "params":{...}}`），宿主回包 `session/submit` 时只带 `{"events":2}` 不带持久游标，因此没有一种可达的直播帧会携带一个已经在 `delivered` 里出现过的游标——`SseFrame.delivered(ids:, id:)` 在 `idOf(frame) != ""` 的分支下永远返回 `false`。
+
+尝试补一个「建流时游标停在 seq 0、在途期间再 submit 一条、flush、断言 seq 3 只出现一次」的独占受害用例，在**变异版**和**基线版**上都得到同一结果：`seq 1、seq 2` 各出现一次，`seq 3` **一次都没出现**（超时 25 秒仍是 keepalive 心跳）。也就是说，即使把去重守卫拆掉，客户端也不会长出第二条 seq 3——因为 host 不会通过 bus 送带 `sessionId|seq` 的通知。这条守护在本仓架构下是**对未来设计的防御性代码**，不是当前架构下会被触发的语义。
+
+因此 M3 在**单元层**已经有独占钉死（`apps/daemon/src/sse_frames_test.cj:131-136` 六条断言，包括空串、跨会话、`ArrayList<String>()` 空集合、`Some` 命中与未命中的边界），但没有端到端受害用例。计划第 182 行里「补读缓冲丢帧测试」的端到端形态在本仓的当前架构下**不存在可达路径**——不是没测，是宿主不会把持久游标推回 bus，这个语义面是空集。
+
+**未落**：① 端到端 M3 受害用例在**当前 host 契约下不存在**——需要宿主改成「session/submit 应答里附 `sessionId|seq`」或者「宿主在 flush 时向 bus 播一条带游标的持久通知」两条路径之一，才能把这条守护从单元层推到端到端层。当前架构下这属于「未来设计变更触发的补丁需求」，不是本批的失败。② 幂等账本的「同键同内容跨 workspace 是否应判冲突」没变——那属于幂等键的设计空间，本批只测同 workspace / 同 session / 同 method 场景。
+
+**取证失误（记录以免下次再踩）**：一开始直接把「带 Last-Event-ID 重连」当作 M3 的独占受害用例，跑完发现它在变异版和基线版**都一样绿**——说明这条用例从头到尾就没探测过「补读/直播去重」这条不变量。原因：`sessionWithTwoMessages` 里的三条持久事件（标题 seq 0 + 两条正文 seq 1、2）在客户端建流前就已完成，`bus.subscribe` 在补读之前建，之后没有宿主通知被 publish 到 bus，`delivered` 里只有补读交付的游标、`sub.poll` 里永远不会有同一条。这条用例钉的是「补读游标之后不重发游标之前」，跟「补读交付过的游标，直播里再取到同一条就丢」是**两条不同的不变量**。第一次没识别出这一点就往下写，直到跑完变异轮才看出——写用例之前应该先问「这一行的守卫要生效，得有什么条件？」而不是「哪条用例看起来在测这条」。
+
+**结论**：计划第 182 行的三条语义里，两条（幂等、冲突）端到端受害者明确、被杀；一条（补读去重）在单元层有明确受害者，端到端受害者**在当前架构下不存在**。这是本批的诚实边界，不是「没做完」——把它写出来比伪造一条会绿的「受害用例」更好。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
