@@ -480,13 +480,23 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 
 顺手抓到的第二件事是陈旧暂存产物：`scripts/pack-service.test.mjs` 的 `清单逐条摘要对得上，且摘要就是本轮构建产物` 当轮先红（包内 `c9fbd9c8…` vs 源码产物 `fd806de5…`），原因是 `pack-cli.mjs:33` 把 `apps/cli/target/release/bin/main.exe` 逐字拷成 `bin/sacode.exe`，而我 14:27 重编过 CLI 却没重跑 pack-cli。跑一次 `node scripts/pack-cli.mjs` 后两侧摘要一致、该套回 **11/11**。这条红正是那套摘要检查该干的事——它比时间戳可靠。
 
+### 批次 M：Host 允许集与 DNS rebinding 防线（规格 §7「Host/Origin 检查」那句的实现半）
+
+规格第 124 行逐字要求「Host/Origin 检查、HTTPS 与凭据校验防止浏览器跨站及 DNS rebinding；非浏览器客户端没有 Origin 不能作为放行理由」。批次 G 落了 Origin 那一半，Host 那一半一直在本文件「在飞未完成」里挂着，当时的理由是「缺一个主机名白名单配置面」。本批把配置面与判定一起补上：`RemoteRequestSchema.hostViolation(header, allowed)` 按字节精确比对（归一是转小写、剥 IPv6 方括号、**只在唯一冒号处**切端口——裸 `::1` 全是冒号，按第一个冒号切会把它砍没），`allowedHosts(bind, extra)` 给出默认集 = bind 本身 + 回环三写法 + `SACODE_REMOTE_ALLOWED_HOSTS`，其中 `0.0.0.0` / `::` **不进集合**（那是「所有网卡」不是主机名），允许集为空即全拒，`*` 只能由配置显式写出。调用点两处：`jsonBodyOf` 在 Origin 之后、读体之前（覆盖 `/rpc` 与 `/auth/*`），`/sse` 在订阅与抢槽之前直接 403。`bind=0.0.0.0` 且没配主机名时往 stderr 落 `remote-host-warning`——stdout 那行 `127.0.0.1:port` 是端口解析的唯一锚点，不改它的格式。
+
+读数：红灯是 `error: 'hostViolation' is not a member of class 'RemoteRequestSchema'` × 7 加 `undeclared identifier 'SCHEMA_DENY_HOST'` × 2（先写测试的编译器红）；实现后 cj **TOTAL 160 / PASSED 158 / ERROR 0 / FAILED 2**（那 2 条是并发会话未入库的 `remote_identity_scope_test.cj` 用例，批次 K 已记同轮红）；Node 真实 HTTP 面 **9/9 / cancelled 0**；独占逐套回归 11 套 83 用例 **82 通过 / 1 红**，唯一那条红是批次 K 刻意保留的撤销事故半径，不是新伤——既有客户端一律用 `127.0.0.1`/`localhost` 连，回环写法在允许集内，所以这条门禁没改变任何既有通过面。
+
+**这一批最值钱的一条是变异轮的失败判决。** 一轮同施加四个语义变异，Node 侧 3/3 全中（M2 不剥 IPv6 方括号、M5 把 `/sse` 的允许集写成 `*`、M6 无条件收下 bind），但 cj 侧 M1「把堆叠 Host 判定改成永不触发」没让预期用例红——判定如实写成 `MUTATION-VERDICT-FAILED` 而不是放过。根因是**等价变异**：那条用例里 `"a.com, b.com"` 即使没有逗号守卫也照样被拒，因为整串匹配不到 allowlist 里的任何一项，也就是说这条守卫在当时整个用例集里**没有任何可观察后果**。它唯一的可观察场景是允许集配成 `*` 时（精确比对不再起作用，只剩堆叠守卫在挡），于是补 `stackedHostIsRejectedEvenWhenAllowlistIsWildcard`（同批要求 `"a.com"` 在 `*` 下必须放行，防这条被改成永久拒绝），再单跑 M1：基线 FAILED 2 → 变异态 FAILED 3（多出的正是那条新用例）→ 还原回 FAILED 2，`判定=M1-CAUGHT-BY-NEW-CASE`，还原逐字一致。
+
+另一件是裸 socket 实测出来的分层：HTTP/1.1 缺 Host、Host 空值、两个 Host 头、单头堆两值这四种**都是 stdx 在解析层就 400 掉**（原文分别是 `Host should be and only one.` / `Host should be only one.` / `Malformed host header.`），本仓代码根本没被调用；唯一走到本仓的是 **HTTP/1.0 不带 Host**——它被解析器接受，回的是 `host-not-allowed` 且未进分派。所以用例对前四种只断言「没走到分派」（不出现 `"result"` / `"protocolVersion"`），不钉那句英文，免得 stdx 换措辞就红。顺带纠正我自己的一处夹具错：第一版用 Node 的 `http` 客户端发 `headers.host = ''` 想测缺 Host，实测 Node 会回退填连接地址，那条用例拿到的是 initialize 成功回包——看着像门禁失效，其实是形态压根没发出去。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
 | 设备凭据轮换，以及认证 RPC 管理面 | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），撤销关闭在途 SSE 已在批次 F 落地（`EventBus.closeFor` + 空闲 tick 重认） | 仍缺：**HEAD 里**`remote_identity.cj` 无按 deviceId 轮换凭据的公开方法；契约里的 `auth/devices`/`auth/revoke` RPC 面未接。属任务 7 授权分派。2026-10-10 04:00 复核：工作区已出现 `rotateCredential` 与 `remote_identity_scope_test.cj`（前者 +62 行未提交、后者未入 HEAD，同属并发会话那条线，且该文件两条用例当轮为红），本会话未改这两个文件，故这条**不判已交付**。 |
-| §7 请求结构上界里的 Host 头校验 | `apps/daemon/src/remote_schema.cj` 只判深度、方法名形状、批量与 Origin | 深度 32、方法名 1..64 字节加字符集、batch 与通知显式归因、Origin 出现即拒已在批次 G 落地；**Host/DNS rebinding 校验未做**，缺一个「本实例允许被哪些主机名访问」的配置面（`--bind` 只有地址没有主机名）。与 `auth/devices` 管理面同批补。 |
+| §7 请求结构上界里的 Host 头校验 | **已交付（批次 M）**：`apps/daemon/src/remote_schema.cj` 的 `hostViolation`/`allowedHosts`/`normalizeHost` + `daemon.cj` 的 `setRemoteAllowedHosts` 与 `/rpc`、`/sse` 两个调用点 + `remote-host-guard.test.mjs`（9 条）| 深度 32、方法名 1..64 字节加字符集、batch 与通知显式归因、Origin 出现即拒已在批次 G 落地；批次 M 补 Host/DNS rebinding：允许集 = bind 本身 + 回环三写法 + `SACODE_REMOTE_ALLOWED_HOSTS`，`0.0.0.0`/`::` 不进集合、空集合全拒、`*` 只能显式写。仍缺的两件另立一行（证书 SAN 不联动、Linux 侧传输层行为未测）。取证见 `docs/evidence/2026-10-10-host-allowlist-dns-rebinding.md` |
 | §6 逐帧授权过滤与补读去重的生产通路 | `apps/daemon/src/sse_frames.cj` 的 `idOf`/`delivered` 分支 + `daemon.cj` 的 `/sse` | **未兑现**：真实宿主的通知帧不带持久 `seq`，去重分支在真机上不命中；逐帧资源过滤要求通知自带归属键。两条都卡在被并发会话持有的 `host_proxy.cj`/`apps/host/src/main.cj`（任务 7）。分支语义已由 cj 单测钉住，宿主打上 seq 后即可兑现。 |
 | 远程方法面已铺到 98 条，但**每条的真实语义闭环**未逐面验 | `host_proxy.cj` 的白名单 + `remote-method-surface.test.mjs` 只端到端抽了 `tips/get`/`model/list`/`credential/set` 三条代表 | 其余家族（`lsp/*`、`worktree/*`、`execution/*`、`plugin/*`、`custom/*` 等）目前只有静态对账与 宿主侧既有测试；且转发过去的方法仍按 0.1 的 `session/select` 全局态执行——daemon 已把 params 顶层的 workspaceId/sessionId/operationId 交给 gate，但宿主是否按这份显式归属定位会话属任务 7 剩余（下一批）。 |
 | `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
@@ -503,6 +513,10 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
 | CLI 第二入口的两条装配断言与 core 矛盾（批次 L 安装态验收抓出，**FAIL**） | `apps/cli/src/main.cj` 的 `runPluginTests`（现 `:475` / `:477`）仍要求 `planA.units.size == 2` 与 `@local/panel=kind-not-wired`；真值侧是 `core/src/plugin_assembly.cj` 的 `pluginWiredKinds`（五类含 `ui` 全接通，工作区与 HEAD 都干净）与 `core/src/plugin_assembly_test.cj` 的 `assemblyActivatesEveryWiredKind` | 效果：包内 CLI `all` 自测 129 PASS / 2 FAIL，`scripts/verify-service-install.mjs` 第 11 步判不过。已排除旧产物（开发态与安装态读数逐字一致，包内 exe mtime 是本轮 `pack-cli.mjs` 刷新后的）。**本目标未改**：该文件正被并发会话持有，其未提交 hunk 覆盖这两行所在行段。修法是两行、方向是把 CLI 对齐 core（`ui` 进装配序、未接种类改用 `magic` 这类表外名字），不许反过来改 core 语义凑绿 |
 | 安装态只验到「包能装、daemon 能答 `/health`、CLI 自测能跑」，远程面与 Host 未在包内复验 | `scripts/verify-service-install.mjs` 第 10/11 步 | 未做且非缩水：① 安装态没跑 `SACODE_REMOTE_ACCESS=1` + TLS + 建票 + `/rpc` 那套（开发态有 4 个测试文件覆盖，包内等价证据仍缺）；② `sacode-host.exe` 进了包、摘要对上，但没有在剥 SDK 的环境下被真实 spawn 并完成一次 `initialize`；③ registry 上按 `os/cpu` 自动挑平台包这条真实分发路径未验（需 `npm publish`，未获授权）；④ 只在单一 Node 版本（v24）上跑过 |
+| TLS 证书 SAN 与 Host 允许集不联动（批次 M 遗留的运维面） | `apps/daemon/src/remote_schema.cj` 的 `allowedHosts` 与 `remote_access.cj` 的 `certPath` 是两条互不校验的配置 | LAN 场景要在两处各配一次：证书加 SAN、`SACODE_REMOTE_ALLOWED_HOSTS` 加同名。本批**没有**擅自加「SAN 必须覆盖允许集」这类交叉校验（规格未要求，且会改变既有启动失败码的语义），只把坑记在 `docs/evidence/2026-10-10-host-allowlist-dns-rebinding.md` §5。要么后续按规格补校验，要么在文档里给一条可复制的自签命令 |
+| Host 门禁在 Linux 上的等价性未测 | `apps/daemon/test/remote-host-guard.test.mjs` 的分层表（哪些形态由 stdx 解析层挡）取自本机 Windows 构建 | 实测四种畸形 Host 由 stdx 挡、只有 HTTP/1.0 走到本仓——这个分布是**当平台当版本**的读数，不是跨平台不变量。Linux 的 stdx 若放行更多无 Host 形态，本仓 `hostViolation` 仍兜底，但分层表要重测。属任务 2/3 的 Linux 半（BLOCKED：本机无 Linux，Windows→Linux 交叉编译探针 rc=1） |
+
+## 后续批次依赖
 
 - 任务 6 daemon 认证与接入生命周期：需 remote_identity/authorization/audit 三模块跑绿再动工，避免签名返工。
 - 任务 8 服务端幂等 + 授权 SSE + 恢复：客户端面已交付（d66aae8/34b5cfe），服务端面依赖任务 6。
