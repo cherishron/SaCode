@@ -352,5 +352,53 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 宿主与 Electron 残留：本轮所有跑测结束后 `tasklist //FI "IMAGENAME eq sacode-host.exe"` 与 `electron.exe` 均 `No tasks are running`。
 
+## 16. 第五次取 core 计数：真因是「提交态悬空引用」，HEAD 单独连库层都编不过；最小补齐集已构造性验证（2026-10-11 06:59–07:08 实测）
+
+### 16.1 方法与两条前置排除
+
+副本用 `git worktree add --detach D:/Temp/SaCode-head-core-count-20261011 a5ab6ec`（**仓库外**，主仓全程零改动），167 个 `*_test.cj`。两条会让结论失真的前提先排掉：
+
+- **副本不缺依赖**：HEAD 的 `core/cjpm.toml` 里 `path-option` 是绝对路径 `C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx`，本机该目录存在（含 `libstdx.*.dll` 等），所以副本**不需要**改配置就能构建——「副本因缺 `.deps` 而红」这个假象被排除（`.deps` 那条相对路径是并发会话未落库的改动，不在 HEAD）。
+- **临时产物**：日志与 TMP 全部落主仓 `apps/desktop/.tmp-test/`（已忽略），副本自身在仓库外。
+- 为拿完整清单，在**副本**的 `cjc-option` 追加 `--error-count-limit all`。默认上限 8 条正是 §15 归因不完整的直接原因之一。
+
+### 16.2 第一层：HEAD 的实现文件本身有 3 类不合法写法（4 条 error 同一根）
+
+`cjpm test` 8 秒退出、rc=1、剥码后 `Summary: TOTAL` 计数 0（第三态），但这次只有 4 条 error，全在 `core/src/cmds.cj`：
+
+| # | 位置 | 报错原文 |
+| --- | --- | --- |
+| 1 | `cmds.cj:11:105` | `expected ',' or ')', found '='` |
+| 2 | `cmds.cj:64:65` | `expected a type name after ':' in function declaration, found '{'` |
+| 3 | `cmds.cj:64:70` | `expected operator or end of expression, found ':'` |
+| 4 | `cmds.cj:70:2` | `unclosed delimiter: '{'` |
+
+对应三类 cjc 1.1.3 不接受的写法：默认参数没写 `!`（`parse: Option<…> = None`）、匿名 struct 作返回类型（`: {spec: CommandSpec, args: HashMap<…>}`）、`if` 分支不带花括号的表达式形态。**§15 把 HEAD 的红归给「别人的测试夹具」，本轮更正：主因是已入库的实现文件**，而修正只活在并发会话未落库的 `cmds.cj`（工作区 18+/6−）。
+
+自我误读一并记下，免得下次重犯：第一版统计用 `==>` 行数当「每文件错误数」，把 170 条 warning 的定位一起算了，于是凭空多出 `ledger.cj` 34 条、`migration_pack.cj` 24 条这类假数字；真 error 只有 4 条（后一层 8 条）。判 error 只认 `^error:` 行。
+
+### 16.3 第二层：8 条 error 全是「已入库文件引用未入库定义」，最小补齐集 7 个文件已验证充分
+
+把 `cmds.cj` 修好后重新编，下一层错误才露出来（`--error-count-limit all`，共 8 条）。报错文件全部是**工作区干净、与 HEAD 一致**的，定义侧却都在未落库文件里：
+
+| error 原文 | 报错位置（副本） | 定义所在文件:行 | 该文件 git 状态 |
+| --- | --- | --- | --- |
+| `undeclared type name 'GitQueryResult'` | `todo.cj:18:25` | `git_workbench.cj:29` | `??` 未入库 |
+| `function 'webUrlEncode' has overload conflicts` | `prompt_enhance.cj:8:137` | `web_network.cj:7` | `M` 未落库 |
+| `mismatched types` | `prompt_enhance.cj:9:87` | 同上 | `M` |
+| `undeclared identifier 'it'` | `prompt_enhance.cj:10:162` | 同上（级联） | `M` |
+| `'protects' is not a member of class 'WriteLease'` | `prompt_enhance.cj:11:90`、`:31:68` | `lease.cj:35` | `M` 未落库 |
+| `'isDurableFrozen' is not a member of class 'SessionLog'` | `prompt_enhance.cj:12:93`、`attempt_log.cj:28:84` | `session.cj:167` | `M` 未落库 |
+| `undeclared identifier 'appendDurablePrefix'` ×3 | 第三轮露出 | `durable_checkpoint.cj:8`/`:31` | `??` 未入库 |
+
+第三轮再补 `ledger.cj`（`M`）与 `durable_checkpoint.cj`（`??`）后，副本 `cjpm build`：**rc=0、打印 `cjpm build success`、0 条 error、170 条 warning**（18 秒，增量）。即**最小充分集 = 7 个未落库实现文件**（`session` / `lease` / `web_network` / `git_workbench` / `durable_checkpoint` / `ledger` / `cmds`），不是猜测而是构造出来的。
+
+### 16.4 对交付链的含义（这条比计数本身更重要）
+
+- **HEAD 单独不可构建**：clean checkout、CI、换一台机器都打不出 core，因而打不出宿主与 CLI。本机之所以能连续出包，是因为工作区一直带着别人未落库的这 7 个文件。
+- 所以批次 B「从当前源码重建双入口」里的「当前源码」在本机**只能是工作区态**，不等于提交态；`docs/evidence/2026-10-11-package-and-packed-verification-batchE.md` 那批产物的可复现性以此为前提，需在该文档补一句（下批做）。
+- 批次 A/B 的验收项「core cjpm test 计数与 rc」在提交态**取不到**，判决 BLOCKED；解锁动作是**唯一且明确的一条**：让并发会话把上述 7 个实现文件落库（不是测试夹具——这是本轮相对 §13/§15 的实质更正）。
+
+
 
 

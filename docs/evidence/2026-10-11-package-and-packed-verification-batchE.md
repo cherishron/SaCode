@@ -50,3 +50,6 @@ NSIS 那一跳与批次 D 定到的同一条本机前提有关（`%TEMP%` 对非
 - 未做（不是失败，是本轮没主张）：布局冒烟没有在打包态重跑（只在开发态 192 组绿）；A3 的真模型端到端仍卡在凭据，见 `2026-10-11-windows-tls-anchor-audit.md` §9。
 
 > **本条后半句已被 2026-10-11 06:13 的复测推翻**（原文保留）：A3 的真模型端到端**不再**卡在凭据——`~/.sacode/user/credentials.env` 里的 StepFun 键实测可用，界面「新增供应商→填密钥→保存→选模型→发送」已出真答复，判据逐条成立，见同一文档 §13.1（凭据归因的作用域更正）与 §13.2（A3 完整口径 PASS 表）。本条前半句（布局冒烟未在打包态重跑）仍然成立。
+
+> **可复现性前提（2026-10-11 07:08 补，本轮新证据）**：本包链路的「当前源码」在本机**等于工作区态，不等于提交态**。分离 HEAD 副本实测：`cd core && cjpm build` 在 HEAD 单独编不过（8 条 error 全是已入库文件引用未入库定义，如 `SessionLog.isDurableFrozen`、`WriteLease.protects`、`GitQueryResult`、`appendDurablePrefix`），补齐 7 个未落库实现文件（`session`/`lease`/`web_network`/`git_workbench`/`durable_checkpoint`/`ledger`/`cmds`）后才 `cjpm build success`、rc=0。逐条读数与表见 `2026-10-11-windows-tls-anchor-audit.md` §16。**含义**：按 clean checkout 或 CI 重放本文件 §3 的打包步骤会在 core 编译步失败；这不是本轮打包失败（本轮产物确实出得来并跑通冒烟），而是可复现性依赖尚未落库的那 7 个文件。解锁动作同 §16.4。
+
