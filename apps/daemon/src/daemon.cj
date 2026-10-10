@@ -364,7 +364,12 @@ func dispatchBusiness(method: String, params: String, idText: String): String {
                     capabilities = "${capabilities[0..capabilities.size - 1]},\"${jsonEscapeText(name)}\"]"
                 }
             }
-            let result = "{\"protocolVersion\":\"0.1\",\"capabilities\":${capabilities},\"core\":\"cangjie\",\"transport\":\"http-sse\"}"
+            let enforcementJson = RemoteSandboxEnforcement.current().toJson()
+            var announceId = ""
+            if (let Some(g) <- currentRemoteGate()) { announceId = g.instanceId }
+            // 宣告必须与实际分派同源：sandboxEnforcement 直接取门禁用的那个探针值，
+            // 客户端据此判断「这台目标现在能不能远程跑代码」，不用试了才知道。
+            let result = "{\"protocolVersion\":\"0.1\",\"capabilities\":${capabilities},\"core\":\"cangjie\",\"transport\":\"http-sse\",\"instanceId\":\"${jsonEscapeText(announceId)}\",\"sandboxEnforcement\":${enforcementJson}}"
             bus.publish("daemon/client-initialized", "{\"protocolVersion\":\"0.1\",\"transport\":\"http-sse\"}")
             return okRpc(idText, result)
         } else if (method == "session/catalog") {

@@ -89,6 +89,19 @@ public class RemoteRequestGate {
         }
         let ctx = identity.authenticate(token)
         if (let Some(c) <- ctx) {
+            // 远程执行门禁：认证通过、但这台实例没有 OS 强制执行能力时，契约里标 execute
+            // 那一族在建账与转宿主之前就拒（规格 §7「沙箱失败不得通过用户批准绕过」）。
+            // 放在 scope/归属判定之前，是为了让「这台机器现在能不能安全执行」先于
+            // 「你有没有这个权限」——否则客户端拿到的是 scope-required，会误以为
+            // 申请个权限就能远程跑代码。未认证的请求仍只拿到认证拒因，不透露策略差异。
+            let enforcement = RemoteSandboxEnforcement.current()
+            var permission = ""
+            if (let Some(spec) <- authorizer.specOf(method)) { permission = spec.permission }
+            let refuse = refusalReason(permission, enforcement.enforcing)
+            if (refuse != "") {
+                recordDenied(c.deviceId, c.principalId, method, ws, sid, op, refuse)
+                return GateOutcome(false, refuse, ctx)
+            }
             let view = DeviceAuthzView(c)
             let decision = authorizer.check(view, method, ws, sid)
             if (decision.allowed) {

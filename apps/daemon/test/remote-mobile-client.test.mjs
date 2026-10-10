@@ -204,7 +204,12 @@ async function createTicket(snapshot, principal) {
   let err = '';
   proc.stdout.on('data', d => { out += d; });
   proc.stderr.on('data', d => { err += d; });
-  const code = await new Promise(resolve => proc.on('close', c => resolve(c)));
+  // 有界等待建票退出：'close' 还要等 stdio 句柄全关，并发跑整套时可能永远不来，
+  // 无界 await 会把整个测试文件冻住（2026-10-10 批次 J 就是这个形状挂的）。
+  const end = Date.now() + 15000;
+  while (proc.exitCode === null && proc.signalCode === null && Date.now() < end) await delay(25);
+  const code = proc.exitCode;
+  assert.notEqual(proc.exitCode, null, '本地管理入口建票未在 15s 内退出');
   assert.equal(code, 0, `本地管理入口建票失败 rc=${code}：${err}`);
   const lines = out.replace(/\r/g, '').trim().split('\n');
   const ticket = lines[lines.length - 1].trim();
