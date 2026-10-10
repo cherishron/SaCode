@@ -18,10 +18,17 @@ public class GateOutcome {
     public let allowed: Bool
     public let denyReason: String       // allowed=false 时非空
     public let context: Option<AuthenticationContext>
-    public init(allowed: Bool, denyReason: String, context: Option<AuthenticationContext>) {
+    // 放行时把**门禁实际用来做判定的那个视图**交出去。分派层要再核一次管理权
+    // （规格 §2「业务授权在核心执行前再次检查」），必须由执行判定的同一个对象出发；
+    // 让分派层自己从 context 重造一个视图就等于允许它「忘」掉 scope 的来源，
+    // 于是同一条请求在门禁放行、在执行处被写成另一种放行条件。
+    public let view: Option<DeviceAuthzView>
+    public init(allowed: Bool, denyReason: String, context: Option<AuthenticationContext>,
+                view!: Option<DeviceAuthzView> = None) {
         this.allowed = allowed
         this.denyReason = denyReason
         this.context = context
+        this.view = view
     }
 }
 
@@ -106,7 +113,7 @@ public class RemoteRequestGate {
             let decision = authorizer.check(view, method, ws, sid)
             if (decision.allowed) {
                 recordAllowed(c, method, ws, sid, op)
-                return GateOutcome(true, "", ctx)
+                return GateOutcome(true, "", ctx, view: Some(view))
             }
             recordDenied(c.deviceId, c.principalId, method, ws, sid, op, decision.reason)
             return GateOutcome(false, decision.reason, ctx)

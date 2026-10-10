@@ -312,6 +312,9 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
     } catch (_: Exception) { return errRpc(idText, -32600, "invalid request") }
     var slotDevice = ""
     var authCtx: Option<AuthenticationContext> = None
+    // 管理面要拿的是**门禁实际判定过的那个视图**（带 scope），不是从 context 重造一个。
+    // 没有它就没有「执行前再核一次管理权」的第二个输入，规格 §2 那条只能靠调用层自觉。
+    var authView: Option<DeviceAuthzView> = None
     // 幂等账的键在认证之后才凑得齐：principalId 只能来自认证上下文，
     // 客户端自报的归属字段要过 gate 的资源校验才算数。
     let k = LedgerKeyOf()
@@ -330,6 +333,7 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
             }
             slotDevice = c.deviceId
             authCtx = Some(c)
+            authView = outcome.view
             k.instanceId = gate.instanceId
             // 只有策略表里标了 durable 的写操作才建账；判定回到登记它的那张表，
             // daemon 不维护第二份写操作名单。被限额拒掉的请求走不到这里，
@@ -356,7 +360,7 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
             if (prior.kind == LEDGER_KIND_REPLAY) { return replayReceipt(prior.receipt, idText) }
             if (prior.kind == LEDGER_KIND_CONFLICT) { return errRpc(idText, LEDGER_ERR_CONFLICT, "idempotency-conflict") }
         }
-        return ledgerAfterExecution(dispatchBusiness(method, params, idText), idText, ledgerOn, k, contentDigest)
+        return ledgerAfterExecution(dispatchBusiness(method, params, idText, mgmtView: authView), idText, ledgerOn, k, contentDigest)
     } catch (e: Exception) { return errRpc(idText, -32003, e.message) }
     finally {
         // 早退（业务分支里的 return）也必须归还槽位，否则跑几轮就把 8 个槽吃干。
@@ -367,7 +371,8 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
 // 业务分派支：认证与限额都过了才走到这里。整段是从 dispatchRpcWithAuth
 // 原样搬出来的，一条分支都没改——搬出来只为了让幂等账能在它前后各插一步
 // （执行前 consult，执行后按去向记账），不是为了顺手重写这段分派。
-func dispatchBusiness(method: String, params: String, idText: String): String {
+func dispatchBusiness(method: String, params: String, idText: String,
+                      mgmtView!: Option<DeviceAuthzView> = None): String {
         if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
         if (method == "initialize") {
             var capabilities = INIT_CAPS
@@ -422,6 +427,25 @@ func dispatchBusiness(method: String, params: String, idText: String): String {
                 afterSeq: afterSeq, limit: limit, generation: wantedGeneration)
             if (page.kind == REPLAY_KIND_REJECTED) { return errRpc(idText, -32602, page.reason) }
             return okRpc(idText, page.toJson())
+        } else if (method == "auth/devices" || method == "auth/revoke") {
+            // 认证 RPC 管理面（规格 §5 后半个通路）。这两个方法**不进宿主转发**：
+            // 它们读的是 daemon 自己的身份存储与快照，宿主既没有这份数据也不该有。
+            // 视图缺失就当无权限——正常路径上门禁放行时一定带着它，这里兜住的是
+            // 「有人改了分派却没把视图接上」那种漂移。
+            var store: Option<RemoteIdentityStore> = None
+            var snap = ""
+            if (let Some(g) <- currentRemoteGate()) {
+                store = Some(g.identity)
+                snap = g.snapshotPath
+            }
+            if (let Some(s) <- store) {
+                var view = DeviceAuthzView(AuthenticationContext("unauthenticated", "unauthenticated", Int64(0)))
+                if (let Some(v) <- mgmtView) { view = v }
+                let svc = RemoteManagementService(s, snapshotPath: snap)
+                if (method == "auth/devices") { return okRpc(idText, svc.devicesJson(view)) }
+                return okRpc(idText, svc.revokeJson(view, RemoteAccessEndpoints.field(params, "deviceId")))
+            }
+            return errRpc(idText, -32001, "authz-denied:remote-access-disabled")
         } else if (acceptsTeamMethod(method)) {
             return teamHost.forward(method, params, idText)
         } else if (forwarded(method)) {
