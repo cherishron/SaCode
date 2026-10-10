@@ -805,6 +805,41 @@ if (decision.allowed
 
 **自证边界**：本批没有源码改动、没有测试改动、没有跑 `cjpm test` 或 `cjpm build`、没有跑 Node 测试；所有结论都是对 HEAD 上具体行号的机械读取。取证全文见 `docs/evidence/2026-10-10-protocol-schema-freeze.md`。
 
+## 批次 Z：契约方法表 119 条锚点的真实落地审计（plan 第 72 行）
+
+**目标**：把 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` §1 第 4 条「审查方法表真实引用，记录能力缺实现时需补哪个核心/Host模块；未完成项不得进 capabilities」按源码事实逐条机械核对。纯取证任务，无源码改动、无测试改动、无构建。
+
+**探针**：`apps/desktop/.tmp-test/audit-anchors-v2.cjs`（未入库），按文件读代码并分类五档：`implemented-locally` / `forwarded-only` / `capabilities-only` / `proposed` / `anchor-broken`。原始 TALLY `{"implemented-locally":91,"forwarded-only":6,"anchor-broken":20,"proposed":2}`——把 20 条 anchor-broken 与 2 条 proposed 逐条人工复核后确认，**没有一条是「完全没实现」**，都是契约表的元数据过期（锚点写错文件或行号，或谓词后缀指错定义所在文件）。
+
+**结论分档**（119 条）：
+
+| 档 | 计数 | 说明 |
+| --- | --- | --- |
+| 有真实现（锚点与实现一致） | 91 | 探针直接判出 |
+| 有真实现（锚点写错，实现在别处） | 20 | 契约表元数据过期，逐条已指认真分派点 |
+| 有真实现（`拟新增` 标记已过期） | 2 | `auth/enroll` / `auth/token` 已建，见 `remote_access.cj:258` + `daemon.cj:762/769` |
+| 有真实现（漏标 worktree_rpc.cj） | 6 | 5 条 `worktree/*` 分派在 `apps/host/src/worktree_rpc.cj`，1 条 `workspace/set-directory` 分派在 `main.cj:2256` |
+| 完全没有实现 | 0 | 119/119 都能指到真分派点 |
+
+**「未完成项不得进 capabilities」判定**：`apps/host/src/main.cj:1017` 的 caps blob 里 119 条方法名逐个都在别处能找到真分派，**没有裸声明**——这一半为 PASS。
+
+**「能力缺实现时需补哪个核心/Host模块」答复**：没有能力缺口需要补实现。真正要补的是**契约表的元数据**：22 条锚点写错，1 条 `拟新增` 标记过期，worktree 分派所在文件 `apps/host/src/worktree_rpc.cj` 从未出现在契约表锚点里。这是文档维护工作，不是实现工作。
+
+**契约表元数据修正清单（本批不改）**：
+
+- 6 条 caps-suffix 指 `main.cj:987`（真 caps blob 在 `:1017`），且真分派在别处：`workspace/files` → `main.cj:2191`；`workspace/git-status` / `workspace/git-diff` → `main.cj:2149`（共用分支）；`attachment/upload` → `main.cj:1639`；`ledger/stats` → `main.cj:1685`；`workspace/set-directory` → `main.cj:2256`
+- 5 条 `goal/create|edit|pause|resume|clear` 的锚点写 `main.cj isGoalControlMethod`，真分派在 `core/src/goal_control.cj:7`（谓词）+ `:42-45`（分派）
+- 4 条 `tips/get|startup|after-reply|set-hidden` 的锚点写 `main.cj:921`，真分派在 `apps/host/src/tips_surface.cj:13-14`（谓词）+ `:101/:120/:128`（分派）
+- 2 条 `execution/propose|authorize` 的锚点写 `main.cj ExecutionApi`，真分派在 `core/src/execution_api.cj:13`（谓词）+ `:43/:59`（分派）
+- 2 条 `auth/enroll` / `auth/token` 的锚点写 `拟新增: apps/daemon/src/identity.cj`，真分派已建在 `apps/daemon/src/remote_access.cj:258`（处理器）+ `apps/daemon/src/daemon.cj:762/769`（`server.distributor.register`）
+- 5 条 `worktree/enter|exit|agent-prepare|agent-finish|cleanup` 的锚点写 `main.cj` 或 `host_proxy.cj:43`，真分派在 `apps/host/src/worktree_rpc.cj:14-16`（谓词）+ `:114/:126/:139/:172`（分派）
+
+**契约表与实际能力面的一处设计级不一致**：契约表把 `auth/*` 四条列入 capabilities 面（因为方法表整体是「capabilities 里的所有方法」），但 `apps/host/src/main.cj:1017` 的 caps blob 里**没有** `auth/enroll` / `auth/token` / `auth/devices` / `auth/revoke`——这四条走独立 HTTP 端点与独立 RPC 分派，不进主 RPC 能力面。契约表的 `clientConsumers` / `requiredScope` 字段表明这属于设计选择而非遗漏，但如果要让契约表 100% 对齐 caps blob，需要把 auth 四条从 capabilities 面里剔除。这一决定牵动移动客户端的能力发现逻辑（`apps/mobile/kotlin/`），**本批不改**，记入解锁清单。
+
+**为何本批不改契约表本身**：契约表与 `apps/daemon/test/remote-capability-contract.test.mjs`、`apps/daemon/test/remote-method-surface.test.mjs` 两份测试文件通过机械校验绑定，本批没有测试脚本支持「只改锚点字符串」的独立编辑通道（改一处会牵出锚点格式、契约测试与三份文档的一致性）。**解锁动作**：单独开一个只改契约表锚点、同步三份文档、跑三份测试的独立批次，不并入本目标。
+
+**自证边界**：本批只做了**静态锚点审计**——纯 Node 侧的文件读取与正则匹配，没有跑任何编译/测试，没有触及仓颉编译产物。每一条 anchor-stale-but-implemented 的**分派行号**都是从源码逐行 grep 直读后写下的，不是靠探针盲归。**BLOCKED**：契约表元数据的实际修正属文档维护工作，非本批授权范围；本批仅出证据。取证全文见 `docs/evidence/2026-10-10-remote-method-anchor-audit.md`。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
