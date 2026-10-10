@@ -53,3 +53,6 @@ NSIS 那一跳与批次 D 定到的同一条本机前提有关（`%TEMP%` 对非
 
 > **可复现性前提（2026-10-11 07:08 补，本轮新证据）**：本包链路的「当前源码」在本机**等于工作区态，不等于提交态**。分离 HEAD 副本实测：`cd core && cjpm build` 在 HEAD 单独编不过（8 条 error 全是已入库文件引用未入库定义，如 `SessionLog.isDurableFrozen`、`WriteLease.protects`、`GitQueryResult`、`appendDurablePrefix`），补齐 7 个未落库实现文件（`session`/`lease`/`web_network`/`git_workbench`/`durable_checkpoint`/`ledger`/`cmds`）后才 `cjpm build success`、rc=0。逐条读数与表见 `2026-10-11-windows-tls-anchor-audit.md` §16。**含义**：按 clean checkout 或 CI 重放本文件 §3 的打包步骤会在 core 编译步失败；这不是本轮打包失败（本轮产物确实出得来并跑通冒烟），而是可复现性依赖尚未落库的那 7 个文件。解锁动作同 §16.4。
 
+> **本文件的三产物状态已被 2026-10-11 07:35 的复打推翻**（原文保留，不改写上一轮读数）：宿主重打到 07:18 后按批次 E 口径重跑 `electron-builder`，结果是 **win-unpacked 与 portable 产出成功、NSIS 转 FAIL**（`makensis` 成功后 electron-builder 以空参数执行安装包，回 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`、`Exit code: null`，两次复跑同点同错），且上一轮 84 MB 安装包被本轮 153 KB 残件覆盖；打包态 `--ui-smoke` 在 win-unpacked 上只跑到 **252/296**（`Cannot find module …\win-unpacked\scripts\sse-contract-server.cjs`，夹具在仓库根 `scripts/`、不在 `build.files`）；portable 两次运行 stdout 均 0 行（含 `ELECTRON_ENABLE_LOGGING=1`）⇒ 该腿 BLOCKED。宿主哈希两腿一致（`d2ef66eb…`），**三方对账本轮不成立**；四对象签名逐个实测仍 `NotSigned`。安装副作用已核查：Programs 目录、HKCU 卸载项、进程三处均无 SaCode 痕迹，你已安装的应用未被触碰。逐条读数见 `2026-10-11-windows-tls-anchor-audit.md` §18。
+
+

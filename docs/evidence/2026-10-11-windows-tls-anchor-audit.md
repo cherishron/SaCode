@@ -445,6 +445,31 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **批次 B 判决**：双入口从当前工作区源码重建 **PASS**（每步 rc 与产物 mtime/体积如上，均为本轮新构建）；CLI 逐子命令自测 **PASS（除 `sig` 4 条既有限制红、`realstream` 缺外部配置、操作类子命令未结算）**；「core cjpm test 计数」仍按 §16.6 判 **BLOCKED**，本表不冒充它。
 
+## 18. 批次 E 复验被两条真红灯挡住：NSIS 在执行安装包那一步 CANNOT_EXECUTE，打包态冒烟缺测试夹具停在 252/296（2026-10-11 07:24–07:35 实测）
+
+前置：§17 把宿主重打到 07:18 之后，`dist/electron` 里三产物仍是上一轮宿主，故按批次 E 口径重打。命令 `npx electron-builder --config.electronDist=node_modules/electron/dist`（本地官方 dist 269 MB，**未设任何镜像**）。
+
+| 产物 | 结果 | 实测 |
+| --- | --- | --- |
+| `win-unpacked/` | 产出 **PASS** | 07:24；日志含 `updating asar integrity executable resource` 与 `file signing skipped via signExecutable configuration`；随包宿主 `resources/host/bin/sacode-host.exe` 11,158,528 B @07:18（就是 §17 那颗） |
+| `sacode-portable.exe` | 产出 **PASS** | 07:26，84,256,059 B |
+| `SaCode Setup 0.1.0.exe` | **FAIL** | `makensis` 自身成功（`Processed 1 file…Total size: 153273`），随后 electron-builder `executing file=…\SaCode Setup 0.1.0.exe args= env={"__COMPAT_LAYER":"RunAsInvoker"}` → `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`，`Exit code: null`，Output 空；07:26 与 07:29 两次复跑同点同错（第二次带 `DEBUG=electron-builder`，`nsis_rc=1`） |
+
+**先做安全核查再谈修法**：这一步的语义是「electron-builder 以空参数直接运行刚生成的安装器」，若真被执行就可能静默装到用户机上。三处实查——`%LOCALAPPDATA%\Programs\` 下无 SaCode/sacode 目录（该目录只有 `Common/`、`Workbuddy/`，mtime 分别是 08-18 与 05-11）、HKCU `Uninstall\*` 里 `DisplayName -match 'SaCode'` 零命中、`tasklist` 里 `sacode|SaCode` 零命中 ⇒ **你已安装的应用没有被触碰**，失败是 spawn 被拒而不是装完了再退。
+**副损伤如实记**：上一轮那个 84 MB 安装包**已被本轮 153 KB 残件覆盖**（同一路径，mtime 07:26；只有 `…exe.blockmap` 还停在 05:24）。也就是说这条线现在没有可用的 NSIS 产物，恢复只能靠重打成功，不能拿旧 blockmap 反推旧包体还在。
+
+打包态冒烟（同 TMP 落点、`--no-sandbox`）：
+
+- `win-unpacked/SaCode.exe --ui-smoke`：**rc=1，252 条 `UI OK`、0 条 `UI FAIL`**。中断点是 `Error: Cannot find module …\win-unpacked\scripts\sse-contract-server.cjs`（`MODULE_NOT_FOUND`）——该夹具真实住在**仓库根** `scripts/sse-contract-server.cjs`，被 `apps/desktop/test/*.test.mjs` 以 `REPO` 相对路径引用；而 `build.files` 那 20 项里没有它，`after-pack.cjs` 也不搬。⇒ 归 **随包清单缺件**（开发态 296 全绿、打包态跑不完），不是产品功能红；**不接受「252 也算过」这种缩范围读法**。
+- `sacode-portable.exe --ui-smoke`：两次运行 stdout 均 **0 行**、rc=1（第二次加 `ELECTRON_ENABLE_LOGGING=1` 仍 0 行）⇒ 本机取证通道收不到 portable 自解压后子进程的输出，判 **BLOCKED**（不等同于「跑不起来」，也不等同于「跑过了」）。
+
+哈希对账：`sha256` 前缀 `d2ef66eb8c3edc9a53ef` 在 `dist/host/bin/sacode-host.exe` 与 `win-unpacked/resources/host/bin/sacode-host.exe` 两处**逐字节一致**（第二腿成立）；第三腿（NSIS 载荷内的宿主）本轮取不到——安装包没产出，且仓内无 `7za` 可用（`node_modules/7zip-bin` 路径不存在）。⇒ **三方对账本轮不成立**，只交两方。
+
+签名状态逐个实测：`Get-AuthenticodeSignature` 对 `win-unpacked/SaCode.exe`、`sacode-portable.exe`、`SaCode Setup 0.1.0.exe`、包内 `sacode-host.exe` **四个对象全部 `NotSigned`**——这是 `build.win.signExecutable=false` 的主动选择，「安装包已产出」与「已签名可分发」仍是两句话。
+
+**批次 E 判决**：`win-unpacked` 产出 PASS 但打包态断言覆盖 **FAIL（252/296，缺夹具）**；`portable` 产出 PASS、打包态冒烟 **BLOCKED（stdout 零通道）**；`NSIS` **FAIL（CANNOT_EXECUTE，且覆盖掉了上一轮产物）**；签名如实 **NotSigned**；NSIS 真机安装/卸载仍 **BLOCKED（未获授权）**。三条解锁动作：① 把打包态 ui-smoke 依赖的夹具纳入随包清单，或让该用例在打包态走已随包的等价路径（属桌面线，需改 `build.files`/`after-pack`，而 `package.json` 此刻是别人未落库的 `M` 文件，我不代改）；② 查清本机为何拒 spawn 新生成的安装器（与 §13/§14 里那条按路径按可执行文件生效的策略同族嫌疑，未定位）；③ 换用能收到 portable 子进程输出的取证方式重跑那一腿。
+
+
 
 
 
