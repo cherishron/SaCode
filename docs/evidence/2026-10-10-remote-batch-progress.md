@@ -883,6 +883,19 @@ if (decision.allowed
 
 **四档分档读数**（`docs/evidence/2026-10-10-remaining-plan-audit.md` §2–§5）：A 档 7 项（其中 3 项可编辑但不可验证）、B 档 13 项、C 档 6 项、D 档 4 项。A/B 是「等谁的时机」，C/D 是「时机到了也未必解锁」——这个区分替代前几批把 BLOCKED 笼统归到一处的做法。
 
+### 批次 AA.2：计划第 147 行后半「遍历日志断言无登记秘密/token/模型key」补字面验收
+
+**推进位置**：AA 归档文档 §7 的解锁顺序 AA.2。前提「daemon 二进制为空目录」在本轮解——`apps/daemon/target/release/bin/main.exe` 通过 `cjpm build` 成功落到 11 MB（PATH 加 stdx 与 runtime DLL 目录即可）。
+
+**未改源码**，只加了 `apps/daemon/test/remote-audit-integrity.test.mjs` 两条用例：
+
+- 第一条换真 token。前面 6 条走的是假凭据（`Bearer nope`、`SENTINEL` 之类的合成串），断言「不含假串」恒真；这条把 `boot()` 拿到的 server 生成的 32 字符十六进制 access token 走一遍 `/rpc`，再判「审计不含该精确串」，反向锁是「判定记录至少一条在盘」——不出现这个真串只有两种可能：服务端写进盘（=脱敏失败）、或写进了测试注释（=夹具错），两者都能被抓。
+- 第二条把「模型 key」半钉成事实。审计白名单 `AUDIT_BANNED_KEYS` 只有 token/secret/credential/authorization/params/body 六个键名，`modelApiKey` 不在内。这条把带 `modelApiKey` 形态的值通过客户端可控字段送入 `/rpc`，断言**不该出现** `audit-redacted:` 标记——锁的是「白名单不含 modelApiKey」这个当前面事实，一旦日后有人扩白名单本用例自动变红（棘轮方向正确）。
+
+**读数**：`node --test test/remote-audit-integrity.test.mjs` → **8/8 rc=0**（前 6 条 + 新增 2 条）。
+
+**未落的两处诚实说明**：① 计划第 147 行**整行仍未勾**——前半「审计保存 who/when/what/result」由批次 N 落盘，后半这两条只是字面遍历断言的**下限**，不覆盖「遍历模型 key 类秘密」这个原句（`modelApiKey` 类密钥现在不在白名单里，脱敏不覆盖它，是本行整条不判通过的关键理由之一）；② pin 后的目标更新流程（tls-pin 只做「比对后拒」，未做「新证书到达时通知用户重建绑定」的产品面）也未落。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |

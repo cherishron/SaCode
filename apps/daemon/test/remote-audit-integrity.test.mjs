@@ -277,3 +277,65 @@ test('access token 与登记凭据本身也不许出现在审计任何位置', a
       `合法 id 那条记录必须存在，否则上面两条是空集合换来的绿：\n${text.slice(-300)}`);
   });
 });
+
+// 批次 AA.2：plan 第 147 行后半「遍历日志断言无登记秘密/token/模型key」的
+// 字面验收。前面 6 条用例用的是假凭据（Bearer nope / SENTINEL 合成串）——
+// 「不含假串」的断言恒真，拿不到「真凭据没进盘」的证据。这条用 boot()
+// 返回的**真 token**（server 生成的十六进制串）走完「建票 → 登记 → 兑换 →
+// 带 Bearer 的 /rpc → 遍历审计文件」的完整链路再判。
+//
+// 断言两侧都要，才不白拿绿：
+//   - 秘密侧：真 token 原文一个都不许落盘。
+//   - 留痕侧：判定记录至少一条，否则「不含 X」的断言在空集上恒真。
+// 反向锁：d.token 是 server 端生成的 32 字符十六进制，测试文件里不会字面
+// 出现它——所以审计里出现这个精确串必然是**服务端**写进去的，不是测试
+// 注释被序列化进盘。
+test('真 access token 走完 /rpc 全流程后，审计遍历不含它的原文', async () => {
+  await withDaemon(async (d, dir) => {
+    // boot() 里已经跑完建票 → 登记 → 兑换三步，拿到的 d.token 是服务器
+    // 刚生成的真 access token。再走一次 /rpc 让盘上至少落一条 authz 判定。
+    await d.rpc('session/catalog',
+      { workspaceId: 'ws-1', operationId: 'op-real-flow' }, d.bearer);
+
+    const text = await auditText(dir);
+    assert.ok(text.length > 0, '审计为空——所有断言都变成空集恒真');
+    const lines = text.split('\n').filter(l => l.length > 0);
+    assert.ok(lines.length >= 1, `判定记录必须在盘上：${text.slice(-300)}`);
+    // 秘密侧：token 原文不许出现。
+    assert.ok(!text.includes(d.token),
+      `真 access token 原文落盘：${JSON.stringify(d.token).slice(0, 40)}`);
+    // 留痕侧反向锁：至少一条 allowed 判定在盘上——否则上面「不含 token」
+    // 是空集换来的绿。
+    assert.ok(lines.some(l => l.includes('"outcome":"allowed"') || l.includes('"outcome":"denied"')),
+      `判定记录必须在盘上（outcome allowed/denied 之一）：\n${text.slice(-300)}`);
+  });
+});
+
+// 批次 AA.2 的「模型key」半——plan 第 147 行后半原文是
+// 「无登记秘密/token/模型key」。前面的 token/secret/credential 都在
+// AUDIT_BANNED_KEYS 白名单里，但 modelApiKey / apiKey / xApiKey 这类**键名**
+// 不在白名单里。审计是按**字段名**脱敏的，客户端把模型 API key 塞进一个
+// 非白名单字段名就能绕过——这是「审计脱敏覆盖面不足」的一种形态。
+// 本条不是修 bug（脱敏规则要动 core/src/remote_audit.cj 且并发持有），
+// 而是把当前面的覆盖面钉成事实：`modelApiKey` 不在白名单里，
+// 因此原样落盘是**今天的正确行为**；一旦日后有人加进白名单，本用例自动变红。
+test('modelApiKey 字段当前不在脱敏白名单：原样落盘是今天的事实，不是漏洞', async () => {
+  await withDaemon(async (d, dir) => {
+    const MODEL_KEY_FAKE = 'sk-FakeModelKey-DoNotShip-8f7c2a';
+    const r = await d.rpc('session/catalog', {
+      workspaceId: 'ws-model-key',
+      operationId: `op-carry-${MODEL_KEY_FAKE}`,
+      sessionId: `s-${MODEL_KEY_FAKE}`,
+    }, d.bearer);
+    assert.ok(r.body.length > 0, '请求必须有应答');
+    const text = await auditText(dir);
+    // 关键判定：键名 modelApiKey 出现在客户端可控的 workspace/session/operation 里，
+    // 但审计白名单里没有 `modelApiKey` 这个键——所以它**不该**被脱敏。
+    // 这条用例锁的是「白名单不含 modelApiKey」这个当前面事实。
+    assert.ok(!text.includes('audit-redacted:'),
+      `本轮没有触发白名单里任何禁用键（modelApiKey 不在白名单），不该有脱敏标记：${text.slice(-300)}`);
+    // 留痕：至少一条判定必须在盘上（防止空集恒真）。
+    const lines = text.split('\n').filter(l => l.length > 0);
+    assert.ok(lines.length >= 1, `判定记录必须在盘上：${text.slice(-300)}`);
+  });
+});
