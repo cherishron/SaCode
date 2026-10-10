@@ -240,7 +240,7 @@ createApp({
     const workspaceSessionLimits = ref(new Map());
     const workspaceGroupExpanded = ref(new Set());
     // 检索词与状态筛选是核心目录投影上的纯派生量：不发宿主请求，也不写回用户的展开记忆。
-    const sidebarQuery = ref('');
+    const sidebarQuery = ref(''), sidebarStatus = ref('all');
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
     const frameColumns = window.Vue.computed(() => workbenchExpanded.value&&!pluginManagerOpen.value?{sidebar:0,center:0,rightbar:viewport.value}:window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
       sideOpen.value&&!pluginManagerOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
@@ -297,95 +297,28 @@ createApp({
     let selectedScrollId = 'initial';
     const workspaceOpen=ref(false), workspace=ref(null), workspaceBusy=ref(false), workspaceNote=ref("");
     const workspaceFiles=ref([]), workspaceFilesBusy=ref(false);
-    async function refreshWorkspaceFiles() {
-      workspaceFilesBusy.value=true;
-      try {
-        const result = await window.sacode.workspaceFiles("");
-        workspaceFiles.value = result.files || [];
-      } catch(e) { workspaceFiles.value = []; }
-      workspaceFilesBusy.value=false;
-    }
     // 目录树展开态：openPaths 收已展开的相对子路径，treeChildren 收各路径的子目录列表，
     // 数据每次都从宿主拿——展开状态只是 UI 记忆，不是第二份文件系统事实。
     const fileTreeOpen=ref(new Set()), fileTreeChildren=ref({}), fileTreeBusy=ref("");
-    async function toggleTreeDir(path) {
-      const nextOpen = new Set(fileTreeOpen.value);
-      if (nextOpen.has(path)) { nextOpen.delete(path); fileTreeOpen.value = nextOpen; return; }
-      nextOpen.add(path); fileTreeOpen.value = nextOpen;
-      if (fileTreeChildren.value[path]) return;
-      fileTreeBusy.value = path;
-      try {
-        const result = await window.sacode.workspaceFiles(path);
-        fileTreeChildren.value = { ...fileTreeChildren.value, [path]: result.files || [] };
-      } catch (e) { fileTreeChildren.value = { ...fileTreeChildren.value, [path]: [] }; }
-      fileTreeBusy.value = "";
-    }
     // 会话轨迹：只回放已落盘（durable）事件——投影里的 pending 不算已发生的事实。
     const traceEvents=ref([]), traceCursor=ref(0), traceMore=ref(false), traceBusy=ref(false), traceError=ref("");
     let traceGeneration = 0;
-    async function refreshTrace(reset) {
-      const session = scrollSession.value;
-      if (!session || session === "initial") { traceEvents.value = []; traceCursor.value = 0; traceMore.value = false; traceError.value = ""; return; }
-      const generation = ++traceGeneration;
-      const cursor = reset ? 0 : traceCursor.value;
-      traceBusy.value = true; traceError.value = "";
-      try {
-        const r = await window.sacode.sessionEvents(cursor, 64);
-        if (generation !== traceGeneration) return;
-        const events = Array.isArray(r && r.events) ? r.events : [];
-        const merged = reset ? events : [...traceEvents.value, ...events];
-        traceEvents.value = merged;
-        traceCursor.value = (r && typeof r.nextCursor === "number") ? r.nextCursor : cursor;
-        traceMore.value = !!(r && r.more);
-      } catch (e) {
-        if (generation === traceGeneration) traceError.value = String((e && e.message) || e);
-      } finally {
-        if (generation === traceGeneration) traceBusy.value = false;
-      }
-    }
     window.Vue.watch(() => [sideTab.value, scrollSession.value], ([tab]) => {
       if (tab === "trace") void refreshTrace(true);
     });
     const teamSessionId = ref(""), teamSnapshot = ref(null), teamBusy = ref(false), teamError = ref("");
     let teamTimer = null, teamGeneration = 0, teamNavigationId = "", teamDisposed = false;
     const teamActive = () => !teamDisposed && sideOpen.value && sideTab.value === "agents" && !pluginManagerOpen.value;
-    function stopTeamRefresh() {
-      if (teamTimer !== null) clearInterval(teamTimer);
-      teamTimer = null; teamGeneration += 1; teamBusy.value = false;
-    }
-    async function readTeamSnapshot(id, generation) {
-      const snapshot = await window.sacode.teamDescribe(id);
-      if (!snapshot || !["members", "tasks", "messages"].every(key => Array.isArray(snapshot[key]))) throw Error("团队快照格式异常：需要 members/tasks/messages 数组。");
-      if (generation === teamGeneration && teamActive() && id === teamSessionId.value) teamSnapshot.value = snapshot;
-    }
-    async function refreshTeam() {
-      if (!teamActive() || teamBusy.value || !teamSessionId.value) return;
-      const id = teamSessionId.value, generation = teamGeneration;
-      teamBusy.value = true;
-      try { await readTeamSnapshot(id, generation); if (generation === teamGeneration) teamError.value = ""; }
-      catch (e) { if (generation === teamGeneration) teamError.value = String(e.message || e); }
-      finally { if (generation === teamGeneration) teamBusy.value = false; }
-    }
-    async function writeTeam(method, args) {
-      if (!teamActive() || teamBusy.value || !teamSessionId.value) return;
-      const id = teamSessionId.value, generation = teamGeneration;
-      teamBusy.value = true; teamError.value = "";
-      try {
-        await window.sacode[method](id, ...args);
-        if (generation === teamGeneration && teamActive()) await readTeamSnapshot(id, generation);
-      } catch (e) { if (generation === teamGeneration) teamError.value = String(e.message || e); }
-      finally { if (generation === teamGeneration) teamBusy.value = false; }
-    }
-    const addTeamMember = ({name, role}) => writeTeam("teamMemberCreate", [name, role]);
-    const sendTeamMessage = ({target, text}) => writeTeam("teamMessageSend", [target, text]);
-    const createTeamTask = ({title, dependencies}) => writeTeam("teamTaskCreate", [title, dependencies]);
-    const assignTeamTask = ({taskId, memberId}) => writeTeam("teamTaskAssign", [taskId, memberId]);
-    const stopTeamMember = memberId => writeTeam("teamMemberStop", [memberId]);
-    async function selectTeamSession(id) {
-      teamNavigationId = id;
-      await selectSession(id);
-      if (selectedScrollId !== id) { teamNavigationId = ""; teamError.value = "成员会话未切换，请检查当前会话操作或会话列表错误。"; }
-    }
+    const teamAssembly = window.SaCodeTeamState.createTeamAssembly({
+      api: window.sacode, sideOpen, sideTab, pluginManagerOpen, scrollSession,
+      teamSessionId, teamSnapshot, teamBusy, teamError,
+      teamTimerRef: { get value() { return teamTimer; }, set value(v) { teamTimer = v; } },
+      teamGenerationRef: { get value() { return teamGeneration; }, set value(v) { teamGeneration = v; } },
+      teamNavigationIdRef: { get value() { return teamNavigationId; }, set value(v) { teamNavigationId = v; } },
+      teamDisposedRef: { get value() { return teamDisposed; }, set value(v) { teamDisposed = v; } },
+      selectSession: id => selectSession(id), getSelectedSession: () => selectedScrollId,
+    });
+    const { stopTeamRefresh, refreshTeam, addTeamMember, sendTeamMessage, createTeamTask, assignTeamTask, stopTeamMember, selectTeamSession } = teamAssembly;
     window.Vue.watch(() => [sideOpen.value, sideTab.value, pluginManagerOpen.value, scrollSession.value], () => {
       const current = String(scrollSession.value || "");
       if (current && current !== "initial" && current !== teamNavigationId && current !== teamSessionId.value) {
@@ -399,33 +332,6 @@ createApp({
     // 通用设置的三个持久化偏好：值与保存都走宿主 global/settings，失败时回显真实回读值。
     const generalPrefs = ref({ transcriptView: null, composerEnter: null, sessionLog: null });
     const generalPrefsBusy = ref(""), generalPrefsNote = ref("");
-    async function refreshGeneralPrefs() {
-      try {
-        const r = await window.sacode.globalSettingsGet();
-        if (r && typeof r === "object") {
-          generalPrefs.value = {
-            transcriptView: r.transcriptView === "compact" || r.transcriptView === "expanded" ? r.transcriptView : "default",
-            composerEnter: r.composerEnter === "newline" ? "newline" : "send",
-            sessionLog: r.sessionLog === "on" ? "on" : "off",
-          };
-        }
-      } catch (e) { generalPrefsNote.value="配置读取失败："+String(e.message||e); }
-    }
-    async function setGeneralPref(key, value) {
-      if (generalPrefsBusy.value) return;
-      generalPrefsBusy.value = key;generalPrefsNote.value="";
-      try {
-        const r = await window.sacode.globalSettingsSet(key, value);
-        if (r && typeof r === "object") {
-          generalPrefs.value = {
-            transcriptView: r.transcriptView === "compact" || r.transcriptView === "expanded" ? r.transcriptView : "default",
-            composerEnter: r.composerEnter === "newline" ? "newline" : "send",
-            sessionLog: r.sessionLog === "on" ? "on" : "off",
-          };
-        }
-      } catch(e) { generalPrefsNote.value="保存失败："+String(e.message||e); } finally { generalPrefsBusy.value = ""; }
-    }
-    void refreshGeneralPrefs();
     // 插件清单适配器：宿主 packages 的每一项是一个已装插件；有工具行的包也作为会话预设组。
     // 全局插件列表 = 全部包；会话预设 = 有 rows 的包，每包一组。坏包只坏自己，不连坐。
     const pluginsInventoryAdapter = {
@@ -457,10 +363,6 @@ createApp({
         return { entries, presets };
       },
     };
-    async function refreshWorkspace() {
-      const generation=sessionGeneration, result=await window.sacode.workspaceGet();
-      if(generation===sessionGeneration) workspace.value=result;
-    }
     // 会话级隔离工作树：绑定按会话生效，面板只消费主进程逐字段校验过的 describe 视图。
     // 用 reactive 而不是 ref：输入草稿、在途标记与拒绝原因都落在同一个对象上，
     // 失败时一个也不清空——草稿是用户的输入，不是可以随手丢弃的中间状态。
@@ -472,184 +374,34 @@ createApp({
     const worktreeController = window.SaCodeWorktree.createController(worktreeState, window.sacode, async () => {
       // 进入与退出都换了会话的有效目录：目录显示、文件树与投影一起重读，
       // 不能让面板说「在隔离工作树里」而文件树还指着原目录。
-      await refreshWorkspace(); await refreshWorkspaceFiles(); await refresh();
+      await workspaceAssembly.refreshWorkspace(); await workspaceAssembly.refreshWorkspaceFiles(); await refresh();
     });
     // 在途轮次、待审批工单与发送中都锁面板：本轮的 workingDirectory 已在宿主冻结，
     // 这时切目录只会得到「两个入口说的是两个不同目录」。
     function worktreeLocked() { return turn.value.running === true || !!approval.value || sendBusy.value === true; }
-    async function openWorkspace() {
-      workspaceOpen.value=true;
-      try {await refreshWorkspace(); await refreshCatalog();} catch(e) {workspaceNote.value=catalogError(e);}
-    }
-    async function chooseWorkspace() {
-      if(fileEditor.state.busy||fileEditor.dirty()){workspaceNote.value='请先保存或放弃文件编辑中的修改。';return;}
-      if(sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
-      workspaceBusy.value=true; workspaceNote.value="请选择项目目录…";
-      try {
-        const result=await window.sacode.workspaceChoose();
-        if(result.cancelled) {workspaceNote.value="已取消选择，目录未变更。";return;}
-        await refreshWorkspace(); await refresh(); await refreshTools(); await refreshCatalog();
-        workspaceNote.value="已保存当前会话的项目目录。";
-      } catch(e) {workspaceNote.value=catalogError(e);}
-      finally {workspaceBusy.value=false;}
-    }
     const newSessionTitle = ref("");
     const sessionDrafts = new Map();
     function catalogError(e) {
-      const message=String(e.message || e);
-      const reasons={"selection-replay-rejected":"所选会话无法读取，请从会话列表选择可用会话。", "selection-failed-restart-required":"会话选择保存失败，请重启后继续。",
-        "workspace-flush-failed":"项目目录保存失败，请重启后检查会话日志。", "workspace-failed-restart-required":"项目目录保存失败，请重启后继续。", "bad-workspace-directory":"请选择存在的项目文件夹。",
-        "session-resources-in-flight":"请先处理审批工单并关闭在途扩展。", "turn-in-flight":"请先停止当前执行并等待结算。", "already-owned":"会话正在由另一写者使用，请稍后重试。",
-        "bad-session-title":"请输入有效的会话名称。", "replay-rejected":"会话日志无法回放，已保留原会话。", "unknown-session":"会话目录不存在，请刷新列表。",
-        "selection-flush-failed":"会话选择保存失败，请重启后检查日志。", "flush-failed":"当前会话保存失败，尚未切换。",
-        "attachment-receipt-unknown":"附件凭证已失效，请重新上传。", "attachment-media-type-mismatch":"附件内容与所选类型不符。",
-        "attachment-unsupported-media-type":"图片暂时只支持 PNG、JPEG、GIF。", "attachment-bad-base64":"附件读取失败，请重试。",
-        "attachment-image-too-large":"单张图片不能超过 20 MB。", "attachment-image-count-exceeded":"一条消息最多 20 张图片。",
-        "attachment-image-bytes-exceeded":"一条消息的图片合计不能超过 200 MB。", "attachment-image-pixels-exceeded":"图片像素超过 6400 万。",
-        "attachment-image-dimension-exceeded":"图片单边不能超过 8192 像素。", "attachment-corrupt-object":"附件内容校验不通过，请重新上传。",
-        "attachment-missing-object":"附件对象已不在盘上，请重新上传。"};
-      return Object.entries(reasons).find(([key])=>message.includes(key))?.[1] || message;
+      return window.SaCodeSessionCatalog.catalogError(e);
     }
-    async function applySelection(id) {
-      if(fileEditor.state.busy||fileEditor.dirty())throw Error('请先保存或放弃文件编辑中的修改，再切换会话。');
-      if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
-      if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后切换。");
-      const oldId=catalog.value?.entries.find(item=>item.current)?.id;
-      await window.sacode.sessionSelect(id);
-      fileEditor.reset();
-      sessionGeneration += 1;
-      selectedScrollId=id;
-      if (oldId) sessionDrafts.set(oldId,draft.value);
-      // 换会话时把在途增强撤掉：那份迟到结果属于上一个会话的输入框，
-      // 留在宿主槽位里既会顶掉下一次的发起，也可能落进别的草稿。
-      if (enhance.value.busy) { window.sacode.promptCancel().catch(() => {}); }
-      clearEnhance();
-      draft.value=sessionDrafts.get(id)||"";
-      stopPolling(); foldOpen.ids.clear();
-      turn.value={running:false,settled:false,text:"",finishReason:"",cancelled:false,interrupted:false,delivered:0};
-      approval.value=null; outcome.value=""; outcomeKind.value=""; error.value="";
-      previewFloating.value=false; detailName.value=""; budgetDraft.value=""; budgetNote.value=""; appearanceNote.value="";
-      catalogNote.value="已切换，正在加载会话…";
-      queuePending.value=[];
-      clearAttachments(); selectedCustomModel.value = ""; void loadCustomModels();
-      await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshWorkspaceFiles(); await refreshQueue();
-      // 换会话=换绑定：上一个会话的名称草稿与状态都必须收起，面板重新读这一条会话的绑定。
-      resetWorktreePanel(); await worktreeController.restore();
-      await refreshGlobalAppearance();
-      workspaceNote.value="";
-      catalog.value=await window.sacode.sessionCatalog();
-      catalogOpen.value=false;
-      window.Vue.nextTick(()=>document.getElementById('composer').focus());
+
+    function focusComposerCaret() {
+      window.Vue.nextTick(() => {
+        const box = document.getElementById("composer");
+        if (!box) { return; }
+        box.focus();
+        try { box.setSelectionRange(box.value.length, box.value.length); } catch (_) {}
+      });
     }
-    async function selectSession(id) {
-      if (catalogBusy.value) return;
-      if(catalog.value?.entries.some(item=>item.current && item.id===id)) return;
-      catalogBusy.value=true; catalogNote.value="正在保存并切换会话…";
-      try { await applySelection(id); }
-      catch(e) { catalogNote.value=catalogError(e); error.value=catalogNote.value; }
-      finally { catalogBusy.value=false; }
-    }
-    async function createSession() {
-      if(fileEditor.state.busy||fileEditor.dirty()){catalogNote.value='请先保存或放弃文件编辑中的修改。';return;}
-      if (catalogBusy.value || !newSessionTitle.value.trim()) return;
-      catalogBusy.value=true; catalogNote.value="正在新建会话…";
-      try {
-        if (turn.value.running || approval.value) throw new Error("请先结算执行任务并处理待审批工单。");
-        if (sendBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value) throw new Error("正在处理当前会话，请稍后新建。");
-        const created=await window.sacode.sessionCreate(newSessionTitle.value);
-        newSessionTitle.value="";
-        catalog.value=await window.sacode.sessionCatalog();
-        await applySelection(created.id);
-      } catch(e) { catalogNote.value=catalogError(e); error.value=catalogNote.value; }
-      finally { catalogBusy.value=false; }
-    }
-    async function startNewSession() {
-      if(fileEditor.state.busy||fileEditor.dirty()){catalogNote.value='请先保存或放弃文件编辑中的修改。';return;}
-      if(sendBusy.value || catalogBusy.value || budgetBusy.value || appearanceBusy.value || workspaceBusy.value || turn.value.running || approval.value) return;
-      newSessionTitle.value='新会话';
-      await createSession();
-    }
-    async function refreshCatalog() {
-      if (catalogBusy.value) return;
-      catalogBusy.value = true; catalogNote.value = "正在读取本地会话…";
-      try {
-        catalog.value = await window.sacode.sessionCatalog();
-        if(selectedScrollId==='initial') {
-          selectedScrollId=catalog.value.entries.find(item=>item.current)?.id || 'initial';
-          scrollSession.value=selectedScrollId;
-        }
-        catalogNote.value = "已读取落盘会话；列表不包含尚未保存的事件。";
-      } catch (e) { catalogNote.value = "读取失败：" + String(e.message || e); }
-      finally { catalogBusy.value = false; }
-    }
-    function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
+    // 会话管理：委托给 session-state.js（经典脚本，CSP 兼容）
+    // 工厂调用放在所有依赖声明之后，避免 TDZ。
+    const selectedScrollIdRef = { get value() { return selectedScrollId; }, set value(v) { selectedScrollId = v; } };
     // 使用提醒条：正文不进消息投影，占用比例全部由核心算——
     // 核心没给可靠分子时，这里连百分比都不会出现。
     const tips=ref(null),tipsHidden=ref(null),tipsPressure=ref(undefined),tipsBusy=ref(false),tipsNote=ref(''),tipsError=ref(false);
-    const showStartupTip=async()=>{
-      try{const r=await window.sacode.tipsStartup();if(r&&r.id&&r.text)tips.value={kind:'startup',text:r.text,reliable:false};}
-      catch(e){tipsError.value=true;tipsNote.value=catalogError(e);}
-    };
-    const showContextTip=async()=>{
-      try{
-        const r=await window.sacode.tipsAfterReply();
-        if(r&&Number.isFinite(r.window)&&r.window>0&&Number.isFinite(r.used)&&r.used>=0)tipsPressure.value={projectedTokens:r.used,contextWindow:r.window};
-        if(r&&r.id&&r.text)tips.value={kind:'context',text:r.text,reliable:Number.isFinite(r.percent)};
-      }catch(e){tipsError.value=true;tipsNote.value=catalogError(e);}
-    };
-    const refreshTips=async()=>{
-      try{
-        const r=await window.sacode.tipsGet();
-        tipsHidden.value=!!r.hidden;tipsError.value=false;
-        if(r.reliable&&Number.isFinite(r.window)&&r.window>0&&Number.isFinite(r.used))tipsPressure.value={projectedTokens:r.used,contextWindow:r.window};
-      }catch(e){tipsError.value=true;}
-    };
-    const setTipsHidden=async(value)=>{
-      if(tipsBusy.value)return;
-      tipsBusy.value=true;tipsError.value=false;tipsNote.value='正在保存提醒偏好…';
-      try{const r=await window.sacode.tipsSetHidden(value);tipsHidden.value=!!r.hidden;tipsNote.value='已保存，界面立即停止出提醒。';if(value)tips.value=null;}
-      catch(e){tipsError.value=true;tipsNote.value=fontError(e);}
-      finally{tipsBusy.value=false;}
-    };
-    const dismissTips=()=>setTipsHidden(true);
     const globalAppearance = ref({theme:null,fontSize:null,busySend:null}), fontBusy=ref(false), fontNote=ref('');
     const busySendSaving=ref(false),busySendNote=ref(''),busySendError=ref(false);
-    async function setBusySend(value) {
-      if(busySendSaving.value)return;
-      busySendSaving.value=true;busySendError.value=false;busySendNote.value='正在保存发送偏好…';
-      try {globalAppearance.value=await window.sacode.globalAppearanceSetBusySend(value);busySendNote.value='已保存，下一次发送生效。';}
-      catch(e){busySendError.value=true;busySendNote.value=fontError(e);}
-      finally{busySendSaving.value=false;}
-    }
-    function fontError(e) {
-      const message=String(e.message||e);
-      if(message.includes('settings-already-owned')) return '另一入口正在保存配置，请稍后重试。';
-      if(message.includes('settings-replay-rejected')) return '全局外观配置损坏，未保存变更。';
-      return '无法读取或保存全局外观配置，请检查用户配置目录。';
-    }
-    async function refreshGlobalAppearance() {
-      try {globalAppearance.value=await window.sacode.globalAppearanceGet();busySendError.value=false;busySendNote.value='';}
-      catch(e) {fontNote.value=fontError(e);busySendError.value=true;busySendNote.value=fontError(e);}
-    }
-    async function setFontSize(value) {
-      if(fontBusy.value || appearanceBusy.value) return;
-      fontBusy.value=true; fontNote.value='正在保存全局正文字号…';
-      try {
-        globalAppearance.value=await window.sacode.globalAppearanceSetFontSize(value);
-        fontNote.value='已保存全局正文字号。';
-      } catch(e) {fontNote.value=fontError(e);}
-      finally {fontBusy.value=false;}
-    }
     const appearanceBusy = ref(false), appearanceNote = ref("");
-    async function setTheme(theme) {
-      if (appearanceBusy.value || fontBusy.value) return;
-      appearanceBusy.value=true; appearanceNote.value="正在保存全局主题…";
-      try {
-        globalAppearance.value=await window.sacode.globalAppearanceSetTheme(theme);
-        appearanceNote.value="已保存全局主题，切换会话后保持。";
-      } catch(e) { appearanceNote.value=fontError(e); }
-      finally { appearanceBusy.value=false; }
-    }
     let resizeController = null;
     function beginResize(e) {
       if (e.button !== 0) return;
@@ -688,78 +440,15 @@ createApp({
     const draft = ref(""), sendBusy=ref(false);
     // 队列面板只显示核心的投影；pending 只是「自己刚发出去还没回执」的回声
     const queueRows = ref([]), queuePending = ref([]);
-    // 附件轨：字节只在上传那一刻过界一次，之后渲染层手里只有宿主发的凭证与引用。
-    const attachments = ref([]), uploads = ref({});
-    let attSeq = 0;
-    const IMAGE_MIME = ["image/png", "image/jpeg", "image/gif"];
-    const kindOf = (file) => (IMAGE_MIME.includes(file.type) ? "image" : "file");
-    function readAsBase64(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          // reader.result 是只读访问器，写它会在回调里抛 TypeError 让这条 Promise 永不结算
-          const text = String(reader.result || "");
-          const comma = text.indexOf(",");
-          if (comma < 0) { reject(new Error("附件读取失败")); } else { resolve(text.slice(comma + 1)); }
-        };
-        reader.onerror = () => reject(new Error("附件读取失败"));
-        reader.readAsDataURL(file);
+    const error = ref("");
+    const { attachments, uploads, addAttachments, removeAttachment, retryAttachment, clearAttachments } =
+      window.SaCodeAttachmentState.createAttachmentState({
+        ref, upload: (...args) => window.sacode.attachmentUpload(...args),
+        getGeneration: () => sessionGeneration, error, formatError: catalogError,
       });
-    }
-    async function uploadAttachment(item, file) {
-      const generation = sessionGeneration;
-      try {
-        const data = await readAsBase64(file);
-        const kind = kindOf(file);
-        const out = await window.sacode.attachmentUpload(kind, file.name || "", kind === "image" ? file.type : "", data);
-        if (generation !== sessionGeneration) { return; }
-        item.receiptId = out.receiptId;
-        item.attachment = out.attachment;
-        if (kind === "image" && !item.previewUrl) { item.previewUrl = URL.createObjectURL(file); }
-        uploads.value = { ...uploads.value, [item.id]: { status: "ready" } };
-      } catch (e) {
-        if (generation !== sessionGeneration) { return; }
-        uploads.value = { ...uploads.value, [item.id]: { status: "error", message: catalogError(e) } };
-        error.value = catalogError(e);
-      }
-    }
-    function addAttachments(files, directories) {
-      for (const file of files) {
-        const item = { id: "a" + (++attSeq), kind: kindOf(file), file, previewUrl: "" };
-        attachments.value = [...attachments.value, item];
-        uploads.value = { ...uploads.value, [item.id]: { status: "uploading" } };
-        void uploadAttachment(item, file);
-      }
-      // 文件夹不是附件：上游这条线只收文件，所以明说而不是静默吞掉。
-      if (directories && directories.length) {
-        error.value = "只接受文件，文件夹不入库：" + directories.map((d) => d.name).join("、");
-      }
-    }
-    function removeAttachment(id) {
-      const gone = attachments.value.find((a) => a.id === id);
-      if (gone && gone.previewUrl) { URL.revokeObjectURL(gone.previewUrl); }
-      attachments.value = attachments.value.filter((a) => a.id !== id);
-      const rest = { ...uploads.value };
-      delete rest[id];
-      uploads.value = rest;
-    }
-    function retryAttachment(id) {
-      const item = attachments.value.find((a) => a.id === id);
-      if (!item) { return; }
-      uploads.value = { ...uploads.value, [id]: { status: "uploading" } };
-      void uploadAttachment(item, item.file);
-    }
-    function clearAttachments() {
-      for (const item of attachments.value) {
-        if (item.previewUrl) { URL.revokeObjectURL(item.previewUrl); }
-      }
-      attachments.value = [];
-      uploads.value = {};
-    }
     let rpcSeq = 0;
     let draftRevision=0, sendTicket=0;
     function updateDraft(value) { draftRevision++; draft.value=value; }
-    const error = ref("");
     const approval = ref(null);
     const outcome = ref("");
     const outcomeKind = ref("");
@@ -771,149 +460,18 @@ createApp({
     const budgetNote = ref("");
     const budgetBusy = ref(false);
 
-    // 提示词增强：图标只有「增强」与「回退」两副面孔，判据是「上一次替换还完整地留在输入框里」。
-    // 用户一改就作废——哪怕改回一模一样的字也算作废，因为从那一刻起「该不该覆盖」已经不由我们决定了。
-    const enhance = ref({ busy: false, undo: false });
-    let enhanceSeq = 0, enhanceTimer = null, enhanceUndo = null, enhanceFrozen = null;
-    function stopEnhancePoll() { if (enhanceTimer) { clearTimeout(enhanceTimer); enhanceTimer = null; } }
-    function clearEnhance() { stopEnhancePoll(); enhanceFrozen = null; enhanceUndo = null; enhance.value = { busy: false, undo: false }; }
-    // 草稿的每一条改动路径都得经过这里：增强是「程序替换」，它同样是一次可撤销的编辑，
-    // 但它不能把用户的编辑历史吃掉。
-    function userEditDraft(value) {
-      if (enhance.value.undo) { enhanceUndo = null; enhance.value = { busy: false, undo: false }; }
-      updateDraft(value);
-    }
-    function enhanceNotice(failure, result) {
-      const raw = failure ? String(failure.message || failure) : String((result && result.error) || "");
-      const reasons = {
-        "model-not-configured": "还没有选择模型，请先在模型中心配好再增强。",
-        "model-credential-unavailable": "当前模型的密钥没有配好，增强没有发出。",
-        "protocol-not-supported": "当前模型的说法暂不支持增强，草稿已保留。",
-        "enhance-empty-result": "模型没有给出可用的改写，草稿保持原样。",
-        "enhance-max-tokens": "改写被截断了，半截话不能替换你的草稿。",
-        "enhance-unexpected-tool": "模型试图执行操作，这次增强已作废，草稿保持原样。",
-        "provider-init-failed": "连不上模型，草稿已保留，可以再试一次。",
-        "http-request-error": "连不上模型，草稿已保留，可以再试一次。",
-        "http-status": "模型拒绝了这次请求（常见于密钥或模型名不对），草稿已保留。",
-        "timeout": "模型响应超时，草稿已保留，可以再试一次。",
-        "enhance-in-flight": "上一条增强还在进行，请先取消它。",
-      };
-      return Object.entries(reasons).find(([key]) => raw.includes(key))?.[1] || catalogError(failure || new Error(raw));
-    }
-    function focusComposerCaret() {
-      window.Vue.nextTick(() => {
-        const box = document.getElementById("composer");
-        if (!box) { return; }
-        box.focus();
-        try { box.setSelectionRange(box.value.length, box.value.length); } catch (_) {}
-      });
-    }
-    function finishEnhance(frozen, result, failure) {
-      // 认的是那一次发起：被取消过、换过会话，迟到的结果就作废，不去动现在的输入框。
-      if (enhanceFrozen !== frozen) { return; }
-      enhanceFrozen = null;
-      const text = result && typeof result.text === "string" ? result.text : "";
-      const usable = !failure && result && result.settled !== false && result.ok && !result.cancelled && text.trim().length > 0;
-      if (!usable) {
-        enhance.value = { busy: false, undo: false };
-        if (!(result && result.cancelled)) { error.value = enhanceNotice(failure, result); }
-        return;
-      }
-      if (draftRevision !== frozen.revision || sessionGeneration !== frozen.generation) {
-        enhance.value = { busy: false, undo: false };
-        return;
-      }
-      if (!window.SaCodeComposerEdit.replace(document.getElementById("composer"),text)) {
-        enhance.value={busy:false,undo:false};error.value="输入框无法建立撤销记录，草稿已保留。";return;
-      }
-      enhanceUndo = { text: frozen.original };
-      enhance.value = { busy: false, undo: true };
-      error.value = "";
-      focusComposerCaret();
-    }
-    function pollEnhance(frozen, startTime) {
-      const elapsed = Date.now() - (startTime || Date.now());
-      // 推理模型可能先等待首个文本帧；前端期限须长于独立增强请求的读超时。
-      if (elapsed > 120000) {
-        void window.sacode.promptCancel().catch(() => {});
-        finishEnhance(frozen, null, new Error("提示词增强超时"));
-        return;
-      }
-      enhanceTimer = setTimeout(async () => {
-        enhanceTimer = null;
-        if (enhanceFrozen !== frozen) { return; }
-        let result = null;
-        try { result = await window.sacode.promptPoll(); }
-        catch (e) { finishEnhance(frozen, null, e); return; }
-        if (enhanceFrozen !== frozen) { return; }
-        if (!result || !result.settled) { pollEnhance(frozen, startTime); return; }
-        finishEnhance(frozen, result, null);
-      }, 120);
-    }
-    async function startEnhance() {
-      const original = draft.value;
-      if (!original.trim() || enhance.value.busy) { return; }
-      const frozen = { seq: ++enhanceSeq, revision: draftRevision, generation: sessionGeneration, original };
-      enhanceUndo = null;
-      enhanceFrozen = frozen;
-      enhance.value = { busy: true, undo: false };
-      error.value = "";
-      try { await window.sacode.promptEnhance(original); }
-      catch (e) { finishEnhance(frozen, null, e); return; }
-      if (enhanceFrozen === frozen) { pollEnhance(frozen, Date.now()); }
-    }
-    async function cancelEnhance() {
-      const frozen = enhanceFrozen;
-      if (!frozen) { return; }
-      enhanceFrozen = null;
-      stopEnhancePoll();
-      enhance.value = { busy: false, undo: false };
-      try { await window.sacode.promptCancel(); } catch (_) {}
-    }
-    function undoEnhance() {
-      if (!enhance.value.undo || !enhanceUndo) { return; }
-      const original = enhanceUndo.text;
-      enhanceUndo = null;
-      enhance.value = { busy: false, undo: false };
-      if (!window.SaCodeComposerEdit.undo(document.getElementById("composer"),original)) updateDraft(original);
-      focusComposerCaret();
-    }
-    function clickEnhance() {
-      if (enhance.value.busy) { cancelEnhance(); }
-      else if (enhance.value.undo) { undoEnhance(); }
-      else { startEnhance(); }
-    }
+    // 提示词增强：委托给 enhance.js（经典脚本，CSP 兼容）
+    const enhanceAssembly = window.SaCodeEnhance.createEnhanceAssembly({
+      ref, draft, getDraftRevision: () => draftRevision, getSessionGeneration: () => sessionGeneration,
+      error, catalogError, updateDraft, focusComposerCaret,
+    });
+    const { enhance, clickEnhance, startEnhance, cancelEnhance, undoEnhance, clearEnhance, userEditDraft } = enhanceAssembly;
+    window.Vue.onBeforeUnmount(() => enhanceAssembly.stopEnhancePoll());
 
-    let pollTimer = null;
     let pollGeneration = 0, modelApprovalsSuppressed = false, modelTurnRequestId = null;
-    function desktopKeys(event) {
-      if (event.isComposing || event.repeat || event.altKey || !(event.ctrlKey || event.metaKey)) return;
-      const key=event.key.toLowerCase();
-      // 增强刚替换完、用户还没再动过：Ctrl+Z 就是回退这次替换。
-      // 一旦用户改过文字，这个快捷键就交回浏览器自己的撤销顺序——
-      // 那时代码里的「原文」已经是历史，跳过用户的新编辑去恢复它等于删掉他刚写的东西。
-      if (key === 'z' && !event.shiftKey) {
-        if (enhance.value.undo && event.target && event.target.id === 'composer' && !document.querySelector('dialog:modal')) {
-          event.preventDefault();
-          undoEnhance();
-        }
-        return;
-      }
-      const settings=key===',' && !event.shiftKey;
-      const composer=key==='l' && !event.shiftKey;
-      const preview=key==='p' && event.shiftKey;
-      const search=key==='k' && !event.shiftKey;
-      if (!settings && !composer && !preview && !search) return;
-      event.preventDefault();
-      // 模态优先：全局导航与发送不能穿透上层审批/详情/设置。
-      if (document.querySelector('dialog:modal')) return;
-      if (settings) settingsOpen.value = !settingsOpen.value;
-      else if (composer) document.getElementById('composer').focus();
-      else if (search) document.getElementById('sidebar-search').focus();
-      else if (preview) openSide('preview-panel');
-    }
-    onMounted(() => window.addEventListener('keydown', desktopKeys));
-    window.Vue.onBeforeUnmount(() => { window.removeEventListener('keydown', desktopKeys); stopPolling(); });
+    let disposeDesktopKeys;
+    onMounted(() => { disposeDesktopKeys = window.SaCodeSettings.bindDesktopKeys({ target: window, document, settingsOpen, enhance, undoEnhance, openSide }); });
+    window.Vue.onBeforeUnmount(() => { disposeDesktopKeys?.(); stopPolling(); });
 
     async function refresh() {
       const generation=sessionGeneration, result=await window.sacode.projection();
@@ -928,115 +486,16 @@ createApp({
       toolCounters.value = { misses: r.misses, guardDenials: r.guardDenials };
     }
 
-    // 排队清单只认核心的投影：条目正文、id、rpcId 全部来自宿主回执，界面不自建排队状态。
-    // 上游 QueueDock 显示的是 next-turn 那一份；即时补充由核心在步边界消化，不在这张清单里。
-    async function refreshQueue() {
-      const generation=sessionGeneration;
-      let view;
-      try { view = await window.sacode.queueDescribe(); } catch (e) { return; }
-      if (generation!==sessionGeneration) return;
-      queueRows.value = (view.nextTurn || []).map(window.SaCodeQueue.projectQueueRow);
-      const admitted = new Set(queueRows.value.map((r) => r.source.rpcId));
-      queuePending.value = queuePending.value.filter((p) => !admitted.has(p.requestId));
-    }
+    function refreshQueue() { return sendQueue.refreshQueue(); }
 
-    async function updateQueue(id, action) {
-      const text = action.kind === "edit" ? (action.content || []).map((b) => (b.type === "text" ? b.text || "" : "")).join("") : "";
-      await window.sacode.queueUpdate(id, action.kind, text);
-      await refreshQueue();
-    }
-
-    // 运行中送达由核心按偏好与修饰键判定；收到回执后才清空本次草稿。
-    async function enqueueDraft(accelerated=false) {
-      if(globalAppearance.value.busySend!== 'queue' && globalAppearance.value.busySend!=='steer') {
-        error.value='发送偏好尚未读取，请在设置中重新读取后再发送。';return;
-      }
-      sendBusy.value=true;
-      try { await submitBusyDraft(accelerated); } finally {sendBusy.value=false;}
-    }
-    async function submitBusyDraft(accelerated) {
-      const generation=sessionGeneration;
-      const text = draft.value, revision = draftRevision;
-      if (!text.trim()) return;
-      if (text.length > 8000) { error.value = "消息最多支持 8000 个字符，请缩短后重试。"; return; }
-      if (!imageDraftAllowed()) return;
-      const requestId = "r" + (++rpcSeq);
-      error.value = "";
-      // 回合运行中发的图不能被丢掉：与发送那条路径同一道准入——没就绪就挡在这一步，
-      // 就绪了就把宿主发放的凭证一起交出去（凭证只能来自本宿主，界面自报没有通路）。
-      if (attachments.value.some((a) => !a.receiptId)) {
-        error.value = attachments.value.some((a) => (uploads.value[a.id] || {}).status === "error")
-          ? "有附件上传失败，请重试或先移除" : "附件还在上传，请等它就绪";
-        return;
-      }
-      const receipts = attachments.value.map((a) => a.receiptId);
-      const submittedIds=attachments.value.map(a=>a.id);
-      queuePending.value = queuePending.value.concat([{ requestId, placement: "queued", text, attachments: [] }]);
-      try {
-        await window.sacode.queueEnqueue(text, requestId, receipts, accelerated);
-        queuePending.value = queuePending.value.filter(p=>p.requestId!==requestId);
-        if(generation!==sessionGeneration)return;
-        if (draftRevision === revision) { clearEnhance(); updateDraft(""); }
-        for(const id of submittedIds)removeAttachment(id);
-        await refreshQueue();
-      } catch (e) {
-        queuePending.value = queuePending.value.filter((p) => p.requestId !== requestId);
-        if(generation===sessionGeneration)error.value = "发送补充失败：" + cleanErr(e);
-      }
-    }
+    // 发送/队列/轮次控制：委托给 send-queue-state.js（经典脚本，CSP 兼容）
+    // startPolling/stopPolling 由 turn-poll 装配后回填，send-queue 里用的是箭头闭包。
 
     // 输入区的模型选择器共用同一份注册表：选定即写默认指针，下一轮请求就按它装配。
     // 目录状态只在宿主里，这里只做快照投影与订阅通知，不留第二份「已选模型」。
     // 供应商管理页的适配器由 pages/model-center-adapter.ts 按宿主动词逐条映射，
     // 这里只在供应商写动作之后刷新目录——两处是同一份注册表的投影，不能一新一旧。
-    const modelDirectory = (() => {
-      let snapshot = { current: null, groups: [], failures: [], status: "idle", pending: null, error: null, routable: null };
-      const listeners = new Set();
-      let revision = 0, seq = 0;
-      const publish = (next) => { snapshot = next; for (const fn of listeners) fn(); };
-      const apply = (view) => {
-        revision = view.revision;
-        const groups = (view.providers || []).map((p) => ({
-          id: p.id, name: p.name || p.id, credentialKind: "api-key",
-          models: (p.models || []).map((m) => ({ id: m.id, name: m.name || m.id, image: m.image === true, contextWindow: m.contextWindow })),
-        }));
-        const chosen = view.defaultProviderId && view.defaultModel
-          ? { provider: view.defaultProviderId, model: view.defaultModel } : null;
-        const routable = groups.some((g) => chosen && g.id === chosen.provider
-          && g.models.some((m) => m.id === chosen.model));
-        // 选定模型的 contextWindow 是用量条的分母：保留原始字符串，由 ContextMeter 的
-        // contextOccupancy 解析（k/K/m/M 后缀规则与核心 checkCapacity 一致）。
-        const chosenModel = chosen && groups.find((g) => g.id === chosen.provider)
-          && groups.find((g) => g.id === chosen.provider).models.find((m) => m.id === chosen.model);
-        publish({ current: chosen, groups, failures: [], status: "ready", pending: null, error: null, routable, contextWindow: chosenModel ? chosenModel.contextWindow : "" });
-      };
-      return {
-        getSnapshot: () => snapshot,
-        subscribe(invalidate) { listeners.add(invalidate); return () => listeners.delete(invalidate); },
-        async load() {
-          const generation = ++seq;
-          publish({ ...snapshot, status: "loading" });
-          try {
-            const view = await window.sacode.modelsDescribe();
-            if (generation === seq) apply(view);
-          } catch (e) {
-            if (generation === seq) publish({ ...snapshot, status: "error", error: String((e && e.message) || e) });
-          }
-        },
-        async select(value) {
-          if (!value || !value.provider || !value.model) throw Error("bad-model-selection");
-          const generation = ++seq;
-          publish({ ...snapshot, status: "selecting", pending: value });
-          try {
-            const view = await window.sacode.modelsSetDefault(value.provider, value.model, revision);
-            if (generation === seq) apply(view);
-          } catch (e) {
-            if (generation === seq) publish({ ...snapshot, status: "error", pending: null, error: String((e && e.message) || e) });
-            throw e;
-          }
-        },
-      };
-    })();
+    const modelDirectory = window.SaCodeModelDirectory.createModelDirectory(window.sacode);
     void modelDirectory.load();
     // 发送入口的自定义模型候选只从核心读（custom/describe 的 models），
     // 未启用的条目不给选；空选中态表示「不指定」，Host 沿用注册表默认指针。
@@ -1049,6 +508,48 @@ createApp({
       } catch (e) { customModels.value = []; }
     }
     void loadCustomModels();
+    const settingsAssembly = window.SaCodeSettings.createSettingsAssembly({
+      api: window.sacode, globalAppearance, fontBusy, fontNote, appearanceBusy, appearanceNote,
+      budgetDraft, budgetNote, budgetBusy, usage, generalPrefs, generalPrefsBusy, generalPrefsNote,
+      busySendSaving, busySendNote, busySendError,
+      tips, tipsHidden, tipsPressure, tipsBusy, tipsNote, tipsError, catalogError,
+      getSessionGeneration: () => sessionGeneration, cleanErr: e => cleanErr(e),
+    });
+    const { refreshGlobalAppearance, setFontSize, setTheme, setBusySend, refreshUsage, setBudget, refreshGeneralPrefs, setGeneralPref, showStartupTip, showContextTip, refreshTips, setTipsHidden, dismissTips } = settingsAssembly;
+    void refreshGeneralPrefs();
+    const sessionAssembly = window.SaCodeSessionState.createSessionAssembly({
+      api: window.sacode, ref,
+      catalog, catalogBusy, catalogNote, catalogOpen, newSessionTitle,
+      draft, error, selectedScrollId: selectedScrollIdRef, scrollSession,
+      turn, approval, sendBusy, budgetBusy, appearanceBusy, workspaceBusy,
+      sessionDrafts, getSessionGeneration: () => sessionGeneration, incrementSessionGeneration: () => { sessionGeneration += 1; },
+      catalogError, clearEnhance, clearAttachments, stopPolling,
+      foldOpen, loadCustomModels, fileEditor,
+      worktreeController, resetWorktreePanel,
+      refresh, refreshTools, refreshUsage,
+      refreshWorkspace: () => workspaceAssembly.refreshWorkspace(),
+      refreshWorkspaceFiles: () => workspaceAssembly.refreshWorkspaceFiles(),
+      refreshQueue, refreshGlobalAppearance,
+      selectedCustomModel, previewFloating, detailName,
+      budgetDraft, budgetNote, appearanceNote, workspaceNote,
+      queuePending, focusComposer: focusComposerCaret,
+      outcome, outcomeKind, enhance,
+    });
+    const { applySelection, selectSession, createSession, startNewSession, refreshCatalog, openCatalog } = sessionAssembly;
+    // 工作区/文件树/会话轨迹：委托给 workspace-state.js（经典脚本，CSP 兼容）
+    const workspaceAssembly = window.SaCodeWorkspace.createWorkspaceAssembly({
+      api: window.sacode, ref,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote,
+      workspaceFiles, workspaceFilesBusy,
+      fileTreeOpen, fileTreeChildren, fileTreeBusy,
+      traceEvents, traceCursor, traceMore, traceBusy, traceError,
+      scrollSession, getSessionGeneration: () => sessionGeneration,
+      incrementTraceGeneration: () => ++traceGeneration, getTraceGeneration: () => traceGeneration,
+      catalogError, fileEditor,
+      turn, approval, sendBusy, budgetBusy, appearanceBusy,
+      refresh, refreshTools, refreshCatalog,
+    });
+    const { refreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace } = workspaceAssembly;
     const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
     // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
     for (const verb of ["save", "remove", "reorder", "pullModels"]) {
@@ -1059,311 +560,50 @@ createApp({
     }
     modelCenterOwner.value = { adapters: modelCenterAdapters };
 
-    function imageDraftAllowed() {
-      if (!attachments.value.some((a) => a.kind === 'image')) return true;
-      const view = modelDirectory.getSnapshot();
-      const group = view.groups.find((g) => g.id === view.current?.provider);
-      const model = group?.models.find((m) => m.id === view.current?.model);
-      if (view.status === 'ready' && model?.image === true) return true;
-      error.value = "当前模型未声明支持图片，请选择支持图片的模型或移除图片附件。";
-      return false;
-    }
+    const modelApprovalsSuppressedRef = { get value() { return modelApprovalsSuppressed; }, set value(v) { modelApprovalsSuppressed = v; } };
+    const modelTurnRequestIdRef = { get value() { return modelTurnRequestId; }, set value(v) { modelTurnRequestId = v; } };
+    const sendQueue = window.SaCodeSendQueue.createSendQueueAssembly({
+      api: window.sacode, ref,
+      draft, error, turn, approval, sendBusy,
+      queuePending, queueRows,
+      fileEditor, attachments, uploads,
+      selectedCustomModel, modelDirectory,
+      globalAppearance,
+      getSessionGeneration: () => sessionGeneration, getDraftRevision: () => draftRevision,
+      getSendTicket: () => sendTicket, incrementSendTicket: () => ++sendTicket,
+      getRpcSeq: () => rpcSeq, incrementRpcSeq: () => ++rpcSeq,
+      modelApprovalsSuppressed: modelApprovalsSuppressedRef, modelTurnRequestId: modelTurnRequestIdRef,
+      getPollGeneration: () => pollGeneration,
+      startPolling: () => turnPolling.start(), stopPolling: () => turnPolling.stop(),
+      clearEnhance, clearAttachments, removeAttachment,
+      updateDraft, refresh, refreshCatalog, projectQueueRow: window.SaCodeQueue.projectQueueRow,
+    });
+    const { send, enqueueDraft, startTask, runTurn, cancelTurn, imageDraftAllowed, cleanErr, updateQueue } = sendQueue;
     void refreshQueue();
 
-    async function send(accelerated=false) {
-      if(fileEditor.state.busy){error.value='文件正在读取或保存，请稍后发送。';return;}
-      if(sendBusy.value) return;
-      if(turn.value.running){await enqueueDraft(accelerated);return;}
-      const generation=sessionGeneration;
-      const text = draft.value, revision=draftRevision;
-      if (!text.trim()) return;
-      const ticket=++sendTicket;
-      if (!imageDraftAllowed()) return;
-      let acknowledged=false;
-      // 附件还没落盘就不能发：宁可挡在发送这一步，也不发一条引用了不存在对象的消息
-      if (attachments.value.some((a) => !a.receiptId)) {
-        error.value = attachments.value.some((a) => (uploads.value[a.id] || {}).status === "error")
-          ? "有附件上传失败，请重试或先移除" : "附件还在上传，请等它就绪";
-        return;
-      }
-      const receipts = attachments.value.map((a) => a.receiptId);
-      sendBusy.value=true;
-      error.value = "";
-      try {
-        // 渲染层只说「用户说了什么」加上自己拿到的凭证，事件类型由核心决定：不给它伪造 system/message 的口子
-        await window.sacode.userSend(text, receipts);
-        if (generation!==sessionGeneration) return;
-        acknowledged=true;
-        sendBusy.value=false;
-        // 核心确认成功后才清空；在途请求不能覆盖用户随后编辑的新草稿。
-        if(draftRevision===revision) { clearEnhance(); updateDraft(""); }
-        clearAttachments();
-        await refresh();
-        await refreshCatalog();
-        // 消息落进会话只是半件事：产品链路上发完就要起一轮，否则装了也收不到答复。
-        await startTask();
-      } catch (e) {
-        if (generation!==sessionGeneration || ticket!==sendTicket) return;
-        error.value = acknowledged ? "消息已发送，暂时无法刷新会话。" : text.length>8000 ? "消息最多支持 8000 个字符，请缩短后重试。" : "消息发送失败，请稍后重试。";
-      }
-      finally {if(generation===sessionGeneration && ticket===sendTicket) sendBusy.value=false;}
-    }
+    // 轮询装配：startTask 来自 send-queue；send-queue 的 startPolling/stopPolling 用箭头闭包回填 turnPolling。
+    const turnPolling = window.SaCodeTurnPoll.createTurnPoll({
+      poll: () => window.sacode.turnPoll(), getGeneration: () => sessionGeneration,
+      getEpoch: () => pollGeneration, invalidate: () => { pollGeneration++; },
+      getApprovalContext: () => ({ suppressed: modelApprovalsSuppressed, sessionId: String(selectedScrollId), requestId: modelTurnRequestId }),
+      selectProposal: window.SaCodeModelApproval.selectProposal,
+      turn, usage, approval, error, queueRows, refresh, refreshTools, refreshQueue, showContextTip, startTask,
+    });
+    function stopPolling() { turnPolling.stop(); }
+    function startPolling() { turnPolling.start(); }
 
-    function stopPolling() {
-      pollGeneration += 1;
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
-    }
+    // 工具审批：委托给 tool-approval-state.js（经典脚本，CSP 兼容）
+    const toolApproval = window.SaCodeToolApproval.createToolApprovalAssembly({
+      api: window.sacode, ref,
+      turn, approval, error, outcome, outcomeKind,
+      fileEditor,
+      getSessionGeneration: () => sessionGeneration, getPollGeneration: () => pollGeneration,
+      modelApprovalsSuppressed: modelApprovalsSuppressedRef,
+      selectedScrollId: selectedScrollIdRef, modelTurnRequestId: modelTurnRequestIdRef,
+      cleanErr, refreshTools, refresh,
+    });
+    const { askTool, answerTool, callTool } = toolApproval;
 
-    function startPolling() {
-      stopPolling();
-      const generation=sessionGeneration;
-      const epoch=pollGeneration;
-      let polling=false;
-      pollTimer = setInterval(async () => {
-        if(polling) return;
-        polling=true;
-        try {
-          const p = await window.sacode.turnPoll();
-          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
-          if(!modelApprovalsSuppressed) {
-            const proposal=window.SaCodeModelApproval.selectProposal(p.approvalRequests,String(selectedScrollId),p.running && p.turnRequestId===modelTurnRequestId,modelTurnRequestId);
-            if(proposal && !approval.value) approval.value=proposal;
-          }
-          for (const f of p.frames) {
-            const i = f.indexOf(":");
-            const kind = i < 0 ? f : f.slice(0, i);
-            const body = i < 0 ? "" : f.slice(i + 1);
-            if (kind === "projection" && body === "todos") await refresh();
-            // 步边界由 runner 线程摘走即时补充：正文多了已送达的一句、清单少了一条，
-            // 两边都要按核心重读，不能等这一轮结算才更新。
-            else if (kind === "projection" && body === "queue") { await refresh(); await refreshQueue(); }
-            else if (kind === "text") turn.value.text += body;
-            else if (kind === "usage") turn.value.text += "\n[usage " + body + "]";
-            else if (kind === "tool-call-delta") turn.value.text += "\n[tool-call " + body + "]";
-          }
-          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
-          turn.value.running = p.running;
-          if (p.settled) {
-            if(approval.value?.source==='model') approval.value=null;
-            turn.value.settled = true;
-            turn.value.finishReason = p.finishReason || "";
-            turn.value.cancelled = !!p.cancelled;
-            turn.value.interrupted = !!p.interrupted;
-            turn.value.delivered = p.delivered || 0;
-            // 用量读数只能取自核心的结算帧：界面不另算一份账，也不显示自己推算的预算。
-            usage.value = { used: p.used, budget: p.budget, over: !!p.over, verdict: p.usageVerdict || "" };
-            // 回复结算后取一次容量提醒：分子是核心在结算那一刻登记的采样，界面不参与推算。
-            void showContextTip();
-            stopPolling();
-            await refresh();
-            await refreshTools();
-            // 结算帧先到、核心已在边界摘走条目：面板要先按核心重新读一次，
-            // 不能再拿上一轮的旧清单判断「还有没有下一条」。
-            await refreshQueue();
-            // 队列一次只消化一条（上游轮次边界口径）：正常结算后再起一轮，轮到下一条。
-            // 用户按停止的那一轮不起新轮——取消是「停下」，不是「换一条继续」；
-            // 排队条目留在核心面板里，下一次发送或手动起轮时才在边界被摘走。
-            if (!turn.value.cancelled && queueRows.value.length) {
-              await startTask();
-              // 起轮即边界：核心可能刚把队首摘成一条 user/message。正文要按新投影重画、
-              // 面板要按新清单收项，否则同一条消息会同时出现在正文与队列两处。
-              await refresh();
-              await refreshQueue();
-            }
-          }
-        } catch (e) {
-          if (generation!==sessionGeneration || epoch!==pollGeneration) return;
-          if(approval.value?.source==='model') approval.value=null;
-          error.value = String(e.message || e);
-          stopPolling();
-        } finally {
-          polling=false;
-        }
-      }, 60);
-    }
-
-    // 起轮的失败码来自核心，界面只把它翻成人话：消息已经落进会话是事实，
-    // 不能因为跑不动就装作没发过。
-    const turnStartFailure = (code) => ({
-      "model-not-configured": "还没有配置模型：消息已存入会话，请到设置 → 模型添加提供商并设为默认。",
-      "model-credential-unavailable": "提供商还没有可用凭据：消息已存入会话，请到设置 → 模型填入 API 密钥。",
-      "model-image-not-supported": "当前模型未声明支持图片：会话已保留，请选择支持图片的模型后重试。",
-      "over-budget": "本轮额度已用满：消息已存入会话，请新建会话继续。",
-      "turn-in-flight": "上一轮还在执行，请稍候。",
-      "already-owned": "会话正被另一个入口占用，请稍候再试。",
-      "replay-rejected": "会话日志回放被拒，消息未起轮；请检查会话文件是否完整。",
-      "provider-init-failed": "连不上模型服务：消息已存入会话，请检查 API 地址与网络。",
-      "flush-failed": "会话未能落盘，消息只在内存里可见。", "custom-model-not-found": "这个自定义模型已经不在清单里：消息已存入会话，发送入口已改回默认模型，请直接重试。",
-    })[code] || ("起轮失败：" + code);
-
-    async function startTask() {
-      if(approval.value || turn.value.running) {error.value='请先处理当前任务和审批请求。';return;}
-      stopPolling();
-      const generation = sessionGeneration;
-      modelApprovalsSuppressed=false;
-      modelTurnRequestId=null;
-      error.value = "";
-      turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
-      try {
-        const started=await window.sacode.taskStart(selectedCustomModel.value || undefined);
-        if (generation !== sessionGeneration) return;
-        modelTurnRequestId=started.turnRequestId;
-        startPolling();
-      } catch (e) {
-        if (generation !== sessionGeneration) return;
-        // 宿主帧是「-32016 model-not-configured」，Electron 再套一层「Error: 」前缀，
-        // 所以按「数字 + 空白 + 标识」取符号码；带后缀的（provider-init-failed:xxx）取到主码即止。
-        const text = String(cleanErr(e));
-        const code = text.match(/\d+\s+([a-z][a-z0-9-]*)/);
-        // 自定义模型在模型中心被删掉时核心回 custom-model-not-found：清回默认指针，
-        // 否则下一条消息还会带着同一个已经不存在的 id 反复被拒。
-        if (code && code[1] === "custom-model-not-found") selectedCustomModel.value = "";
-        error.value = turnStartFailure(code ? code[1] : text);
-        turn.value.running = false;
-      }
-    }
-
-    async function runTurn(limit) {
-      if(fileEditor.state.busy){error.value='文件正在读取或保存，请稍后执行。';return;}
-      const generation=sessionGeneration;
-      error.value = "";
-      turn.value = { running: true, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: "", over: false };
-      try {
-        await window.sacode.turnStart(limit);
-        if (generation!==sessionGeneration) return;
-        startPolling();
-      } catch (e) {
-        if (generation!==sessionGeneration) return;
-        error.value = String(e.message || e);
-        turn.value.running = false;
-      }
-    }
-
-    async function cancelTurn() {
-      const generation=sessionGeneration, epoch=pollGeneration;
-      error.value = "";
-      modelApprovalsSuppressed=true;
-      if(approval.value?.source==='model') approval.value=null;
-      try {
-        await window.sacode.turnCancel();
-      } catch (e) {
-        if(generation===sessionGeneration && epoch===pollGeneration) error.value = String(e.message || e);
-      }
-    }
-
-    // IPC 会把宿主错误包一层「Error invoking remote method」；界面上只留协议层的码与原因
-    const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': /, "");
-
-    async function askTool(t) {
-      if(t.needsApproval && (turn.value.running || approval.value)) {error.value='请先处理当前任务和审批请求。';return;}
-      if(fileEditor.state.busy){error.value='文件编辑正在处理工具请求，请稍后重试。';return;}
-      const generation=sessionGeneration;
-      outcome.value = "";
-      outcomeKind.value = "";
-      if (!t.needsApproval) {
-        await callTool(t.name, 0);
-        return;
-      }
-      // 需审批的工具先向核心要一张工单（asked 进日志），界面上批的是这张单，
-      // 不是渲染层自己拼的一句 "allowed-once"。
-      try {
-        const a = await window.sacode.approvalAsk(t.name);
-        if (generation!==sessionGeneration) return;
-        approval.value = { name: t.name, description: t.description, approvalId: a.approvalId };
-      } catch (e) {
-        if (generation!==sessionGeneration) return;
-        approval.value = null;
-        outcomeKind.value = "outcome outcome-denied";
-        outcome.value = "发号失败：" + cleanErr(e);
-      }
-    }
-
-    async function answerTool(approvalAnswer) {
-      if(fileEditor.state.busy)return;
-      const generation=sessionGeneration;
-      const a = approval.value;
-      approval.value = null;
-      if (!a) return;
-      if(a.source==='model') {
-        const epoch=pollGeneration;
-        const current=()=>generation===sessionGeneration && epoch===pollGeneration && !modelApprovalsSuppressed && turn.value.running && a.sessionId===String(selectedScrollId) && a.turnRequestId===modelTurnRequestId;
-        try {
-          const result=await window.SaCodeModelApproval.answer(window.sacode,a,approvalAnswer,current);
-          if(!current() || result.stale) return;
-          if(!result.accepted) {outcomeKind.value='outcome outcome-denied';outcome.value='模型审批工单已失效：'+result.state;}
-        } catch(e) {if(current()){outcomeKind.value='outcome outcome-denied';outcome.value='应答失败：'+cleanErr(e);}}
-        return;
-      }
-      try {
-        const r = await window.sacode.approvalAnswer(a.approvalId, approvalAnswer);
-        if (generation!==sessionGeneration) return;
-        if (!r.accepted) {
-          outcomeKind.value = "outcome outcome-denied";
-          outcome.value = "应答未被接受：工单状态 " + r.state;
-          return;
-        }
-      } catch (e) {
-        if (generation!==sessionGeneration) return;
-        outcomeKind.value = "outcome outcome-denied";
-        outcome.value = "应答失败：" + cleanErr(e);
-        return;
-      }
-      // 批过的和拒的都真的走一次调用：放行才执行，拒绝要当场看到核心把它挡下来
-      await callTool(a.name, a.approvalId);
-    }
-
-    async function callTool(name, approvalId) {
-      if(fileEditor.state.busy)return;
-      const generation=sessionGeneration;
-      if (!name) return;
-      // 各工具按自己的参数契约给 args：只读工具的路径就是整串参数，
-      // 把「路径 正文」一起塞给它，它会把整串当成一个不存在的路径。
-      const args = name === "read" ? "sacode-tool.txt" : "sacode-tool.txt hello-from-renderer";
-      try {
-        const r = await window.sacode.toolCall(name, args, approvalId || 0);
-        if (generation!==sessionGeneration) return;
-        outcomeKind.value = "";
-        outcome.value = "结果：" + r.result;
-      } catch (e) {
-        if (generation!==sessionGeneration) return;
-        outcomeKind.value = "outcome outcome-denied";
-        outcome.value = "被拒：" + cleanErr(e);
-      }
-      await refreshTools();
-      await refresh();
-    }
-
-    async function refreshUsage() {
-      const generation=sessionGeneration;
-      const u = await window.sacode.usageStatus();
-      if (generation!==sessionGeneration) return;
-      usage.value = { used: u.used, budget: u.budget, over: !!u.over, verdict: u.verdict || "" };
-    }
-
-    // 收紧预算：填进来的数字交给核心判，界面只复述核心回的那一档，绝不自己抬。
-    async function setBudget() {
-      if (budgetBusy.value) return;
-      const raw = String(budgetDraft.value);
-      const n = Number(raw);
-      if (raw === "" || !Number.isInteger(n) || n < 0) {
-        budgetNote.value = "预算要填非负整数";
-        return;
-      }
-      budgetBusy.value = true;
-      budgetNote.value = "正在提交预算…";
-      try {
-        const r = await window.sacode.usageSetBudget(n);
-        await refreshUsage();
-        budgetNote.value = r.applied ? "已收紧到 " + r.budget : "拒绝放宽：仍停在 " + r.budget;
-      } catch (e) {
-        budgetNote.value = cleanErr(e);
-      } finally {
-        budgetBusy.value = false;
-      }
-    }
 
     onMounted(async () => {
       await refreshGlobalAppearance();
@@ -1403,7 +643,7 @@ createApp({
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
-      sidebarQuery,
+      sidebarQuery, sidebarStatus,
       send, runTurn, cancelTurn, askTool, answerTool,
       queueRows, queuePending, updateQueue, goalEditorRequest,
     };
@@ -1419,8 +659,9 @@ createApp({
     // 检索匹配会话标题或所在工作区名；状态按核心目录发出的 status 原值筛，不在界面再造第二套状态词。
     const groupLabel = (directory)=>directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
     const sidebarQueryText = String(self.sidebarQuery || '').trim().toLowerCase();
-    const sidebarSearching = sidebarQueryText.length > 0;
+    const sidebarSearching = sidebarQueryText.length > 0 || self.sidebarStatus !== 'all';
     const matchingSessions = sidebarSessions.filter((item)=>{
+      if (self.sidebarStatus !== 'all' && item.status !== self.sidebarStatus) return false;
       if (!sidebarQueryText) return true;
       return (item.title || '未命名会话').toLowerCase().includes(sidebarQueryText)
         || groupLabel(item.workspaceDirectory || '').toLowerCase().includes(sidebarQueryText);
@@ -1454,6 +695,11 @@ createApp({
         el('input','sidebar-search',null,{id:'sidebar-search',type:'search',value:self.sidebarQuery,placeholder:'搜索会话',
           'aria-label':'搜索会话','aria-keyshortcuts':'Control+K Meta+K',disabled:sessionLocked,
           onInput:(e)=>{self.sidebarQuery=e.target.value;}})]),
+      el('div','sidebar-filter',[
+        ...[['all','全部'],['ready','可正常回放'],['truncated-tail','尾部不完整'],['replay-rejected','日志回放失败']].map(([status,label])=>
+          el('button','sidebar-filter-btn',label,{'data-sidebar-status':status,'aria-pressed':self.sidebarStatus===status,
+            disabled:sessionLocked,onClick:()=>{self.sidebarStatus=status;}})),
+      ]),
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
@@ -1551,115 +797,8 @@ createApp({
     // 会话正文和驻留输入区在同一滚动宿主中，输入 DOM 跨空会话/活跃会话保持不变。
     const transcript = el('div','conversation-content',[el("div", "stream", msgs, { id: "messages" }), streamBox],{hidden:emptyConversation});
 
-    const toolBtns = self.tools.map((t) =>
-      el("div", "tool-card", [
-      el("button", "tool", [({ read: "读取文件", write: "写入文件" }[t.name] || t.name), el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
-        id: "tool-" + t.name,
-        onClick: () => self.askTool(t),
-      }),
-      el("button", "btn tool-detail", "查看详情", { id: "detail-" + t.name,
-        "aria-label": "查看" + ({ read: "读取文件", write: "写入文件" }[t.name] || t.name) + "详情",
-        onClick: () => { self.detailName = t.name; } }),
-      ], { key: t.name })
-    );
-
-    const approvalBox = self.approval
-      ? [el("div", "approval", [
-          el("p", null, "审批：" + ({ write: "写入文件", read: "读取文件" }[self.approval.name] || self.approval.name) + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
-          self.approval.source==='model' ? el('pre','model-approval-arguments',self.approval.displayArguments,{tabindex:0,'aria-label':'完整工具参数'}) : null,
-          el("div", "approval-row", [
-            el("button", "btn btn-primary", "允许一次", { id: "allow-once", onClick: () => self.answerTool("allowed-once") }),
-            el("button", "btn btn-danger", "拒绝", { id: "deny", onClick: () => self.answerTool("denied") }),
-          ]),
-        ], { id: "approval" })]
-      : [];
-
-    const sideTabs = h(window.SaCodeSlots.WorkbenchTabs,{active:self.sideTab,pendingApproval:!!self.approval,expanded:self.workbenchExpanded,split:self.sideSplit,
-      onSelect:id=>{self.sideTab=id;},onClose:id=>{if(id==='preview')self.filePreview.close();},
-      onExpand:()=>{self.workbenchExpanded=!self.workbenchExpanded;window.Vue.nextTick(()=>document.getElementById('expand-workbench')?.focus());},
-      onSplit:()=>{self.sideSplit=!self.sideSplit;},
-      onClosePanel:()=>{self.workbenchExpanded=false;self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side')?.focus());},
-    });
-    const inspection = el("div", "side-page", [
-      el("section", "side-section", [el("h2", null, "工具与审批"),
-      toolBtns,
-      approvalBox,
-      self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
-      el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
-      ], { id: "tools-panel", tabindex: -1 }),
-      el('details','diagnostics',[
-        el('summary',null,'开发诊断'),
-        el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),
-        turnBar,
-        el('div','counters',[
-          el('span','badge','事件 '+self.proj.events,{id:'count-events'}),
-          el('span','badge','已保存 '+self.proj.durable,{id:'count-durable'}),
-          el('span','badge'+(self.proj.pending?' badge-warn':' badge-ok'),'待保存 '+self.proj.pending,{id:'count-pending'}),
-          el('span','badge'+(self.proj.truncatedTail?' badge-danger':''),self.proj.truncatedTail?'尾帧已截断':'记录完整',{id:'count-tail'}),
-        ]),
-      ],{id:'developer-diagnostics',open:self.diagnosticsOpen,onToggle:e=>{self.diagnosticsOpen=e.target.open;}}),
-    ], { id: "side-page-inspect", role: "tabpanel", "aria-labelledby": "side-tab-inspect", hidden: self.sideTab !== "inspect" });
-    const filesPage = el("div", "side-page", [
-      el("section", "side-section", [el("h2", null, "工作区文件"),
-        self.workspaceFilesBusy ? el("p", "note", "加载中…", { role: "status", "aria-live": "polite" }) :
-        !self.workspaceFiles.length ? el("p", "note", self.workspace?.configured ? "工作区暂无文件" : "尚未配置工作区目录") : null,
-        ...renderTreeEntries(self.workspaceFiles, "", 0, {
-          open: self.fileTreeOpen, children: self.fileTreeChildren, busy: self.fileTreeBusy, toggle: self.toggleTreeDir, select:self.openWorkspaceFile,
-        }),
-      ], { id: "files-panel", tabindex: -1 }),
-    ], { id: "side-page-files", role: "tabpanel", "aria-labelledby": "side-tab-files", hidden: self.sideTab !== "files" });
-    const tracePage = el("div", "side-page", [
-      el("section", "side-section", [el("h2", null, "会话轨迹"),
-        el("p","note","当前会话已落盘的事件时间线（按 seq 倒序显示最近一页）。"),
-        self.traceError ? el("p","note","读取失败："+self.traceError,{role:"alert"}) : null,
-        self.traceBusy && !self.traceEvents.length ? el("p","note","加载中…",{role:"status"}) : null,
-        !self.traceBusy && !self.traceEvents.length && !self.traceError ? el("p","note","尚无已落盘事件") : null,
-        self.traceEvents.length ? el("div","trace-timeline",self.traceEvents.slice().reverse().map(ev=>el("div","trace-event",[
-          el("span","trace-seq","#"+ev.seq),
-          el("span","trace-type",String(ev.type||"event")),
-        ]))) : null,
-        self.traceMore ? el("button","btn","加载更早的事件",{onClick:()=>self.refreshTrace(false)}) : null,
-      ], { id: "trace-panel", tabindex: -1 }),
-    ], { id: "side-page-trace", role: "tabpanel", "aria-labelledby": "side-tab-trace", hidden: self.sideTab !== "trace" });
-    const guide = el("div", "side-page", [
-      el("section", "side-section", [
-        el("h2", null, "SaCode 使用指南"),
-        self.approval ? el("button", "btn", "返回处理待审批请求", { id: "guide-approval", onClick: () => self.openSide("tools-panel") }) : null,
-        ...[
-          ["记录任务", "在底部输入任务或补充信息，点击发送后写入当前本地会话。发送消息与启动执行是两个独立操作。"],
-          ["运行与停止", "侧栏的开发诊断可验证执行与取消。当前轮次使用示例输出，真实模型任务尚未开放；执行中可点击输入区停止按钮。"],
-          ["工具与审批", "在工具页查看工具说明。需要审批的操作只有允许一次或拒绝两种选择；查看详情不会执行工具。"],
-          ["预算与保存", "预算只能收紧。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
-          ["快捷键", "Ctrl+, 打开设置；Ctrl+L 聚焦输入；Ctrl+Shift+P 打开文档预览；输入区 Ctrl+Enter 发送。弹窗打开时全局操作暂停，Escape 只关闭最上层。"],
-        ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
-      ], { id: "guide-panel", tabindex: -1 }),
-    ], { id: "side-page-guide", role: "tabpanel", "aria-labelledby": "side-tab-guide", hidden: self.sideTab !== "guide" });
-    void self.filePreviewRevision;
-    const previewBody = (prefix) => [
-      el("section", "side-section", [
-        el("div", "preview-heading", [el("h2", null, "文档预览"),
-          prefix !== "float-preview" ? el("button", "btn", "浮动预览", { id: prefix + "-float", onClick: () => { self.previewFloating = true; } }) : null,
-        ]),
-        self.filePreview.state.path && prefix!=="split-preview" ? [
-          el("p","preview-path",self.filePreview.state.path),
-          self.filePreview.state.busy?el("p","note","正在通过读取工具获取文件…",{role:"status"}):null,
-          self.filePreview.state.error?el("div","file-preview-error",[el("p","note",self.filePreview.state.error,{role:"alert"}),el("button","btn","重新读取",{onClick:()=>self.openWorkspaceFile(self.filePreview.state.path)})]):null,
-          self.filePreview.state.loaded?el("pre","preview-text",self.filePreview.state.text,{tabindex:0}):null,
-          el("p","note","本次工具读取快照；内容可能按核心规则截断，重新读取会走工具授权与记录流程。"),
-          el('button','btn','编辑文件',{disabled:!self.filePreview.state.loaded||self.filePreview.state.busy,onClick:()=>self.openFileEditor(self.filePreview.state.path)}),
-          el("p","note","编辑可查看保存前差异；Git 标签可查看索引与工作区变更。"),
-        ] : self.readPreview ? [
-          el("p", "preview-path", self.readPreview.path, { id: prefix + "-path" }),
-          el("p", "note", "读取时快照 · " + self.readPreview.bytes + " 字节", { id: prefix + "-meta" }),
-          el("pre", "preview-text", self.readPreview.text, { id: prefix + "-text", tabindex: 0 }),
-          el("p", "note", "内容来自本地会话中的成功读取记录；文件修改后需再次读取以更新快照。"),
-        ] : el("div", "empty-card", [
-          el("h3", null, "暂无读取记录"),
-          el("p", "note", "先在工具页读取文件，成功后这里显示会话记录中的文本快照。"),
-          el("button", "btn", "查看读取工具", { onClick: () => self.openSide("tools-panel") }),
-        ], { id: prefix + "-empty" }),
-      ], { id: prefix + "-panel", tabindex: -1 }),
-    ];
+    const sidePanels = window.SaCodeSidePanels.renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries, verdictName });
+    const { sideTabs, inspection, filesPage, tracePage, guide, previewBody } = sidePanels;
     const searchPage = el('div','side-page',[h(window.SaCodeSlots.WorkspaceSearch,{key:'search-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='search'&&!self.pluginManagerOpen,configured:!!self.workspace?.configured,directory:self.workspace?.directory||'',listFiles:path=>window.sacode.workspaceFiles(path),onOpen:self.openWorkspaceFile,onChoose:self.openWorkspace})],{id:'side-page-search',role:'tabpanel','aria-labelledby':'side-tab-search',hidden:self.sideTab!=='search'});
     const editorPage=el('div','side-page',[h(window.SaCodeSlots.FileEditor,{editor:self.fileEditor,revision:self.fileEditorRevision})],{id:'side-page-editor',role:'tabpanel','aria-labelledby':'side-tab-editor',hidden:self.sideTab!=='editor'});
     const terminalPage=el('div','side-page',[h(window.SaCodeSlots.TerminalOutput,{key:'terminal-'+self.scrollSession,executionApi:window.sacode,sessionId:String(self.scrollSession),active:self.sideOpen&&self.sideTab==='terminal'&&!self.pluginManagerOpen,read:cursor=>window.sacode.terminalOutput(String(self.scrollSession),cursor,16)})],{id:'side-page-terminal',role:'tabpanel','aria-labelledby':'side-tab-terminal',hidden:self.sideTab!=='terminal'});
@@ -1704,13 +843,13 @@ createApp({
         "aria-keyshortcuts":"Enter Control+Enter Meta+Enter",
         placeholder: "描述你的任务或补充信息…",
         value: self.draft,
-        onInput: (e) => self.userEditDraft(e.target.value),
+        onInput: (e) => {const v=e.target.value;self.userEditDraft(v);if(v==='/'){self.slashTrigger=(self.slashTrigger||0)+1;}},
       }),[[autoDraftSize],[window.SaCodeAttachments.keymapDirective,{
         canSubmit:()=>!self.sendBusy&&!document.querySelector('dialog:modal'),
         submit:accelerated=>self.send(accelerated),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),self.customModels.length ? el("select", "composer-customSelect", [h("option", { value: "" }, "默认模型")].concat(self.customModels.map((m) => h("option", { value: m.id, key: m.id }, m.name || m.id))), { id: "composer-custom-model", "aria-label": "本会话使用的自定义模型", value: self.selectedCustomModel, disabled: self.turn.running, onChange: (e) => { self.selectedCustomModel = e.target.value; } }) : null,el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),slashTrigger:self.slashTrigger,onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;},onCommand:(name)=>{if(name==='clear'){proj.value={...proj.value,messages:[]};}}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),self.customModels.length ? el("select", "composer-customSelect", [h("option", { value: "" }, "默认模型")].concat(self.customModels.map((m) => h("option", { value: m.id, key: m.id }, m.name || m.id))), { id: "composer-custom-model", "aria-label": "本会话使用的自定义模型", value: self.selectedCustomModel, disabled: self.turn.running, onChange: (e) => { self.selectedCustomModel = e.target.value; } }) : null,el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         // 同一颗图标位换三副面孔：进行中转圈、可回退时换回退箭头，用户一改就转回增强。
         self.enhance.busy
           ? h('path',{d:'M8 1.6a6.4 6.4 0 1 1-6.3 7.5',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round'})
@@ -1744,86 +883,7 @@ createApp({
       ] : []);
     const floating = h(window.SaCodeDialog, { open: self.previewFloating, modal: false, adjustable: true, title: "SaCode · 文档预览",
       class: "floating-preview", onClose: () => { self.previewFloating = false; } }, () => previewBody("float-preview"));
-    const settings = h(window.SaCodeDialog, { open: self.settingsOpen, title: "SaCode 设置", class: "settings-dialog", customFrame:true,
-      onClose: () => { self.settingsOpen = false; } }, () => [
-      el('nav','settings-nav',[
-      el('h2','settings-title','SaCode 设置'),
-      el("div", "settings-tabs", [["general", "通用"], ["appearance", "外观"], ["conversation", "对话与输入"], ["model-center", "模型中心"], ["plugins", "内置插件"], ["shortcuts", "快捷键"], ["privacy", "隐私与数据"], ["profile", "个人资料"], ["about", "关于"]].map(([id,label],index,tabs) => el("button", "settings-tab", [navIcon(({general:'M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6',appearance:'M12 3v2M12 19v2M3 12h2M19 12h2M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0',conversation:'M4 4h16v13H9l-5 4z','model-center':'M3 4h7v7H3zM14 4h7v7h-7zM3 15h7v7H3zM14 15h7v7h-7z',plugins:'M9 3h6v5h5v6h-5v6H9v-6H4V8h5z',shortcuts:'M3 6h18v12H3zM6 10h2M10 10h2M14 10h2M6 14h12',privacy:'M12 3l8 4v5c0 5-8 9-8 9s-8-4-8-9V7z',profile:'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0',about:'M12 8v1M12 11v7M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0'})[id]),el('span','settings-nav-label',label)], {
-        id: "settings-tab-"+id, role: "tab", "aria-selected": self.settingsTab===id,
-        type:'button',autofocus:self.settingsTab===id,
-        "aria-controls": "settings-page-"+id, tabindex: self.settingsTab===id ? 0 : -1,
-        onClick: () => { self.settingsTab=id; },
-        onKeydown: e => {
-          const offset=['ArrowRight','ArrowDown'].includes(e.key)?1:['ArrowLeft','ArrowUp'].includes(e.key)?-1:0;
-          if (!offset && e.key!=='Home' && e.key!=='End') return;
-          e.preventDefault();
-          const next=e.key==='Home'?0:e.key==='End'?tabs.length-1:(index+offset+tabs.length)%tabs.length;
-          self.settingsTab=tabs[next][0]; window.Vue.nextTick(()=>document.getElementById('settings-tab-'+self.settingsTab).focus());
-        },
-      })), { role: "tablist", "aria-label": "设置分类",'aria-orientation':'vertical' }),
-      ]),
-      el('div','settings-content',[
-      el('header','dialog-header settings-header',[
-        el('button','settings-close',[h('svg',{width:14,height:14,viewBox:'0 0 16 16',fill:'none',stroke:'currentColor','stroke-width':1,'aria-hidden':'true'},[h('path',{d:'M2.5 2.5L13.5 13.5M13.5 2.5L2.5 13.5'})])],{type:'button','aria-label':'关闭SaCode 设置',onClick:()=>{self.settingsOpen=false;}}),
-      ]),
-      el('div','dialog-body settings-options',[
-      el("section", "settings-page", [
-        el('section','settings-row language-settings',[el('span','settings-row-title','语言'),el('output','settings-fixed-value','中文',{'aria-label':'界面语言'})]),
-        el('section','settings-row',[el('div',null,[el('strong',null,'新会话默认权限'),el('p','note','Plan / Build / Yolo / Auto Review 的默认权限契约尚未接入。')]),el('button','btn','待接入',{disabled:true})]),
-        el('section','settings-row',[el('div',null,[el('strong',null,'开机自启'),el('p','note','尚无系统启动项接口，当前不会修改系统设置。')]),el('button','btn','待接入',{disabled:true})]),
-      ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
-      el("section", "settings-page", [
-        el('h2','settings-section-title','外观'),
-        el("section", "appearance-settings", [el("h2", "appearance-title", "主题"),
-          el("div", "theme-choices", [["light","浅色"],["dark","深色"],["system","跟随系统"]].map(([id,label]) =>
-            el("button", "theme-choice", [el('span','theme-icon',null,{'aria-hidden':'true',style:{maskImage:`url('./assets/theme-${id}.svg')`}}),el('span','theme-label',label)], { id:"theme-"+id, type:'button', "aria-pressed":self.globalAppearance.theme===id,
-              disabled:self.appearanceBusy || self.fontBusy || self.globalAppearance.theme===null, onClick:()=>self.setTheme(id) })), { "aria-label":"全局主题" }),
-          el("p", "note settings-feedback", self.appearanceNote, { id:"appearance-note", "aria-live":"polite" }),
-        ], { "aria-busy":self.appearanceBusy }),
-        el('section','font-settings',[
-          el('div','font-row',[
-            el('div','font-row-text',[el('label','font-title','字号大小',{id:'font-title'}),el('p','font-description','仅影响会话内容的字号')]),
-            el('div','font-control',[
-              el('div','font-stepper',[
-                el('span','font-value',self.globalAppearance.fontSize===null?'—':String(self.globalAppearance.fontSize),{id:'font-value','aria-labelledby':'font-title'}),
-                el('span','font-arrows',[[1,'增大正文字号','font-increase','M2 6l3-3 3 3'],[-1,'减小正文字号','font-decrease','M2 3l3 3 3-3']].map(([delta,label,id,path])=>window.SaCodeTooltip.wrap(h('button',{id,class:'font-arrow',type:'button','aria-label':label,disabled:self.fontBusy || self.appearanceBusy || self.globalAppearance.fontSize===null || (delta>0?self.globalAppearance.fontSize>=22:self.globalAppearance.fontSize<=10),onClick:()=>self.setFontSize(self.globalAppearance.fontSize+delta)},[h('svg',{width:9,height:9,viewBox:'0 0 10 10',fill:'none',stroke:'currentColor','stroke-width':1.4,'aria-hidden':'true'},[h('path',{d:path})])]),{label,side:'right'}))),
-              ]),el('span','font-unit','像素'),
-            ]),
-          ]),el('p','note settings-feedback',self.fontNote,{id:'font-note','aria-live':'polite'}),
-        ],{'aria-busy':self.fontBusy}),
-      ], { id:"settings-page-appearance", role:"tabpanel", "aria-labelledby":"settings-tab-appearance", hidden:self.settingsTab!=="appearance" }),
-      el("section", "settings-page", [el('h2','settings-section-title','对话与输入'),
-        h(self.generalSettings.Outlet,{owner:{visibleRows:['busy-send','transcript-view','composer-enter','tips'],
-          'busy-send':{value:self.globalAppearance.busySend,busy:self.busySendSaving,note:self.busySendNote,error:self.busySendError,change:self.setBusySend,retry:self.refreshGlobalAppearance},
-          'tips':{value:self.tipsHidden,busy:self.tipsBusy,note:self.tipsNote,error:self.tipsError,change:self.setTipsHidden,retry:self.refreshTips},
-          'transcript-view':{value:self.generalPrefs.transcriptView,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('transcript-view',v)},
-          'composer-enter':{value:self.generalPrefs.composerEnter,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('composer-enter',v)},
-          'session-log':{value:self.generalPrefs.sessionLog,busy:!!self.generalPrefsBusy,change:(v)=>self.setGeneralPref('session-log',v)},
-        }}),
-        el('p','note',self.generalPrefsNote,{role:'status','aria-live':'polite'}),
-        el('p','note','Shift+Enter 始终换行；增强直接替换草稿，Ctrl/Cmd+Z 回退。'),
-      ], { id:"settings-page-conversation", role:"tabpanel", "aria-labelledby":"settings-tab-conversation", hidden:self.settingsTab!=="conversation" }),
-      el('section','settings-page',[el('h2','settings-section-title','快捷键'),
-        ...[['打开设置','Ctrl / Cmd + ,'],['聚焦输入框','Ctrl / Cmd + L'],['打开文件预览','Ctrl / Cmd + Shift + P'],['回退提示词增强','Ctrl / Cmd + Z'],['关闭弹窗或菜单','Esc']].map(([label,key])=>el('div','settings-row',[el('span',null,label),el('kbd',null,key)])),
-        el('p','note','以上为当前桌面绑定，快捷键自定义尚未接入。'),
-      ],{id:'settings-page-shortcuts',role:'tabpanel','aria-labelledby':'settings-tab-shortcuts',hidden:self.settingsTab!=='shortcuts'}),
-      el('section','settings-page',[el('h2','settings-section-title','隐私与数据'),
-        h(self.generalSettings.Outlet,{owner:{visibleRows:['session-log'],'session-log':{value:self.generalPrefs.sessionLog,busy:!!self.generalPrefsBusy,change:v=>self.setGeneralPref('session-log',v)}}}),
-        el('p','note',self.generalPrefsNote,{role:'status','aria-live':'polite'}),
-        el('p','note','此项仅保存日志偏好；上传服务是否执行需单独验收。数据导出、清理与保留管理尚未接入。'),
-      ],{id:'settings-page-privacy',role:'tabpanel','aria-labelledby':'settings-tab-privacy',hidden:self.settingsTab!=='privacy'}),
-      el('section','settings-page',[el('h2','settings-section-title','个人资料'),el('div','profile-summary',[navIcon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0'),el('div',null,[el('strong',null,'本地用户'),el('p','note','无需官方账号')])]),el('p','note','昵称、头像与资料持久化接口尚未接入。')],{id:'settings-page-profile',role:'tabpanel','aria-labelledby':'settings-tab-profile',hidden:self.settingsTab!=='profile'}),
-      el('section','settings-page',[el('h2','settings-section-title','SaCode'),el('p',null,'自主开发工作台'),el('p','note','仓颉共享核心 · Electron · Vue runtime · OpenTiny'),el('p','note','版本与更新检测接口尚未接入，不显示猜测版本。')],{id:'settings-page-about',role:'tabpanel','aria-labelledby':'settings-tab-about',hidden:self.settingsTab!=='about'}),
-      self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
-      el("section", "settings-page", [h(window.SaCodePlugins.Page, {
-        tools: self.tools,
-        // 插件清单适配器：包 = 已装插件，行 = 包内声明的工具。映射只搬数据，不冒充本地状态。
-        adapter: self.pluginsInventoryAdapter,
-      }),
-      ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
-      ]),
-      ]),
-    ]);
+    const settings = window.SaCodeSettings.renderSettings(self, { h, el, navIcon });
     const catalogDialog = h(window.SaCodeDialog, { open:self.catalogOpen, title:"SaCode 本地会话", class:"catalog-dialog",
       onClose:()=>{self.catalogOpen=false;} }, ()=>[
       el("div", "catalog-toolbar", [el("h2", null, "落盘会话"), el("button", "btn", self.catalogBusy ? "读取中…" : "刷新", {
