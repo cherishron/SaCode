@@ -7,12 +7,59 @@
 ## 0. 工作区基线
 
 ```
-git rev-parse HEAD              → 3cd0bc9
+git rev-parse HEAD              → 3cd0bc9（本批开工时）
 git status --short -- ...       → 本批 5 个只读文件全部为 ` M` 或空
 ```
 
 本批读到的 4 个冻结锚点文件都在 HEAD 上干净：
 `apps/daemon/src/daemon.cj`、`core/src/remote_identity.cj`、`apps/daemon/src/idempotency.cj`、`apps/daemon/src/canonical_json.cj`。工作区里那 688 行改动属于其他会话的线（`apps/host/src/main.cj`、`core/src/approval.cj`、`core/src/remote_identity.cj` 有 +126 行的并发未提交改动，本批不动），本批的结论对 HEAD 成立、对工作区态是否成立取决于对方落库后要不要动这些字段——已在 §4 逐条点出。
+
+---
+
+## 0b. 计划第 1 节第 1 条（line 53）：git/worktree 快照与本计划文件的在途实现识别
+
+计划 line 53 要求「记录 `git rev-parse HEAD`、`git status --short`、`git worktree list`；逐 hunk 识别本计划涉及文件的在途实现，尤其 durable_checkpoint 与 execution 文件」。批次 Y 一并把这一半落死：
+
+**三条快照命令的当轮读数**（2026-10-10 13:00 UTC，本批提交后 HEAD 变为 `f52dd57`）：
+
+```
+git rev-parse HEAD              → f52dd5790fc1b3a4e5a610390fd284ad2f1d13f6
+git status --short --untracked-files=all  → 689 行
+                                              已跟踪 M/D         100
+                                              未跟踪 ??           589
+                                                  apps/**   575（其中 apps/desktop/** 571）
+                                                  core/src  12
+                                                  docs      1
+                                                  tmpFile*  1
+git worktree list               → 主树 D:/Project/sa/saai/sa-code (refactor/dsh-learning)
+                                    + 10 个 detached 副本（3 个 C:/Users/jingg/.codex/worktrees/…
+                                    + 7 个 D:/Temp/SaCode-…）
+                                    （并发会话在本批取证过程中又建了 2 个副本，非本批动作）
+```
+
+`apps/desktop/**` 的 571 行绝大多数是 `.tmp-test/package-recheck-*/node-compile-cache/**` 的编译缓存（本仓 `.gitignore` 已把 `.tmp-test/` 忽略，但仍计入 `--untracked-files=all` 的裸计数）；`core/src` 的 12 行全部是本计划 line 90/160 点名的 durable_checkpoint 与 execution 系列在飞文件（下表）。这些不是本会话的产物，本会话不改、不 `git add`、不 `git commit` 触碰。
+
+**本计划明确点名要识别的两组文件**（计划 line 90、160 分别点名 `durable_checkpoint.cj` 与 `execution` 文件属并发会话线）：
+
+| 路径 | 工作区状态 | 归属 | 与计划的关系 |
+| --- | --- | --- | --- |
+| `core/src/durable_checkpoint.cj` | `??` 未入库 | 并发会话（Windows `@When[os == "Windows"]` 半，本文件里 `appendDurablePrefix` 硬编码 PowerShell 调用） | 计划任务 3 的 Linux 半——本文件今天只覆盖 Windows，Linux 屏障实现仍在计划里未落 |
+| `core/src/execution_api.cj` | `??` 未入库 | 并发会话（execution API 定义） | 计划任务 4 的工具执行面，与本计划的 §4 OS 沙箱门禁正交 |
+| `core/src/execution_service.cj` | `??` 未入库 | 并发会话（`ExecutionSnapshot` + 状态机） | 同上 |
+| `core/src/execution_output.cj` | `??` 未入库 | 并发会话 | 同上 |
+| `core/src/execution_supervisor.cj` | `??` 未入库 | 并发会话（`ExecutionRun` + `TurnToken` + `Future<ShellResult>`） | 同上 |
+| 各 `execution_*_test.cj` 4 份 | `??` 未入库 | 并发会话 | 同上 |
+
+9 个文件加其余 3 个 `core/src` 未入库文件（`git_workbench.cj`、`goal_runtime.cj`、`terminal_view.cj`——分别属另外在飞的 Git 工作台 / goal runtime / 终端视图模块）合计 12 个。
+
+**归属判定依据**（不是靠文件名猜）：
+1. `core/src/durable_checkpoint.cj:1-40` 的 `@When[os == "Windows"]` 与硬编码 `powershell.exe` 调用——不是通用 Linux 屏障，是 Windows 半的临时实现，属计划任务 3 的 Linux 半尚未接上；
+2. `execution_*.cj` 系列的文件头注释与 API 形态（`ExecutionSnapshot` 状态机 + `ExecutionRun` 异步句柄）是「工具执行」这条产品线的核心层，与本计划任务 4（沙箱）不同源，是本仓库另一条在飞主线；
+3. `git status` 显示这 9 个文件全部 `??`（未入库），说明对方还在飞，本会话不改、不 `git add`、不 `git commit` 触碰。
+
+**其余与本计划正交但在飞的文件**（本会话同样不动，仅登记）：`core/src/approval.cj`（+70，`approvalDesk` 那条线）、`apps/host/src/main.cj`（+908，宿主新 RPC 分派）、`apps/desktop/main.cjs`（−289，Electron 端多目标 IPC）、`core/src/remote_identity.cj`（+126，`rotateCredential` 与 scope 线）、`apps/daemon/src/host_proxy.cj`（+未计，转发面扩展）。这些改动与本计划的**当前批次不冲突**（各自改不同的字段/函数），但会在下次全量回归时把测试套件里若干条翻红——已在批次 X 与 Y 的取证里逐条点出，见 §4.4「与其他批次的关系」。
+
+**本会话对这三条快照命令的态度**：只读、只登记、只在本文件里留一次数，不落库进任何测试或断言脚本——`git status --short` 的计数在并发会话下每几分钟都在漂，把它做成测试断言会立刻变成噪声。
 
 ---
 
