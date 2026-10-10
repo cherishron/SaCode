@@ -222,13 +222,13 @@ for (const row of rows) {
 
 **接口：**验收输出每项PASS/FAIL/BLOCKED、平台、取证SHA、产物摘要、命令、计数、rc及缺失前提；不提供猜测百分比或日期。
 
-- [ ] 固定提交隔离副本，不混未入库源码；完整core、extjs、daemon、CLI与桌面测试，按真实计数判读。
+- [ ] 固定提交隔离副本，不混未入库源码；完整core、extjs、daemon、CLI与桌面测试，按真实计数判读。（批次 K 落了一部分：`scripts/verify-remote-product.mjs` 用 `git worktree add --detach <tmp> <SHA>` 起只含提交的副本，副本内 `git status --porcelain --untracked-files=no` 为空已实测，跑出 `extjs` 73/73 rc=0 与能力契约静态对账 15/15 rc=0。**未做的两半**：daemon/CLI 的 cjpm 侧读数无法在副本里取——`target/` 被 gitignore，副本里没有构建产物，而在那儿全量重编要过 core 的链接段（本会话已知 40 分钟不出 `unittest_bin/core.exe`，见证据文档 BLOCKED 表）；桌面 `npm test` 同理缺 `node_modules` 与 `renderer/vendor/`。副本内只跑「不吃构建产物」的套件这条口径就是为此）
 - [ ] Linux服务器干净包、本机Windows干净包分别执行真实任务→工具→落盘→审查→审批→取消→重启回放；验证OS沙箱强制边界。
-- [ ] 桌面与手机同时连接服务器，再手机切到Windows电脑；确认两个目标不同状态持续可见、旧任务继续、迟到数据隔离。
-- [ ] 双客户端不同会话并发和同一审批竞态；设备撤销/策略变化立即限制RPC与SSE；服务端审计定位who/when/what而不含token。
-- [ ] 验收安装包仅一套SaCode部署，无独立PC桥、开发SDK、源码根目录或全局Host依赖；核CLI/daemon/Host版本与摘要。
-- [ ] 明确反向结果：认证失守、权限过滤失守、沙箱透传、幂等失守、会话归属失守、epoch失守等变异均有指定用例杀死。
-- [ ] 未通过Linux/安全执行/移动真实运行任一门槛，整体验收保持FAIL或BLOCKED，不能按缩范围发布“完整支持”。
+- [ ] 桌面与手机同时连接服务器，再手机切到Windows电脑；确认两个目标不同状态持续可见、旧任务继续、迟到数据隔离。（批次 K 落了前半：`apps/daemon/test/remote-product.test.mjs` 在**同一台** TLS 实例上同时挂两台设备（桌面 + 手机两个 deviceId），实测同一条总线事件扇到两条独立 `/sse`、两台各自建的会话在同一 workspace 目录里互不串、同名 operationId 跨设备各建各的账。「手机切到 Windows 电脑」这条**跨目标切换**仍只有客户端侧的 `TargetStore` 分目标草稿与 `EpochGate` 迟到数据隔离（批次 I），没有真实双目标读数——要第二台目标机）
+- [ ] 双客户端不同会话并发和同一审批竞态；设备撤销/策略变化立即限制RPC与SSE；服务端审计定位who/when/what而不含token。（批次 K 落了 2/4：不同会话并发与「撤销只限该设备」都有真读数，审计那条按 deviceId 分得开、含 `"ts":` 与 `outcome:denied`、整份日志无 params 值/凭据/token/`Bearer`/64 位 hex。**撤销那半当场抓出真缺陷**：`core/src/remote_identity.cj:274` 撤销一台抬全局 `revocationVersion`、`:301` 令牌按签发时版本比对，于是撤销任意一台会作废整台实例所有设备的在途令牌——用例保留红（该文件被并发会话持有）。**未落的两半**：同一审批竞态（四个 `approval/*` 锚点全在宿主侧，`apps/host/src/main.cj` 在飞）与策略变化（非撤销）的即时影响）
+- [ ] 验收安装包仅一套SaCode部署，无独立PC桥、开发SDK、源码根目录或全局Host依赖；核CLI/daemon/Host版本与摘要。（批次 K 落了**进程级**那一半：`remote-product.test.mjs` 用 `netstat -ano -p TCP` 按 daemon 的 PID 过滤 LISTENING 行，断言只有一颗端口号（IPv4/IPv6 同行算一颗）且就是 stdout 宣布的那颗，再用同端口的明文 `http://` 打 `/health` 要求拿不到 200——「没有第二颗桥在别处听」是可数的，不是声明。执行器另外逐行打印 daemon 与 Host 二进制的 sha256 摘要。**未落的一半**：真·安装包态（`npm pack` 装进干净目录后跑 CLI/daemon/Host）没做，发布与网络安装需另行授权；批次 H 只到等价安装布局）
+- [ ] 明确反向结果：认证失守、权限过滤失守、沙箱透传、幂等失守、会话归属失守、epoch失守等变异均有指定用例杀死。（批次 K 的 `verify-remote-product.mjs` 里 `REGISTRY` 把这六类加「断连恢复丢事件」「凭据泄漏到审计」共 9 类逐条对上具名受害用例，缺失 0 类——但**这一行是静态对账**（用例存在且名字对得上），不等于本轮把 9 个变异全重跑。当轮真重跑过的只有沙箱那一类（批次 J 三轮）与认证那一类（批次 K 的撤销事故半径当场就是活缺陷读数）。分级写在 `docs/evidence/2026-10-10-remote-product-acceptance.md` §4，别读成「九类今日已被变异杀死」）
+- [ ] 未通过Linux/安全执行/移动真实运行任一门槛，整体验收保持FAIL或BLOCKED，不能按缩范围发布“完整支持”。（**这一条现在就在生效**：`verify-remote-product.mjs` 的总判定是「有任何一行不是 PASS 就整体 FAIL/BLOCKED」，rc 非零。2026-10-10 14:18 在 `f67d27ca` 上跑出的整体判词就是 **FAIL**——Linux 包、OS 沙箱边界、移动真实运行三关 BLOCKED，外加撤销事故半径那条 FAIL。执行器不提供任何百分比或「基本可用」措辞）
 - [ ] 授权后提交验收证据与平台声明；推送、发布、服务器部署必须另有明确授权。
 
 ## 12. 依赖与规划自审

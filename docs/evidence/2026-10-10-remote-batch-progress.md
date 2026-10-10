@@ -420,6 +420,54 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 3. **传递性执行缺口**：`session/submit` 在契约里标的是 `write`，不在执行门禁的拒止面内；但它落到宿主后会驱动一轮 Agent，进而可能触发工具执行。也就是说「远程提交的会话 turn」这条路径目前绕过了 execute 门禁。关掉它需要在工具执行边界（`host_proxy.cj`/宿主侧）按 `enforcing` 二次判定，而 `host_proxy.cj` 正被并发会话持有未提交改动，本批不动。这一条是本批留下的最大真实风险，写成在飞行而非「已完成」。
 4. 审批绕过那半只有**结构性**保证（拒发生在 gate 里、建账与转宿主之前，`approval/*` 属 approval 类别且位于门禁下游，没有放行 execute 的通路），没有反证用例——因为要反证就得先有能跑的执行面。
 
+### 批次 K：任务 11 的交付验收执行器、一台实例两台设备的产品面，与被它抓出的撤销事故半径
+
+**这一批的价值不在写了多少代码，在于它让两个原本看不见的东西现形**：一条真缺陷（§3）与一条我自己写的门禁假阳性（§4）。完整读数在 `docs/evidence/2026-10-10-remote-product-acceptance.md`，这里只记批次口径。
+
+**落的三个文件**：
+
+- `apps/daemon/test/remote-product.test.mjs`（新增 5 条，真 TLS daemon，两台 deviceId 同时挂同一实例）。TLS 用真 `ca` 建（自签证书 SAN `IP:127.0.0.1`），**没有**关证书校验——这一批要证的就是「明文与不受信链都进不来」，`checkServerIdentity: () => undefined` 那一版我自己先删掉了。
+- `scripts/verify-remote-product.mjs`（新增）：每次真跑再出表，逐行给状态、取证态（提交副本 / 工作区）、命令、计数、rc、缺失前提。计数只读剥 ANSI 后末尾的 `# tests / # pass / # fail`，不靠匹配 `[ PASSED ]` 标记。整体判定是「有任何一行不是 PASS 就 FAIL/BLOCKED」，rc 非零；不提供百分比。
+- `scripts/sacode-naming.test.mjs`（改）：修我自己批次 H 那条假阳性，见 §4。
+
+**读数**（`f67d27ca`，本机 14:18）：
+
+| 入口 | 结果 |
+| --- | --- |
+| 固定提交隔离副本（`git worktree add --detach <tmp> <SHA>`，副本内 `git status --porcelain --untracked-files=no` 为空） | `extjs` tests **73** / pass 73 / fail 0 / rc 0；桥面命名 tests **4** / pass 4 / fail 0；能力契约静态对账 tests **15** / pass 15 / fail 0 |
+| 一台实例两台设备产品面 | tests **5** / pass **4** / **fail 1** / rc **1**（唯一红见 §3） |
+| 完整远程套件（11 个文件，`--test-concurrency=1 --test-timeout=120000`） | tests **76** / pass **75** / **fail 1** / cancelled 0 / rc **1**（那 1 条就是 §3） |
+| 打包链（只能工作区态，副本无 `target/`） | `node --test scripts/pack-service.test.mjs` tests **11** / pass 11 / rc 0 |
+| 执行器整体判词 | **FAIL**（Linux 包 / OS 沙箱边界 / 移动真实运行三关 BLOCKED + §3 一条 FAIL） |
+
+#### 批次 K 抓出的真缺陷：撤销一台设备会作废整台实例的在途令牌
+
+红的用例是「带外撤销一台：只砍被撤那台的在途流与新请求，另一台不受影响」，另一台的 RPC 实得：
+
+```json
+{"jsonrpc":"2.0","id":"rev-2","error":{"code":-32001,"message":"authz-denied:invalid-token"}}
+```
+
+单跑该用例两次 rc 均为 1，不是偶发。根因两行都在 **HEAD**（`git show HEAD:core/src/remote_identity.cj` 同样有），不是并发会话写坏的：
+
+- `:274` `revokeDevice` 命中后 `if (hit) { revocationVersion += 1 }`——抬的是**全局**版本；
+- `:301` `if (token.revocationVersion < revocationVersion) return None`——令牌带的是各自**签发时**的版本。
+
+于是撤销任意一台 = 该实例上**所有设备**的访问令牌同时判过期。规格 §5 要的是「设备撤销立即限制**该设备**的 RPC 与 SSE」，而同一函数里本来就有 per-device 的 `device.revoked` 分支，那次全局 +1 既多余又把事故半径从一台扩大到整台实例；在「桌面 + 手机同时挂一台服务器」这个形态下等于一次撤销把另一位用户也踢下线，顺带还是个登录用户可触发的自我 DoS 面。**本批没改它**：`core/src/remote_identity.cj` 正被并发会话持有（工作区 +62/−5 未提交，内容就是 `rotateCredential` 那条线）。修法在两行内：撤销只推进该设备的版本，或把令牌比对换成「对该设备比对」。
+
+既有套件为什么没抓到：`remote-auth.test.mjs` 的撤销用例只断言**被撤那台**被拒（`assert.match(after.body, /-32001/)`），从没问「另一台还在不在」。这是单客户端用例的结构性盲区。
+
+#### 批次 K 也抓出一条我自己写的假阳性
+
+第一次跑副本时桥面命名用例红在 `缺少主进程通道：sacode:executionPropose`。我先按「HEAD 有悬空通道」写进证据，再往下核了一层才发现归因反了：
+
+- `apps/desktop/main.cjs:221` 是**表驱动 + 模板注册**（`executionActions` 那张表 + `ipcMain.handle(\`sacode:${action}\`, …)`），`apps/desktop/worktree-ipc.cjs:69` 起是 `registerWorktreeIpc` 里的字面量注册；
+- 批次 H 我写的 `sacode-naming.test.mjs` 只扫 `ipcMain.handle('…'`/`("…")` 两种**字面量**形态，模板注册天生看不见，`registerWorktreeIpc` 那个模块也压根没读，于是 `sacode:executionPropose` 与 `sacode:worktreeDescribe` 都被误判成悬空。
+
+修法是让扫描器认得真实注册机制（字面量 ∪ 模板前缀 + 路由表键，并检查模板前缀只能是 `sacode:`），同时补三条**合成源码反证**证明放宽不是把断言改成永真：表驱动 + 新前缀须识别、模板写成旧 `dsh:` 前缀须原样报出、表里没有那个键时仍须判悬红。修完两侧复验：HEAD 源码 + 新扫描器 **4/4 绿**；工作区源码 + 新扫描器仍红在 `sacode:executionPropose`——那一条是**真的**，但成因是并发会话此刻正把那段注册从 `main.cjs` 里删着改（工作区 `main.cjs` 已无该注册而 `preload.cjs` 仍在 invoke），文件在对面手里，本批不动。
+
+顺带纠正同一批的证据口径：`node --check` 与工作区单跑都绿不代表提交态绿，反之亦然——这两句在这一批里各只成立了一半，所以证据文档里每个数字都必须写清取在哪一侧。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -432,10 +480,12 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | `session/events` 持久补读面 | 已落地：`apps/daemon/src/event_replay.cj` + `daemon.cj` 分派支 + 契约锚点实名 + `remote-events.test.mjs`（批次 E） | 不再是「锚点不存在的转发候选」；能力宣告与补读作答都由 daemon 本人负责，宿主侧不出现该方法。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 | 任务 5 的 Linux 半与「发布态」验证 | `scripts/pack-service.mjs` + `scripts/verify-service-package.mjs` + `npm/sacode-cli/bin/daemon.js`（Windows 半见批次 H） | 未做且非缩水：① Linux 收 `.so`、ELF ABI 与可执行位、`readelf`/`ldd` 依赖核对——本机无 Linux 且装系统依赖不在本次授权范围，**BLOCKED**；② 真出 tarball 并在剥 SDK、无仓库的环境里 `npm install` 后逐子命令跑——本批的合成 node_modules 布局只验了包装脚本的解析与失败码；③ 包内 Host/扩展宿主的端到端一条方法调用。**FAIL/BLOCKED 分档：① BLOCKED，②③ 未做。** |
-| 任务 10 的 Kuikly 工程与三平台真实运行 | `apps/mobile/kotlin/`＋`apps/mobile/kotlin-test/`＋`apps/daemon/test/remote-mobile-client.test.mjs`（批次 I 落的接入逻辑层） | **BLOCKED**：本机有 JDK 17 与 Kotlin 2.3.20，但缺 gradle、`ANDROID_HOME`/`ANDROID_SDK_ROOT`、`adb` 与真机/模拟器，iOS 与鸿蒙工具链也没有。缺 gradle 就没有依赖解析通道，Kuikly 模板源集路径无从冻结（任务 2 前提未兑现），所以计划命名的 `ConnectionsPage.kt`/`WorkspacePage.kt`/`ApprovalPage.kt` 与 `SecureTransportModule`/`CredentialStoreModule` 的 Kuikly 侧接线仍未落。批次 I 的 18 条**全是 JVM 单平台读数**，按计划第 6 条的告诫不冒充三平台。解锁动作：装 gradle + Android SDK（需另行授权）或提供已配好的 Kuikly 工程路径。 |
+| 任务 10 的 Kuikly 工程与三平台真实运行 | `apps/mobile/kotlin/`＋`apps/mobile/kotlin-test/`＋`apps/daemon/test/remote-mobile-client.test.mjs`＋`apps/daemon/test/remote-product.test.mjs`（批次 I 接入逻辑层、批次 K 一台实例两台设备产品面） | **BLOCKED**，但归因已在批次 K 收窄，见下「更正」行。当前实测（2026-10-10 14:18，`scripts/verify-remote-product.mjs`）：gradle **在位**（Gradle 8.7 / JVM 17.0.2），缺的是 Android SDK（`ANDROID_HOME`/`ANDROID_SDK_ROOT` 均未设、无默认 SDK 目录）、`adb` 与真机/模拟器（已连设备 0 台），iOS 与鸿蒙工具链也没有。`apps/mobile/` 目前只有 Kotlin 源码与 JVM 夹具，没有 gradle 工程本体。批次 I 的 18 条与本批产品面的 5 条**全是单平台读数**，按计划第 6 条的告诫不冒充三平台。解锁动作：授权安装 Android SDK 或提供 `sdk.dir`；或提供已配好的 Kuikly 工程路径 |
 | daemon 宣告的 protocolVersion 仍是 0.1 | `apps/daemon/src/daemon.cj` 的 `initialize` 结果位（实测回 `"protocolVersion":"0.1"`） | 批次 I 真机读数记录的不对称：请求侧已按 0.2 的显式归属（params 顶层 workspaceId/sessionId/operationId）被 gate 检查，但**宣告位没跟上**，capabilities 仍只列三条。改这一处会同时影响 `remote-capability-contract.test.mjs` 与桌面/CLI 两个客户端的版本协商，且该文件正被并发会话持有，本批未动。属任务 7 编号对齐（与 `docs/plans/sacode-product-interfaces` §8 编号待对齐同源）。 |
 | 执行门禁的传递性缺口：`session/submit` 能绕开它 | 契约 `docs/plans/remote-capability-contract.json` 里 `session/submit` 的 permission 是 `write`（批次 J 实测：`execute` 一族恰 8 条，不含它）；拒判只发生在 `apps/daemon/src/remote_gate.cj` 的请求入口 | **未闭合**。远程提交的一轮会话在宿主侧仍可能驱动工具执行，而那条路径不经过 execute 类别判定。要关它得在工具执行边界（`host_proxy.cj` 与宿主侧）按 `RemoteSandboxEnforcement.current().enforcing` 二次判定——这两个文件正被并发会话持有未提交改动，批次 J 不动。解锁动作：等其落库后按同一探针取值加边界判定，并补一条「无强制后端时远程 turn 里的工具执行被拒」的真 HTTP 用例。 |
-| 远程套件并行跑会冻住（无界 `on('close')` await） | `apps/daemon/test/` 下 `remote-auth`/`remote-events`/`remote-idempotency`/`remote-method-surface`/`remote-request-limits`/`remote-sse-recovery`/`remote-tls`/`team-host` 各有至少一处 | 批次 J 只收口了自己新增的 `remote-execution-gate.test.mjs` 与批次 I 的 `remote-mobile-client.test.mjs` 两个文件（改成有界轮询 + `SIGKILL` 升级 + `boot` 纳入 finally），其余 8 个文件同形状隐患**未动**，因为它们是别批的文件。当前取整套读数的可行口径是 `--test-concurrency=1 --test-timeout=120000`（批次 J 用这个拿到 71/71 rc=0），并行默认跑法则不确定能否收尾。 |
+| 远程套件并行跑会冻住（无界 `on('close')` await） | `apps/daemon/test/` 下 `remote-auth`/`remote-events`/`remote-idempotency`/`remote-method-surface`/`remote-request-limits`/`remote-sse-recovery`/`remote-tls`/`team-host` 各有至少一处 | 批次 J 只收口了自己新增的 `remote-execution-gate.test.mjs` 与批次 I 的 `remote-mobile-client.test.mjs` 两个文件（改成有界轮询 + `SIGKILL` 升级 + `boot` 纳入 finally），其余 8 个文件同形状隐患**未动**，因为它们是别批的文件。当前取整套读数的可行口径是 `--test-concurrency=1 --test-timeout=120000`（批次 J 用它拿到 71/71 rc=0，批次 K 用它拿到 76/75 rc=1），并行默认跑法则不确定能否收尾。 |
+| 撤销一台会作废整台实例所有设备的在途令牌（批次 K 验收抓出，**FAIL**） | `core/src/remote_identity.cj:274`（`revokeDevice` 里 `if (hit) { revocationVersion += 1 }`）与 `:301`（`token.revocationVersion < revocationVersion` 判过期），两行**都在 HEAD** | 缺陷效果：撤销任意设备后，其它设备的 Bearer 全部 `authz-denied:invalid-token`；规格 §5 要的是只限该设备，而同函数内已有 per-device 的 `device.revoked` 分支，所以那次全局 +1 是多余的且把事故面扩大到整台实例。修法在两行内（撤销只推进该设备版本，或令牌按所属设备比对）。**本目标未改**：该文件正被并发会话持有（工作区 +62/−5 未提交，内容是 `rotateCredential` 那条线）。防回归用例已入库：`apps/daemon/test/remote-product.test.mjs` 第二条，保留红，文件头写明不许为变绿弱化断言 |
+| 工作区 `main.cjs` 里 `sacode:executionPropose` 通道悬空（HEAD 不悬空） | 工作区 `apps/desktop/main.cjs`（并发会话在飞，`executionActions` 那段注册正被删改）＋ `apps/desktop/preload.cjs` 仍在 invoke 该通道 | 批次 K 先误判成「HEAD 有悬空通道」，实为 `sacode-naming.test.mjs` 的扫描器只认字面量注册（假阳性，已修并补合成源码反证）。修完后 HEAD 4/4 绿、工作区仍红这一条——所以这条是**对面的在飞态**，不是本目标的交付项。等其落库后由执行器复验 |
 
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
@@ -456,3 +506,24 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | 本机 WSL2 未装 Linux 发行版 | 用户执行 `wsl --install -d Ubuntu`；本会话不安装系统依赖 |
 | OS 沙箱强制后端缺失（远程 execute 族整族拒绝中） | 批次 J 的拒绝是**当前构建的终态**而非临时脚手架：`SandboxRuntime.confine` 原样退回 argv、全仓无 Job Object 用法。解锁动作按平台分两条——Windows：把 provider 换成 Job Object + 受限令牌 + 显式 ACL 的工作区挂载，且 `confineRewritesArgv()` 探针要能翻成 true 才算（只改 `enforcing` 字符串等于没做，本批的 N2 变异就是钉这一点的）；Linux：`sandbox_linux.cj` 的 namespace/mount/seccomp/资源/进程树组合，前提是先有一台 Linux 或 WSL2 发行版。两侧都要补计划 §4 第 1 条的五类真实子进程越权用例。 |
 | Kuikly 移动工程定位与三平台构建 | 用户提供外部 Kuikly 工程绝对路径；或授权本仓在 `apps/mobile/` 建 Kuikly 工程**并**安装 gradle + Android SDK（2026-10-10 批次 I 实测：JDK 17 与 Kotlin 2.3.20 已在位，`gradle`/`adb`/`ANDROID_HOME`/`ANDROID_SDK_ROOT` 全缺）。接入逻辑层已按批次 I 落并跑绿，缺的是工程本体与真机 |
+
+## 更正
+
+### 批次 I 那句「gradle 缺失」是错的（2026-10-10 批次 K 复探）
+
+**原文照录**（本文件「已知阻塞与解锁动作」表上一行的措辞，以及批次 I 一节里同义的表述）：
+
+> 本机有 JDK 17 与 Kotlin 2.3.20，但缺 gradle、`ANDROID_HOME`/`ANDROID_SDK_ROOT`、`adb` 与真机/模拟器
+
+**当轮复探读数**（不是推断，两条命令都实跑）：
+
+```
+$ gradle --version        → Gradle 8.7 / JVM: 17.0.2 (Oracle Corporation 17.0.2+8-86)
+$ echo "$ANDROID_HOME|$ANDROID_SDK_ROOT"  → |（两者均未设）
+$ adb                     → command not found；默认 SDK 目录不存在；已连设备 0 台
+```
+
+gradle 由 version-fox 提供（`C:\Users\jingg\.version-fox\sdks\gradle\bin`），批次 I 当时探漏了。
+**这条写错的代价不是措辞，是可选路径**：只要有 Android SDK，`apps/mobile` 的 gradle 工程本来可以直接脚手架化，「等用户提供外部 Kuikly 工程路径」这个前提并非唯一路。BLOCKED 结论本身不变（SDK、adb、设备当时与现在都缺），但归因从「工具链整体缺失」收窄为「缺 Android SDK 与设备」。
+
+同一个坑在批次 K 又踩了一次并当场修掉：`execFileSync('gradle', ['--version'])` 报 ENOENT，因为 version-fox 给的是 shell 包装（没有 `.exe`），不经 shell 直接 spawn 就探不到——第一版执行器因此把在位的 gradle 又报成缺失。现在探针固定走 `ComSpec /c`，并把 gradle 的**具体版本号**打进读数，而不是只回一个 true/false。
