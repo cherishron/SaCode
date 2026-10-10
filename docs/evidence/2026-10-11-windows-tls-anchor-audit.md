@@ -322,5 +322,35 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 「为什么系统存储提供者在本进程开不起来」仍是未证项。要把它查实，缺的是错误码通道（`CertGetLastError` 需进 import lib 或走文档化的动态装载），不是再换一批序号常量试。
 
+## 15. core 整仓计数第四次尝试：仍是第三态，但这次把 49 条错误全部归因完毕；本批未用 import 清掉 4 处（2026-10-11 06:15–06:53 实测）
+
+### 15.1 `cd core && cjpm test`：rc=1、剥码后 `Summary: TOTAL` 计数 0——「根本没跑」，且本批 0 指名
+
+落盘后按固定流程剥码读：**rc=1，`Summary: TOTAL` 0 条，末行 `Error: cjpm test failed`，`49 errors generated, 8 errors printed`**（cjpm 默认只印 8 条，见 §15.2 怎么拿全）。这与 §13.4 同一档位，但阻塞面已经换人：库层 `cjpm build` 本轮 **rc=0、`cjpm build success`、0 条 error**，坏的只有测试编译那一步。
+
+### 15.2 先纠正我自己的一条假读数，再谈归因
+
+第一次我把 `cjpm test -V` 打印出来的那条 cjc 命令用 `cmd /V /C "set Path=…&& cjc.exe …"` 复跑，得到 **rc=0 且 0 条 error**——这个读数**作废**：日志只有 125 字节的 Windows 版本 banner，`core/target/release/unittest_bin/core.exe` 根本不存在，说明 `cmd` 收不到那条内嵌 `&&` 的命令，**cjc 一次都没执行**。零输出既不是「编译干净」也不是「通过」，是「没跑」。改写成仓库内 gitignore 的批处理 `apps/desktop/.tmp-test/core-test-all-errors.cmd`（绝对路径、单引号传给 `cmd //c`）才真正执行。
+
+拿全 49 条的办法是把 cjpm 自己那条命令原样复用并加 `--error-count-limit all`（`cjc --help` 里的选项，默认 8）：
+
+| 报错文件 | 条数 | 归属 |
+| --- | --- | --- |
+| `core/src/worktree_test.cj` | 28 | **已入库且与工作树逐字一致**（`git diff` 空） |
+| `core/src/worktree_setup_test.cj` | 9 | 同上，已入库、他人 |
+| `core/src/worktree_tools_test.cj` | 6 | 同上，已入库、他人 |
+| `core/src/cmds_test.cj` | 5 | 他人未落库的 TDD 红灯（`undeclared identifier 'registerBuiltinCommands'` 等） |
+| `core/src/acp_approval_test.cj` | 1 | 已入库、他人（`lambda capturing mutable variables needs to be called directly`） |
+
+合计 **49 = 49 generated = 49 printed**，本批的 `tls_roots.cj`/`tls_roots_test.cj`/`hook_executor.cj`/`model_catalog.cj`/`web_exec.cj`/`web_http.cj` **0 条指名**。主因写清楚：前三行那 43 条里绝大多数是 `SessionLog(Path(...))` → `expected 'Struct-String', found 'Struct-Path'`，而 `core/src/session.cj` 恰是并发会话**未落库**的 M 文件（其 `let path: String` 就是被改的一侧）——即「已入库的测试调用方」撞上「未落库的签名改动」。解锁动作不变也不掺假：等 `session.cj`/`cmds.cj`+`agent.cj` 那条线落库后重跑 `cd core && cjpm test`；**在它落库前，任何 core 全套计数都拿不到**，这条仍是 BLOCKED，库层 rc=0 只作替代证据、不冒充通过。
+
+### 15.3 本批欠账清掉 4 处，剩 2 处都不是我的
+
+批次 A 把 https 出口收敛到 `defaultTlsClientConfig()` 后留下的 `warning: unused import 'stdx.net.tls.*'`，清理前在测试编译里点名 **6 个文件**：`accel_relay`、`hook_executor`、`model_catalog`、`sse`、`web_exec`、`web_http`。本轮删掉其中属于我批次（最后改动提交为 `e2cc85d`）的 4 个——`hook_executor.cj:14`、`model_catalog.cj:6`、`web_exec.cj:7`、`web_http.cj:8`，`git diff` 恰为 **4 行删除、无其他改动**。清理后 `cd core && cjpm build`：**rc=0、`cjpm build success`、0 条 error、164 warnings**，该告警只剩 **2 处**：`accel_relay.cj`（属批次外提交 `1e6a1c7`）与 `sse.cj`（带着并发会话未落库的 +21 行，按 pathspec 提交会一起吞掉，继续挂着）。四个被改文件此前只调 `defaultTlsClientConfig()`（同包函数，无需 `stdx.net.tls`），这解释了为什么删除能编译通过。
+
+顺带把 `model_catalog.cj:94` 那条 `warning: unused variable:'apiKey'` 判掉，免得下次再被当缺陷追：`summary(apiKey, ids)` 的注释写明「永不带凭据材料」，参数存在就是让调用方必须交出键而摘要侧绝不使用；真正发请求的 `fetch()`（`:100-108`）确实发 `Authorization: Bearer ${apiKey}`，且空键先抛 `model-credential-unavailable`。**不是缺陷，不改他人签名。**
+
+宿主与 Electron 残留：本轮所有跑测结束后 `tasklist //FI "IMAGENAME eq sacode-host.exe"` 与 `electron.exe` 均 `No tasks are running`。
+
 
 
