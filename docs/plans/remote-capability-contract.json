@@ -116,6 +116,6 @@
   {"method":"daemon/shutdown","implementationAnchor":"apps/daemon/src/daemon.cj:102","permission":"management","resourceKeys":[],"durable":false,"idempotent":true,"clientConsumers":["desktop"],"requiredScope":"management"},
   {"method":"auth/enroll","implementationAnchor":"拟新增: apps/daemon/src/identity.cj","permission":"read","resourceKeys":[],"durable":false,"idempotent":false,"clientConsumers":["desktop","mobile"],"requiredScope":null},
   {"method":"auth/token","implementationAnchor":"拟新增: apps/daemon/src/identity.cj","permission":"read","resourceKeys":[],"durable":false,"idempotent":false,"clientConsumers":["desktop","mobile"],"requiredScope":null},
-  {"method":"auth/devices","implementationAnchor":"拟新增: apps/daemon/src/identity.cj","permission":"management","resourceKeys":[],"durable":false,"idempotent":true,"clientConsumers":["desktop"],"requiredScope":"management"},
-  {"method":"auth/revoke","implementationAnchor":"拟新增: apps/daemon/src/identity.cj","permission":"management","resourceKeys":[],"durable":true,"idempotent":true,"clientConsumers":["desktop"],"requiredScope":"management"}
+  {"method":"auth/devices","implementationAnchor":"apps/daemon/src/remote_management.cj","permission":"management","resourceKeys":[],"durable":false,"idempotent":true,"clientConsumers":["desktop"],"requiredScope":"management"},
+  {"method":"auth/revoke","implementationAnchor":"apps/daemon/src/remote_management.cj","permission":"management","resourceKeys":[],"durable":true,"idempotent":true,"clientConsumers":["desktop"],"requiredScope":"management"}
 ]
