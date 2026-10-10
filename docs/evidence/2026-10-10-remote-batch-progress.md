@@ -372,6 +372,54 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 5. 会话视图、断网恢复/重新认证、后台前台恢复（计划第 3 条的 UI 半）未做。
 6. 收尾缺陷是我自己的夹具：第一次真联跑 18 条全过、整条用例却因为 `rm` 撞 `EBUSY` 而红（daemon 的 cwd 就是那份临时目录，`kill` 是异步的）。已改成 kill→有界等 close→带 EBUSY 重试的删除，并连跑两次确认可复现，而不是把清理步骤删掉了事。
 
+### 批次 J：远程执行门禁与执行宣告（任务 4 的 Windows 半，走计划第 3 条的「拒绝」分支）
+
+**口径**：计划 §4 第 3 条给的是二分叉——「核验得出文件/网络隔离能力，就把 enforcement 报成真的」或「核验不出，就**拒绝远程执行并登记 BLOCKED，而不是只改 enforcement 字符串**」。本批走第二分支。
+
+**核验结论（先于实现）**：全仓 `core/src` 与 `apps/*/src` 对 `CreateJobObject`/`JOB_OBJECT` grep **零命中**；`core/src/sandbox.cj` 的 `SandboxRuntime.confine` 只做档位字符串闭集校验（`read-only`/`workspace-write`），然后 `return argv` —— 原样退回，没有任何 OS 级约束包裹。所以 Windows 侧当前的执行面 = 无隔离，`enforcing` 必须是 false。
+
+**落的实现（`apps/daemon/src/remote_sandbox.cj` 新增）**：
+
+- `confineRewritesArgv()`：**行为探针**，真的拿 `["sacode-probe","--flag"]` 去问 `SandboxRuntime().confine(...)`，逐项比对输出与输入是否逐字相同；`confine` 抛异常（`withoutBackend()` 那一档）也如实回 false。`enforcing` 的值只从这里来，不写死——将来接了 `sandbox-exec`/`bwrap`/Job Object + 受限令牌，探针自己翻 true，宣告位和门禁同时跟着变。
+- `refusalReason(permission, enforcing)`：只按**权限类别**判定，类别由 `core/src/remote_authorization.cj:151` 的 `specOf(method).permission` 给出（那张表就是从 `docs/plans/remote-capability-contract.json` 装进来的）。daemon 里**没有第二份 execute 方法名单**可以漂移。
+- `RemoteSandboxEnforcement.current()/toJson()`：`mode`、`enforcing`、`limitations` 三项；限制清单在两种结局里都保留 `no-file-system-isolation`、`no-network-isolation`、`no-namespace-or-seccomp-backend`——规格 §7 明写 seccomp/Job Object 单独都不构成路径与网络隔离，所以将来接了进程/资源治理也不能抹掉前两条。
+- `remote_gate.cj`：认证通过、拿到 context 之后，**在 scope/归属判定与建幂等账之前**插入拒因判定，命中即 `recordDenied(...)` 落审计并回 `GateOutcome(false, refuse, ctx)`；未认证的请求仍只拿 `missing-bearer`，门禁不提前泄露策略差异。
+- `daemon.cj` 的 `initialize`：宣告体新增 `instanceId`（取当前 gate 的）与 `sandboxEnforcement`（取同一个探针），客户端不用「试了才知道这台目标能不能远程跑代码」。
+
+**红先**：先写 `apps/daemon/src/remote_sandbox_test.cj`（6 个 `@Test`），实现未落时 cjpm 报 `undeclared identifier 'RemoteSandboxEnforcement'`，**17 errors generated, 8 errors printed**——这条流水线唯一可行的红灯。
+
+**绿读数（还原后，工作区态）**：
+
+| 入口 | 命令 | 结果 |
+| --- | --- | --- |
+| 仓颉 daemon 副本单测 | `apps/daemon` 下 `cjpm test --target-dir target/j-m2-td`（TMP 每轮唯一且**先建目录**） | TOTAL **155** / PASSED **153** / FAILED **2** / ERROR 0，rc=1；2 条红是 `scopeGrantSurvivesSnapshotRoundTrip` 与 `gatePassesDeviceScopeIntoAuthorizationSoManagementMethodIsReachable`，属并发会话那条线（本批未改那两个文件），三轮变异里它们恒为红且与本批受害用例不相交 |
+| 真 HTTP 门禁面 | `node --test apps/daemon/test/remote-execution-gate.test.mjs` | tests **5** / pass **5** / fail 0，rc=**0** |
+| 完整远程套件（串行） | `node --test --test-concurrency=1 --test-timeout=120000 apps/daemon/test/remote-*.test.mjs`（10 个文件） | tests **71** / pass **71** / fail 0 / cancelled 0 / skipped 0，rc=**0**（66 条批次 I 基线 + 5 条本批新增，分母对上） |
+
+**变异反证（三轮，逐条指定受害）**：施加器 `target/apply-j-mutants.mjs`（gitignore 的 scratch，每条锚点要求唯一命中，命中数≠1 就整体退出）。N1 与 N2 会互相遮蔽（N1 把判定表改成恒放行后，N2 改探针就不可观察），所以**必须分轮**。
+
+| 轮 | 变异 | 指定的受害用例 | 实测 |
+| --- | --- | --- | --- |
+| J1 | N3 限制清单删掉 `no-network-isolation` | cj `limitationsNameFileAndNetworkExplicitly` + Node 第 4 条（宣告要点名网络隔离） | cj FAILED 4（2 受害 + 2 外来红）、Node fail 3 |
+| J1 | N4 `toJson()` 不输出 `limitations` | cj `enforcementJsonAnnouncesModeEnforcingAndLimitations` + Node 第 4 条 | 同上（同轮合并施加，Node 第 4 条为共享受害） |
+| J1 | N6 拒绝时审计拒因写成空串 | Node 第 5 条（审计要记拒因） | Node fail 3 里含第 5 条 |
+| J1 | N7 门禁挪到认证之前 | Node 第 3 条（未认证只拿 `missing-bearer`） | Node `not ok 3`， cj 无对应受害（该不变量只在 HTTP 面可观察） |
+| J2 | N1 `refusalReason` 恒回空串 | cj `executePermissionWithoutEnforcementIsRefused` + Node 第 1/4/5 条 | cj FAILED 3（1 受害 + 2 外来）、Node fail 3；第 3 条按预期**保持绿**（放行路径不影响认证归因），说明受害集不重叠 |
+| J3 | N2 `confineRewritesArgv()` 第一行写死 `return true` | cj `enforcementValueComesFromBehaviorNotAConstant` + `enforcementJsonAnnouncesModeEnforcingAndLimitations` + Node 第 1/4/5 条 | cj FAILED 4（2 受害 + 2 外来）、Node fail 3；第 2/3 条绿 |
+| 还原 | `cp target/remote_sandbox.cj.bak`、`cp target/remote_gate.cj.bak` | — | 两次 `diff` 均 rc=**0**，`grep -c MUTANT` 两个文件都 **0**，随后回绿（上表） |
+
+**本批我自己造成的三次无效读数（不写成变异结果）**：三次把 `TMP/TEMP/TMPDIR` 指到 `target/j-tmp3`、`target/j-tmp5`、`target/j-tmp9` 却**没有先 `mkdir -p`**，cjpm 直接 `error: Temporary directory path set by environment variable (TMP) does not exist.` 退出——日志无 Summary、rc 非零。其中最后一次（还原后的绿轮）最危险：build 失败后 Node 那条打的还是上一轮带 N2 变异的旧 exe，读数与 J3 完全一样，若我拿它当「还原回绿」就是假绿。改法是 launch 前 `mkdir -p` + `test -d` 断言，并在链路里把 build/test 的 rc 逐个打印，缺目录就停而不是继续跑。
+
+**并发会话干扰（一次作废重跑）**：J1 首轮重编时构建失败于 `core/src/lease.cj:122` 报 `'substring' is not a member of struct 'String'`——并发会话写进 core 的一行编不过，非本批文件。当轮 Node 用的是旧 exe，我按「红集合越出目标模块即不归因」把它作废，等对面推进后重编（13:19 构建成功）再重跑 J1，才是上表读数。
+
+**收尾缺陷（本批发现的测试侧真问题，已改）**：并行跑 10 个远程文件时整套**冻住 13 分钟不动**，进程树取证显示卡的是本批 `remote-execution-gate.test.mjs` 的 child，它名下的 daemon（PID 4284，父 PID 正是该用例进程）仍活着。根因是我这个文件的两处无界 await：teardown 的 `await new Promise(resolve => proc.on('close', resolve))`（Windows 上 `'close'` 还要等 stdio 句柄全关，可能永远不来）与 `createTicket` 同款；另外 `boot()` 写在 `try` 之外，它自己失败时留下的孤儿 daemon 与临时目录不会被收。批次 I 我给 `stopDaemon` 加过有界等待，批次 J 反而退回旧写法。改法：`waitForExit` + 4s 有界轮询、超时升级 `SIGKILL`、`removeDir` 补 `ENOTEMPTY`、`boot` 纳入 `try/finally`，并对批次 I 那份 `createTicket` 做同样收口。**同形状隐患仍在本目录其余 8 个文件里**（`remote-auth`/`remote-events`/`remote-idempotency`/`remote-method-surface`/`remote-request-limits`/`remote-sse-recovery`/`remote-tls`/`team-host` 各有 `on('close')` 无界 await），本批不越界去改别批的文件，改用 `--test-concurrency=1 --test-timeout=120000` 取整套读数，并把这条记进下面的在飞表。
+
+**本批明确没做到的（不缩范围）**：
+1. 计划 §4 第 1 条那五类**真实子进程越权用例**（读凭据目录、写工作区外、未授权网络、fork/resource 超限、取消后逃逸进程）没写。在没有强制后端的现在，五条只会红在同一个原因上，区分不出 provider 行为；等接了后端才有可归因的红。本批只钉住了这条的**前提**——`confine` 原样传回 argv 这一事实被探针读出并驱动门禁。
+2. Linux 半（namespace/mount/seccomp/资源/进程树组合、`sandbox_linux.cj`）：**BLOCKED**，理由与探针证据见 `docs/evidence/2026-10-10-remote-platform-baseline.md` §1（退出码 1，SDK 里没有 `modules/linux_x86_64_cjnative`）与 §2（官方矩阵不含 Windows→Linux）。
+3. **传递性执行缺口**：`session/submit` 在契约里标的是 `write`，不在执行门禁的拒止面内；但它落到宿主后会驱动一轮 Agent，进而可能触发工具执行。也就是说「远程提交的会话 turn」这条路径目前绕过了 execute 门禁。关掉它需要在工具执行边界（`host_proxy.cj`/宿主侧）按 `enforcing` 二次判定，而 `host_proxy.cj` 正被并发会话持有未提交改动，本批不动。这一条是本批留下的最大真实风险，写成在飞行而非「已完成」。
+4. 审批绕过那半只有**结构性**保证（拒发生在 gate 里、建账与转宿主之前，`approval/*` 属 approval 类别且位于门禁下游，没有放行 execute 的通路），没有反证用例——因为要反证就得先有能跑的执行面。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
@@ -386,6 +434,8 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | 任务 5 的 Linux 半与「发布态」验证 | `scripts/pack-service.mjs` + `scripts/verify-service-package.mjs` + `npm/sacode-cli/bin/daemon.js`（Windows 半见批次 H） | 未做且非缩水：① Linux 收 `.so`、ELF ABI 与可执行位、`readelf`/`ldd` 依赖核对——本机无 Linux 且装系统依赖不在本次授权范围，**BLOCKED**；② 真出 tarball 并在剥 SDK、无仓库的环境里 `npm install` 后逐子命令跑——本批的合成 node_modules 布局只验了包装脚本的解析与失败码；③ 包内 Host/扩展宿主的端到端一条方法调用。**FAIL/BLOCKED 分档：① BLOCKED，②③ 未做。** |
 | 任务 10 的 Kuikly 工程与三平台真实运行 | `apps/mobile/kotlin/`＋`apps/mobile/kotlin-test/`＋`apps/daemon/test/remote-mobile-client.test.mjs`（批次 I 落的接入逻辑层） | **BLOCKED**：本机有 JDK 17 与 Kotlin 2.3.20，但缺 gradle、`ANDROID_HOME`/`ANDROID_SDK_ROOT`、`adb` 与真机/模拟器，iOS 与鸿蒙工具链也没有。缺 gradle 就没有依赖解析通道，Kuikly 模板源集路径无从冻结（任务 2 前提未兑现），所以计划命名的 `ConnectionsPage.kt`/`WorkspacePage.kt`/`ApprovalPage.kt` 与 `SecureTransportModule`/`CredentialStoreModule` 的 Kuikly 侧接线仍未落。批次 I 的 18 条**全是 JVM 单平台读数**，按计划第 6 条的告诫不冒充三平台。解锁动作：装 gradle + Android SDK（需另行授权）或提供已配好的 Kuikly 工程路径。 |
 | daemon 宣告的 protocolVersion 仍是 0.1 | `apps/daemon/src/daemon.cj` 的 `initialize` 结果位（实测回 `"protocolVersion":"0.1"`） | 批次 I 真机读数记录的不对称：请求侧已按 0.2 的显式归属（params 顶层 workspaceId/sessionId/operationId）被 gate 检查，但**宣告位没跟上**，capabilities 仍只列三条。改这一处会同时影响 `remote-capability-contract.test.mjs` 与桌面/CLI 两个客户端的版本协商，且该文件正被并发会话持有，本批未动。属任务 7 编号对齐（与 `docs/plans/sacode-product-interfaces` §8 编号待对齐同源）。 |
+| 执行门禁的传递性缺口：`session/submit` 能绕开它 | 契约 `docs/plans/remote-capability-contract.json` 里 `session/submit` 的 permission 是 `write`（批次 J 实测：`execute` 一族恰 8 条，不含它）；拒判只发生在 `apps/daemon/src/remote_gate.cj` 的请求入口 | **未闭合**。远程提交的一轮会话在宿主侧仍可能驱动工具执行，而那条路径不经过 execute 类别判定。要关它得在工具执行边界（`host_proxy.cj` 与宿主侧）按 `RemoteSandboxEnforcement.current().enforcing` 二次判定——这两个文件正被并发会话持有未提交改动，批次 J 不动。解锁动作：等其落库后按同一探针取值加边界判定，并补一条「无强制后端时远程 turn 里的工具执行被拒」的真 HTTP 用例。 |
+| 远程套件并行跑会冻住（无界 `on('close')` await） | `apps/daemon/test/` 下 `remote-auth`/`remote-events`/`remote-idempotency`/`remote-method-surface`/`remote-request-limits`/`remote-sse-recovery`/`remote-tls`/`team-host` 各有至少一处 | 批次 J 只收口了自己新增的 `remote-execution-gate.test.mjs` 与批次 I 的 `remote-mobile-client.test.mjs` 两个文件（改成有界轮询 + `SIGKILL` 升级 + `boot` 纳入 finally），其余 8 个文件同形状隐患**未动**，因为它们是别批的文件。当前取整套读数的可行口径是 `--test-concurrency=1 --test-timeout=120000`（批次 J 用这个拿到 71/71 rc=0），并行默认跑法则不确定能否收尾。 |
 
 
 三份未提交源码已通过**编译阶段**（同一次 cjpm test 里 cjc 已打印 158 warnings，其中包含 remote_*.cj 的 unused-variable 提示）；未通过的仅是**链接和运行**。→ 由 e572a78 走 daemon 副本达成运行验证；core 侧链接段仍记 BLOCKED（40 分钟未落 unittest_bin/core.exe），解锁条件是 cjpm 侧根因排查或换机器。
@@ -404,4 +454,5 @@ M1 轮（A+C+D+E+F）读数 cj **TOTAL 149 / PASSED 140 / FAILED 9**（7 条本�
 | --- | --- |
 | cjpm test 链接段无 Summary 且时长 >30 分钟 | 观察至 60 分钟；届时按死锁处理：kill 后改分模块 `cjpm build` 拿库层通过，再走 `cjpm test --target-dir` 私有目录单跑一次 |
 | 本机 WSL2 未装 Linux 发行版 | 用户执行 `wsl --install -d Ubuntu`；本会话不安装系统依赖 |
+| OS 沙箱强制后端缺失（远程 execute 族整族拒绝中） | 批次 J 的拒绝是**当前构建的终态**而非临时脚手架：`SandboxRuntime.confine` 原样退回 argv、全仓无 Job Object 用法。解锁动作按平台分两条——Windows：把 provider 换成 Job Object + 受限令牌 + 显式 ACL 的工作区挂载，且 `confineRewritesArgv()` 探针要能翻成 true 才算（只改 `enforcing` 字符串等于没做，本批的 N2 变异就是钉这一点的）；Linux：`sandbox_linux.cj` 的 namespace/mount/seccomp/资源/进程树组合，前提是先有一台 Linux 或 WSL2 发行版。两侧都要补计划 §4 第 1 条的五类真实子进程越权用例。 |
 | Kuikly 移动工程定位与三平台构建 | 用户提供外部 Kuikly 工程绝对路径；或授权本仓在 `apps/mobile/` 建 Kuikly 工程**并**安装 gradle + Android SDK（2026-10-10 批次 I 实测：JDK 17 与 Kotlin 2.3.20 已在位，`gradle`/`adb`/`ANDROID_HOME`/`ANDROID_SDK_ROOT` 全缺）。接入逻辑层已按批次 I 落并跑绿，缺的是工程本体与真机 |

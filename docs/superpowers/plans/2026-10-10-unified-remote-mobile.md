@@ -113,12 +113,12 @@ for (const row of rows) {
 
 **接口：**SandboxRuntime.confine 不再只返回未经约束 argv；提供者输出 enforcing launch descriptor、enforcement、limitations。启动前再次确认 enforcement 与部署策略；缺所需能力抛 SANDBOX_UNAVAILABLE。
 
-- [ ] 写真实子进程越权测试：读凭据目录、写工作区外、未授权网络、fork/resource超限、取消后逃逸进程。当前 argv 原样传回应产生红灯。
-- [ ] Linux 实现 namespace/mount/seccomp/资源/进程树组合；seccomp 单独不判完整，工作区挂载权限按 read-only/workspace-write。
-- [ ] Windows 核验 Job Object 之外的文件/网络隔离能力；若当前实现不能保证，拒绝远程执行并登记 BLOCKED，而不是只改 enforcement 字符串。
-- [ ] 测试内核禁 user namespace、后端缺失、启动失败都无副作用；允许网络与拒绝网络分别测。
-- [ ] 将提供者变为原 argv，指定越权用例必须红；还原重跑。沙箱失败不得通过用户批准绕过。
-- [ ] 授权后提交；外部执行的发布门仍依赖本任务 PASS。
+- [ ] 写真实子进程越权测试：读凭据目录、写工作区外、未授权网络、fork/resource超限、取消后逃逸进程。当前 argv 原样传回应产生红灯。（批次 J 只落了这条的**前半**：`confineRewritesArgv()` 探针实测 `SandboxRuntime.confine` 把 `["sacode-probe","--flag"]` 原样退回，即「当前 argv 原样传回」这一条已被钉成事实并驱动门禁；读凭据目录/写工作区外/未授权网络/超限/逃逸这五类**子进程越权用例本身仍未写**——在没有强制后端之前它们只能全部红在同一个原因上，等任务 4 接了真后端才有可区分的红，故本条不判通过）
+- [ ] Linux 实现 namespace/mount/seccomp/资源/进程树组合；seccomp 单独不判完整，工作区挂载权限按 read-only/workspace-write。（**BLOCKED**：本机无 Linux，且 Windows SDK 不能交叉编译 Linux 目标——`docs/evidence/2026-10-10-remote-platform-baseline.md` §1 实测退出码 1，报错点名 SDK 里没有 `modules/linux_x86_64_cjnative`，§2 官方矩阵也不含 Windows→Linux 组合；装系统依赖不在本次授权范围。批次 J 把这条的前提交集写进了限制清单常量——`no-namespace-or-seccomp-backend` 与 `no-file-system-isolation`/`no-network-isolation` 三项在宣告里两种结局都保留，正是这条「seccomp 单独不判完整」的口径）
+- [x] Windows 核验 Job Object 之外的文件/网络隔离能力；若当前实现不能保证，拒绝远程执行并登记 BLOCKED，而不是只改 enforcement 字符串。（批次 J 走的就是这条的第二分支。核验结果：全仓 `core/src` 与 `apps/*/src` 无 `CreateJobObject`/`JOB_OBJECT` 任何用法（grep 零命中），`SandboxRuntime.confine` 只校验档位字符串并把 argv **原样退回**，所以文件与网络隔离都不成立。据此落的实现是**拒绝**而非改字符串：`apps/daemon/src/remote_sandbox.cj` 的 `confineRewritesArgv()` 行为探针给出 `enforcing=false`，`refusalReason` 按契约的 `permission == execute` 类别（不是方法名名单）返回 `sandbox-enforcement-unavailable`，`remote_gate.cj` 在建幂等账与转宿主之前拒 `-32001`；真 HTTP 面 `apps/daemon/test/remote-execution-gate.test.mjs` 5 条钉住整族 8 条被拒、read/write 照旧、未认证只拿认证拒因、宣告与门禁同源、拒绝不落账本。BLOCKED 登记在 `docs/evidence/2026-10-10-remote-batch-progress.md`「已知阻塞」表）
+- [ ] 测试内核禁 user namespace、后端缺失、启动失败都无副作用；允许网络与拒绝网络分别测。（批次 J 落了其中两小格：**后端缺失**——`confineRewritesArgv()` 对 `SandboxRuntime.withoutBackend()` 抛异常那条分支实测回 `false`，cj 侧 `enforcementValueComesFromBehaviorNotAConstant` 钉住；**无副作用**——`remote-execution-gate.test.mjs` 最后一条证明门禁在建账**之前**拒（同一 operationId 两次拿到逐字相同的响应，不出现重放或冲突），审计只记拒因、不含 params 值与认证头。user namespace 被禁、启动失败两条属 Linux 面，**BLOCKED**；「允许网络与拒绝网络分别测」现在只有拒绝一侧（宣告恒带 `no-network-isolation`），允许一侧要等平台后端。）
+- [ ] 将提供者变为原 argv，指定越权用例必须红；还原重跑。沙箱失败不得通过用户批准绕过。（批次 J 的变异反证做的是**这条的镜像**：不改造 provider，而是把「enforcement 从哪来」逐个破坏——N1 让判定表恒放行、N2 让探针不真问 confine 而写死「有强制」、N3 漏限制项、N4 宣告里撤掉 limitations、N6 拒绝不落审计、N7 把门禁挪到认证之前，三个变异轮各有点名受害用例转红，还原后 `diff` 空、`MUTANT` 标记 0 处、双入口回绿。**「不得通过用户批准绕过」这一半是靠结构保证的**：拒发生在 `RemoteRequestGate.check` 里，位置在建幂等账与转宿主之前，审批面（`approval/*` 属 approval 类别）在门禁下游，拿不到放行 execute 的通路；但这条要求的**真实子进程越权用例仍缺**，同第 1 条，故不判通过）
+- [ ] 授权后提交；外部执行的发布门仍依赖本任务 PASS。（批次 J 按本次授权精确提交本批 5 个文件（`remote_sandbox.cj` 新增实现 + `remote_sandbox_test.cj` 新增 cj 单测 + `remote-execution-gate.test.mjs` 新增真 HTTP 用例 + `remote_gate.cj`/`daemon.cj` 各自本批 hunk）与文档，不含二进制。**发布门仍关**：本任务未整体 PASS（Linux 后端与真实子进程越权用例两条缺口都在上面），所以在有强制后端的构建上 `enforcing` 会自己翻成 true、execute 族随之放行之前，远程执行面维持整族拒绝）
 
 ## 5. Linux/Windows 同包 CLI、Host、daemon
 
