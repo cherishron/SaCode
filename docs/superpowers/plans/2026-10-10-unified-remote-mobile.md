@@ -68,7 +68,7 @@ for (const row of rows) {
 }
 ```
 
-- [ ] 冻结 0.2 请求归属、幂等、身份、事件 schema；定义旧 0.1 拒绝方式；确定普通/团队请求统一协调器及会话根。
+- [ ] 冻结 0.2 请求归属、幂等、身份、事件 schema；定义旧 0.1 拒绝方式；确定普通/团队请求统一协调器及会话根。（批次 Y，2026-10-10：`docs/evidence/2026-10-10-protocol-schema-freeze.md` 把四组 schema 逐字段与规格机械对齐——1.2 幂等的字段集/canonical 来源/冲突判定完全对得上（PASS），1.3 身份的凭据/登记/时限三条数字量与算法要求全部对得上源码（256/128/15 分钟）；剩下的 FAIL 项分布在 sessionId 反查、SACODE_WORKSPACE_ID 未 opt-in 时门禁空转、撤销事故半径全局推进、generation 不跨进程持久化、SSE 扇出无按 device 过滤。**但「定义旧 0.1 拒绝方式」这一半整条不成立**：`apps/daemon/src/daemon.cj:410-411` 硬编码 `"protocolVersion":"0.1"`，全仓 grep 不到任何版本协商或拒绝分支——今天的事实是 gate 按 0.2 判定、initialize 宣告 0.1 的混用状态，正是规格 §5 明令禁止的；要落三步（initialize 声明 0.2、`/rpc` 加协商、补一条用例），其中宿主 `apps/host/src/main.cj` 正被并发会话持有。**「确定统一协调器及会话根」这一半也定不了**：`apps/daemon/src/runtime_router.cj` 尚未创建，两桥共享同一 CWD 是巧合而非契约。取证与解锁顺序见证据文档 §4）
 - [ ] 审查方法表真实引用，记录能力缺实现时需补哪个核心/Host模块；未完成项不得进 capabilities。
 - [ ] 授权后仅提交本任务证据、方法表与检查脚本，不带入他人源码。
 

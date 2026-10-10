@@ -778,6 +778,33 @@ if (decision.allowed
 
 **仍不整体打勾**：plan §1 第 55 行整行不勾——本文件只是把 F01-F21 映射表这半补上，其余半（Kuikly 移动 UI、F11/F13-F17 上游契约缺口）都是 BLOCKED，把「有入口」当「有验收」正是本文件不判通过的口径。
 
+## 批次 Y：0.2 协议 schema 冻结与 0.1 拒绝路径（plan 第 71 行）
+
+**目标**：把 `2026-10-10-unified-remote-mobile.md` §1 第 3 条「冻结 0.2 请求归属、幂等、身份、事件 schema；定义旧 0.1 拒绝方式；确定普通/团队请求统一协调器及会话根」按源码事实逐字段冻结，并把「今天不成立」的两半写死。纯文档任务，无源码改动、无测试改动、无构建。
+
+**读到的四组冻结锚点**（都在 HEAD 上干净，本批不动并发会话文件）：
+
+- `apps/daemon/src/remote_gate.cj` 与 `apps/daemon/src/daemon.cj` 的 `/rpc` 参数抽取（1.1 请求归属）
+- `apps/daemon/src/idempotency.cj:131-135` 的 `keyOf()` 与 `apps/daemon/src/canonical_json.cj`（1.2 幂等）
+- `core/src/remote_identity.cj:102-115` 的 `AuthenticationContext` + `:176`/`:184`/`:120`/`:119` 的四处数字量（1.3 身份）
+- `apps/daemon/src/event_replay.cj` 的 `session/events` 结果位（1.4 事件）
+
+**冻结结论**：
+
+| 组 | 判定 | FAIL 项 |
+| --- | --- | --- |
+| 1.1 请求归属 | 三个字段名与规格字面一致，`gate.check` 已按显式归属判定 | `sessionId` 是否真属于请求的 `workspaceId` 无检查；`SACODE_WORKSPACE_ID` 未 opt-in 时门禁空转 |
+| 1.2 幂等 | 字段集、canonical 来源、冲突判定完全对得上规格 | 无 |
+| 1.3 身份 | 四字段集、256/128 bit、15/5 分钟时限、SHA-256 + 常数时间比较全部对得上源码 | 撤销事故半径全局推进（批次 K 已定位） |
+| 1.4 事件 | 字段、seq 字符串编码、补读顺序与规格一致 | `generation` 不跨进程持久化；SSE 扇出无按 device 过滤 |
+
+**两条整行不勾的理由**（写死在证据文档 §2 与 §3）：
+
+1. **0.1 拒绝路径整条不成立**：`apps/daemon/src/daemon.cj:410-411` 硬编码 `"protocolVersion":"0.1"`，全仓 grep 不到任何版本协商或拒绝分支——今天的事实是 gate 按 0.2 判定、initialize 宣告 0.1 的混用状态，正是规格 §5 明令禁止的。要落三步（initialize 声明 0.2、`/rpc` 加协商、补一条用例），其中宿主 `apps/host/src/main.cj` 正被并发会话持有。
+2. **统一协调器确定不了**：`apps/daemon/src/runtime_router.cj` 尚未创建；两桥共享同一 CWD 是巧合而非契约。改宿主 + 新建 router + gate 加 sessionId→workspaceId 反查三步，宿主被并发会话持有。
+
+**自证边界**：本批没有源码改动、没有测试改动、没有跑 `cjpm test` 或 `cjpm build`、没有跑 Node 测试；所有结论都是对 HEAD 上具体行号的机械读取。取证全文见 `docs/evidence/2026-10-10-protocol-schema-freeze.md`。
+
 ## 在飞未完成
 
 | 范围 | 位置 | 阻塞项 |
