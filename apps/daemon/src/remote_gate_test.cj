@@ -398,3 +398,34 @@ func initializeAdvertisesSessionEventsBecauseDaemonAnswersIt() {
         "{\"jsonrpc\":\"2.0\",\"id\":63,\"method\":\"initialize\",\"params\":{}}", "")
     @Expect((r.indexOf("session/events") ?? Int64(-1)) >= Int64(0), true)
 }
+
+// 在途流重新校验（设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」）。
+// /sse 建立之后就不再走 check()，所以撤销只挡住下一个请求、挡不住已经开着的流。
+// 空闲 tick 上重认一次是唯一能把带外撤销送进已建连接的路径。
+@Test
+func revalidateStreamKeepsLiveTokenAndAuditsNothing() {
+    let f = GateFixture()
+    @Expect(f.gate.revalidateStreamEndReason(bearer(f.goodToken)), "")
+    // 成功路径不落审计：这条是按秒轮询的心跳，落审计就把审计面变成心跳表。
+    @Expect(f.sink.size(), Int64(0))
+}
+
+@Test
+func streamEndReasonSeparatesExpiredFromRevoked() {
+    // 客户端对这两种的恢复动作相反：到期是「续期后带游标重连」，撤销是「重新登记」。
+    // 认证面故意不区分（防枚举），但关流原因必须区分，否则 §4「长连接到期关闭并续接」
+    // 会被读成设备被撤，客户端去做它根本不需要做的事。
+    let f = GateFixture()
+    f.store.expireToken(f.goodToken)
+    @Expect(f.gate.revalidateStreamEndReason(bearer(f.goodToken), deviceId: f.deviceId), SSE_CLOSE_EXPIRED)
+    @Expect(f.sink.size(), Int64(1))
+    @Expect((f.sink.at(0).indexOf("stream-expired") ?? Int64(-1)) >= Int64(0), true)
+    @Expect((f.sink.at(0).indexOf(f.deviceId) ?? Int64(-1)) >= Int64(0), true)
+    // 撤销路径给另一个原因；只说「认证都失败」不算区分。
+    let g = GateFixture()
+    @Expect(g.store.revokeDevice(g.deviceId), true)
+    @Expect(g.gate.revalidateStreamEndReason(bearer(g.goodToken), deviceId: g.deviceId), SSE_CLOSE_REVOKED)
+    @Expect((g.sink.at(0).indexOf("stream-revoked") ?? Int64(-1)) >= Int64(0), true)
+    // 完全没有 bearer（头被别处剥掉）不能谎报成到期。
+    @Expect(f.gate.revalidateStreamEndReason(""), SSE_CLOSE_REVOKED)
+}

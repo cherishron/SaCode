@@ -125,6 +125,43 @@ public class RemoteRequestGate {
         return GateOutcome(false, "invalid-token", None)
     }
 
+    // 在途流的重新校验（设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」）。
+    // /sse 建流之后就不再走 check()，所以带外撤销（--manage revoke-device 在另一个进程
+    // 改盘）只挡住下一个请求，挡不住已经开着的连接。空闲 tick 上重认一次是唯一能把
+    // 撤销送进已建连接的路径。
+    // 返回空串表示仍然有效；否则返回该用哪个原因关流。
+    // 成功不落审计：这是每秒级心跳，落审计会把审计面变成心跳表。
+    // 失败落一条 denied 并带上这条流当初认证到的设备，让「这次撤销断了几条流」可查。
+    public func revalidateStreamEndReason(authHeader: String, deviceId!: String = ""): String {
+        identity.refreshFromDisk(snapshotPath)
+        var endReason = SSE_CLOSE_EXPIRED
+        let token = extractBearer(authHeader)
+        if (token.size == 0) {
+            endReason = SSE_CLOSE_REVOKED
+        } else {
+            if (let Some(_) <- identity.authenticate(token)) { return "" }
+            // 认不过有两种：设备被撤，或者令牌到期/丢了。认证面本身故意不区分（防枚举），
+            // 但关流原因必须区分——客户端对这两种的恢复动作相反。
+            // 这里只用公开的设备清单判「还在不在、有没有被撤」，不去猜令牌内部状态。
+            if (!deviceIsRevokedOrGone(deviceId)) { endReason = SSE_CLOSE_EXPIRED } else { endReason = SSE_CLOSE_REVOKED }
+        }
+        recordDenied(deviceId, "", "sse/stream-revalidate", "", "", "", "stream-${endReason}")
+        return endReason
+    }
+
+    // 清单里没有这台设备，或清单里它已 revoked，都按撤销处理。
+    func deviceIsRevokedOrGone(deviceId: String): Bool {
+        if (deviceId.size == Int64(0)) { return true }
+        var found = false
+        for (d in identity.listDevices()) {
+            if (d.deviceId == deviceId) {
+                found = true
+                if (d.revoked) { return true }
+            }
+        }
+        return !found
+    }
+
     func recordAllowed(c: AuthenticationContext, method: String, workspaceId: String,                       sessionId: String, operationId: String) {
         let entry = AuditEntry(ts: nowMs(),
             principalId: c.principalId, deviceId: c.deviceId, instanceId: instanceId,

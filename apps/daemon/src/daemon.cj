@@ -582,9 +582,13 @@ main(args: Array<String>): Int64 {
             return
         }
         var streamDevice = ""
-        if (let Some(g) <- currentRemoteGate()) {
-            let outcome = g.checkStreamAuth(requestHeader(ctx.request, "Authorization"),
-                requestHeader(ctx.request, "Last-Event-ID"))
+        var streamAuth = ""
+        var resumeCursor = ""
+        let gateForStream = currentRemoteGate()
+        if (let Some(g) <- gateForStream) {
+            streamAuth = requestHeader(ctx.request, "Authorization")
+            resumeCursor = requestHeader(ctx.request, "Last-Event-ID")
+            let outcome = g.checkStreamAuth(streamAuth, resumeCursor)
             if (!outcome.allowed) {
                 ctx.responseBuilder.status(401).header("Content-Type", "application/json")
                     .body("{\"error\":\"authentication-required\"}")
@@ -606,19 +610,48 @@ main(args: Array<String>): Int64 {
             .header("Connection", "keep-alive")
             .header("transfer-encoding", "chunked")
         let writer = HttpResponseWriter(ctx)
-        let sub = bus.subscribe()
+        // §6 的首订阅顺序：先建立缓冲订阅，再读持久高水位。反过来做会因这两步之间
+        // 落盘的事件既不在页里、也不在缓冲里——那是「恢复」最隐蔽的一种丢事件。
+        let sub = bus.subscribe(device: streamDevice)
+        let delivered = ArrayList<String>()
         try {
             writer.write((": connected\n\n").toArray())
+            // 带 Last-Event-ID 才补读：首订阅的客户端要的是直播，不是整本历史。
+            let resume = SseResume.build(root: ".", lastEventId: resumeCursor, limit: Int64(200))
+            var k: Int64 = 0
+            while (k < Int64(resume.frames.size)) {
+                writer.write(resume.frames[k].toArray())
+                delivered.add(resume.ids[k])
+                k += 1
+            }
             while (!ctx.isClosed() && !sub.isClosed()) {
                 if (let Some(frame) <- sub.poll(1 * Duration.second)) {
-                    writer.write(("data: ${frame}\n\n").toArray())
+                    // 补读交付过的游标，缓冲里再取到同一条就丢：顺序保证了「只多不少」。
+                    if (SseFrame.delivered(ids: delivered, id: SseFrame.idOf(frame))) { continue }
+                    writer.write(SseFrame.renderLive(frame).toArray())
                 } else if (!sub.isClosed()) {
                     // 定期探测对端断连，空闲时也能进入 finally 退订。
                     writer.write((": keepalive\n\n").toArray())
+                    // 空闲 tick 上重认一次身份：带外撤销（另一个进程改盘）只有这条路
+                    // 能进已经建好的连接。按设备关流，这台设备的两条 SSE 一起断。
+                    if (streamDevice.size > Int64(0)) {
+                        if (let Some(g) <- gateForStream) {
+                            // 原因由 gate 给：到期关流要让客户端续期后带游标重连，
+                            // 撤销关流要让客户端去重新登记——两者恢复动作相反。
+                            let endReason = g.revalidateStreamEndReason(streamAuth, deviceId: streamDevice)
+                            if (endReason.size > Int64(0)) {
+                                bus.closeFor(device: streamDevice, reason: endReason)
+                            }
+                        }
+                    }
                 }
             }
-            if (sub.closeReason() == "overflow") {
-                getStdErr().writeln("sse subscription ${sub.id} closed: overflow")
+            let why = sub.closeReason()
+            if (why != "" && why != SSE_CLOSE_UNSUBSCRIBED) {
+                // §6「超过任一限额关闭并给出可恢复原因」：原因要发到流里，
+                // 只写 stderr 就是让客户端靠连接自己断来猜该重连还是该缩页。
+                writer.write(SseFrame.renderClose(why).toArray())
+                getStdErr().writeln("sse subscription ${sub.id} closed: ${why}")
             }
         } finally {
             bus.unsubscribe(sub.id)

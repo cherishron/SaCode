@@ -13,6 +13,19 @@ public let SSE_INSTANCE_LIMIT: Int64 = 64
 // 与上面三条同层，是因为它们都是「一个实例能容纳多少在途/历史」的实例级额度；
 // 超限按插入序淘汰最早那条（代价：被淘汰的键会重新执行，这在账本头部写明）。
 public let IDEMPOTENCY_LEDGER_LIMIT: Int64 = 4096
+// 设计 §6「每连接保留 1024 帧上限，并增加 4 MiB 字节上限；超过任一限额关闭并给出可恢复原因」。
+// 两个限额必须各自独立生效且原因可区分：客户端看到 overflow 该缩页重取，
+// 看到 byte-overflow 该降低订阅粒度，混成一个字符串就等于让客户端猜。
+public let SSE_FRAME_LIMIT: Int64 = 1024
+public let SSE_BYTE_LIMIT: Int64 = 4 * 1024 * 1024
+
+public let SSE_CLOSE_OVERFLOW: String = "overflow"
+public let SSE_CLOSE_BYTE_OVERFLOW: String = "byte-overflow"
+public let SSE_CLOSE_REVOKED: String = "revoked"
+// 到期与撤销必须分开：客户端收到 revoked 会走「重新登记」，收到 expired 会走「续期后带游标重连」。
+// 合成一个原因就是把两种恢复动作捏成一个，§4「长连接到期关闭并续接」就落不了地。
+public let SSE_CLOSE_EXPIRED: String = "expired"
+public let SSE_CLOSE_UNSUBSCRIBED: String = "unsubscribed"
 
 public let CONCURRENCY_DENY_RPC: String = "rpc-per-device"
 public let CONCURRENCY_DENY_SSE_DEVICE: String = "sse-per-device"
