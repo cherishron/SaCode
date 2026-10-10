@@ -138,10 +138,10 @@ for (const row of rows) {
 **接口：**服务端 AuthenticationContext 由可信入口构造，包含 instanceId/principalId/deviceId/revocationVersion；认证失败不产生 context。登记/兑换 HTTP schema 依规格 §4，业务方法只能消费 context，不能由 params 构造。
 
 - [ ] 写无凭据调用 initialize、过期/撤销凭据、跨证书、并发登记兑换、匿名 SSE 的集成红灯；验证拒绝发生在 Host.forward 前。
-- [x] 接入开关默认关闭、回环监听；外部开启缺 TLS/身份/策略均启动失败。实现两条最小 auth 端点及安全本地登记确认。（c619910 + ca3d698：`--manage enroll-ticket` 建票落盘只存摘要，daemon 运行中新建的票可被 `/auth/enroll` 消费，端到端 17/17 rc=0；TLS 证书「配了就必须以 TLS 服务」仍未接线，见证据文档在飞项）
+- [x] 接入开关默认关闭、回环监听；外部开启缺 TLS/身份/策略均启动失败。实现两条最小 auth 端点及安全本地登记确认。（c619910 + ca3d698 + 92d565b：`--manage enroll-ticket` 建票落盘只存摘要，运行中新建的票可被 `/auth/enroll` 消费；TLS 已真接进 `ServerBuilder.tlsConfig`，解码失败拒启动 78，`remote-tls` 2/2 rc=0、`remote-auth` 19/19 rc=0）
 - [ ] 使用经过任务 2 验证的 CSPRNG/摘要/常数时间校验和安全存储；凭据至少256bit、登记至少128bit/5分钟单次、token至多15分钟。禁止自行写密码学算法。
-- [ ] 添加设备轮换、撤销、每RPC认证、SSE到期/撤销关闭。无header回包不泄漏证书秘密、目录与用户列表。
-- [ ] 加入16KiB认证体、1MiB RPC体、方法/深度/并发/连接数/超时/认证限速；保留当前白名单及明确错误。
+- [ ] 添加设备轮换、撤销、每RPC认证、SSE到期/撤销关闭。无header回包不泄漏证书秘密、目录与用户列表。（92d565b 已落：每 RPC 认证 + `-32001/-32005` 归因、`--manage list-devices`/`revoke-device` 本机入口、`refreshFromDisk` 让带外撤销在下一个请求生效、`listDevices` 输出不含摘要与凭据；仍缺：按 deviceId 轮换凭据、撤销后关闭**已建立**的 SSE 流、契约里的 `auth/devices`/`auth/revoke` 认证 RPC 面）
+- [ ] 加入16KiB认证体、1MiB RPC体、方法/深度/并发/连接数/超时/认证限速；保留当前白名单及明确错误。（92d565b 已落：16KiB 认证体与每来源 10/分、每票据 5 次（c619910）、1MiB RPC 体、`readHeaderTimeout`/`readTimeout` 10 秒、每设备 8 RPC / 2 SSE 与实例 64 SSE 且授权后才占槽；仍缺：方法名与 JSON 嵌套深度的上界）
 - [ ] 审计保存 who/when/what/result；遍历日志断言无登记秘密/token/模型key。禁跨主机认证重定向与trust-all。
 - [ ] 变异删请求级认证时越权测试必须红；撤销只改存储不关连接时专属SSE测试必须红；还原回绿。
 - [ ] 授权后提交本任务文件，不开放真实防火墙或公网服务。

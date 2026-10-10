@@ -34,7 +34,27 @@
 | e572a78 | 三模块 34 条 Cangjie 单测真跑绿（daemon 侧运行，绕开 core 链接 40 分钟卡）；补 jsonEscape 后 escaped 禁词检测 | cjpm test --target-dir daemon-fix：**TOTAL 34 / PASSED 34 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0** | auditRejectsValueContainingBannedKey 首跑红（漏检 `\"credential\"`）→ 加 bannedEscaped 分支后绿；authz 未知方法变异（默认拒改默认允）→ 只 authzUnknownMethodRejected 一条红，其余 33 条绿；还原回绿 | 已入库 |
 | c619910 | 任务 6 第二批：远程接入 HTTP 面接线。dispatchRpc→dispatchRpcWithAuth 贯通 Authorization 头与 params 顶层归属；/sse 建立即认证；/health 本机匿名最小存活 + 非本机认证；新增 remote_access.cj（/auth/enroll + /auth/token 两面、16KiB 认证体、每来源 10/分、每票据 5 次锁定、实例身份文件跨重启稳定、生产 FileAuditSink、按契约表逐行装策略且坏行整体拒启动）；启动校验缺项即拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 58 / PASSED 58 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**；新增 `test/remote-auth.test.mjs` 真 HTTP socket：**15/15 rc=0**；`remote-capability-contract` **12/12 rc=0** | 三组变异各杀指定受害后还原回绿：① 撤 dispatch 层 gate 检查 → 仅 `dispatchWithGateRejectsMissingBearer`(FAILED) + `dispatchWithGateExtractsWorkspaceSessionOperationId`(ERROR) 两条红，`dispatchWithoutGateKeepsLegacyPath` 仍绿；② denied 归属写回空串 → `gateDeniedAuditsAttemptedWorkspaceAndSession` / `gatePoisonedIdentifierCannotBlankAudit` / dispatch 归属用例三条红；③ sanitizeId 改透传 → `gatePoisonedIdentifierCannotBlankAudit` / `gateSanitizeIdAcceptsIdentifierShapesAndCapsLength` 两条红。还原用 cp 备份 + `diff` 空输出证逐字一致 | 已入库 |
 | ca3d698 | 任务 6 第三批：登记票据跨进程可见 + 本地管理入口。快照升 `snapshotVersion:2` 带票据摘要与**绝对 unix 毫秒**到期；`reloadTicketsFrom` 在受理登记前合入磁盘新票；daemon 二进制加 `--manage enroll-ticket <storePath> <principalId>` 子命令（网络面仍只两面）；`/auth/token` 的 `expiresInMs` 改由 store 钟算并夹 0 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 67 / PASSED 67 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（63→67）；`remote-auth` **17/17 rc=0**（含新建票→HTTP 登记→兑换→Bearer 过授权面端到端 + 管理入口参数形状两条）；`remote-capability-contract` **12/12 rc=0** | 两个语义变异同一轮施加、受害者互不重叠：① 撤 `enroll()` 里的 `reloadTicketsFrom` → 端到端用例红（401 `invalid-enrollment`）；② `toStoreRelative` 改成原样返回（把绝对 unix 毫秒当相对刻度）→ 仅 `crossProcessTicketUsesAbsoluteExpiryNotStoreRelativeClock` 红，其余 66 条绿。还原 cp + `diff` 空输出，两侧各自复跑回绿（67/67、17/17、12/12）。**首轮 ① 是存活的**，见下节 | 已入库 |
+| 92d565b | 任务 6 第四批：TLS 真装配 + 带外撤销吸收 + §7 并发限额 + 管理入口补齐。`ServerBuilder` 接 `.tlsConfig(TlsServerConfig(...))`，证书/密钥解码失败即拒启动 78，`readHeaderTimeout`/`readTimeout` 配 10 秒；`RemoteIdentityStore.refreshFromDisk`（磁盘文本未变短路）+ gate 在 `check`/`checkStreamAuth` 认证前吸收，`listDevices`/`revokeDevice` 公开且不外泄摘要；新增 `remote_limits.cj`（每设备 8 RPC / 2 SSE、实例 64 SSE，授权后才占槽、`finally` 归还、被拒不占槽）；`--manage` 增 `list-devices`/`revoke-device` 并把 arity 与未知子命令统一拒 | `cjpm test`（daemon，私有 target-dir）：**TOTAL 80 / PASSED 80 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（67→80）；`remote-tls` **2/2 rc=0**（新建套件）；`remote-auth` **19/19 rc=0**；`remote-capability-contract` **12/12 rc=0** | 两轮施加、受害者互不重叠。轮 1（Cangjie）：① 撤 `/rpc` 的 `finally` 归还 → `dispatchReleasesRpcSlotAfterEachRequest` 红；② `acquireRpc` 上限改恒真 → `dispatchRejectsWhenDeviceRpcSlotsAreExhausted`/`rpcSlotsAllowEightPerDeviceThenDenyNinth`/`rpcSlotReleaseFreesCapacityAgain` 红；该轮 **TOTAL 80 / PASSED 76 / FAILED 4 rc=1**，红集合不越出 RPC 槽位族。轮 2（Node，重打二进制）：③ 撤 gate 的 `refreshFromDisk` → 仅「管理入口列设备与撤销对在跑的 daemon 生效」红；④ 注释 `.tlsConfig(...)`（启动行仍打 `https://`）→ 仅 TLS 第 1 条红、坏证书拒启动那条仍绿；⑤ `acquireSse` 设备上限改恒假 → 仅「每设备第 3 条 SSE 被限额拒回」红；该轮 auth **17/19**、tls **1/2**。两轮各自 cp 备份 + `diff -q` 空输出证逐字还原（还原后 `MUTANT-` 标记计数 0），再全链复跑回绿（80/80、19/19、2/2、12/12） | 已入库 |
 
+### 92d565b 的两处夹具红与一处被关掉的真实缺口
+
+- **两条红都是我自己写的夹具，不是被测面**。① `remote-tls.test.mjs` 用
+  `-subj CN=127.0.0.1` 出自签证书，openssl 直接报
+  `req: subject name is expected to be in the format /type0=value0/...`，用例在生成夹具阶段就炸；
+  改成 `/CN=127.0.0.1` 后同一份断言一次过。② `remote-auth.test.mjs` 的 SSE 用例借用了
+  `boot()` 里那个带 `AbortSignal.timeout(10000)` 的 `get()`——那是给短响应设计的。长连接被自己的
+  定时器掐掉后 DOMException 记到用例头上、错误信息是空串，看起来像被测面挂了。独立探针给的是相反结论：
+  两条流各收到 `: connected` 首帧、第 3 条 `429 concurrency-denied / sse-per-device`
+  且 `content-type` 是 `application/json`、关掉一条后 **1179ms** 内新流建起来。
+  用例改成流自带 reader、断言首帧、并在定时器到点前主动 `cancel()`，不再用带超时的 `get()` 开长连接。
+- **被关掉的真实缺口**：证书只做启动校验、从未接进 `ServerBuilder`，即「配了 TLS 却明文服务」。
+  这条现在由变异 ④ 反向钉住——把装配注释掉、启动行照样打 `https://`，只有真发 https 请求的用例会红。
+- **本轮踩到的 stdx 形状**（编译器原文）：官方 `stdx/net/tls` 文档写的
+  `import stdx.crypto.x509.{X509Certificate, PrivateKey}` 在 1.1.3 上报
+  `undeclared identifier 'PrivateKey'`；真实包是 `stdx.crypto.common`，而且 `PrivateKey` 是接口，
+  直接 `PrivateKey.decodeFromPem` 报 `static invocation contains unimplemented static function`，
+  必须走 `stdx.crypto.keys.RSAPrivateKey.decodeFromPem`——因此启动拒因拆成
+  `tls-cert-undecodable` 与 `tls-key-undecodable` 两条，而不是混成一条。
 ### ca3d698 抓到的两处问题
 
 1. **`expiresInMs` 报得比名义 TTL 还长（实测 900001 > 900000）**。引导层 `RemoteAccessEndpoints`
@@ -104,8 +124,8 @@
 
 **桌面侧总计（本轮）**：`target-store` 28、`remote-transport` 26、`remote-transport-integration` 7、
 `target-bridge` 17、`multi-target-integration` 3、`tls-pin` 9，共 **90** 条断言全绿。
-**daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **17/17** rc=0（ca3d698 轮）。
-**daemon Cangjie 侧**：`cjpm test` **TOTAL 67 / PASSED 67 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（ca3d698 轮）
+**daemon Node 侧**：`remote-capability-contract` **12/12** + `remote-auth` **19/19** + `remote-tls` **2/2** rc=0（92d565b 轮）。
+**daemon Cangjie 侧**：`cjpm test` **TOTAL 80 / PASSED 80 / SKIPPED 0 / ERROR 0 / FAILED 0 rc=0**（92d565b 轮）
 （身份 11 + 审计 6 + 授权 12 + gate 8 + 归属净化 3 + 分派接线 3 + 引导面/限速/配置 15 + 设备持久面 4
  + 票据跨进程与管理入口 5；上一轮 63 条里的 `enrollmentTicketsAndTokensAreNotPersisted` 与「票据不落盘」
  的新契约互斥，已替换为 `ticketFromAnotherProcessIsConsumableButTokensAreNotPersisted`）。
@@ -115,9 +135,9 @@
 | 范围 | 位置 | 阻塞项 |
 | --- | --- | --- |
 | 身份/审计/授权 3 模块 core 侧 cjpm test 链接 | core/src 单测副本仍在（738b829 + e572a78 修好），本会话无法在 40 分钟内出 unittest_bin/core.exe | **绕过**：e572a78 把同一批测试以 `package daemon + import core.*` 副本落到 apps/daemon/src/，`cjpm test --target-dir daemon-fix` 5 分钟出 **TOTAL 34 / PASSED 34 / FAILED 0 rc=0**，运行验证已到手。core 侧原路径未删，若未来链接段解锁可再直接跑；本轮记 BLOCKED（非 FAIL）。 |
-| TLS 只做了启动校验、没接进 `ServerBuilder`（**ca3d698 轮新发现的真实缺口**） | `remote_access.cj:336` 校验 `certPath/keyPath` 存在；`daemon.cj` 建服务时从未调 `.tlsConfig(...)` | 后果：配了证书也照样明文服务，客户端以为 bearer 走在 TLS 上。设计 §4「所有网络，包括内网，都禁止明文 bearer」未满足。红先用例已写好（`apps/daemon/test/remote-tls.test.mjs`：https 可达 + 明文打不进 + 启动行须报 `https://` + 坏证书拒启动 78），下一批接 `.tlsConfig(TlsServerConfig(X509Certificate.decodeFromPem, PrivateKey.decodeFromPem))`；本机 stdx 有 `net.tls`，openssl 3.5.4 可出自签 SAN=IP:127.0.0.1 夹具。 |
-| 设备轮换、设备列表与撤销的本地管理面（任务 6 剩余） | `remote_identity.cj` 只有 `generateCredential`/`revokeDevice`，没有按 deviceId 轮换凭据与列设备的公开方法；`--manage` 目前只有 `enroll-ticket` | 规格 §4 要求「设备列表、确认、撤销只能通过本机受保护管理入口或具有显式管理权限的认证 RPC」。CLI 半边可在本仓补（`--manage list-devices` / `revoke-device`，快照里本就有 revoked），带管理 scope 的认证 RPC 半边属任务 7 的授权分派。 |
-| 每设备 8 并发 RPC / 2 条 SSE、实例 64 条 SSE、请求头与体 10 秒超时 | 设计 §7 限额，`remote_access.cj` 已落 16KiB 认证体与来源限速 | 并发与超时计数尚未接入 daemon 路由。**stdx 能力已核实**（`http_server/README.md` 第 55-58 行）：`ServerBuilder.readHeaderTimeout(Duration)` / `readTimeout(Duration)` / `writeTimeout` / `maxRequestHeaderSize` 是配置项，10 秒超时直接配；每设备并发数无现成配置项，需要自计（`GateOutcome.context` 已带 deviceId，可在 `/rpc` 与 `/sse` 两支做有界计数）。 |
+| 设备凭据轮换，以及撤销后关闭**在途** SSE | `--manage list-devices`/`revoke-device` 与 `RemoteIdentityStore.listDevices`/`revokeDevice`/`refreshFromDisk` 已入库（92d565b），但 `remote_identity.cj` 仍无按 deviceId 轮换凭据的公开方法；契约里的认证 RPC 面 `auth/devices`/`auth/revoke` 也未接 | 设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」目前只到请求粒度（下一个请求被拒），已建立的流不会被打断；轮换与 RPC 管理面属任务 7 授权分派。 |
+| 远程方法面只有 16 条可转发（契约表 119 行，其中 116 行在 host/core/daemon 非测试源码里能找到实现字面量） | `apps/daemon/src/host_proxy.cj:38` 的 `hostMethods` 硬编 16 条，白名单外一律 -32601；`initialize` 对客户端宣称的能力面就是这份表 | 契约里 `clientConsumers` 含 mobile/cli 的 84 条中，`goal/*`、`tips/*`、`execution/*`、`model/*`、`lsp/*`、`global/*`、`attachment/*`、`credential/*` 等家族到不了远程面。下一批按「契约 ∩ Host 实际可分派」扩白名单，并用契约检查双向钉住：不得转发无实现锚点的方法，已实现的远程方法不得漏转发。 |
+| `session/events`（断线恢复事件回放）与服务端幂等落库 | 契约表里 `session/events` 的实现锚点是「拟新增: apps/daemon/src/event_replay.cj」，全仓无该文件；`operation_store.cj` 同理未落 | 客户端面已交付（d66aae8/34b5cfe 的 Idempotency-Key 与 Last-Event-ID 透传），服务端面属任务 8。这是 119 行里唯一一条锚点尚不存在的转发候选，必须保持「不宣称能力」。 |
 | Host 侧接受 0.2 显式归属字段 | `apps/host/src/main.cj` 由并发会话持有未提交改动 | daemon 已按 params 顶层取 workspaceId/sessionId 并交给 gate，但被转发方法是否真按该归属执行，属任务 7（唯一实例与显式会话路由）。 |
 
 
