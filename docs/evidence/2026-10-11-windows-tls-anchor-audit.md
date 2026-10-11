@@ -1137,6 +1137,45 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 另：上一枚提交 `438d1ed` 的正文写「纯增 6 行」，实测 `git diff --numstat` 是 **7/0**，正文那条计数错，在此更正（不影响正文内容）。
 
+## 42. 批次 E 的装机腿（已获授权实跑）：载荷四条腿全对、装机副本 296 条绿，但安装包**没写注册表也没建快捷方式**，自带卸载器因此空转（rc=0 而 0 删除）（2026-10-11 11:39–11:55 实测）
+
+授权口径：只装进 `apps/desktop/.tmp-test/nsis-install/`，跑它自带的 `/S` 与卸载器，核对注册表项与快捷方式在卸载后清零、宿主进程零残留，**不影响已安装应用**。
+
+**动手前先把撞车风险排掉**（不是事后追认）：从 electron-builder 自己的代码算出本包的卸载键——
+`NsisTarget.js:157` `guid = options.guid || UUID.v5(appInfo.id, ELECTRON_BUILDER_NS_UUID)`、
+`:28` 命名空间 `50e065bc-3134-11e6-9bab-38c9862bdaf3`，代入本机 `appId = com.cherishron.sacode.desktop`
+得 `e56f7b8d-2c32-5aaa-b268-cf000322f618`；当时 `HKCU\…\Uninstall` 下 12 个子键**没有这个 GUID**，
+用户那项是另一个 GUID `1bf39983-…`。两者不同 → 才继续。
+
+装机与运行读数：
+
+| 步骤 | 读数 |
+|---|---|
+| 安装（`/S /D=<沙箱>`） | `SETUP-rc=0`，落 **167 个文件 / 343,810 KB** |
+| 宿主载荷哈希（三条腿） | `nsis-install` = `dist/host` = `win-unpacked` 三者逐字节相同：`d2ef66eb8c3edc9a53efb0b9777c14255f440eee47bb488dead90e9f880e2a4c` |
+| 壳本体哈希（第四条腿） | `nsis-install/SaCode.exe` = `win-unpacked/SaCode.exe` = `913c2ea0ab66e942885736d43dcb982082c9c51e1cd62676c2901153409f8fd8`（各 188,784,640 B） |
+| 装机副本 `--ui-smoke`（补 `SACODE_SSE_FIXTURE` 后） | **rc=0、296 条 `UI OK` / 0 条 `UI FAIL`**、末行 `UI_SMOKE PASS`；报告体 `passed=true failed=0 checks=296 packaged=true`（35,628 B）。这是第一条「真·装机副本」上的 296 证据（此前 296 只在 win-unpacked 与 portable 上取过） |
+| 该轮 `session.log` | 57 行 tab 分隔；`assistant/message` **2** 行、`turn/usage` 落账（`12:12`）；密钥特征（`sk-[A-Za-z0-9]{8,}` / `Bearer …{16,}`）**0 命中** |
+| 进程残留 | `Get-Process electron,SaCode,sacode-host` = **NONE-0**（冒烟后与卸载后各测一次） |
+
+**两条真缺陷（不缩范围，按 FAIL 记）**：
+
+1. **注册登记缺失**：装完 167 个文件后，`HKCU\…\Uninstall\e56f7b8d-…` **不存在**；`Software\e56f7b8d-…`（`INSTALL_REGISTRY_KEY`，模板 `multiUser.nsh:8` 定义，值取的是同一个 v5 GUID 而非 appId）也**不存在**；32 位视图 `WOW6432Node` 两处同样为空（模板 `common.nsh:59` 确实 `SetRegView 64`，不是视图错位）；Start Menu 匹配 **0** 项、桌面 **0** 项。⇒ 这个包实测是**纯文件布局安装器**，卸载列表里找不到它。
+2. **自带卸载器空转**：`"Uninstall SaCode.exe" /S` 报 `UNINST-rc=0`，但 **167 个文件一个没删**，且无活着的卸载进程、无临时副本残留。机制只到行为层：卸载器要先从注册表读 `InstallLocation`（`multiUser.nsh:26`），而那份键从未被写 → 与缺陷 1 同族。**为何安装时没写注册表，本轮未定位**（候选：本机策略拦非常规进程的 HKCU 写 / 该 installer 的注册段未执行），不写成已归因。
+
+用户既有应用无损（装前后各测一次，逐字未变）：`1bf39983-…` 的 `DisplayName = DeepSeek Harness 0.2.0-rc.2`、`D:\Program Files\Deepseek\DeepSeek Harness` 仍在。
+
+沙箱外那处可疑目录**排除了本次责任**：`%LOCALAPPDATA%\com.cherishron.sacode.desktop`（1,018 文件 / 180,039 KB，Edge WebView2 档案）目录建于 Sep 25、内容 Oct 2，`find -newermt 2026-10-11` 命中 **0** 个文件 ⇒ 不是我这次装机造的，**未动它**（其中 WebView2 缓存 blob 能 grep 到 `sk-` 形状串，属用户既有浏览器缓存，不打印、不处置）。
+
+我自己的两个探针错，都差点变成假结论：
+
+- **第一次装机冒烟 rc=1 / 只 252 条**，报 `Cannot find module …\nsis-install\scripts\sse-contract-server.cjs`。根因不是产品缺陷，是**我漏传了 HEAD 既有的驱动约定** `SACODE_SSE_FIXTURE`（`test-support/ui-smoke.cjs:999` 注释原话「打包态从 asar 里往上爬找不到仓库 `scripts/`，由驱动用 `SACODE_SSE_FIXTURE` 指到真实那份」；`batchE.md:25` 早已记录同一个 252 断点）。这是本轮第三次「驱动侧遗漏造成假红」，前两次是标记名读错。
+- 我用 `'"role":"…"'` 这种 JSON 形状探针去查**tab 分隔**的 `session.log`，得 0 命中，差点写成「装机日志里没有消息」；换 `awk -F'\t' '{print $2}'` 才读出 14 种事件名与 `assistant/message` 2 行。判据：**探针形状必须对着文件真实分帧，不能对着想象中的格式**。
+
+收尾：卸载器没删的 167 个文件，由我按授权的「不留安装残留」意图在沙箱内 `rm -rf` 掉（`.tmp-test/` 已 gitignore，重装一条命令即可复现）。
+
+**批次 E 装机腿判决**：文件布局 PASS / 装机态运行 **PASS（296/0，rc=0）** / 载荷哈希四条腿 **PASS** / 注册登记 **FAIL** / 自带卸载 **FAIL（rc=0 但 0 删除）** / 用户既有应用无损 PASS / 进程零残留 PASS。NSIS 作为「可安装并可卸载的产品」仍差注册登记与卸载器两条，属交付缺口，**不能因「文件齐、跑得通」记作已解决**。
+
 
 
 
