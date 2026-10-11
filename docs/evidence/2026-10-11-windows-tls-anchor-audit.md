@@ -644,6 +644,24 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **判据更新**：`core cjpm test 计数与 rc` = **BLOCKED**，解锁条件从笼统的「等别人落库」具体化成三条可核对的前置：① `registerBuiltinCommands` 的实现落库（工作区态）；② `cmds.cj` 改掉默认参数值与大括号返回类型两处语法（提交态）；③ `team_board.cj` / `team_workspace.cj` 依赖的 `protects` / `isDurableFrozen` / `freezeAfterDurableFailure` / `durableCheckpointBatched` / `GitQueryResult` 与 `webUrlEncode` 重载冲突随实现一并落库（提交态）。三条都不由我持有，缩范围或改断言都不在该项的允许处置里。
 
+## 27. 第三条腿也拿不到计数：把工作区实现整体借进提交态副本后，红换了一批但仍停在「根本没跑」（`38 errors generated / 8 printed`，Summary 0）（2026-10-11 09:10–09:33 实测）
+
+§26 做了两次单变量实验（纯 HEAD、只借 `cmds.cj`）。这轮把第三条腿做穷：**副本 = HEAD 的测试面（含 `6b8e4b7`+`b72d621` 的夹具重载）+ 工作区全部未落库实现面**——只动 `D:/Temp/SaCode-core-cnt-20261011` 这份副本，逐文件 `cp` 覆盖 169 个非 `*_test.cj` 文件，共享工作区一个字节没改（覆盖后 `git -C 副本 status` 只报本批预期的 M/??）。
+
+**读数**：库层第一次编过（`160 warnings generated`，无 error）；测试面 **`CJPM-rc=1`、`38 errors generated, 8 errors printed`、剥码后 `Summary: TOTAL` 出现 0 次** ⇒ 仍是第三态「根本没跑」，**没有可报的条数**。打印出的 8 条全是同一形状 `expected 'Struct-String', found 'Struct-Path'`：
+
+| 位置 | 原文 |
+| --- | --- |
+| `worktree_setup_test.cj:288:26`、`worktree_setup_test.cj:313:26` | `let log = SessionLog(Path(repo).join("a.log"))` |
+| `worktree_test.cj:191:43`、`214:26`、`245:26`、`267:26`、`285:26`、`304:43` | 同一类把 `Path` 传给期望 `String` 的调用 |
+
+**两条判读**：
+
+1. 我修的 6 个 `wsTWrite(Path…)` 调用点（原先报在 160/181/217）没有再出现在打印集合里，报错形状换到了 `SessionLog(...)` 上。但 `8 printed` 是编译器上限（`cjc --error-count-limit <value|all>` 默认 8，本轮实测 `cjpm test --help` 里**没有**直传该参数的口子，只有 `-V`），所以「消失」本身不构成定论；定论要靠 `-V` 抓到测试面那条 `cjc` 命令行后原样重跑并加 `--error-count-limit all`，把 38 条全列出再与 `worktree_setup_test.cj` 的行号集合做差。这条腿本轮正在跑，读数单独记。
+2. 更硬的新事实是：**这条「借实现」的路也拿不到 core 测试计数**。§16 已经见过反方向（已入库测试对不上未落库实现签名，同一批 49 条在工作区态与「HEAD+7 实现文件」态各测到一次）；现在把实现**全量**借过来，红仍然停在测试面，只是换了调用点。合起来：**提交态测试面与工作区实现面之间是双向签名漂移，任何单向借用都补不齐**——所以「core cjpm test 计数与 rc」今天的不可达不是某次构建没跑成，而是两侧必须同时落到同一个 commit 上才可能出 `Summary`。§26 的三条前置因此收紧成这一条更本质的判据。
+
+**顺带做的一次密钥自查**（`.tmp-test/secret-scan.mjs`，脚本只输出布尔与计数，不打印键或其任何前缀）：把 `~/.sacode/user/credentials.env` 里长度 > 20 的值读进内存，对 `.tmp-test/` 下所有 `*.log|*.txt|*.json|*.md|*.clean` 逐个 `includes` 比对。读数：**`secret-vars-loaded=1`、`scanned=325`、`leaked-files=0`，脚本 rc=0**（这条 rc 是先重定向落盘再 `echo real-rc=$?` 取的，不是 `| tail` 之后那个——即 §25 登记的第二条陷阱）。这把「凭据不落盘」这条红线在本批全部取证文件上验了一次，而不只是靠 `session.log` 不含键那一处。
+
 
 
 
