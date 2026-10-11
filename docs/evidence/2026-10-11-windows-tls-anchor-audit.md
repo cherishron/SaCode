@@ -950,6 +950,26 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 **不需要因为本批改动而重跑**；保留的限定语只有一条——它们本就是「**含并发线未落库源码**」的构建，
 这条限定与 §36 六里给批次 D 的那句同源。**PASS，非 BLOCKED**（因为要判的「产物是否对应现源码」已被两条独立查法证实）。
 
+## 38. A2「统一默认证书配置」做到**站点级**复核：全部走 TLS 的客户端都带锚，唯一没带的是纯回环 http（2026-10-11 10:43 实测）
+
+此前 A2 只证到「`sse.cj` 这一处改了」。本轮把范围拉满：**全仓每一个 `ClientBuilder()` 站点**逐面核。
+
+- **带锚的生产站点 6 个文件**（`grep -rln 'defaultTlsClientConfig()' core/src apps/host/src`）：
+  `sse.cj:94`、`model_catalog.cj:104`、`web_exec.cj:185` 三处是 `.tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()` 一行式；
+  `hook_executor.cj:262`、`web_http.cj:78` 两处是**跨行链式**，`.tlsConfig(...)` 落在后续行。
+- **没带锚的站点逐面判过，全部不涉 TLS**：`apps/cli/src/remote.cj:320`（`remoteSendRequests`）与 `:398`（`remoteSubscribePort`）
+  的 URL 是 `http://127.0.0.1:${port}`，该文件 `grep -n 'https\|tls'` **零命中**；`sse_test.cj:489/:638` 是测试内本地服务端。
+  回环明文不需要信任锚，所以这不是「统一」的漏网点。
+- **红线复核（当前入库态，不靠记忆）**：全仓 `TrustAll` 仅 **5 处**，全在注释或用例名里
+  （`tls_roots.cj:16` 的「任何情况下都不退到 TrustAll」、`tls_roots_test.cj` 的红线注释与用例名
+  `clientTlsConfigWithoutRootsStaysOnDefaultNeverTrustAll`），**没有一处把它当可通过期望值**；
+  `verifyMode: None` / `InsecureSkipVerify` / `verify-none` 这类旁路开关**零命中**。
+
+**顺手更正我自己的方法错**：第一次分类是按行 `grep 'ClientBuilder()'` 再判该行有没有 `tlsConfig`，
+于是把上面两处跨行链式误标成「NO-TLS」，差点写成「A2 仍有两个站点绕过锚」。
+判据：**跨行链式调用不能按行分类**；要用 `grep -l` 的文件集合与按行站点集合做差集，
+差集里的站点必须逐处读上下文再定性——这次两条腿（文件级 helper + 逐行 URL 形态）合起来才把结论钉住。
+
 
 
 
