@@ -611,7 +611,7 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 **读数**（全部为本轮实测）：
 - 零网络整形探针 `.tmp-test/helper-probe.mjs`：**HELPER 12/12 PASS**，先落盘再取 rc，**real-rc=0**（日志 `.tmp-test/probe-25.log`）。其中包含 `extra_cannot_be_clobbered`、`extra_provider_decoy_survives`、`extra_settings_override`、`anchor_still_set_with_extra`、`inherited_provider_still_dropped` 五条顺序与共存断言。
 - 七个文件一起 `node --test`（带 `STEPFUN_API_KEY` + `SACODE_HOST`）：**# tests 11 / # pass 11 / # fail 0 / # cancelled 0 / # skipped 0**，包装脚本 `CREDSIX-rc=0`。比 §22 的 3 条多出 8 条，是因为这次把原先被 `!host` 挡掉的 `host-startup-recovery` 两条也放进了同一腿；收尾 `tasklist` 实查 `sacode-host.exe` **零残留**。
-- 带凭据全套 `npm test`：**# tests 671 / # pass 669 / # fail 0 / # cancelled 0 / # skipped 2**，`CREDALL-rc=0`——与 §22 基线逐位相同，说明这次纯接线的迁移没碰坏任何一条既有断言（余下 2 条 skip 仍是 `{ skip: !host }` 之外的既有门控）。
+- 带凭据全套 `npm test`：**# tests 671 / # pass 669 / # fail 0 / # cancelled 0 / # skipped 2**，`CREDALL-rc=0`——与 §22 基线逐位相同，说明这次纯接线的迁移没碰坏任何一条既有断言。**这 2 条 skip 就是上面放行的那两条**：全仓 `test/` 目录里只有 2 处 skip 门控（`host-startup-recovery.test.mjs` 的两条 `{ skip: !host }`，ripgrep 全目录仅此二命中），而 `npm test` 这一腿的包装脚本 `.tmp-test/cred-all.cmd` 压根没设 `SACODE_HOST`（实读第 2–11 行），所以它们照旧被挡。也就是说 skipped 2 不是「未知门控」，而是**消得掉的**：补一条设了 `SACODE_HOST` 的全套腿就该是 skipped 0（已在 §26 之后准备 `.tmp-test/cred-all-host.cmd` 专跑这一腿）。
 - 改动面：`git show --stat d674f68` = 4 files、16 插 / 22 删，全部在 `apps/desktop/test*`；产品源码一行未动。
 
 **登记两条 rc 读数陷阱**（都是本轮自己踩的）：① 后台任务通知里的「exit code 0」是我包装命令（末尾 `echo "CJPM-rc=$?"`）自己的退出码，被包装的原命令真实读数只看日志末行；② `node x.mjs | tail -6` 之后取 `$?` 拿到的是 `tail` 的 0，不是 node 的——本轮复跑探针时先这样拿过一次假 0，改成「先重定向落盘、再 `echo real-rc=$?`」才拿到真值。
