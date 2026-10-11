@@ -70,3 +70,23 @@
 解锁/推进动作（都不在本批）：
 - 让并发会话把 `apps/desktop/plugins-ipc.cjs` 与其 `main.cjs` 拆分落库，第 3 项的假象才从 HEAD 消失；
 - 第 1、2 项若要真做，先补核心的模型（远程源解包链 / entry 级启用位），再谈接线与测试。
+
+## 6. 第 3 项（install cancel）复验：HEAD 的假象原文钉出，工作树的修复+钉桩用例实测绿，但仍未落库（2026-10-11 08:37–08:46 实测）
+
+上面 §5 的表是 03:52 的快照，本轮只补第 3 项的两端证据，表体不改。
+
+**HEAD 侧假象的原文**（`git show HEAD:apps/desktop/main.cjs` 第 724-726 行，逐字）：
+
+```
+ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
+  return { cancelled: true, output: "install-was-not-running" };
+});
+```
+
+没有任何在途安装被取消，却回 `cancelled: true` —— 渲染层 `plugin-manager-adapter.ts:331` 收到回执后把状态推到 `cancelling`，这是本批唯一的模拟成功。HEAD 的 `plugin-manager-wiring.test.mjs` 里也只有 entry 那条 `/-32033 plugin-entry-not-wired/`，**没有**任何针对取消的拒绝断言，所以 HEAD 上这条假象没有测试能挡住。
+
+**工作树侧**：`apps/desktop/plugins-ipc.cjs` 整个文件是**未跟踪**（`git status` 显示 `??`），里面 `:50-52` 已把同一动作改成 `throw Error('plugin-install-cancel-not-wired')`；`test/plugin-manager-wiring.test.mjs` 是**已跟踪但被改**（` M`），新增用例 `宿主没有安装取消契约时桌面不得假报已取消`（该文件 `:39`）。
+
+**本轮实测读数**：带凭据全套 `node --test`（671 条）里这四条接线用例逐条绿 —— `ok 371 桌面包启停保留布尔类型和核心回执`、`ok 372 桌面组件启停请求写动作，宿主拒绝不得伪装成功`、**`ok 373 宿主没有安装取消契约时桌面不得假报已取消`**、`ok 374 桌面检视和安装进度原样返回宿主事实`；整批 `# pass 669 / # fail 0 / # cancelled 0`，rc=0。
+
+**判决不变**：第 3 项在**工作树态**已经是「具名拒绝 + 有测试钉住」（不再是假象），但**HEAD 态仍是模拟成功**，所以本批不把它算作已解决。这两个文件都在并发会话手里（一个未跟踪、一个已修改未提交），我不动它们、也不代它们落库——落库动作只能由那条线自己做。反证一句如实说：`ok 373` 绿的是**工作区态**，不是提交态；只跑 HEAD 副本时这条用例根本不存在，因此它现在挡不住任何回归。
