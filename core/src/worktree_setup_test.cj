@@ -57,6 +57,16 @@ func wsTWrite(file: String, text: String): Unit {
     File.writeTo(file, text.toArray())
 }
 
+// 下面两个重载只为已存在的调用点补齐：夹具里有 6 处直接拿 Path（以及其 UTF-8 字节）来写盘，
+// 早前只声明了 (String, String) 这一版，整个 core 测试目标因此在提交态就编不过。
+func wsTWrite(file: Path, bytes: Array[Byte>): Unit {
+    File.writeTo(file, bytes)
+}
+
+func wsTWrite(file: Path, text: String): Unit {
+    File.writeTo(file, text.toArray())
+}
+
 // 项目设置写进 <repo>/.sacode/settings.json（走默认解析路径），用户设置给私有文件。
 func wsTProjectFile(repo: String): String {
     return Path(repo).join(".sacode").join("settings.json").toString()
