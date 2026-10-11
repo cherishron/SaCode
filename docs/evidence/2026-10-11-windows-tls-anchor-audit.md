@@ -752,6 +752,15 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **副作用与卫生**：全程未执行安装、未写注册表、未启动安装包、未联网。落点只有 `.tmp-test/nsis-4th-leg/`（gitignored）：`listing.txt` 14,559 B、`extract.log` 611 B、`extract-asar.log` 610 B、`out/sacode-host.exe` 11,158,528 B、`out/app.asar` 6,794,111 B；93,719,789 B 的中间切件按「做完即删」已 `rm` 掉，复现法是「探针取 offset + 按 offset 复制到 EOF」两步，offset 已写在正文（140,446）。
 
+## 32. 工作区态 `cjpm test` 的**库层**已结算：0 error / 160 warnings / `libcore.a` 6,414,900 B @09:52 全新落盘；测试面仍在编，计数仍未到手（2026-10-11 09:52–10:00 实测）
+
+§30 那条腿（`cjpm test`，工作区态）跑到 10:00 的中间事实，单独记一条，因为它们**不等 Summary 也成立**：
+
+- **库层编译结算**：剥码后日志的最后一段是 `160 warnings generated, 160 warnings printed.`，且**全程 `error:` 计数为 0**；该段落出现 **1 次**（对应库层那一段编译）。产物侧同时给上了硬证据：`core/target/release/core/libcore.a` **6,414,900 B @09:52**、`core-cache.json` @09:52——都是本轮新生成，不是上一轮的残留（批次 B 那句「产物 mtime/体积证明本轮新构建」在库层这一侧已经满足）。
+- **测试面仍在进行**：`cjpm.exe`(23872) 之下挂着 `cjc.exe`(24560，RSS 1,548,768 K)，`core/target/release/unittest_bin/` 目录空、`Summary` 计数为 0 ⇒ 按 §27 那套判据现在**还不能报任何用例数**，只能报「库层绿、测试面未结算」。既往读数里这一段（测试目标编译 + link）是 30 分钟量级的静默段，不判挂死。
+
+**顺带登记一条仓库根卫生违规（不是我造的，也没擅动）**：提交前 `git status --short --untracked-files=all` 按顶层聚合时露出仓库根有一个**未跟踪且未被忽略**的文件 `tmpFilea27728`——`file` 判 JSON text、236 B、mtime **2026-10-10 10:54**（早于本批开工），内容形态是 `snapshotVersion/revocationVersion/nextDeviceId/devices/enrollments[{digest,principalId:"p-b",expiresAtUnixM…}]`，即某条设备撤销/注册线的一次落盘；`git check-ignore -v` 明确返回 NOT-IGNORED。按 AGENTS.md「仓库根只允许已入库的源码、文档与配置；出现未跟踪未忽略的顶层文件即视为违规」这条**成立**，但它的 mtime 与内容都不属于本批任何一条腿（本批临时产物全部落 `.tmp-test/`，§27 那次 325 文件扫描也确认没有密钥外泄），且并发会话可能正在读它——**所以我没有删也没有移**，等一句授权再处置（可逆做法：原字节移进 `apps/desktop/.tmp-test/`）。
+
 
 
 
