@@ -824,6 +824,24 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **所以批次 A 不能报完成**：链路本身（A1/A2/A3）有实测支撑，但目标文本明写的「core cjpm test 计数与 rc」这一条今天**两侧都拿不到**，且今天多了一条更硬的证据——即使把实现全借过来（§27）、即使符号定义已出现在工作区（本节），只要测试与实现不同源同批落库，`Summary` 就不会出现。**解锁动作不变且更具体**：并发线把 `cmds_test.cj`/`agent.cj`（以及 `session.cj` 的 `SessionLog` 构造与 `worktree*_test.cj` 的调用形状）**同一批**落库后，我再跑一次 `cjpm test` 取五计数。
 
+## 35. 逐批次终判表（本轮 A–G 一次收拢，每格带实测读数与出处；两处 BLOCKED 不含任何替代性绿灯）2026-10-11 10:10
+
+| 批次 | 判 | 实测读数 | 出处 |
+| --- | --- | --- | --- |
+| A1 系统信任根进 TLS | **PASS（机制替换已如实登记，不是按原方案实现）** | crypt32 进程内枚举恒 NULL（路由证伪，两条读数）；改走构建期导出 PEM 注入 `CustomCA`；锚集合 raw=94 / distinct=53 / 随包 53，逐张对得上 | §3、§14、§24 |
+| A2 `tls_roots.cj` 与测试、`sse.cj` 统一默认配置 | **PASS** | `core/src/tls_roots.cj` 5,276 B 与 `tls_roots_test.cj` 6,242 B 均已入库（`git ls-files` 两行都在）；`sse.cj` 走 `.tlsConfig(defaultTlsClientConfig())`；全仓 `TrustAll` 只出现在禁止语境的注释与用例名 `clientTlsConfigWithoutRootsStaysOnDefaultNeverTrustAll` | §30 |
+| A3 桌面端到端（无 `SSL_CERT_FILE`） | **PASS** | 在当前构建宿主（11,158,528 B @07:18）+ 随包锚（84,105 B）上两轮：界面出正文「收到就好」、`用量 3371/3385/200000 · 已计量`、`session.log` 9/10 行含 `assistant/message`=true 且含键=false、磁盘四文件不含键=true、`A3-rc=0`、宿主零残留；第一轮漏掉的「面板可见打开」已归因驱动抢跑并补跑 | §29 |
+| A 验收项 `core cjpm test` 计数与 rc | **BLOCKED（今日两侧各实测一次，均第三态）** | 提交态：`38 errors generated / 8 printed`、Summary 0 次（§27）。工作区态：**`CJPMTEST-rc=1`、Summary 0 次、`43 errors generated, 8 errors printed`**，8 条逐条配对归因到 `cmds_test.cj`(5) / `worktree_setup_test.cj`(2) / `worktree_test.cj`(1)；同轮**库层零 error**、`libcore.a` 6,414,900 B @09:52 全新落盘 | §27、§32、§34 |
+| B 从当前源码重建双入口 | **PASS** | core 库层本轮新构建（上一行）；宿主重打并 `dist/host/bin/sacode-host.exe` @07:18；CLI 平台包剥掉仓颉 PATH 后逐子命令 `^PASS/^FAIL` 计数、包内 exe 与本轮新构建**逐字节一致**（第四条对账腿） | §17、§23、§32 |
+| C 渲染入口 < 1000 行 | **PASS** | `renderer/app.js` **953 行**，且工作区与 HEAD 该文件**无差异**（`git status` 该路径 0 行输出）——不是靠压行凑数 | §30 |
+| D 全量回归 | **PASS（分母已随 §33 新增用例升级并重记）** | `npm test` 三种门槛读数：无凭据 671/663/0/0/8 rc=0（§21）、带凭据 671/669/0/0/2 rc=0（§22）、带凭据带宿主 **674 / pass 674 / fail 0 / cancelled 0 / skipped 0，`CREDALLHOST-rc=0`**（§34，日志 136,121 B 与 rc 文件 197 B 配对）；`ui-smoke` 296 条 UI OK / 0 FAIL；`layout-smoke` 192 PASS / 0 FAIL（后两条为 §22 读数，本轮改动不触及其分母，已如实标注）；`tasklist` 宿主与 Electron 计数 **0** | §21、§22、§28、§34 |
+| E 打包与安装包验收 | **PASS**（安装/卸载除外） | 三产物本轮新建（Setup 93,860,235 B @07:54、asar 6,794,111 B @07:56、portable 84,256,050 B @07:58）；双入口打包态各 **296 项**；宿主载荷哈希由三条腿升级为**四条腿实测一致**（源 / win-unpacked / portable 运行期解包 / **NSIS 内嵌**，前缀 `d2ef66eb…80e2a4c`），且包内 `app.asar` 与 win-unpacked 那份 `ddee3cb7…` 一致、`ca-bundle.pem` 84,105 B 在清单内；`host/bin` 92 条目 / 90 DLL 两侧相同；签名四对象如实 **`NotSigned`**（`signExecutable=false` 是主动选择，「已产出」不等于「可分发」） | §19、§20、§30、§31 |
+| E 的 NSIS 真机安装/卸载 | **BLOCKED（未获授权，非技术不可行）** | `oneClick=true` 的静默装会写 HKCU `Uninstall\` 与 Start Menu 快捷方式，不是纯目录级可无痕撤销的动作。**你已安装的应用未被触碰**；解锁动作＝授权一次，我装到 `.tmp-test/nsis-install/`、跑它自带 `/S /Uninstall`、核注册项与进程零残留 | §20、§31 |
+| F 插件管理四项缺口 | **未解决（逐项归类，不默认算已解决）** | remote source＝`plugin/registries` 硬编码空壳（**模拟成功**）＋远程取源未实现；entry enable＝后端直接回 `-32033 plugin-entry-not-wired`（诚实未实现）；install cancel＝能力清单无该动词且 `install/start` 同步置 `done`（**假异步，无在途可取消**）；build approval＝`approvedBuilds` 在宿主处理体里根本不被读（**传输契约错误**）。本轮补上 3 条**钉住现状**的运行时契约用例（首跑 3 全红＝我夹具漏 `bridge.start()`，修正后 **3/3 pass、`GAP-rc=0`**）；不实现的可复核理由：要动的 `core/src/plugin_store.cj` 与 `apps/host/src/main.cj` 均为 **M**、`apps/desktop/plugins-ipc.cjs` 为 **??**，三份都在并发线手里 | §33、§34 |
+| G 精确提交 | **PASS** | 本轮 6 枚，全部 `git commit -m … -- <显式路径>`，无一次 `add -A/.`：`b135989`（§28/§29）、`b1f91dd`（§30）、`0f46a12`（§31）、`fb4fed8`（§32）、`391563b`（新测试，1 文件 +57）、`d1640e0`（§33/§34）；每枚提交后 `git show --name-status` 逐条比对实际路径；文档各节均为**纯增行**（+47/+26/+23/+9/+63），未消费别人一行 | 本节 |
+
+**贯穿红线的当轮自证**：不缩范围——两处 BLOCKED 都按原文口径保留，没有任何一条用别的入口的绿去顶（`core` 计数没有，A3/D 的绿也没被写成它有了）；不设镜像——四条腿全走本机官方宿主与构建器自有缓存，`ELECTRON_MIRROR` 始终未设；不提交产物与密钥——产物路径全部 `git check-ignore` 命中，`.tmp-test/` 325 个取证文件与本文档分别扫过密钥（`leaked-files=0`、`doc-secret-hits=0`）；不叠加在跑测试——core 编译期间只做零负载的读与写文档，宿主类用例一律等 CPU 空了独占跑；临时产物只落 `.tmp-test/`（93 MB 中间切件已删）；**唯一一条我没擅自处置的越界项**：仓库根那个非本批的 `tmpFilea27728`，登记在 §32 等一句授权。
+
 
 
 
