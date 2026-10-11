@@ -707,6 +707,32 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **与 §13.2（05:44，重建前宿主）对照**：同一条全路径两轮都 PASS，`session.log` 9/10 行、usage 3371 / 3385 / 3406 三读数同量级——本轮新构建的宿主没有让这条链退化。**批次 A 的 A3 判据因此按「当前构建」重记一遍为 PASS**；`core cjpm test` 计数仍是 §27 那条 BLOCKED，本节的绿不顶替它。
 
+## 30. 三条独立复核：批次 E 产物仍对应当前桌面源码、A2 确实在库里、以及阻塞 core 计号的四处符号**刚刚在工作区补齐**（2026-10-11 09:51–09:52 实测）
+
+**一、批次 E 的新鲜度复核（不重跑打包，只比对时间戳）**：以 `dist/electron/win-unpacked/resources/app.asar`（6,794,111 B @07:56）为基准，用 `find renderer -type f \( -name "*.js" -o -name "*.ts" -o -name "*.css" \) -not -path "renderer/vendor/*" -newer <asar>` 查非 vendor 渲染层源码——**零命中**；四个入口文件 `main.cjs` / `preload.cjs` / `host-bridge.cjs` / `paths.cjs` 与未跟踪的 `plugins-ipc.cjs` 逐个 `-nt` 比对也都是 older。三产物 `SaCode Setup 0.1.0.exe` 93,860,235 B @07:54、asar @07:56、`sacode-portable.exe` 84,256,050 B @07:58 因此仍对应**当前**桌面源码。
+
+> 一个必须先排掉的假信号：`find ... -newermt "2026-10-11 07:50"` 会命中一整批 `renderer/vendor/*.iife.js`，看着像「打包后又被改」——但那些是 gitignore 的构建产物，**我自己 08:05–08:12 的 ui-smoke / layout 腿就把它们重写过**。所以这条复核必须按 `-not -path renderer/vendor/*` 排除产物，只比源码。
+
+**二、A2 的落点复核**：`core/src/tls_roots.cj`（5,276 B @03:08）与 `core/src/tls_roots_test.cj`（6,242 B @02:51）**两个都已入库**（`git ls-files` 都列出）。`core/src/sse.cj:94` 现在是 `ClientBuilder().tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()`——即统一走默认证书配置，没有旁路。全仓 `TrustAll` 命中**只出现在禁止语境**：`tls_roots.cj:16` 的注释「任何情况下都不退到 TrustAll」、`tls_roots_test.cj` 的红线注释与用例名 `clientTlsConfigWithoutRootsStaysOnDefaultNeverTrustAll`。没有一处把它当可通过的期望值。
+
+**三、最重要的一条状态变化**：§26/§27 把提交态编译失败归因到四处悬空符号，本轮复查发现它们**已经在工作区里有定义了**——
+
+| 符号 | §26/§27 的判 | 本轮实测 |
+| --- | --- | --- |
+| `registerBuiltinCommands` | 全仓 0 个定义 | `core/src/agent.cj` 有 `public func registerBuiltinCommands(reg: CommandRegistry)` |
+| `WriteLease.protects` | 悬空 | `core/src/lease.cj` 有 `public func protects(sessionPath: String): Bool` |
+| `SessionLog.isDurableFrozen` / `freezeAfterDurableFailure` / `durableCheckpointBatched` | 悬空 | `core/src/session.cj` 三个都在 |
+| `GitQueryResult` | 悬空 | `core/src/git_workbench.cj` 有 `public class GitQueryResult` |
+
+但落库态一条都没有：`git status` 显示 `agent.cj`、`lease.cj`、`session.cj`、`cmds_test.cj` 是 **M**、`git_workbench.cj` 是 **??**（未跟踪），而 `git show HEAD:<file> | grep -c <符号>` 对这四个符号**全部为 0**。也就是说 §27 那句「两侧必须同时落到同一个 commit 才可能出 Summary」**结论不变**，但工作区这一侧刚刚被别人的在途改动补齐了——这给了一个**窗口**：工作区态现在有机会真跑出 `Summary`。
+
+**因此本轮另开两条腿**（读数单独成节，不在此预告）：
+
+1. 一条 `cjc --test-only --error-count-limit all` 的**只编译**腿（`.tmp-test/core-test-all-errors.cmd` → `.tmp-test/core-all-errors.log`，剥码后 278,708 B）。它一路打到 codegen 阶段，**全程 `grep -c "error:" = 0`**，只剩 `unused import` 一类告警。但这条腿是我**主动中断**的（进了 30 分钟量级的静默 codegen/link，而它只用来数错误，继续等不出新事实），所以「0 条错误」是**一次被中断运行的缺失读数**，不能当完成态证据——这一点必须写明。TaskStop 只停 Bash 壳，随后 `tasklist` 实查 `cjc/cjpm/lld/link` 计数 **0**，无孤儿。
+2. 一条真 `cjpm test` 腿（`.tmp-test/core-test-ws.cmd`，`TMP/TEMP` 指 `.tmp-test\nsis-tmp`、PATH 带 stdx dynamic，日志 `.tmp-test/core-test-ws.log` + rc 单独落 `.tmp-test/core-test-ws.rc.txt` 配对）。它若出 `Summary`，就同时证掉「编译干净」和「计数与 rc」；**但这是工作区态读数，含别人未落库的源文件，不得冒充提交级证据**，落库态仍按 §27 判 BLOCKED。
+
+
+
 
 
 
