@@ -178,7 +178,7 @@ func worktreeModelToolsAppearOnlyWhenSessionWorktreeIsBound() {
     for (spec in unbound.specs()) { if (spec.name.contains("worktree")) { worktreeNamed += 1 } }
     @Expect(worktreeNamed, Int64(0))
     let root = wtToolsRepo()
-    let boundLog = SessionLog(Path(root).join("session.log"))
+    let boundLog = SessionLog(Path(root).join("session.log").toString())
     let runtime = wtToolsRuntime(boundLog, SessionWorktree(boundLog, fallback: root), root)
     @Expect(runtime.registry.has("enter_worktree"), true)
     @Expect(runtime.registry.has("exit_worktree"), true)
@@ -458,7 +458,7 @@ func sameRelativeNameIsSeparateFileAcrossWorktreeBoundary() {
 @Test
 func exitWorktreeIsRefusedForEveryActionWithoutATicket() {
     let root = wtToolsRepo()
-    let log = SessionLog(Path(root).join("session.log"))
+    let log = SessionLog(Path(root).join("session.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let bound = wtToolsRuntime(log, tree, root)
     @Expect(bound.execute(wtToolsCall("enter_worktree", "{\"name\":\"tools-no-ticket\"}")).allowed, true)
@@ -671,7 +671,7 @@ func removeWithDiscardChangesForwardsTheFlag() {
 @Test
 func guardDenialStopsWorktreeToolsBeforeTheyRun() {
     let root = wtToolsRepo()
-    let log = SessionLog(Path(root).join("session.log"))
+    let log = SessionLog(Path(root).join("session.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let runtime = ModelToolRuntime(log, false, files: true, workingDirectory: root,
         worktree: Some(tree), guard: { _, _ => false })

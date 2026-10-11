@@ -188,7 +188,7 @@ func wtCoreSlugCharsetAndLengthRules() {
 @Test
 func wtCoreGeneratedSlugShape() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let first = tree.enter("")
     @Expect(exists(first), true)
     let generated = tree.name()
@@ -211,7 +211,7 @@ func wtCoreGeneratedSlugShape() {
 @Test
 func wtCoreEnterCreatesFixedDirectoryAndBranch() {
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     @Expect(tree.active(), false)
     @Expect(tree.directory(), root)
@@ -242,7 +242,7 @@ func wtCoreEnterCreatesFixedDirectoryAndBranch() {
 @Test
 func wtCoreKeepRestoresDirectoryAndKeepsWorktree() {
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let dir = tree.enter("kept")
     File.writeTo(Path(dir).join("note"), "keep me".toArray())
@@ -264,7 +264,7 @@ func wtCoreKeepRestoresDirectoryAndKeepsWorktree() {
 @Test
 func wtCoreRemoveDeletesDirectoryAndBranch() {
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let dir = tree.enter("gone")
     @Expect(tree.exit("remove").contains("\"active\":false"), true)
@@ -282,7 +282,7 @@ func wtCoreRemoveDeletesDirectoryAndBranch() {
 @Test
 func wtCoreUnknownExitActionRejected() {
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let dir = tree.enter("action")
     // 草稿里的 delete 不是合法取值；大小写、空串、复合值、带空格一样拒。
@@ -301,7 +301,7 @@ func wtCoreUnknownExitActionRejected() {
 @Test
 func wtCoreExitWithoutBindingRejected() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     @Expect(wtErrorCode({ => tree.exit("keep") }), "worktree-not-active")
     @Expect(wtErrorCode({ => tree.exit("remove", discardChanges: true) }), "worktree-not-active")
     // 非法动作先于「有没有绑定」判：闭集是参数校验，不是状态校验。
@@ -323,7 +323,7 @@ func wtCoreExitWithoutBindingRejected() {
 @Test
 func wtCoreRejectsOutsideRepository() {
     let outside = wtTempDir()
-    let tree = SessionWorktree(SessionLog(Path(outside).join("a.log")), fallback: outside)
+    let tree = SessionWorktree(SessionLog(Path(outside).join("a.log").toString()), fallback: outside)
     @Expect(wtErrorCode({ => tree.enter("alpha") }), "worktree-not-a-repository")
     @Expect(wtErrorCode({ => tree.enterPullRequest("17") }), "worktree-not-a-repository")
     @Expect(wtErrorCode({ => tree.prepareAgent("one") }), "worktree-not-a-repository")
@@ -336,12 +336,12 @@ func wtCoreRejectsOutsideRepository() {
 @Test
 func wtCoreRejectsNestedLinkedWorktree() {
     let root = wtFixture()
-    let outerLog = SessionLog(Path(root).join("a.log"))
+    let outerLog = SessionLog(Path(root).join("a.log").toString())
     let outer = SessionWorktree(outerLog, fallback: root)
     let dir = outer.enter("outer")
     // 在已有 worktree 里再开一个会话并尝试进入：仓库根用 git 自己的查询得出，
     // 且必须靠 git-dir 与 common-dir 的差别识别出「这已经是工作树」，嵌套一律拒。
-    let inner = SessionWorktree(SessionLog(Path(root).join("b.log")), fallback: dir)
+    let inner = SessionWorktree(SessionLog(Path(root).join("b.log").toString()), fallback: dir)
     @Expect(wtErrorCode({ => inner.enter("inner") }), "worktree-nested")
     @Expect(wtErrorCode({ => inner.enterPullRequest("17") }), "worktree-nested")
     @Expect(exists(Path(wtBaseDir(root)).join("inner")), false)
@@ -358,7 +358,7 @@ func wtCoreRejectsNestedLinkedWorktree() {
 @Test
 func wtCoreRejectsWhenNoDirectoryIsKnown() {
     let dir = wtTempDir()
-    let tree = SessionWorktree(SessionLog(Path(dir).join("a.log")))
+    let tree = SessionWorktree(SessionLog(Path(dir).join("a.log").toString()))
     @Expect(wtErrorCode({ => tree.enter("alpha") }), "worktree-no-directory")
     @Expect(wtErrorCode({ => tree.enterPullRequest("1") }), "worktree-no-directory")
     @Expect(wtErrorCode({ => tree.prepareAgent("one") }), "worktree-no-directory")
@@ -399,7 +399,7 @@ func wtCoreBindingIsSessionLogOnly() {
     // 同名的重入是幂等复用，不是第二次绑定。
     @Expect(back.enter("owned"), dir)
     // 别的会话（另一份日志）认领不到这份目录。
-    let stranger = SessionWorktree(SessionLog(Path(root).join("b.log")), fallback: root)
+    let stranger = SessionWorktree(SessionLog(Path(root).join("b.log").toString()), fallback: root)
     @Expect(wtErrorCode({ => stranger.enter("owned") }), "worktree-name-taken")
     // 磁盘上来源不明的同名目录也不认领，而且原样留在原地。
     Directory.create(Path(wtBaseDir(root)).join("handmade"), recursive: true)
@@ -439,7 +439,7 @@ func wtCoreVanishedDirectoryClearsBindingAndContinues() {
 @Test
 func wtCoreDescribeHasExactlyEightFields() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let shape = wtObject(tree.describe())
     @Expect(shape.size(), Int64(8))
     let names = wtObjectFieldNames(shape)
@@ -472,16 +472,16 @@ func wtCoreDescribeHasExactlyEightFields() {
 @Test
 func wtCoreRemoveRequiresCreatingSession() {
     let root = wtFixture()
-    let ownerLog = SessionLog(Path(root).join("owner.log"))
+    let ownerLog = SessionLog(Path(root).join("owner.log").toString())
     let creator = SessionWorktree(ownerLog, fallback: root)
     let dir = creator.enter("owned")
     @Expect(ownerLog.flush(), true)
     // 回放同一份日志的实例拿到的是同一份归属，所以它删得动。
-    let sameSession = SessionWorktree(SessionLog(Path(root).join("owner.log")), fallback: root)
+    let sameSession = SessionWorktree(SessionLog(Path(root).join("owner.log").toString()), fallback: root)
     @Expect(sameSession.exit("remove").contains("\"active\":false"), true)
     @Expect(exists(dir), false)
     // 归属不明就凭空造不出删除：先手工建一个同名目录，别的会话既进不去也删不掉。
-    let outsiderLog = SessionLog(Path(root).join("other.log"))
+    let outsiderLog = SessionLog(Path(root).join("other.log").toString())
     let outsider = SessionWorktree(outsiderLog, fallback: root)
     Directory.create(Path(wtBaseDir(root)).join("foreign"), recursive: true)
     @Expect(wtErrorCode({ => outsider.enter("foreign") }), "worktree-name-taken")
@@ -496,7 +496,7 @@ func wtCoreRemoveRequiresCreatingSession() {
 @Test
 func wtCoreRemoveDirtyRules() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     // ignored 不算脏：只有被忽略文件时可以直接删。
     let ignoredOnly = tree.enter("onlyignored")
     File.writeTo(Path(ignoredOnly).join("ignored"), "still-valuable".toArray())
@@ -525,7 +525,7 @@ func wtCoreRemoveDirtyRules() {
 @Test
 func wtCoreStatusCountCountsRenamedPairAndSkipsIgnored() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let dir = tree.enter("status")
     wtGitAt(dir, ["mv", "seed", "renamed"])
     File.writeTo(Path(dir).join("ignored"), "x".toArray())
@@ -543,7 +543,7 @@ func wtCoreStatusCountCountsRenamedPairAndSkipsIgnored() {
 @Test
 func wtCoreUniqueCommitsCannotBeForced() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let dir = tree.enter("commit")
     File.writeTo(Path(dir).join("seed"), "changed".toArray())
     wtGitAt(dir, ["add", "."])
@@ -571,7 +571,7 @@ func wtCoreUniqueCommitsCannotBeForced() {
 @Test
 func wtCoreRemoteRefAlsoRetainsCommits() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let dir = tree.enter("remote")
     wtGitAt(dir, ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
         "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "远端留存"])
@@ -589,7 +589,7 @@ func wtCoreRemoteRefAlsoRetainsCommits() {
 @Test
 func wtCoreCreateFailureLeavesNoDirectory() {
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     // 别人占了这条分支名：本会话没有创建记录，不许拿来用，也不许留下目录。
     wtGitAt(root, ["branch", "worktree-taken", "HEAD"])
@@ -606,7 +606,7 @@ func wtCoreCreateFailureLeavesNoDirectory() {
 @Test
 func wtCoreAlreadyActiveRejected() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let first = tree.enter("one")
     // 一个会话只有一条活动绑定：换名字必须先退出（绑定检查在 origin/分支核验之前）。
     @Expect(wtErrorCode({ => tree.enter("two") }), "worktree-already-active")
@@ -672,7 +672,7 @@ func wtCorePullRequestEndToEndAgainstLocalOrigin() {
     wtGitAt(remote, ["init", "--bare"])
     wtGitAt(root, ["remote", "add", "origin", remote])
     wtGitAt(root, ["push", "origin", "HEAD:refs/pull/17/head"])
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     // 裸编号 + 本机 origin：抓 pull/<N>/head 建工作树，名字是 pull-<N>。
     let dir = tree.enterPullRequest("#17")
@@ -703,7 +703,7 @@ func wtCorePullRequestEndToEndAgainstLocalOrigin() {
 func wtCorePullRequestFailuresLeaveNoDirectory() {
     // 没有 origin 的仓库：编号形态也拒，不建目录、不建分支。
     let root = wtFixture()
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     @Expect(wtErrorCode({ => tree.enterPullRequest("17") }), "worktree-pr-origin-missing")
     @Expect(exists(wtBaseDir(root)), false)
@@ -727,7 +727,7 @@ func wtCorePullRequestFailuresLeaveNoDirectory() {
 @Test
 func wtCoreAgentPrepareFinishLifecycle() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let clean = tree.prepareAgent("one")
     @Expect(exists(clean), true)
     @Expect(wtAgentDirName(wtBaseName(clean)), true)
@@ -756,7 +756,7 @@ func wtCoreAgentPrepareFinishLifecycle() {
 @Test
 func wtCoreAgentIdValidation() {
     let root = wtFixture()
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     for (bad in ["", "../x", "a/b", "a b", "-x", "agent-x", "a;b", "中文", wtStringOfLength(65)]) {
         @Expect(wtErrorCode({ => tree.prepareAgent(bad) }), "worktree-bad-agent-id")
     }
@@ -787,7 +787,7 @@ func wtCoreSlugAndAgentIdReservedPrefixSeparateSurfaces() {
 func wtCoreCleanupAgentsOnlyOldAgentDirectories() {
     let root = wtFixture()
     let base = wtBaseDir(root)
-    let log = SessionLog(Path(root).join("a.log"))
+    let log = SessionLog(Path(root).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let minAge: Int64 = 31 * 24 * 3600
     let oneDay: Int64 = 24 * 3600
@@ -846,7 +846,7 @@ func wtCoreCleanupAgentsOnlyOldAgentDirectories() {
 func wtCoreRunnerPassesArgvLiterally() {
     // 目录名里带 shell 元字符：拼 shell 字符串的实现会在这里碎掉，argv 形态不受影响。
     let root = wtFixtureIn(Path(wtTempDir()).join("a&b'c").toString())
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     let dir = tree.enter("amp")
     @Expect(exists(dir), true)
     @Expect(wtGitRun(root, ["rev-parse", "--show-toplevel"]).exitCode, Int64(0))
@@ -952,7 +952,7 @@ func wtCoreBaseDirectoryEscapeRejected() {
     let target = wtSlashes(other).replace("/", "\\")
     let (rc, _, err) = executeWithOutput("cmd", ["/c", "mklink", "/J", link, target])
     if (rc != 0) { throw Exception("junction-fixture-unavailable:${String.fromUtf8(err)}") }
-    let tree = SessionWorktree(SessionLog(Path(root).join("a.log")), fallback: root)
+    let tree = SessionWorktree(SessionLog(Path(root).join("a.log").toString()), fallback: root)
     @Expect(wtErrorCode({ => tree.enter("escape") }), "worktree-base-escape")
     @Expect(wtErrorCode({ => tree.prepareAgent("escape") }), "worktree-base-escape")
     @Expect(tree.active(), false)

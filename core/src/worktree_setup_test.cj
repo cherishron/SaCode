@@ -285,7 +285,7 @@ func wsTApplyFailsLoudlyAndNeverCopies() {
         @Expect(wsTSymlinkReadsAsLink(worktree, "node_modules"), true)
     }
     // 装配不写会话日志：日志里只有绑定与目录变更，不设第二真源。
-    let log = SessionLog(Path(repo).join("a.log"))
+    let log = SessionLog(Path(repo).join("a.log").toString())
     let before = log.eventCount()
     let settled = wsTError({ => setup.apply(worktree) })
     @Expect(log.eventCount(), before)
@@ -310,7 +310,7 @@ func wsTSymlinkReadsAsLink(worktree: String, entry: String): Bool {
 func wsTEnterAssemblesCreatedWorktreeOnly() {
     let repo = wsTFixture()
     let dir = wsTTemp()
-    let log = SessionLog(Path(repo).join("a.log"))
+    let log = SessionLog(Path(repo).join("a.log").toString())
     let tree = SessionWorktree(log, fallback: repo)
     // 没配任何东西时是彻底 no-op：正常建得起工作树，工作树里也不多一个目录。
     let plain = tree.enter("plain")
