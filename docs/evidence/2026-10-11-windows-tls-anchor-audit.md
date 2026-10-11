@@ -602,6 +602,47 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **登记一处过期文档，但不代改**：`AGENTS.md`（git 跟踪的是这个名字；`agents.md` 只是同一文件在大小写不敏感文件系统里的别名）第 16 行与第 51 行仍写 `npm/dsh-cli` / `npm/dsh-cli-win32-x64` / `npm/dsh-cli-*/bin/`，与磁盘上的实际目录和 `.gitignore` 现行的模式都不一致。这是会误导下一个 agent 的过期路径（按它去 `git add npm/dsh-cli/bin/cli.js` 会直接找不到文件）。AGENTS.md 属项目指令文件、改动需要你点头，本轮我只把「哪两行过期、正确值是什么、忽略规则其实已对」测清楚记在这里，不动它。
 
+## 25. §22 的接线做成统一门禁：六条真实模型用例 + 两条 `!host` 用例一次跑绿，11/11/0/0/0 rc=0，全套 671/669/0/0/2 rc=0（2026-10-11 08:57–09:00 实测，commit `d674f68`）
+
+§22 只给三条凭据用例补了锚。本轮把**六条**真实模型用例（`real-provider-e2e` / `real-provider-read-tool` / `real-provider-system-prompt` / `real-provider-tools` / `real-provider-enhance` / `host-routing-real`）的环境整形收敛到 `apps/desktop/test-support/real-host-env.mjs` 一处，逐文件删掉各自复制的 `if (!process.env.SACODE_CA_BUNDLE) {…}` 块——同一个「复用生产接线（`paths.cjs` 的 `caBundleSidecar` + `hostEnvWithCaBundle`）+ 撤掉 `SSL_CERT_FILE`」的保证从此覆盖整条真实链，而不是覆盖其中三条。
+
+**迁移中发现并修掉一个自己造的顺序缺陷**：helper 最初写成 `{ ...整形后的 env, ...删 provider, ...extra }` 之外的顺序（`...extra` 早于 provider 删除被套用），那会让 `real-provider-enhance` 故意传的兜底诱饵（`SACODE_PROVIDER_BASE_URL=http://127.0.0.1:1` + 一个「不能误用的兜底模型」+ 空 `STEPFUN_API_KEY`）被整形步骤抹掉，用例就会去打真网络。改法是让 `...extra` 最后套用，并用两条新探针用例把顺序钉住。
+
+**读数**（全部为本轮实测）：
+- 零网络整形探针 `.tmp-test/helper-probe.mjs`：**HELPER 12/12 PASS**，先落盘再取 rc，**real-rc=0**（日志 `.tmp-test/probe-25.log`）。其中包含 `extra_cannot_be_clobbered`、`extra_provider_decoy_survives`、`extra_settings_override`、`anchor_still_set_with_extra`、`inherited_provider_still_dropped` 五条顺序与共存断言。
+- 七个文件一起 `node --test`（带 `STEPFUN_API_KEY` + `SACODE_HOST`）：**# tests 11 / # pass 11 / # fail 0 / # cancelled 0 / # skipped 0**，包装脚本 `CREDSIX-rc=0`。比 §22 的 3 条多出 8 条，是因为这次把原先被 `!host` 挡掉的 `host-startup-recovery` 两条也放进了同一腿；收尾 `tasklist` 实查 `sacode-host.exe` **零残留**。
+- 带凭据全套 `npm test`：**# tests 671 / # pass 669 / # fail 0 / # cancelled 0 / # skipped 2**，`CREDALL-rc=0`——与 §22 基线逐位相同，说明这次纯接线的迁移没碰坏任何一条既有断言（余下 2 条 skip 仍是 `{ skip: !host }` 之外的既有门控）。
+- 改动面：`git show --stat d674f68` = 4 files、16 插 / 22 删，全部在 `apps/desktop/test*`；产品源码一行未动。
+
+**登记两条 rc 读数陷阱**（都是本轮自己踩的）：① 后台任务通知里的「exit code 0」是我包装命令（末尾 `echo "CJPM-rc=$?"`）自己的退出码，被包装的原命令真实读数只看日志末行；② `node x.mjs | tail -6` 之后取 `$?` 拿到的是 `tail` 的 0，不是 node 的——本轮复跑探针时先这样拿过一次假 0，改成「先重定向落盘、再 `echo real-rc=$?`」才拿到真值。
+
+## 26. 「core cjpm test 计数与 rc」第一次拿到可复现的**逐条**归因：工作区态卡在 `cmds_test.cj`，提交态卡在 `cmds.cj` 的 cjc 1.1.3 语法与三处悬空引用（2026-10-11 08:55–09:10 实测）
+
+这条验收项此前只能写 BLOCKED。本轮把两个态各跑一遍并把错误逐条落名，BLOCKED 的前提第一次是**具体到符号**的。
+
+**工作区态**（`.tmp-test/ct-worktree.log`，197,120 B，末行 `Error: cjpm test failed` + `CJPM-rc=1`）：剥 ANSI 并拆 CR 后 **`Summary: TOTAL` 出现 0 次** ⇒ 三态里的「根本没跑」，按红线不许报任何条数。编译器侧：`49 errors generated, 8 errors printed`、`160 warnings generated` / `64 warnings generated, 35 warnings printed`。打印出来的 8 条定位（把 `error:` 与其后紧跟的 `==>` 配对取，不能按出现顺序硬套）：
+
+| 文件 | 条数 | 错误原文 | 该文件 git 态 |
+| --- | --- | --- | --- |
+| `core/src/cmds_test.cj` | 5（76/77/86/96/108 行） | `undeclared identifier 'registerBuiltinCommands'` ×3、`mismatched types`、`no matching function for operator '()'` | **M**（未落库 +51 行，别人在飞） |
+| `core/src/worktree_setup_test.cj` | 3（160/181/217 行） | `expected 'Struct-String', found 'Struct-Path'` | **与 HEAD 逐字一致**（无人正在改） |
+
+**先更正我自己给过的归因**：`ledger.cj` / `migration_pack.cj` / `custom_model_registry.cj` / `plugin_manifest_test.cj` 这些名字来自 `==>` 全集计数（37 / 25 / 16 / 13），它们是**warning 的定位**，不是 error。上一段口头说的「错误聚在 index.cj、ledger.cj」是错的，以本表为准。另外整份日志里 `tls_roots.cj`、`tls_roots_test.cj`、`sse_test.cj` 各命中 **0** 次（`.tmp-test/err-histogram.mjs` 逐串数过），批次 A 的 A2 文件不在这条阻塞里。
+
+**注册表符号 `registerBuiltinCommands` 全仓还没有实现**：`grep -c` 工作区 `core/src/cmds.cj` = **0**（HEAD 版同样 0）。所以工作区态这一腿在他人把实现写出来之前必然编不过，与我无关也无法代做（那是别人的在飞文件，`cmds_test.cj` 上还有他 51 行未落库改动，我不动）。
+
+**提交态**（新建 detached 副本 `D:/Temp/SaCode-core-cnt-20261011` @ `6b8e4b7`，`.tmp-test/ct-head-6b8e4b7.log`，`CJPM-rc=1`）：`4 errors generated, 4 errors printed`，**四条全在 `core/src/cmds.cj`**， cjnative 1.1.3 直接判语法错：
+
+- `cmds.cj:11:105` `error: expected ',' or ')', found '='` —— 原文 `public init(name: String, help: String, parse: Option<((Array<String>) -> HashMap<String, String>)> = None)`，**默认参数值**这条语法本机编译器不接受。
+- `cmds.cj:64:65` `error: expected a type name after ':' in function declaration, found '{'` —— 原文把返回类型写成 `{spec: CommandSpec, args: HashMap<String, String>}`。
+- 另两条 `expected operator or end of expression, found ':'` / `unclosed delimiter: '{'` 是上述两处的级联。
+
+同一轮把副本里的 `cmds.cj` 换成工作区那份未落库的版本（只改副本，共享工作区一行未动），错误立刻换成 **20 generated / 8 printed**，其中 6 条落在 `team_board.cj`、1 条落在 `team_workspace.cj`：`WriteLease.protects`、`SessionLog.isDurableFrozen` / `freezeAfterDurableFailure` / `durableCheckpointBatched`、`undeclared type name 'GitQueryResult'`，另加 `web_network.cj:127` 的 `function 'webUrlEncode' has overload conflicts`。**这些成员/类型只存在于他人未落库的 `session.cj` / `lease.cj` / `web_network.cj` 与未入库的 `durable_checkpoint.cj` / `git_workbench.cj` 里**——即已提交的 `team_board.cj` / `team_workspace.cj` 带着悬空引用进了库，所以提交态在**库层**就编不过。这条我不能代修：补它等于替别人把未复核的实现落库。
+
+**我自己动的一行级修复**（commit `6b8e4b7`，仅 `core/src/worktree_setup_test.cj`，+10 行纯增补、未改任何已有行）：给夹具补 `wsTWrite(file: Path, bytes: Array[Byte])` 与 `wsTWrite(file: Path, text: String)` 两个重载，因为该文件已有 6 个调用点直接传 `Path`（5 处还传 `"…".toArray()`）。依据是官方文档的 `func toArray(): Array<Byte>`（cangjie-skills `cangjie-lang-features/string/README.md:410`），不是猜的。**如实标注：这条修复目前还没有被编译验证过**——提交态副本停在库层就没走到测试文件；能否消除那 3 条 `Struct-Path` 错误，要等 §27 那腿「提交态测试面 + 工作区实现面」的混合读数出来才算，混合态的条数不能冒充提交态计数。
+
+**判据更新**：`core cjpm test 计数与 rc` = **BLOCKED**，解锁条件从笼统的「等别人落库」具体化成三条可核对的前置：① `registerBuiltinCommands` 的实现落库（工作区态）；② `cmds.cj` 改掉默认参数值与大括号返回类型两处语法（提交态）；③ `team_board.cj` / `team_workspace.cj` 依赖的 `protects` / `isDurableFrozen` / `freezeAfterDurableFailure` / `durableCheckpointBatched` / `GitQueryResult` 与 `webUrlEncode` 重载冲突随实现一并落库（提交态）。三条都不由我持有，缩范围或改断言都不在该项的允许处置里。
+
 
 
 
