@@ -447,10 +447,12 @@ func wtCoreDescribeHasExactlyEightFields() {
         @Expect(names.contains(field), true)
     }
     // 类型钉住：三个布尔位、五个字符串/整数位都不许换位。
-    @Expect(shape.get("active").getOrThrow().asBool().isSome(), true)
-    @Expect(shape.get("name").getOrThrow().asString().isSome(), true)
-    @Expect(shape.get("uncommittedCount").getOrThrow().asInt().isSome(), true)
-    @Expect(shape.get("uniqueCommits").getOrThrow().asInt().isSome(), true)
+    // asBool()/asString()/asInt() 是「向下转换」，类型不符直接抛 JsonException，
+    // 所以钉类型只能问 kind()；写法照 core/src/model_catalog.cj 的同用途先例。
+    @Expect(match (shape.get("active").getOrThrow().kind()) { case JsBool => true; case _ => false }, true)
+    @Expect(match (shape.get("name").getOrThrow().kind()) { case JsString => true; case _ => false }, true)
+    @Expect(match (shape.get("uncommittedCount").getOrThrow().kind()) { case JsInt => true; case _ => false }, true)
+    @Expect(match (shape.get("uniqueCommits").getOrThrow().kind()) { case JsInt => true; case _ => false }, true)
     // Host 侧按字面把这段 JSON 透传给桌面，序列化必须是紧凑的 "key":value。
     @Expect(tree.describe().contains("\"active\":false"), true)
     tree.enter("shape")
