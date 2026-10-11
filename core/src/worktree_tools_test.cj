@@ -57,7 +57,7 @@ func wtToolsGrant(desk: ApprovalDesk, name: String, args: String): Int64 {
 func wtToolsRuntime(log: SessionLog, tree: SessionWorktree, root: String,
     router!: LspRouter = LspRouters.sharedRouter()): ModelToolRuntime {
     let desk = ApprovalDesk(log)
-    return ModelToolRuntime(log, false, files: true, workingDirectory: root, worktree: Some(tree),
+    return ModelToolRuntime(log, false, files: true, workingDirectory: root, worktree: Some(WorktreeTools(tree)),
         desk: desk, approval: { call => wtToolsGrant(desk, call.name, call.args) },
         lspRouter: router, lspSession: "wt-tools")
 }
@@ -464,7 +464,7 @@ func exitWorktreeIsRefusedForEveryActionWithoutATicket() {
     @Expect(bound.execute(wtToolsCall("enter_worktree", "{\"name\":\"tools-no-ticket\"}")).allowed, true)
     let dir = SessionWorkspace(log).effectiveDirectory()
     // 另起一个「没有审批回调」的运行时：core 里的免审批档就是这个形状（工单号恒为 0）
-    let autoTier = ModelToolRuntime(log, false, files: true, workingDirectory: root, worktree: Some(tree))
+    let autoTier = ModelToolRuntime(log, false, files: true, workingDirectory: root, worktree: Some(WorktreeTools(tree)))
     for (action in ["keep", "remove"]) {
         let out = autoTier.execute(wtToolsCall("exit_worktree", "{\"name\":\"tools-no-ticket\",\"action\":\"${action}\"}"))
         @Expect(out.allowed, false)
@@ -488,7 +488,7 @@ func keepTicketCannotAuthorizeRemove() {
     let ticket = desk.askForCall("exit_worktree", keepArgs)
     @Expect(desk.answer(ticket, "allowed-once"), true)
     let runtime = ModelToolRuntime(h.log, false, files: true, workingDirectory: h.root,
-        worktree: Some(h.tree), desk: desk, approval: { _ => ticket })
+        worktree: Some(WorktreeTools(h.tree)), desk: desk, approval: { _ => ticket })
     let remove = runtime.execute(wtToolsCall("exit_worktree", "{\"name\":\"tools-steal\",\"action\":\"remove\"}"))
     @Expect(remove.allowed, false)
     @Expect(remove.why, "approval-arguments-mismatch")
@@ -674,7 +674,7 @@ func guardDenialStopsWorktreeToolsBeforeTheyRun() {
     let log = SessionLog(Path(root).join("session.log").toString())
     let tree = SessionWorktree(log, fallback: root)
     let runtime = ModelToolRuntime(log, false, files: true, workingDirectory: root,
-        worktree: Some(tree), guard: { _, _ => false })
+        worktree: Some(WorktreeTools(tree)), guard: { _, _ => false })
     let out = runtime.execute(wtToolsCall("enter_worktree", "{\"name\":\"tools-guard\"}"))
     @Expect(out.allowed, false)
     @Expect(out.why, "guard-denied")
@@ -694,7 +694,7 @@ func nameOnlyTicketCannotReleaseRemoveOfSessionWorktree() {
     let loose = desk.ask("exit_worktree")
     @Expect(desk.answer(loose, "allowed-once"), true)
     let runtime = ModelToolRuntime(h.log, false, files: true, workingDirectory: h.root,
-        worktree: Some(h.tree), desk: desk, approval: { _ => loose })
+        worktree: Some(WorktreeTools(h.tree)), desk: desk, approval: { _ => loose })
     let out = runtime.execute(wtToolsCall("exit_worktree", "{\"name\":\"tools-loose\",\"action\":\"remove\"}"))
     @Expect(out.allowed, false)
     @Expect(out.why, "approval-not-granted:allowed-once")
