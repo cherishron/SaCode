@@ -547,6 +547,33 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **本批判据**：`npm test` **PASS（671/663，fail=0，cancelled=0，rc=0）**；dev `ui-smoke` **PASS（296/0）**，但**必须先 `--no-sandbox`**，原样 `npm run ui-smoke` 在本机是 `0x80000003` 环境红；`layout-smoke` **在跑（暂不判）**；8 条 skip **如实按未验记**，其中 6 条待带真凭据补跑。
 
+## 22. §21 那 6 条补跑做完了：红的全是夹具缺信任锚，产品侧零改动；带键全套 671/669/0/0/2 rc=0（2026-10-11 08:33–08:38 实测）
+
+**先说结论归因**：批次 A 的真实模型链路**没有新产品缺陷**——本轮那几条红，根因是三条凭据门控用例从未接上「壳层在生产里会注入的那一跳」，属测试夹具缺件。产品侧接线一直是真的：`apps/desktop/paths.cjs` 的 `caBundleSidecar` + `hostEnvWithCaBundle` 由 `main.cjs:53` 调用，把宿主同目录的 `ca-bundle.pem` 经 `SACODE_CA_BUNDLE` 交给宿主；`paths.cjs:20-23` 顶部注释本来就把这条塌陷写下来了（「实测宿主不带锚时那两次请求塌成 http-request-error」）。缺的是三条用例没照着 `real-provider-e2e.test.mjs:17-20` 的既有做法补这一跳。
+
+**单变量对照（同一份独立探针 `.tmp-test/read-probe.mjs`，只差 `SACODE_CA_BUNDLE` 一个变量）**：
+
+| 腿 | 锚 | 端点与模型 | 实测读数 |
+| --- | --- | --- | --- |
+| 1 | 无 | `/v1` + `step-3.7-flash` | settled=true、interrupted=**true**、finishReason=`error:http-request-error`、textLen=0、日志无 `"name":"read"`、无 `ok-read:` |
+| 2 | 有 | `/v1` + `step-3.7-flash` | interrupted=false、finishReason=`stop`、textHasSecret=**true**、`"name":"read"` 与 `ok-read:` **都在**、日志不含键、stopCode=0 且未 force |
+| 3 | 有 | `/v1` + `step-5-preview` | 同上全绿（textLen=25），即三条用例原本要跑的模型也能出工具调用 |
+
+会话日志里连 `request/header` 都没有，说明失败发生在 provider 打开阶段而非解析阶段；`core/src/sse.cj:136` 的 `catch` 把异常正文丢掉、只留 `http-request-error`，所以宿主 stderr **零字节**也如实一致——这条不是「静默挂起」，是传输层抛错后按契约塌成固定形态（`core/src/transport_failure.cj:8`）。
+
+**端点侧另测了一组三对（只读 HTTP 状态，键不落盘不打印）**：`/v1` + `step-5-preview` → **200**；`/step_plan/v1` + `step-3.7-flash` → **403**；`/v1` + `step-3.7-flash` → **200**。可见 403 卡在 **path** 不在模型——账号侧对 `step_plan` 这条路要实名。所以三条用例**只把 baseUrl 从 `step_plan/v1` 换成 `/v1`，模型保持 `step-5-preview`**（比 §21 里 e2e 那条「顺手换成 step-3.7-flash」更接近原意图，不缩断言）。
+
+**改了什么**：新增 `apps/desktop/test-support/real-host-env.mjs`（`realHostEnv(directory, host)`：自有配置目录 + 撤掉 `SACODE_PROVIDER_*` 覆盖 + **复用 `paths.cjs` 的 `caBundleSidecar`/`hostEnvWithCaBundle`**，锚不在就不设变量，让核心如实失败，绝不降级校验）；`test/real-provider-read-tool.test.mjs`、`real-provider-system-prompt.test.mjs`、`real-provider-tools.test.mjs` 各改三处（引入 helper、baseUrl、注释）。**产品源码一行未动**（`git diff --stat` 只有这三个 test 文件 25 增 12 删 + 一个新 helper）。
+
+**本轮踩到并登记的三条本机陷阱**：
+1. cmd 包装脚本里 `for /f ... set %%a=%%b` 会**顺带把带前缀的 `SA_CODE_STEPFUN_API_KEY` 也注入环境**，而宿主视 env 携带的凭据为只读——`core/src/credential.cj:154-158` 的 `set()` 遇 `envLookup(ref)` 非空即抛 `credential-read-only`，三条用例因此在 ~100 ms 处齐红（根本没上线）。修法：映射成 `STEPFUN_API_KEY` 后把带前缀那个 `set X=` 撤掉。**这条红是我自己包装脚本造的，不是产品回归。**
+2. 同一个 `.cmd` 里写中文注释会**把 cmd 的代码页解析打断**（脚本后半段没执行，`ENV-TMP` 回显出的是继承来的用户 Temp，日志是上一轮的旧文件而 rc 却报了 0）——包装脚本一律 ASCII。
+3. Git Bash `export TMP` 对 Node 的 `os.tmpdir()` **不生效**（`process.env.TMP` 看得见，`tmpdir()` 仍返回用户 Temp），而 cmd 里 `set TMP=` **生效**——宿主在非 MSYS 进程下写不了用户 Temp（§19 第三条独立证据），所以跑这套用例的取证腿必须走 cmd 包装并把 TMP 指到 `.tmp-test/nsis-tmp`。
+
+**读数**：三条用例单独跑 **PASS（tests 3 / pass 3 / fail 0 / cancelled 0，rc=0）**，逐条 `ok`，duration 4,278 ms / 1,795 ms / 3,400 ms（真往返）。带凭据全套 **PASS（tests 671 / pass 669 / fail 0 / cancelled 0 / skipped 2，rc=0）**；与 §21 无凭据基线对得上：663 + 6 = 669、8 − 6 = 2。6 条真实模型用例逐条点名绿：`真实 StepFun：自定义模型请求完成且进入待核算账本`（ok 215）、`真实提供商往返：配置面登记的模型能出真答复`（ok 399）、`真模型增强`（ok 400）、`真实 StepFun 调用 read 读盘上文件并把正文带进续答`（ok 401）、`真实 StepFun 回合收到系统提示，并能从冷进程日志重建`（ok 402）、`真实 StepFun 调用 todo_write 后续答，冷宿主从日志恢复工具结果`（ok 403）。余下 2 条 skip 是 `host-startup-recovery.test.mjs` 里既有的 `{ skip: !host }` 两条（`实际 Host：首次启动读取默认通用设置…`、`实际 Host：设置文件读取失败返回协议错误…`），与凭据无关，本轮不判。收尾 `tasklist` 实查 `sacode-host.exe` **零残留**。`layout-smoke` **192 PASS / 0 FAIL**——读数是 08:18 那轮（改动前），本批改动画像与产品零接触（只动 test 与一个 test-support helper），不构成该腿的重跑义务，如实标注为「改动前读数」。
+
+**批次 D 判据更新**：npm test 无凭据 **PASS 671/663/0/0/8 rc=0**（§21）与带凭据 **PASS 671/669/0/0/2 rc=0**（本节）两条都成立；ui-smoke **PASS 296/0**；layout **PASS 192/0**；宿主零残留。**仍 BLOCKED 未变**：`core cjpm test` 提交级计数（等别人把 7 个实现文件与签名迁移后的测试落库）、NSIS 真机安装/卸载与第四条哈希腿（未获授权）。
+
 
 
 
