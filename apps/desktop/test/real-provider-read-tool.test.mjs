@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { realHostEnv } from '../test-support/real-host-env.mjs';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
@@ -21,14 +22,18 @@ test('真实 StepFun 调用 read 读盘上文件并把正文带进续答', { tim
   // 文件放在宿主 CWD（= 本目录）下：未设工作区时相对路径就落在进程 CWD
   const secret = '菠萝-42-信号';
   writeFileSync(join(directory, 'real-read-demo.txt'), secret, 'utf8');
-  const env = { ...process.env, SACODE_USER_SETTINGS_DIR: join(directory, 'settings') };
-  // 不允许继承本地 provider 夹具覆盖本次真实测试。
-  for (const name of ['SACODE_PROVIDER_BASE_URL', 'SACODE_PROVIDER_KEY', 'SACODE_PROVIDER_MODEL']) delete env[name];
+  // 环境口径统一到 test-support/real-host-env.mjs：撤掉本地 provider 夹具覆盖，
+  // 并补上壳层生产里那一跳——随包信任锚经 SACODE_CA_BUNDLE 交给宿主（缺锚时宿主 https 请求在传输层
+  // 塌成 http-request-error，2026-10-11 单变量对照实测；见 docs/evidence/2026-10-11-windows-tls-anchor-audit.md）。
+  const env = realHostEnv(directory, host);
   const bridge = new HostBridge(host, env);
   await bridge.start(directory);
   try {
+    // 2026-10-11 实测：/step_plan/v1 这条路对本账号回 403 real_name_required（账号侧限制，与模型无关——
+    // 同一个 /step_plan/v1 换 step-3.7-flash 也是 403），同一条键打 /v1 + step-5-preview 回 200 且能出工具调用，
+    // 所以只换 baseUrl、模型保持 step-5-preview。
     await bridge.request('model/registry/update', { draft: {
-      id: 'stepfun', name: 'StepFun', baseUrl: 'https://api.stepfun.com/step_plan/v1', protocol: 'openai-completions',
+      id: 'stepfun', name: 'StepFun', baseUrl: 'https://api.stepfun.com/v1', protocol: 'openai-completions',
       models: [{ id: 'step-5-preview', name: 'step-5-preview', contextWindow: '', maxTokens: '', image: false }],
     }, expectedRevision: 0 });
     await bridge.request('model/registry/set-default', { providerId: 'stepfun', model: 'step-5-preview', expectedRevision: 1 });
