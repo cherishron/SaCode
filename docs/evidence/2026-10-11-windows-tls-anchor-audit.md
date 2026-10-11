@@ -731,6 +731,29 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 1. 一条 `cjc --test-only --error-count-limit all` 的**只编译**腿（`.tmp-test/core-test-all-errors.cmd` → `.tmp-test/core-all-errors.log`，剥码后 278,708 B）。它一路打到 codegen 阶段，**全程 `grep -c "error:" = 0`**，只剩 `unused import` 一类告警。但这条腿是我**主动中断**的（进了 30 分钟量级的静默 codegen/link，而它只用来数错误，继续等不出新事实），所以「0 条错误」是**一次被中断运行的缺失读数**，不能当完成态证据——这一点必须写明。TaskStop 只停 Bash 壳，随后 `tasklist` 实查 `cjc/cjpm/lld/link` 计数 **0**，无孤儿。
 2. 一条真 `cjpm test` 腿（`.tmp-test/core-test-ws.cmd`，`TMP/TEMP` 指 `.tmp-test\nsis-tmp`、PATH 带 stdx dynamic，日志 `.tmp-test/core-test-ws.log` + rc 单独落 `.tmp-test/core-test-ws.rc.txt` 配对）。它若出 `Summary`，就同时证掉「编译干净」和「计数与 rc」；**但这是工作区态读数，含别人未落库的源文件，不得冒充提交级证据**，落库态仍按 §27 判 BLOCKED。
 
+## 31. 批次 E 第四条宿主哈希腿**到手且不需要安装**：NSIS 内嵌载荷与源、win-unpacked 逐字节一致；§20 那句归因是错的，按更正节办（2026-10-11 09:55–09:56 实测）
+
+**先更正 §20**。原文写的是「第四腿仍 BLOCKED：NSIS 安装器内部的宿主需要**授权实跑安装**才能测……仓内也没有 7z 抽取器（`node_modules/7zip-bin` 不存在，MSYS `tar` 是 GNU tar 不认 7z）」。前半句事实成立（仓内确实没有），**但推论错了**：electron-builder 自己的缓存里就有官方抽取器 `C:\Users\jingg\AppData\Local\electron-builder\Cache\7zip@1.0.0\7zip-win-x64-a34pt\bin\7za.exe`（849,920 B，自报 `7-Zip (a) 24.09 (x86) … 2024-11-29`）——这是构建时官方工具链自己下载的，不是镜像、不涉网络；而且**根本不需要 NSIS 解析器**（下面第一条实测证明了载荷是原样内嵌的）。
+
+**探针先判「内嵌还是被二次压缩」**（`.tmp-test/nsis-carve-probe.cjs`，只读、不抽取、不落盘）：对 `SaCode Setup 0.1.0.exe` 全文 93,860,235 B 扫 7z 签名 `37 7A BC AF 27 1C`。读数：**`sig-hits=1`、`offset=140446`、`fromEnd=93719789`，判定 PROBE-EMBEDDED-PLAIN**，整个扫描 `real 0m0.160s`。NSIS stub 占前 140,446 B，之后一路到 EOF 就是那份 `app-64.7z`，没有被 NSIS 自己的压缩器二次吃掉。
+
+**切出来让 7za 认**：按该 offset 复制到 `.tmp-test/nsis-4th-leg/app-64-carved.7z`，`carved-bytes=93719789 == size-offset`（`equal=true`）。`7za l/e` 对它自报：`Type = 7z`、`Method = LZMA2:20 LZMA:20 BCJ2`、`Solid = -`、`Blocks = 166`、`Physical Size = 93363048`、`Tail Size = 356741`、结论行 **`Everything is Ok`**；唯一告警是 `There are data after the end of archive`——那就是 NSIS 挂在 7z 之后的 356,741 B 尾块（卸载器数据），良性，也正是「从签名切到 EOF 仍然可用」的原因。
+
+**第四条腿（本节的正题）**：抽出 `resources\host\bin\sacode-host.exe`，解压后 **11,158,528 B**，`sha256 = d2ef66eb8c3edc9a53efb0b9777c14255f440eee47bb488dead90e9f880e2a4c`——与 ① 源 `dist/host/bin/sacode-host.exe`、② `dist/electron/win-unpacked/resources/host/bin/sacode-host.exe` **三处同一**。§20 那句「三条腿实测一致、第四腿 BLOCKED」由此升级为 **四条腿实测一致**（源 / win-unpacked / portable 运行期解包 / NSIS 内嵌）。
+
+**顺带加送的两条对账**（同一份清单，不额外装任何东西）：
+
+- `resources/app.asar` 抽出后 `sha256 = ddee3cb7b90d98d2e08c353e704cdc13ee4eaf56b3f21903bd271f5b374fb439`，与 win-unpacked 那份**一致** ⇒ 安装包与解包目录跑的是同一个渲染层，不是两份不同构建。
+- `resources\host\bin\ca-bundle.pem`（84,105 B）**在安装包清单里** ⇒ §24 那颗随包信任锚确实进了 NSIS，A3 的「不带 `SSL_CERT_FILE` 也能验真」在安装包形态下有载荷支撑。
+
+**随包依赖清点（这条我差点读反，必须写下来）**：NSIS 清单里 `resources\host\bin` 共 **92 条目 / 90 个 `.dll`**，与 `win-unpacked/resources/host/bin` 实测 **92 / 90** 相同——AGENTS.md 那条「宿主 exe 必须与全部依赖 DLL 同目录」在安装包内成立。**但第一版计数给了个危险的假信号**：我写的正则是 `host\\bin\\.*\.dll`，bash 双引号把它变成 `host\\bin\\`（两个反斜杠），而 listing 里是单反斜杠路径，于是报出 `dll=0`，读起来像「安装包把依赖 DLL 全落了」。改成 `host.bin` 通配后才拿到 92/90。登记这条不是自谦：**计数脚本的转义错误会造出比「文件真缺失」更像事实的假结论**，凡「0」都要先用第二种匹配方式复现一次。
+
+**仍然 BLOCKED 的只剩一件事**：NSIS **真机安装/卸载**本身。理由与 §20 同且不变——`package.json` 的 NSIS 配置是 `oneClick=true`，静默装会向 HKCU `Uninstall\` 写注册项并建 Start Menu 快捷方式，不是纯目录级、可无痕撤销的动作，而目标文本把「真机安装/卸载」明写在需授权前提下。**这条 BLOCKED 与哈希腿无关了**：哈希对账已经不需要安装。解锁动作仍是「你授权一次，我装到 `.tmp-test/nsis-install/`、跑它自己的 `/S /Uninstall`、核注册项与进程零残留」。
+
+**副作用与卫生**：全程未执行安装、未写注册表、未启动安装包、未联网。落点只有 `.tmp-test/nsis-4th-leg/`（gitignored）：`listing.txt` 14,559 B、`extract.log` 611 B、`extract-asar.log` 610 B、`out/sacode-host.exe` 11,158,528 B、`out/app.asar` 6,794,111 B；93,719,789 B 的中间切件按「做完即删」已 `rm` 掉，复现法是「探针取 offset + 按 offset 复制到 EOF」两步，offset 已写在正文（140,446）。
+
+
+
 
 
 
