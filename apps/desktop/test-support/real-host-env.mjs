@@ -11,6 +11,9 @@ export function realHostEnv(directory, host, extra = {}) {
   const env = { ...process.env, SACODE_USER_SETTINGS_DIR: join(directory, 'settings'), ...extra };
   // 不允许继承本地 provider 夹具覆盖本次真实测试。
   for (const name of ['SACODE_PROVIDER_BASE_URL', 'SACODE_PROVIDER_KEY', 'SACODE_PROVIDER_MODEL']) delete env[name];
+  // 批次 A 的验收写明「不带 SSL_CERT_FILE 也要通」：核心按 SACODE_CA_BUNDLE → SSL_CERT_FILE 的顺序取锚，
+  // 留着它就无法证明走的是随包锚，所以这里显式撤掉，让 CustomCA 注入成为唯一可能的锚来源。
+  delete env.SSL_CERT_FILE;
   const sidecarPath = caBundleSidecar(host);
   return hostEnvWithCaBundle(env, { sidecarPath, exists: existsSync(sidecarPath) });
 }
