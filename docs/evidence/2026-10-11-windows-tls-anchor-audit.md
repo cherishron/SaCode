@@ -574,6 +574,19 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **批次 D 判据更新**：npm test 无凭据 **PASS 671/663/0/0/8 rc=0**（§21）与带凭据 **PASS 671/669/0/0/2 rc=0**（本节）两条都成立；ui-smoke **PASS 296/0**；layout **PASS 192/0**；宿主零残留。**仍 BLOCKED 未变**：`core cjpm test` 提交级计数（等别人把 7 个实现文件与签名迁移后的测试落库）、NSIS 真机安装/卸载与第四条哈希腿（未获授权）。
 
+## 24. 批次 A 的 A1 定性收口：机制被替换但锚集合已实测等价（raw=94 / distinct=53 / 随包 53），另把「不带 SSL_CERT_FILE」做成结构保证（2026-10-11 08:52–08:54 实测）
+
+A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`」。本轮把这条的**实际达成度**测清楚，不含糊过去：
+
+**机制：未按原文实现，且本机不可实现。** `core/src/tls_roots.cj:18-25` 记录的三条路实测结论仍然成立——crypt32 各入口在仓颉进程里恒返回 NULL（`CertOpenSystemStoreA("ROOT")`、`CertOpenSystemStoreW`、`CertOpenStore(SYSTEM_W, LOCAL_MACHINE 0x20000)` 与 `CURRENT_USER|INCLUDE_LOCAL_ROOT 0x10000` 全 NULL 且 lastErr=0），同进程里 `CertOpenStore(MEMORY)`、`CryptStringToBinaryA`、`CryptAcquireContextA` 都正常，同机 .NET 用同一个 `CertOpenStore` 能枚举——本轮又**现场复核了这个正对照**：`X509Store('Root','LocalMachine')` 此刻回 **53** 张。所以缺的不是证书、不是权限，是仓颉进程内那条 FFI 通道，原因未证。
+
+**内容：实测等价，不是缩了范围。** 这是本轮新增的硬读数。`scripts/gen-ca-bundle.mjs:21` 导出的是 **两张存储**（`Root` + `AuthRoot`）并按 DER 精确去重。现场量：`raw=94`、`distinct=53`（`.tmp-test/store-count.ps1`，PowerShell 逐条 `ToBase64String(RawData)` 后 `Sort-Object -Unique`）——本机 `AuthRoot` 的 41 张与 `Root` **逐字节重复**。随包的 `apps/desktop/dist/host/bin/ca-bundle.pem` 实测 **53 个 PEM 块 / 84,105 B**，与 distinct 数**完全相等**，即覆盖两张存储里全部不同的系统根，一张没漏。
+**可复现性**：现场重跑 `node scripts/gen-ca-bundle.mjs apps/desktop/.tmp-test/ca-fresh.pem`（rc=0，打印「53 张」），产物与随包文件 **逐字节相同**（sha256 前缀同为 `8a7b03701e0461d8`）——随包锚不是历史遗留物，当前脚本 + 当前系统就能重造。
+
+**判决**：A1 的**保证**（校验开着、锚来自 Windows 系统信任根、走 `verifyMode = CustomCA`、绝不 TrustAll）达成且可复现；A1 的**机制**（进程内 crypt32 枚举）本机不可用，已如实替换为「打包机上导出、随宿主同目录分发、核心只认 `SACODE_CA_BUNDLE`」。把一条自己解释不通、且在本机恒 NULL 的入口做进产品去替换一条已验证的通道，才是这里真正的风险。
+
+**同轮把 A3 那句「不带 SSL_CERT_FILE」从巧合做成保证**（commit `82fab46`）：核心取锚顺序是 `SACODE_CA_BUNDLE` → `SSL_CERT_FILE` → 用户目录，此前只是本机碰巧没设后者。夹具统一入口 `test-support/real-host-env.mjs` 现在显式 `delete env.SSL_CERT_FILE`。读数两条：零网络探针 `.tmp-test/helper-probe.mjs` 核 8 条环境整形规则 **8/8 PASS**（含「调用方显式给的锚不被覆盖」「随包锚缺失时干脆不设变量」），rc=0；带**诱饵** `SSL_CERT_FILE=D:\decoy\other-root.pem`（不存在的文件）重跑 read 闭环用例 **ok 1，tests 1 / pass 1 / fail 0 / cancelled 0**，rc=0，宿主零残留。
+
 ## 23. 批次 B 的 CLI 腿补第四条对账：npm 平台包内 exe 与本轮新构建逐字节一致；另登记 AGENTS.md 一处过期路径（2026-10-11 08:47–08:48 实测）
 
 §20 的哈希对账只覆盖了宿主那条链。本轮把 CLI 入口也实测一遍：
