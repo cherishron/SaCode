@@ -1202,6 +1202,42 @@ EstimatedSize      0xfda9d        InstallLocation   D:\Program Files\Deepseek\De
 
 **这条缺口的解锁动作**（择一，都需要用户侧配合，我不擅自做）：① 由你从资源管理器**双击**该安装包（仍指向沙箱目录亦可）后再查这三个键，用来直接判掉「发起链」这条候选；② 或允许我在沙箱外用默认位置 `%LOCALAPPDATA%\Programs\SaCode` 做一次带注册的对照装。在此之前，批次 E 的注册登记与自卸载两条保持 **FAIL（归因未定，非产品定罪）**，`NSIS 可安装可卸载` 这条主张**不成立**。
 
+## 44. §39 挂起的 4 处 `isSome` 站点不必等作者意图：编译器原文给出唯一正解，改完差分 4→0（2026-10-11 12:02–12:15 实测，提交 `40b3ffb`）
+
+§39 把 `core/src/worktree_test.cj:450-453` 四处登记为「机械不可修、需作者意图」。**那条登记是错的**，本轮拿到编译器原文后收回。
+
+**根因（编译器一句话钉死）**：
+
+```
+error: 'isSome' is not a member of class 'JsonBool'
+   ==> core\src\worktree_test.cj:450:55:
+    |     @Expect(shape.get("active").getOrThrow().asBool().isSome(), true)
+```
+
+配套查官方 stdx JSON 文档：`asObject()/asArray()/asInt()` 这类**向下转换在类型不符时直接抛 `JsonException`**，返回值是 `JsonBool/JsonString/JsonInt` 这些**类**（各带 `getValue()`），根本不是 `Option`。所以 `.isSome()` 从 API 设计上就不可能存在——这四行不是「意图不明的两可写法」，而是**拼错了的编译错**。
+
+**为什么不算我替作者改语义**：同一份 stdx 文档给出类型判别的正解是 `kind(): JsonKind`（枚举 `JsObject/JsArray/JsString/JsInt/JsFloat/JsBool/JsNull`），而**本仓已有完全同用途的先例**：`core/src/model_catalog.cj:27` `match (v.kind()) { case JsObject => true; case _ => false }`、`:31` 同形取 `JsString`；`core/src/batch.cj:179`、`apps/cli/src/remote.cj:57` 也是同族写法。照它改：
+
+```cangjie
+@Expect(match (shape.get("active").getOrThrow().kind()) { case JsBool => true; case _ => false }, true)
+@Expect(match (shape.get("name").getOrThrow().kind()) { case JsString => true; case _ => false }, true)
+@Expect(match (shape.get("uncommittedCount").getOrThrow().kind()) { case JsInt => true; case _ => false }, true)
+@Expect(match (shape.get("uniqueCommits").getOrThrow().kind()) { case JsInt => true; case _ => false }, true)
+```
+
+这个形状**保住那行原注释的本意**（「类型钉住……不许换位」），且**不需要我猜任何字段取值**——这正是我先前拒绝的 `.value == true` 改法做不到的（那种改会去断言 `active` 该是 true 还是 false，而 `:455` 那条 `contains("\"active\":false")` 说明此刻值就是 false，值比较会把类型钉子换成值钉子）。`worktree_test.cj` 顶部已 `import stdx.encoding.json.*`，裸 `JsBool` 直接可见（与 `model_catalog.cj` 同一 import 形态），无需新增依赖。
+
+**差分读数（两条独立通道，都是编译器级）**：
+
+| 通道 | 改前 | 改后 |
+|---|---|---|
+| 直跑 cjc（`--error-count-limit all`，缓存快照副本，只同步这一个文件） | `^error:` **9**，其中 4 条指 `worktree_test.cj:450-453` | `^error:` **5**，`isSome` 命中 **0** |
+| 真 `cd core && cjpm test`（工作区态，12:09 起） | 从未跑到出数 | `core.errlog`（92,110 B @12:11）里 `^error:` **5** 条**全部**落 `cmds_test.cj`（`registerBuiltinCommands` ×3、`it` 未声明、`operator '()'` 无匹配），全文对 `worktree_test|isSome` 命中 **0** |
+
+⇒ **提交面上属于我这条线的编译阻塞已经清零**；`core cjpm test` 的 Summary 计数现在**只**卡在并发那条线在飞的 `cmds_test.cj` ↔ `cmds.cj`（`registerBuiltinCommands` 尚无声明）。这一轮 `cjpm test` 是我主动终止的（它出着错不可能出 Summary，继续跑只是占着共享 `target/` 的锁），所以日志里那行 `CORETEST-rc=127` **不是测试读数**，别当失败条数引用；终止后 `Get-Process cjpm,cjc` = `KILLED-0`。
+
+**留给下一轮的判据**：等 `cmds_test.cj` 那 5 条归零，`core cjpm test` 就能直接出 `Summary: TOTAL/PASSED/FAILED/SKIPPED/ERROR` 五计数——这是批次 A/B 验收里最后一条仍缺的读数，不需要我再改任何代码。另：那四处新断言目前只有**编译级**证据（改前必红、改后不指名本文件），**还没有跑到 `FAILED=0` 的运行级证据**（被并发线挡住），等能跑起来时要把它们一并计入回归，别把「编译过了」写成「断言验证过了」。
+
 
 
 
