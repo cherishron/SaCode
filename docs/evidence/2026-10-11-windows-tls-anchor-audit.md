@@ -1176,6 +1176,32 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **批次 E 装机腿判决**：文件布局 PASS / 装机态运行 **PASS（296/0，rc=0）** / 载荷哈希四条腿 **PASS** / 注册登记 **FAIL** / 自带卸载 **FAIL（rc=0 但 0 删除）** / 用户既有应用无损 PASS / 进程零残留 PASS。NSIS 作为「可安装并可卸载的产品」仍差注册登记与卸载器两条，属交付缺口，**不能因「文件齐、跑得通」记作已解决**。
 
+## 43. 把 §42 的「注册登记缺失」从产品缺陷改回**归因未定**：本机确实存在 electron-builder 写成的完整注册项（2026-10-11 11:57 复核，§42 那句「未定位」到此收紧为两条候选）
+
+上一节我留了「为何安装时没写注册表，本轮未定位」。补一条能收窄的证据：**用户那条 `1bf39983-…` 就是 electron-builder 的产物**，逐值读回：
+
+```
+DisplayName        DeepSeek Harness 0.2.0-rc.2
+UninstallString    "D:\Program Files\Deepseek\DeepSeek Harness\Uninstall DeepSeek Harness.exe" /currentuser
+QuietUninstallString  … /currentuser /S
+DisplayIcon        …\DeepSeek Harness.exe,0
+EstimatedSize      0xfda9d        InstallLocation   D:\Program Files\Deepseek\DeepSeek Harness
+（另有 Software\1bf39983-… = InstallLocation + KeepShortcuts=true + ShortcutName）
+```
+
+这套键名与值形态只可能来自同一批 NSIS 模板（`INSTALL_REGISTRY_KEY=Software\${APP_GUID}` 与 `Uninstall\${UNINSTALL_APP_KEY}` 成对写入）。⇒ **HKCU 注册与开始菜单快捷方式在这台机器上是可写的，不是策略死区**，所以 §42 里「环境拦 HKCU」这条不能当结论。
+
+剩下两条候选，按现有证据的强弱如实排：
+
+| 候选 | 支持证据 | 反证/缺口 |
+|---|---|---|
+| **取证发起链**：安装器由 `cmd //c` 从非交互 bash 工具链派生，其「写 `$INSTDIR` 以外」的动作（HKCU + Shell 文件夹）被限制 | 本次形态高度自洽：**目录内 167 文件全写成功，目录外的注册表与快捷方式一个没写**；§19 已实测本机对新生成安装器有 `CANNOT_EXECUTE` 类拦截、对非 MSYS 进程写 `AppData\Local\Temp` 也拦 | 未直接观测到拦截方；用户那条注册成功的历史项**不是**由这条链发起的（无同链正样本可比） |
+| **本次构建/配置差异**：这一版 NSIS 的注册段没执行 | 我们的 `package.json` `build.nsis` 只有 `oneClick/perMachine/artifactName` 三项，与能注册成功的历史版本之间的差异未逐字段比对 | 无证据表明注册段被跳过；同版本模板路径已在两条腿上都读过 |
+
+**判据更新（写下来防自己再犯）**：装机验收的**最小证据集**不是「文件数 + 能跑」，而是**三件**：目录内载荷、目录外的注册登记、以及**卸载器真的删了东西**。`rc=0` 只证明进程退出码，卸载器空转同样返回 0——本轮就是这样（`UNINST-rc=0`、167 文件 0 删除）。任何一件缺失都必须标 FAIL/BLOCKED，不能拼成 PASS。
+
+**这条缺口的解锁动作**（择一，都需要用户侧配合，我不擅自做）：① 由你从资源管理器**双击**该安装包（仍指向沙箱目录亦可）后再查这三个键，用来直接判掉「发起链」这条候选；② 或允许我在沙箱外用默认位置 `%LOCALAPPDATA%\Programs\SaCode` 做一次带注册的对照装。在此之前，批次 E 的注册登记与自卸载两条保持 **FAIL（归因未定，非产品定罪）**，`NSIS 可安装可卸载` 这条主张**不成立**。
+
 
 
 
