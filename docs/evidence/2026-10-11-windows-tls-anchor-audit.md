@@ -528,6 +528,25 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **本批判据**：三产物产出 **PASS**（rc 与体积、mtime 如上，全部本轮新建）；双入口打包态 296 项 **PASS**（win-unpacked rc=0 且 stdout 296/0，portable rc=0 且报告体 checks=296 failed=0，第三轮复现同样 296）；宿主哈希 **PASS（三条腿实测一致）**，第四腿（NSIS 内部）**BLOCKED**，解锁动作＝你授权我实跑一次安装并随后卸载；签名如实 **NotSigned**（四对象）；NSIS 真机安装/卸载 **BLOCKED（未获授权）**，你已安装的应用未被触碰。
 
+## 21. 批次 D 全量回归本轮读数：npm test 671/663/0/0/8、dev ui-smoke 296/0，以及一条必须先加 `--no-sandbox` 的环境读数（2026-10-11 08:05–08:12 实测，layout 腿仍在跑）
+
+三条腿都按 D 的口径跑**本轮**读数，不引用上一轮的绿灯。`TMP/TEMP` 全部指 `.tmp-test\nsis-tmp`（§19 那条约束同样适用于宿主与 Electron，不指过去就是成片的假红）。
+
+| 腿 | 结果 | 实测 |
+| --- | --- | --- |
+| `npm test` | **PASS** | `.tmp-test/d.cmd` 外层 **`NPMTEST-rc=0`**；TAP 汇总 `# tests 671`、`# suites 1`、`# pass 663`、**`# fail 0`**、**`# cancelled 0`**、`# skipped 8`、`# todo 0`，`duration_ms 47755` |
+| `npm run ui-smoke`（原样，不带额外参数） | **FAIL（环境）** | **`UISMOKE-rc=-2147483645`** = `0x80000003` STATUS_BREAKPOINT，日志 23 行只到 npm banner、**0 条 `UI OK`**——本机 Electron 默认沙箱在非交互会话里起不来那条老限制，不是产品红 |
+| `npm run ui-smoke -- --no-sandbox` | **PASS** | `.tmp-test/d-uismoke2.log`：**296 条 `UI OK` / 0 条 `UI FAIL`**，末行 `UI_SMOKE PASS` |
+| `npm run layout-smoke -- --no-sandbox` | **在跑，不判** | 截至本节撰写 `LAYOUT PASS=6 / LAYOUT FAIL=0`，速率约 6 行/分钟，192 行需 30 分钟量级；**读数未结算前不写结论**，结算后补进本节 |
+
+**8 条 skip 逐条点名（不糊过去）**：`grep " # SKIP"` 恰好 8 行，其中 **6 条是真实模型凭据门槛**——`ok 215 真实StepFun：自定义模型请求完成且进入待核算账本`、`ok 399 真实提供商往返`、`ok 400 真模型增强`、`ok 401 真实 StepFun 调用 read`、`ok 402 真实 StepFun 回合收到系统提示`、`ok 403 真实 StepFun 调用 todo_write`，理由原文都是「缺少 STEPFUN_API_KEY 或 target/step.key」；另 2 条是 `ok 219 / ok 220 实际 Host：…`，门槛是 `test/host-startup-recovery.test.mjs:38` 的 `{ skip: !host }`（没给 `SACODE_HOST`）。**门槛是「凭据/宿主未注入」而不是「断言被删」**：`test-support/fixture-env.mjs` 里 `STEPFUN_API_KEY` 被显式清空，注释写明「不能让测试默认读取真实注册表或环境凭据」，所以默认跑必 skip。
+
+**因此 fail=0/cancelled=0 不等于这 8 条已验**：批次 A 的真实模型链路另有独立证据（§13.2 走界面全路径：模型中心添加供应商→选 `step-3.7-flash`→发送→出真答复，环境里显式 delete 掉 `SSL_CERT_FILE`），但**单元层这 8 条本轮仍是 skip**，判据按 skip 记，不拿 A3 的界面证据顶替它们。凭据可用（`~/.sacode/user/credentials.env` 单变量 `SA_CODE_STEPFUN_API_KEY`，90 B），下一步把它们带真键实跑一遍再回来记账——**键只进环境变量，绝不落盘、绝不打印**（cmd 批处理里 `set KEY=*** 会把键写进文件，所以这条腿必须走 bash 命令替换；宿主侧还要 `SACODE_HOST` 指 `apps/desktop/dist/host/bin/sacode-host.exe`，同目录已有 `ca-bundle.pem` 84,105 B）。
+
+**本轮还顺手抓到一条构建侧变化**：`prelayout-smoke` 的 vendor 链现在跑 5 个脚本（`pack-vendor` / `pack-tinyvue` / `pack-tinyrobot` / `pack-pages` / `pack-next-sdk`），编译 12 个 TS 页面并折叠 `next-sdk.iife.js`（315,588 B）——比本会话早前记录的 vendor 步骤多了后两个，属别人已推进的线，我不动它，只在此登记分母环境变了。
+
+**本批判据**：`npm test` **PASS（671/663，fail=0，cancelled=0，rc=0）**；dev `ui-smoke` **PASS（296/0）**，但**必须先 `--no-sandbox`**，原样 `npm run ui-smoke` 在本机是 `0x80000003` 环境红；`layout-smoke` **在跑（暂不判）**；8 条 skip **如实按未验记**，其中 6 条待带真凭据补跑。
+
 
 
 
