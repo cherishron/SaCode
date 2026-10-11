@@ -7,10 +7,10 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 const { HostBridge }=createRequire(import.meta.url)('../host-bridge.cjs');
+import { realHostEnv } from '../test-support/real-host-env.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
 const HOST=process.env.SACODE_HOST || join(here,'../dist/host/bin/sacode-host.exe');
-// 随包信任锚与宿主 exe 同目录，生产由壳层经 SACODE_CA_BUNDLE 传入；测试直接 spawn 宿主时按同一位置补上。
-if(!process.env.SACODE_CA_BUNDLE){const side=join(dirname(HOST),'ca-bundle.pem');if(existsSync(side))process.env.SACODE_CA_BUNDLE=side;}
+// 随包信任锚与「不带 SSL_CERT_FILE」两条由 test-support/real-host-env.mjs 统一保证（复用壳层 paths.cjs 的同一套接线）。
 // 夹具模型名只写一次：账本断言与登记表用的是同一个字面量，避免改端点时漏掉一处变成假绿
 const MODEL='step-3.7-flash';
 test('真实 StepFun：自定义模型请求完成且进入待核算账本',{timeout:180000},async t=>{
@@ -19,7 +19,7 @@ test('真实 StepFun：自定义模型请求完成且进入待核算账本',{tim
  if(!key){t.skip('缺少真实模型凭据');return;}
  const dir=mkdtempSync(join(process.env.SACODE_TEST_TMP || tmpdir(),'sacode-route-real-'));
  const settings=join(dir,'settings').replaceAll('\\','/');mkdirSync(settings);
- const b=new HostBridge(process.env.SACODE_HOST || join(here,'../dist/host/bin/sacode-host.exe'),{...process.env,SACODE_USER_SETTINGS_DIR:settings});await b.start(dir);
+ const b=new HostBridge(HOST,realHostEnv(dir,HOST,{SACODE_USER_SETTINGS_DIR:settings}));await b.start(dir);
  try {
   // 2026-10-11 实测：/step_plan/v1 + step-5-preview 对本账号回 403 real_name_required（账号侧限制），
   // 同一条键打 /v1 + step-3.7-flash 能出真答复，故夹具换成后者。

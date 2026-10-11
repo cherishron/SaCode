@@ -8,18 +8,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { realHostEnv } from '../test-support/real-host-env.mjs';
 
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
 const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
-// 随包信任锚与宿主 exe 同目录，生产由壳层经 SACODE_CA_BUNDLE 传入；测试直接 spawn 宿主时按同一位置补上，
-// 缺锚仍然会在 TLS 层如实失败，不降级校验。
-if (!process.env.SACODE_CA_BUNDLE) {
-  const side = join(dirname(HOST), 'ca-bundle.pem');
-  if (existsSync(side)) process.env.SACODE_CA_BUNDLE = side;
-}
+// 随包信任锚与「不带 SSL_CERT_FILE」两条由 test-support/real-host-env.mjs 统一保证
+// （复用壳层 paths.cjs 的同一套接线）；缺锚仍然会在 TLS 层如实失败，不降级校验。
 // 2026-10-11 实测：/step_plan/v1 + step-5-preview 对本账号回 403 real_name_required（账号侧限制，
 // 不是解析器缺陷），同一条键打 /v1 + step-3.7-flash 能出真答复，故夹具换成后者。
 const BASE_URL = 'https://api.stepfun.com/v1';
@@ -41,14 +38,13 @@ test('真模型增强：当前会话的模型把草稿改写得更清楚，且�
   const sessionDir = mkdtempSync(join(tmpdir(), 'sacode-enh-real-'));
   const settingsDir = mkdtempSync(join(tmpdir(), 'sacode-enh-cfg-'));
   // 全新的配置根 + 环境变量兜底：增强取的就是这一颗模型，而不是本机已配的别的提供商。
-  const bridge = new HostBridge(HOST, {
-    ...process.env,
+  const bridge = new HostBridge(HOST, realHostEnv(sessionDir, HOST, {
     SACODE_USER_SETTINGS_DIR: settingsDir,
     SACODE_PROVIDER_BASE_URL: 'http://127.0.0.1:1',
     SACODE_PROVIDER_MODEL: '不能误用的兜底模型',
     SACODE_PROVIDER_KEY: '',
     STEPFUN_API_KEY: '',
-  });
+  }));
   await bridge.start(sessionDir);
   try {
     await bridge.request('credential/set', { ref: 'SACODE_ENH_REAL', value: key });

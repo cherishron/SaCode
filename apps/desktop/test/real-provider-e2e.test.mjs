@@ -6,18 +6,15 @@ import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { realHostEnv } from '../test-support/real-host-env.mjs';
 import { fileURLToPath } from 'node:url';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..', '..');
 const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
-// 随包信任锚与宿主 exe 同目录，生产由壳层经 SACODE_CA_BUNDLE 传入；测试直接 spawn 宿主时按同一位置补上，
-// 缺锚仍然会在 TLS 层如实失败，不降级校验。
-if (!process.env.SACODE_CA_BUNDLE) {
-  const side = join(dirname(HOST), 'ca-bundle.pem');
-  if (existsSync(side)) process.env.SACODE_CA_BUNDLE = side;
-}
+// 随包信任锚与「不带 SSL_CERT_FILE」两条由 test-support/real-host-env.mjs 统一保证
+// （复用壳层 paths.cjs 的同一套接线）；缺锚仍然会在 TLS 层如实失败，不降级校验。
 // 2026-10-11 实测：/step_plan/v1 + step-5-preview 对本账号回 403 real_name_required（账号侧限制，
 // 不是解析器缺陷），同一条键打 /v1 + step-3.7-flash 能出真答复，故夹具换成后者。
 const BASE_URL = 'https://api.stepfun.com/v1';
@@ -36,7 +33,7 @@ test('真实提供商往返：配置面登记的模型能出真答复', { timeou
   if (key.length === 0) { t.skip('缺少真模型凭据（需 STEPFUN_API_KEY 环境变量或 gitignore 的 target/step.key）'); return; }
   assert.ok(existsSync(HOST), '缺少自包含宿主');
   const dir = mkdtempSync(join(tmpdir(), 'sacode-real-'));
-  const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings') });
+  const bridge = new HostBridge(HOST, realHostEnv(dir, HOST));
   await bridge.start(dir);
   try {
     await bridge.request('model/registry/update', {
