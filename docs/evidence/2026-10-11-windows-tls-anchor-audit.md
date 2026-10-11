@@ -662,6 +662,53 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **顺带做的一次密钥自查**（`.tmp-test/secret-scan.mjs`，脚本只输出布尔与计数，不打印键或其任何前缀）：把 `~/.sacode/user/credentials.env` 里长度 > 20 的值读进内存，对 `.tmp-test/` 下所有 `*.log|*.txt|*.json|*.md|*.clean` 逐个 `includes` 比对。读数：**`secret-vars-loaded=1`、`scanned=325`、`leaked-files=0`，脚本 rc=0**（这条 rc 是先重定向落盘再 `echo real-rc=$?` 取的，不是 `| tail` 之后那个——即 §25 登记的第二条陷阱）。这把「凭据不落盘」这条红线在本批全部取证文件上验了一次，而不只是靠 `session.log` 不含键那一处。
 
+## 28. 批次 D 的最强读数到手：带宿主带真键全套 **671 / 671 / 0 / 0 / 0，rc=0**，两条 `!host` skip 也被消掉（2026-10-11 09:33–09:45 实测）
+
+**相对 §22 的增量只有一处**：给同一个 `.cmd` 包装加 `set SACODE_HOST=...\apps\desktop\dist\host\bin\sacode-host.exe`（本轮 07:18 新构建，11,158,528 B，同目录 `ca-bundle.pem` 84,105 B），把 §21/§22 一直按 skip 记的那 2 条 `{ skip: !host }`（`host-startup-recovery.test.mjs:38` 门控）也真跑起来。产品与测试代码一行未动，`skipped` 因此从 2 变 0，而不是把门槛删掉。
+
+**同一条腿跑了三次，逐条如实记**：
+
+| 腿 | 时间 | 读数 | 判 |
+| --- | --- | --- | --- |
+| leg1 | 09:34 | `tests 671 / pass 670 / fail 1`，`CREDALLHOST-rc=1`；唯一红是 `not ok 538 成员消息进入真实Provider与独立持久日志…`，消息原文 `timeout: team/member/create`，实测 5,473 ms 撞 `host-bridge.cjs:85` 的默认 `timeoutMs = 5000` | FAIL（时序） |
+| leg2 | 09:37 | `tests 671 / suites 1 / pass 671 / fail 0 / cancelled 0 / skipped 0 / todo 0`，`duration_ms 50918`，`grep -c "^not ok"` = 0 | PASS |
+| leg3 | 09:45 | 同 leg2 五计数，`duration_ms 57611`，`# SKIP` 计数 **0**，`ok 538` 该用例本轮绿，包装 rc 文件里 `CREDALLHOST-rc=0` | **PASS（本批定稿读数）** |
+
+**leg1 那条红按「待查脆弱点」登记，不当产品缺陷也不当运气**：三条独立证据支撑这个定性——(1) 单独重跑该用例 **3/3 绿、rc=0**；(2) 历史同形：`batchD-rerun.log` 曾以同一条 `timeout:` 消息记 `fail 1`，紧接 `batchD-rerun2.log` 回 `fail 0`；(3) 该用例所在 `apps/desktop/test/team-host.test.mjs` 是**别人正在修改的文件**（`git status` 里 M 态），不是本批改动画像。脆弱点本身仍然真实存在：5 秒单请求预算 vs 真 Provider 往返，谁动了这条链都要知道它有先例。
+
+**我自己的两处取证操作缺陷，写下来防复犯**：
+
+1. **leg1 的日志正文被我的 leg2 覆盖了**。包装脚本原来把日志名硬编码成 `cred-all-host.log`，两条腿写同一个文件——135,664 B 的 leg1 正文只剩会话内读数，盘上留下的 135,342 B 是 leg2 的。已把参数化补进脚本（`cred-all-host-%RUNTAG%.log` + 顶部 `if "%RUNTAG%"=="" set RUNTAG=1`），并**重跑 leg3 重新造出一对**：`.tmp-test/cred-all-host-3.log`（135,404 B，五计数在盘）与 `.tmp-test/cred-all-host-3.rc.txt`（`ENV-TMP` / `ENV-HOST` / `HOST-present=1` / `KEY-present=1` / `CREDALLHOST-rc=0`）。
+2. **包装腿的 rc 天生不在 npm 日志里**：`call npm test 1> …log 2>&1` 只重定向 npm，最后那句 `echo CREDALLHOST-rc=` 走 `.cmd` 自己的 stdout。所以「计数」和「rc」必须两份文件才配成对证据，leg3 就是这么配的。
+
+**还有一次「命令根本没跑」的读数**：第一次调 leg3 用 `RUNTAG=3 cmd //c .tmp-test\\cred-all-host.cmd | grep -E "…"`，立刻返回且盘上没有 `cred-all-host-3.log`——cmd 的报错被管道里的 grep 吞了。判据落回「日志文件不存在即未运行」，改绝对路径 + 全量重定向落盘后才真跑成。**这是 §25 那条 rc 陷阱的姊妹形态：空输出不是 rc=0，是压根没跑。**
+
+**收尾实查**：`tasklist | grep -icE "sacode-host\.exe|electron\.exe"` = **0**（leg3 之后与 A3 两轮之后各查一次，都是 0）。
+
+**批次 D 判据（本轮全绿，四腿齐）**：`npm test` 无凭据 **671/663/0/0/8 rc=0**（§21）、带凭据 **671/669/0/0/2 rc=0**（§22）、带凭据且带宿主 **671/671/0/0/0 rc=0**（本节，本批定稿）；dev `ui-smoke` **296 条 UI OK / 0 FAIL**、`layout-smoke` **192 PASS / 0 FAIL**（§22 已如实标注那是产品改动前读数，本批只动 test 与文档，不构成重跑义务）；宿主零残留。**仍 BLOCKED 未变**：`core cjpm test` 计数（§26/§27 双向漂移）、NSIS 真机安装卸载与第四条宿主哈希腿（未获授权）。
+
+## 29. A3 桌面端到端在**本轮新构建**上复跑两轮：四条判据齐绿，第一轮漏了「设置面板可见打开」这一环，登记为驱动抢跑并补跑（2026-10-11 09:39 / 09:44 实测）
+
+被试产物是 §17 那轮从当前源码重建的宿主：`dist/host/bin/sacode-host.exe` 11,158,528 B @07:18、`dist/host/bin/ca-bundle.pem` 84,105 B @07:18（不是 §13.2 那轮的旧宿主）。驱动 `.tmp-test/a3-ui-fullpath.cjs` 环境里 `delete e.SSL_CERT_FILE`，只设 `SACODE_CA_BUNDLE` 指那颗随包锚——**满足 A3 的「不带 SSL_CERT_FILE」**。
+
+**第一轮（09:39，`.tmp-test/a3-current-build.log`）四条判据本身全绿**：界面出正文 `展开 ⏎ 助手 · 1 条消息 ⏎ 收到就好`、`用量 3371/200000 · 已计量`、`session.log` 9 行且 `assistant/message`=true、含键=false、磁盘四文件均不含键=true、结论 PASS、`A3-rc=0`。
+
+但**它开头两行是 `打开设置: 无 #open-settings` 与 `等到设置面板: false`**（那条 `until` 把 60 × 500 ms 预算耗尽）。这条不能糊过去，先分清是哪一侧的问题：
+
+- `#open-settings` 在当前渲染层**确实存在**（`renderer/app.js:742` 那颗按钮的 id），且**同一个驱动**在 05:41 与 05:44 两轮的首步读数都是 `打开设置: clicked` + `等到设置面板: true`（`.tmp-test/a3-fullpath.log`、`.tmp-test/a3-fullpath2.log` 前两行原文）。所以判为**驱动首步抢在渲染挂载之前**的时序竞态，不是产品回归。
+- 后果要说清是哪一环没被覆盖：这一轮里「进模型中心 / 进供应商子页 / 点添加 / 保存」的点击全都落在**处于关闭状态的 dialog 子树**上——CDP 的 `querySelector` 不看可见性、`.click()` 照样触发 Vue 处理器。因此**功能链证据仍成立**（保存后界面自己回显 `rows:["编辑 StepFun 真模型"]`、`window.sacode.modelsDescribe()` 通道复查到 `stepfun:step-3.7-flash`），但**「点设置按钮 → 面板真的打开」这一环本轮没验到**。
+
+**修驱动后补跑第二轮（09:44，`.tmp-test/a3-current-build2.log`）**：只加一行就绪等待（`say('等到应用就绪', await until("!!document.querySelector('#open-settings')"))`），读数 `等到应用就绪: true` → `打开设置: clicked` → `等到设置面板: true`，收尾 `关闭设置: 点了关闭` → `设置面板还开着: false`，缺的那一环补齐；四条判据同向复现：界面 `展开 ⏎ 助手 · 1 条消息 ⏎ 收到就好`、`用量 3385/200000 · 已计量`、`session.log` 10 行、`assistant/message`=true、含键=false、`磁盘文件均不含密钥: true`、结论 **PASS**、**`A3-rc=0`**；宿主与 Electron **零残留**（`tasklist` 计数 0）。
+
+**两处防误读的注解**：
+
+1. `session.log 有 provider 配置事件: false` 是**负向泄漏探针**（驱动 `:139`，正则是 `/provider|model\/registry/i`）——false 才是期望值，供应商配置属 `providers.log` 不属 `session.log`。后来的读者别把它读成「配置没落盘的功能缺失」。
+2. `通道复查` 里那个 `keyCfg:["?"]` **不是绿也不是红**：驱动在 `credentialConfigured === undefined` 时才打 `?`，说明该字段在 `modelsDescribe` 的响应里没出现。凭据面这一轮的依据只有两条——磁盘/日志四文件不含键、以及界面拿到真答复；不把这个 `?` 写成「凭据已正确登记」。
+
+**与 §13.2（05:44，重建前宿主）对照**：同一条全路径两轮都 PASS，`session.log` 9/10 行、usage 3371 / 3385 / 3406 三读数同量级——本轮新构建的宿主没有让这条链退化。**批次 A 的 A3 判据因此按「当前构建」重记一遍为 PASS**；`core cjpm test` 计数仍是 §27 那条 BLOCKED，本节的绿不顶替它。
+
+
+
 
 
 
