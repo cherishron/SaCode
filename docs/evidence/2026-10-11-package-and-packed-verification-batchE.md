@@ -55,4 +55,6 @@ NSIS 那一跳与批次 D 定到的同一条本机前提有关（`%TEMP%` 对非
 
 > **本文件的三产物状态已被 2026-10-11 07:35 的复打推翻**（原文保留，不改写上一轮读数）：宿主重打到 07:18 后按批次 E 口径重跑 `electron-builder`，结果是 **win-unpacked 与 portable 产出成功、NSIS 转 FAIL**（`makensis` 成功后 electron-builder 以空参数执行安装包，回 `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`、`Exit code: null`，两次复跑同点同错），且上一轮 84 MB 安装包被本轮 153 KB 残件覆盖；打包态 `--ui-smoke` 在 win-unpacked 上只跑到 **252/296**（`Cannot find module …\win-unpacked\scripts\sse-contract-server.cjs`，夹具在仓库根 `scripts/`、不在 `build.files`）；portable 两次运行 stdout 均 0 行（含 `ELECTRON_ENABLE_LOGGING=1`）⇒ 该腿 BLOCKED。宿主哈希两腿一致（`d2ef66eb…`），**三方对账本轮不成立**；四对象签名逐个实测仍 `NotSigned`。安装副作用已核查：Programs 目录、HKCU 卸载项、进程三处均无 SaCode 痕迹，你已安装的应用未被触碰。逐条读数见 `2026-10-11-windows-tls-anchor-audit.md` §18。
 
+> **07:35 那次的三条红/堵已被 08:03 的复验全部结算**（原文与上一轮读数保留不动）：NSIS 的真因不是「拒 spawn」而是非 MSYS 进程写不了 `AppData\Local\Temp`，把 TMP/TEMP 指到 `.tmp-test/nsis-tmp` 后安装包实产 **93,860,235 B @07:54、rc=0**；打包态 44 项缺口靠 HEAD 既有的 `SACODE_SSE_FIXTURE` 由驱动注入仓库根夹具补齐，**零产品改动、没往包里塞测试夹具**；portable 那条腿按仓内注释改用 `ui-smoke-report.json` 报告体结算，**win-unpacked 与 portable 各 checks=296 / failed=0 / packaged=true**（另加第三轮复现同样 296）；宿主哈希本轮**三条腿全部实测**且一致（`d2ef66eb8c3edc9a53ef`），第四腿（NSIS 安装器内部）仍需你授权实跑安装才可测，保持 BLOCKED；四对象签名仍逐个实测为 `NotSigned`；进程与安装副作用零残留。逐条读数见同文 §19、§20。
+
 

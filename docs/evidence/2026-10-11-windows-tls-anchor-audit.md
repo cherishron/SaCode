@@ -498,6 +498,36 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **本批判据**：§18 的「NSIS 拒 spawn」**FAIL（归因错误，本轮更正）**；NSIS 产物 **PASS（rc=0，93,860,235 B @07:54，两遍编译走通）**；「非 MSYS 进程写不了 `AppData\Local\Temp`」这条本机约束 **PASS（第三个独立佐证，机制未定位）**；打包态夹具修法 **PASS（HEAD 既有覆盖口，零产品改动，已写入驱动脚本）**；win-unpacked 与 portable 两条 296 项腿的读数和签名复核见 §20（本轮尚未结算，不在此处冒充）。
 
+## 20. 批次 E 复验结算：三产物齐、双入口打包态各 296 项、宿主哈希三条腿均实测一致（2026-10-11 07:53–08:03 实测）
+
+前置是 §19 的两条修法同时生效：**TMP/TEMP 落点换到 `.tmp-test/nsis-tmp`**，驱动侧设 `SACODE_SSE_FIXTURE=D:\Project\sa\saai\sa-code\scripts\sse-contract-server.cjs`（13,089 B，存在性实测 YES）。构建命令 `npx electron-builder --win <target> --config.electronDist=node_modules/electron/dist`，**未设任何镜像**。
+
+| 产物 | 结果 | 实测读数 |
+| --- | --- | --- |
+| `win-unpacked/` | 产出 **PASS** | `resources/app.asar` 6,794,111 B @23:56:25；`app.js`/`msgfold.js`/`main.cjs`/`preload.cjs` 在包内 |
+| `sacode-portable.exe` | 产出 **PASS** | `STEP0-rc=0`，84,256,050 B @07:58 |
+| `SaCode Setup 0.1.0.exe` | 产出 **PASS** | §19：外层 `rc=0`，93,860,235 B @07:54，blockmap 99,338 B @07:55 |
+
+**双入口打包态各 296 项**（分母与开发态 `.tmp-test/b-smoke.log` 的 296 同一条，不缩范围）：
+
+- `win-unpacked/SaCode.exe --ui-smoke --no-sandbox`：**rc=0**、stdout `252→296` 补齐后 **296 条 `UI OK` / 0 条 `UI FAIL`**（386 行日志），另落文件报告 `.tmp-test/nsis-tmp/sacode-smoke-11916-1791676704447/ui-smoke-report.json` @23:58:53 `passed=true failed=0 checks=296 packaged=true`。
+- `sacode-portable.exe --ui-smoke --no-sandbox`：**rc=0**，stdout **0 行**——这条不是新缺陷，`ui-smoke.cjs:1182` 的注释就写着「便携启动器不保证继承 stdout；显式 `--session-dir` 保留完整断言报告供验收」，所以按**文件报告体**结算：`sacode-smoke-22572-1791676746510` @23:59:35 `passed=true failed=0 checks=296 packaged=true`。§18 那句「portable BLOCKED（stdout 零通道）」由此改为 **PASS（取证通道换成报告体，同一批断言同一分母）**。
+- 第三轮 `sacode-portable.exe --ui-smoke`（专门为了抓运行期解包哈希而重跑）：**`PORTABLE3-rc=0`**，报告 `sacode-smoke-22904-1791676888997` @00:01:58 同样 `checks=296 failed=0 packaged=true`。
+
+**宿主载荷哈希：本轮三条腿全部是实测值**，前缀均为 `d2ef66eb8c3edc9a53ef`、体积 11,158,528 B @07:18：① 源 `dist/host/bin/sacode-host.exe`；② `win-unpacked/resources/host/bin/sacode-host.exe`；③ **portable 运行期解包出来的那颗** `.tmp-test/nsis-tmp/3KWcKjJnWpxidpy6lyc5MMoi0cx/resources/host/bin/sacode-host.exe`（在进程存活窗口内用有界轮询抓到并当场哈希；portable 退出即自清该目录，上一轮就是因此取不到）。**第四腿仍 BLOCKED**：NSIS 安装器内部的宿主需要**授权实跑安装**才能测；中间归档 `@stand-alonesacode-desktop-0.1.0-x64.nsis.7z` 在构建成功后被工具链自己删掉（07:29 那次失败的还在、08:00 已无），仓内也没有 7z 抽取器（`node_modules/7zip-bin` 不存在，MSYS `tar` 是 GNU tar 不认 7z）⇒ 不拿「同源必然同哈希」的推断冒充实测。**为什么不自动作到 scratch 目录**：`p0-status-2026-10-02.md` 第 1520 行确有 `SaCode Setup 0.1.0.exe /S /D=dualtest/nsis-install` 的历史先例，但本轮 `package.json` 的 NSIS 配置是 `oneClick=true`，静默装会向 HKCU `Uninstall\` 写注册项与 Start Menu 快捷方式——不是纯目录级、可无痕撤销的动作，而目标文本把「真机安装/卸载」明写在需授权前提下，所以停在这里。你若要补这第四腿，一句话即可，我会用 `--session-dir` 同款落点装到 `.tmp-test/nsis-install/`、测完跑它自己的 `/S /Uninstall` 再核注册项与进程零残留。
+
+**签名状态如实记录**：`Get-AuthenticodeSignature` 逐个实测 `win-unpacked/SaCode.exe`、`sacode-portable.exe`、`SaCode Setup 0.1.0.exe`、包内 `sacode-host.exe` —— **四个全部 `NotSigned`**。这是 `build.win.signExecutable=false` 的主动选择，「安装包已产出」不等于「已签名可分发」。
+
+**渲染层新鲜度取的是最硬的一条**：`asar.extractFile(app.asar,'renderer/app.js')` 与当前源码 **逐字节相同**（各 76,839 B，`identical=true`），且 asar mtime 23:56:25 晚于源文件 mtime 17:19:21。asar 清单（路径按反斜杠返回，需归一化后统计，第一版探针因没归一化把 `renderer=0` 报了个假数）：**196 条目 / renderer 124 个文件 / `renderer/vendor/` 20 个 / `test-support/` 49 个 / `*-ipc.cjs` 7 个（`customs,execution,lsp,models,plugins,team,worktree`）/ 仓库根 `scripts/` 为 0** —— 最后一条正面印证了 §19 的判断：夹具确实没随包，只能由驱动注入。
+
+**afterPack 卫生只到单侧证据**：`package.json:27` 挂着 `"afterPack": "./after-pack.cjs"`，该脚本删 `debug.log` 与 `resources/default_app.asar`；产物里 `resources/` 只有 `app.asar`、`elevate.exe`、`host/`，而官方源 dist 里 `default_app.asar` 存在（108,953 B @2019-06-18）⇒ 脏文件确实没留下。但**未能把它和 builder 自身可能的排除行为分离**，归因保守记为「卫生结果符合预期，执行主体未唯一确定」。
+
+**来源披露（这条决定这批读数的适用范围）**：`appDir=./` —— 本轮三产物直接打在**在飞工作区**上，不是 `.tmp-test/renderer-current-*` 那份冻结副本。所以包内已含他人未落库的改动（上面那 7 个 `*-ipc.cjs` 与未入库的 `after-pack.cjs` 都在生效）。这是「**最新 renderer 已进包**」的证据，**不是**「提交态可复现」的证据；后者要另起 `--detach` worktree 再打一轮。
+
+**进程与副作用**：`tasklist` 里 `sacode|SaCode Setup` 计数 **0**，两轮冒烟与三次桩实验自己起的进程都已收；NSIS 只构建未执行，未安装任何东西。
+
+**本批判据**：三产物产出 **PASS**（rc 与体积、mtime 如上，全部本轮新建）；双入口打包态 296 项 **PASS**（win-unpacked rc=0 且 stdout 296/0，portable rc=0 且报告体 checks=296 failed=0，第三轮复现同样 296）；宿主哈希 **PASS（三条腿实测一致）**，第四腿（NSIS 内部）**BLOCKED**，解锁动作＝你授权我实跑一次安装并随后卸载；签名如实 **NotSigned**（四对象）；NSIS 真机安装/卸载 **BLOCKED（未获授权）**，你已安装的应用未被触碰。
+
 
 
 
