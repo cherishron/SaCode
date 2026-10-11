@@ -1061,6 +1061,40 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 `core cjpm test` 出 Summary 的前置照旧在并发线手里（`cmds_test.cj` 未落库 hunk 的 5 条 + 库层两处 + `GitQueryResult` 悬空），
 **「core cjpm test 计数与 rc」仍记 BLOCKED**；本批这 5 处把已入库测试面的错误数从 9 降到 4。
 
+## 40. 批次 D 在**当前树**上重取一轮：674/666/fail 0、ui-smoke 296、layout-smoke 192，并把「74 条红」当场归因到 TMP（2026-10-11 11:13–11:27 实测）
+
+**为什么要重取**：桌面树此刻混着并发线在飞的文件（`apps/desktop/main.cjs` `M`、`plugins-ipc.cjs` `??`、十余个 `test/*.test.mjs` `M`），
+批次 D 的旧读数不覆盖这棵树。顺手复验两条不变量：`apps/desktop/renderer/app.js` 仍 **953 行 < 1000**（批次 C 成立，
+迁出的 state 模块最大 255 行）；批次 F 那三份文件仍在并发线手里（`core/src/plugin_store.cj` `M`、`apps/host/src/main.cj` `M`、
+`apps/desktop/plugins-ipc.cjs` `??`），拒绝理由不变，没有一条被默认算已解决。
+
+**三条腿的当轮读数（每条都带 rc）**：
+
+| 腿 | 命令 | 读数 | rc |
+| --- | --- | --- | --- |
+| 全量单测 | `npm test`（TMP/TEMP 指到 `.tmp-test/nsis-tmp`） | `tests 674 / pass 666 / fail 0 / cancelled 0 / skipped 8` | **0** |
+| 界面冒烟 | `npm run ui-smoke -- --no-sandbox` | `UI OK` **296** 条、`UI FAIL` **0** 条、末行 `UI_SMOKE PASS` | **0** |
+| 布局冒烟 | `npm run layout-smoke -- --no-sandbox` | `LAYOUT PASS` **192** 组、`LAYOUT FAIL` **0** 条 | **0** |
+
+**「74 条红」的归因：环境，不是产品**。第一次 `npm test` 用的是 Git Bash 的环境值 `TMP=/tmp TEMP=/tmp`，
+读数是 `tests 674 / pass 592 / fail 74 / cancelled 0 / skipped 8`，rc=1，原文里 **17 处 `Access is denied`**。
+只换一个变量（把 TMP/TEMP 指到仓内可写目录）再跑同一条命令：**fail 74 → 0，其余四个计数一字不差**（674/666/0/0/8）。
+⇒ 这 74 条是宿主写临时文件被拒的连锁，不是断言失败，也与本批 core 改动无关（core 的 `*_test.cj` 不参与桌面 JS 用例）。
+本仓这条根因不是第一次撞到，**74 这个数就是它的指纹**。
+另一条同款坑：`layout-smoke` 不带 `--no-sandbox` 时 rc=3、日志里只有 npm 那两行 banner，**这是 Electron 崩（既有 0x80000003 那条）不是布局失败**，
+判「布局没过」之前要先看日志里有没有任何 `LAYOUT` 行。
+
+**我自己在这轮犯的两次探针错（登记，因为它们是假阴的直接来源）**：数 ui-smoke 用了 `^\s*(OK|ok)`，
+而真实标记是行首无空白的 `UI OK`；数 layout 用了 `LAYOUT OK`，而真实标记是 `LAYOUT PASS`。两次都读到 **0**，
+差点被读成「套件一条没跑」。**判据：任何按标记计数的探针，先 `tail` 一眼原文确认标记形态，再信 0。**
+相关：`cangjie-cjpm-test-result-verification` 里那条「按标记 grep 必然假绿或假红」是同一类错，只是发生在 JS 侧。
+
+**零残留与产物落点**：三轮读数期间不叠加别的测试；跑完 `Get-Process electron,sacode-host` 计数 **0**（自己退出的，不是我杀的）；
+日志全部在 `.tmp-test/`（`npmtest-1113.log`、`npmtest-1115.log`、`uismoke-1116.log`、`layout-1118.log`）。
+仓库根那个 `dualtest/` 目录早于本轮（08:29 起就有），已被 gitignore，且 `bridge.test.mjs` 本来就用它，**不是我建的、我没动**。
+
+**批次 D 判定：PASS**（当轮在当前树上重取，三条腿 rc 均 0，fail=0 且 cancelled=0，宿主零残留）。
+
 
 
 
