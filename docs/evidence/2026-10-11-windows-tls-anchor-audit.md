@@ -921,6 +921,25 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
   （定义在未入库的 `git_workbench.cj`，已入库的 `team_workspace.cj:18` 却引用它）与 HEAD `cmds.cj` 的写法待并发改动落库。
   所以「core cjpm test 计数与 rc」仍是 **BLOCKED**，且现在**每一格的归属都点名到位**。
 
+## 37. 批次 B/E 的产物时效审计：07:18 的宿主与 07:56 的 asar **仍然对应当前源码面**（2026-10-11 10:39 实测）
+
+问句是「本批又动了 core 测试文件、并发线还在写 core，那我打出来的包还是现在这份源码吗」。两条独立查法，都不靠记忆：
+
+- **提交面**：`git log --since="2026-10-11 07:18" --name-only -- apps/desktop/renderer apps/desktop/main.cjs apps/desktop/preload.cjs apps/desktop/host-bridge.cjs core/src apps/host/src`
+  只回来 3 枚提交，且改的文件**全部是 `core/src/*_test.cj`**（`6b8e4b7` 09:06、`b72d621` 09:11、`8c2bd57` 10:31）。
+  测试文件既不进 `sacode-host.exe` 也不进 `app.asar`，所以提交面没有造成产物漂移。
+- **工作场面（这条才是关键，因为并发线的改动大多未落库）**：按 mtime 筛 07:18 之后的写入，
+  `core/src/*.cj` 与 `apps/host/src/*.cj` 里只有我改的 3 个测试文件（10:18 / 10:18 / 10:19）；
+  **非测试的 core 源码与全部宿主源码都早于宿主 exe 的 07:18**。桌面壳五个文件
+  （`main.cjs` 03:11、`preload.cjs`、`host-bridge.cjs`、`plugins-ipc.cjs`、`paths.cjs`）相对 asar 的 07:56
+  **无一条更晚**（筛选输出为空）。
+- 产物基准：`apps/desktop/dist/host/bin/sacode-host.exe` **11,158,528 B @07:18**、
+  `apps/desktop/dist/electron/win-unpacked/resources/app.asar` **6,794,111 B @07:56**。
+
+**结论**：§31 那条四条宿主哈希腿、批次 B 的剥 PATH 逐子命令自测、批次 E 的双入口 296 项，
+**不需要因为本批改动而重跑**；保留的限定语只有一条——它们本就是「**含并发线未落库源码**」的构建，
+这条限定与 §36 六里给批次 D 的那句同源。**PASS，非 BLOCKED**（因为要判的「产物是否对应现源码」已被两条独立查法证实）。
+
 
 
 
