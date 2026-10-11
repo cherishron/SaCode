@@ -851,7 +851,7 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 > （已实跑，输出即清单）：`git log --reverse --since="2026-10-11 08:00" --pretty='format:%h %ad %s' --date=format:'%H:%M'`
 > ——**27 枚**（`docs(` 20、`test(` 4、`fix(` 3），含本节之后的 `2519d39`/`8c2bd57`/`28db617`/`41704ce`/`3d00b04`/`cc2be15`。
 > 批次 G 的「精确」不靠枚数自证，靠逐枚范围核对：`for c in $(git log --pretty=%h --since="2026-10-11 09:20"); do git show --pretty=format: --name-only $c | grep -c .; done`
-> 实测**每枚 1–3 个文件**（唯一 3 文件那枚是 `8c2bd57`，就是本节点三的 3 个 core 测试文件），没有任何一枚吞并发线的改动；全程 pathspec 提交、无 `add -A/.`，ahead 144，**未 push**。
+> 实测**每枚 1–3 个文件**（唯一 3 文件那枚是 `8c2bd57`，就是本节点三的 3 个 core 测试文件），没有任何一枚吞并发线的改动；全程 pathspec 提交、无 `add -A/.`；ahead 数不写死（会随并发线提交漂移），复现口径 `git rev-list --count @{u}..HEAD`，本节点当轮实测 144；**未 push**。
 
 **贯穿红线的当轮自证**：不缩范围——两处 BLOCKED 都按原文口径保留，没有任何一条用别的入口的绿去顶（`core` 计数没有，A3/D 的绿也没被写成它有了）；不设镜像——四条腿全走本机官方宿主与构建器自有缓存，`ELECTRON_MIRROR` 始终未设；不提交产物与密钥——产物路径全部 `git check-ignore` 命中，`.tmp-test/` 325 个取证文件与本文档分别扫过密钥（`leaked-files=0`、`doc-secret-hits=0`）；不叠加在跑测试——core 编译期间只做零负载的读与写文档，宿主类用例一律等 CPU 空了独占跑；临时产物只落 `.tmp-test/`（93 MB 中间切件已删）；**唯一一条我没擅自处置的越界项**：仓库根那个非本批的 `tmpFilea27728`，登记在 §32 等一句授权。
 
@@ -906,7 +906,7 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
   `cjpm test --help` 全表**没有任何转发给 cjc 的错误计数开关**。而 `cjpm test -V --dry-run` 里的 `--dry-run` **并不跳过构建**
   （踩既有那条坑，等于又起一次全量编译），已按启动时间认领我自己那条 cjpm(13012)/cjpm(26412) 并 `taskkill //F //T` 收掉，
   事后 `Get-Process cjpm,cjc` **空表＝零残留**。
-- 本批 3 个测试文件已按路径精确提交：`8c2bd57`（3 files changed, 33 insertions(+), 33 deletions(-)，ahead 140，**未 push**）。
+- 本批 3 个测试文件已按路径精确提交：`8c2bd57`（3 files changed, 33 insertions(+), 33 deletions(-)，**未 push**；该枚落地时 ahead 140，此数随并发线提交漂移，复现口径 `git rev-list --count @{u}..HEAD`）。
   **「`core cjpm test` 计数与 rc」这一格到本批结束仍是 BLOCKED**——修复把已入库那两类形状错消掉了一类，
   但出不了 Summary 的前置在并发线手里（`cmds_test.cj` 的 5 条 + 库层那两处，见本节点七）。
 
@@ -972,6 +972,94 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 于是把上面两处跨行链式误标成「NO-TLS」，差点写成「A2 仍有两个站点绕过锚」。
 判据：**跨行链式调用不能按行分类**；要用 `grep -l` 的文件集合与按行站点集合做差集，
 差集里的站点必须逐处读上下文再定性——这次两条腿（文件级 helper + 逐行 URL 形态）合起来才把结论钉住。
+
+## 39. 用 `--error-count-limit all` 把测试面错误**逐条**归位：14 条落点零条压在本批改过的行上，并照同文件既有惯用法修掉其中 5 条（2026-10-11 10:47–11:09 实测）
+
+本节点结掉 §36 节点五留的那个口子——「余下 8 条被 `printed=8` 上限遮住、落点**未取得**」。
+
+**一、cjpm 侧三条通道实测全部不通，第 2 条是对我自己的更正。**
+1. CLI 旗标：`cjpm test --error-count-limit all` 被 cjpm 当 customized key 拒收（原文已记在 §36 节点六）。
+2. **`cjpm.toml` 的 `[package] cjc-option` 也不转发**——我上一段会话里推断「这是 cjpm 内唯一可用通道」，**未经实验，现作废**。
+   对照实验（`.tmp-test/` 下两个零依赖模块，源码逐字相同、都是 12 处 `let a<i>: Int64 = "e<i>"`）：
+   `eclimit` 带 `cjc-option = ["--error-count-limit","all"]`、`nolimit` 不带，各跑一次 `cjpm build`，两份输出**同形**：
+   `12 errors generated, 8 errors printed.`，剥码后 `^error:` 都恰好 **8** 条，rc 都是 1。
+3. 因此唯一通道是**直调 cjc**。而取 cjpm 真实命令行**不需要 `-V`**（实测 `-V` 在编译已失败时不退出、stdout 0 字节，等不到那行）：
+   `powershell -NoProfile -Command 'Get-CimInstance Win32_Process -Filter "ProcessId=<cjc pid>" | Select-Object ProcessId,ParentProcessId,CommandLine | Format-List'`
+   原样吐出 `cjc.exe --import-path … --test-only -L …/release/core -lcore … -p …/src -o …/unittest_bin/core.exe --mock=off --no-sub-pkg`。
+   这条命令行的**自带证据**：里面既没有 `-Woff parser` 也没有任何 `cjc-option` 痕迹——cjpm 分阶段构造 cjc 命令行，不读那份配置。
+   顺带确认 PID 归属：`CommandLine` 里的 target 路径就是 `.tmp-test/coreec/`，所以那是我自己的进程，才敢 `taskkill //F //T`。
+4. **裸 cjc 认这个旗标**（同一份 12 错源码，`--import-path "D:/Program Files/HuaWei/Cangjie/modules/windows_x86_64_cjnative"`）：
+   缺省 `13 errors generated, 8 errors printed`；加 `--error-count-limit all` → **`13 errors generated, 13 errors printed`**。
+   这条同时修正「裸 cjc 探不出 std」的旧印象：`std.cjo` 就在那个 `modules/<triple>/` 目录里。
+
+**二、core 副本的实测面（读数标签：混合态＝工作区内容副本 + 副本内直调 cjc，不是提交态计数）。**
+副本 `.tmp-test/coreec/src` 与 `core/src` `diff -rq` 空（340 文件）；库层上一段 `cjpm test` 已落盘
+（`libcore.a` 6,414,924 B @10:47:24、`core.cjo` 3,179,096 B @10:47:11），所以直调只补测试包这一段。
+包装脚本 `apps/desktop/.tmp-test/coreec-all.cmd` = 抄来的命令行在 `-p` 前插 `--error-count-limit all`。
+启动于 10:56:43，**10:56:56 时日志已有 130,389 B / 14 条 `error:`**，逐条与其后**第一条** `==>` 配对（配法见补充九）：
+
+| 落点（副本 `src/` 相对路径） | 编译器原文 | 落点性质 | 处置 |
+| --- | --- | --- | --- |
+| `cmds_test.cj:76:5` | `undeclared identifier 'registerBuiltinCommands'` | 该文件**唯一未落库 hunk** 覆盖新侧 72–122 行（HEAD 71 行 / 工作区 122 行） | 并发线，不代修 |
+| `cmds_test.cj:77:34` | `undeclared identifier 'it'` | 同上 | 并发线，不代修 |
+| `cmds_test.cj:86:5` | `undeclared identifier 'registerBuiltinCommands'` | 同上 | 并发线，不代修 |
+| `cmds_test.cj:96:5` | `undeclared identifier 'registerBuiltinCommands'` | 同上 | 并发线，不代修 |
+| `cmds_test.cj:108:13` | `no matching function for operator '()' function call` | 同上 | 并发线，不代修 |
+| `worktree_test.cj:450:55` | `'isSome' is not a member of class 'JsonBool'` | **已入库**（`git status` 空），引入自 `90f3e23`（10-09） | 登记，见「四」 |
+| `worktree_test.cj:451:55` | `'isSome' … 'JsonString'` | 同上 | 登记 |
+| `worktree_test.cj:452:64` | `'isSome' … 'JsonInt'` | 同上 | 登记 |
+| `worktree_test.cj:453:61` | `'isSome' … 'JsonInt'` | 同上 | 登记 |
+| `worktree_tools_test.cj:60:88` | `unable to infer generic argument of this function` | **已入库**，同 `90f3e23` | **本节点已修** |
+| `worktree_tools_test.cj:467:96` | 同上 | 同上 | **已修** |
+| `worktree_tools_test.cj:491:19` | 同上 | 同上 | **已修** |
+| `worktree_tools_test.cj:677:19` | 同上 | 同上 | **已修** |
+| `worktree_tools_test.cj:697:19` | 同上 | 同上 | **已修** |
+
+**三、§36 留的口子这样判死：14 条落点没有一条落在 `8c2bd57` 改过的 33 行上。**
+`git show 8c2bd57 -U0` 导出的新侧改动行号：`worktree_test.cj` = 191/214/245/267/285/304/326/339/344/361/402/**442**/475/480/484/499/528/546/574/592/609/675/706/730/759/790/849/955；
+`worktree_tools_test.cj` = 181/461/**674**；`worktree_setup_test.cj` = 288/313。与上表落点集合取交集为**空**。
+判据（本节点自己差点踩的）：**必须用 `-U0`**。默认 3 行上下文的 `@@ -671,7` 窗口把 677 也罩进去了，
+按 hunk 窗口判归属会把相邻的未改行算成自己改的；而 442 与 450、674 与 677 分别只差 8 行和 3 行，
+「同一个函数里」不等于「同一行」。
+
+**四、那 5 条 `unable to infer generic argument` 为什么算「机械可修」，而 4 条 `isSome` 不算。**
+- 5 条：**不是猜意图，是照抄同文件既有的正确形态**。`ModelToolRuntime` 声明 `worktree!: ?WorktreeTools`
+  （`model_tool_runtime.cj:14`，该文件 `git status` 干净、不在飞行中），`WorktreeTools` 是 `public init(tree: SessionWorktree)`
+  （`worktree_tools.cj:61-65`），而**同一个已入库测试文件的第 713 行早就写着** `worktree: Some(WorktreeTools(h.tree))`。
+  传裸 `SessionWorktree` 得到 `?SessionWorktree`，与 `?WorktreeTools` 不能统一，`Some` 的类型参数就推不出来。
+  改法：`Some(tree)` → `Some(WorktreeTools(tree))`、`Some(h.tree)` → `Some(WorktreeTools(h.tree))`，共 5 处。
+  自证（全部当轮实测）：`git diff --numstat` = `5 5`；`git diff -U0` 新侧行号恰为 60/467/491/677/697（与编译器点名的 5 条一一对应）；
+  新增行里 `@Expect` 命中 **0**（没弱化任何断言）；`grep -cE 'worktree: Some\((tree|h\.tree)\)'` = **0**；
+  `grep -n 'worktree: Some('` 现在 6 条全是包装形态（含原本就正确的 713）。
+- 4 条 `isSome`：**机械替换一定会改语义，所以不做**。`asBool()/asString()/asInt()` 返回的是 `Json*` 值包装类，
+  不是 `Option`，`isSome()` 属 Option。用例注释写的是「三个布尔位、五个字符串/整数位都不许换位」，
+  要同时保住「存在」与「种类」两件事，得知道作者想让 `asBool()` 在错种类时抛还是返回默认值；
+  直接换成 `.value` 会把「类型钉住」悄悄变成「值等于 true」——那是缩范围凑绿。登记给原作者/并发线判断。
+
+**五、结算行的诚实边界，与「改前/改后」那一对差分。**
+改前那一轮 cjc(25008) 的 stdout 自 10:56:56 起停在 130,389 B，CPU 从 92 s 涨到 572 s（形态与补充四「CPU 走、stdout 静」同源），
+但 `-V` 那轮实测过「编译已失败仍不退出」，所以本节点**没有等到** `N generated / N printed` 结算行，
+是自己 `taskkill //F //T //PID 25008` 收的（收完 `Get-Process cjc,cjpm` 计数 **0**，零残留）。
+因此上表是「**已打印并逐条归位**的 14 条集合」，**不是**「总共只有 14 条」的断言；
+与上轮 cjpm `16 generated / 8 printed` 的差额（至多 2 条）落点仍未取得——判据不变：**缺席不是证据**。
+
+真正的证据形态是**同一条命令、同一个副本、只换一个变量**的差分：把改完的 `worktree_tools_test.cj` 单独 `cp` 进副本
+（`cmp -s` 证两边同步），重跑同一条 `coreec-all.cmd`，105 秒后取读数：
+
+| 读数 | 改前 | 改后 |
+| --- | --- | --- |
+| `^error:` 行数（剥码后） | **14** | **9** |
+| 日志体积 | 130,389 B | 103,880 B |
+| 全文 grep `worktree_tools_test` | 5 处落点 | **0**（`No matches found`） |
+| 余下落点 | cmds_test 5 + isSome 4 + tools 5 | cmds_test 5 + isSome 4 |
+
+改后集合**恰好等于**改前集合减去那 5 条，一条不多一条不少。这一对差分同时证到三件事：
+本批 5 处改动**编译级通过**（不再是「照抄同文件惯用法」的静态论证）；没有引入任何新错误；
+`isSome` 那 4 条与本批改动无关（改前改后逐字同形）。副本连 `target/` 只有 24 MB，留着可复用 `libcore.a`，
+下轮再要全量落点不必重跑冷编。
+
+`core cjpm test` 出 Summary 的前置照旧在并发线手里（`cmds_test.cj` 未落库 hunk 的 5 条 + 库层两处 + `GitQueryResult` 悬空），
+**「core cjpm test 计数与 rc」仍记 BLOCKED**；本批这 5 处把已入库测试面的错误数从 9 降到 4。
 
 
 
