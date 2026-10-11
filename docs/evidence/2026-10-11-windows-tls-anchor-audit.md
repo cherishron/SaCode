@@ -574,6 +574,21 @@ run#1 的红是 `error: 'timeout: team/member/create'`（用例在 `team-host.te
 
 **批次 D 判据更新**：npm test 无凭据 **PASS 671/663/0/0/8 rc=0**（§21）与带凭据 **PASS 671/669/0/0/2 rc=0**（本节）两条都成立；ui-smoke **PASS 296/0**；layout **PASS 192/0**；宿主零残留。**仍 BLOCKED 未变**：`core cjpm test` 提交级计数（等别人把 7 个实现文件与签名迁移后的测试落库）、NSIS 真机安装/卸载与第四条哈希腿（未获授权）。
 
+## 23. 批次 B 的 CLI 腿补第四条对账：npm 平台包内 exe 与本轮新构建逐字节一致；另登记 AGENTS.md 一处过期路径（2026-10-11 08:47–08:48 实测）
+
+§20 的哈希对账只覆盖了宿主那条链。本轮把 CLI 入口也实测一遍：
+
+| 对象 | 体积 | mtime | sha256 前 24 位 |
+| --- | --- | --- | --- |
+| `npm/sacode-cli-win32-x64/bin/sacode.exe` | 10,978,304 B | 10-11 07:20 | `83b9018f2644ae60a14abd84` |
+| `apps/cli/target/release/bin/main.exe`（本轮 `cjpm build` 产物） | 10,978,304 B | 10-11 07:20 | `83b9018f2644ae60a14abd84` |
+
+两枚**体积与哈希全等**，且 mtime 就是 §17 那轮重建的时刻——npm 平台包里装的确系本轮新构建，不是上一轮冻结二进制。这一条是 §17「剥掉仓颉 PATH 逐子命令自测」的前置：跑的是包内那颗，而那颗与源码构建产物是同一颗。
+
+**顺带核到的一条安全项**：包目录已从 `npm/dsh-cli*` 改名成 `npm/sacode-cli*`（`package.json` 实读 `@stand-alone/sacode`，bin 为 `sacode` + `sacode-daemon`；平台包 `@stand-alone/sacode-win32-x64` 自身无 bin）。会否因此把 35 MB 二进制变成可提交项？实测 `git check-ignore -v npm/sacode-cli-win32-x64/bin/sacode.exe` 命中 `.gitignore:116 npm/sacode-cli-*/bin/`，第 117 行还管着 `extjs/` ⇒ **忽略规则已随改名更新，无入库风险**；`git status -- npm/` 输出为空。
+
+**登记一处过期文档，但不代改**：`AGENTS.md`（git 跟踪的是这个名字；`agents.md` 只是同一文件在大小写不敏感文件系统里的别名）第 16 行与第 51 行仍写 `npm/dsh-cli` / `npm/dsh-cli-win32-x64` / `npm/dsh-cli-*/bin/`，与磁盘上的实际目录和 `.gitignore` 现行的模式都不一致。这是会误导下一个 agent 的过期路径（按它去 `git add npm/dsh-cli/bin/cli.js` 会直接找不到文件）。AGENTS.md 属项目指令文件、改动需要你点头，本轮我只把「哪两行过期、正确值是什么、忽略规则其实已对」测清楚记在这里，不动它。
+
 
 
 
