@@ -842,6 +842,85 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **贯穿红线的当轮自证**：不缩范围——两处 BLOCKED 都按原文口径保留，没有任何一条用别的入口的绿去顶（`core` 计数没有，A3/D 的绿也没被写成它有了）；不设镜像——四条腿全走本机官方宿主与构建器自有缓存，`ELECTRON_MIRROR` 始终未设；不提交产物与密钥——产物路径全部 `git check-ignore` 命中，`.tmp-test/` 325 个取证文件与本文档分别扫过密钥（`leaked-files=0`、`doc-secret-hits=0`）；不叠加在跑测试——core 编译期间只做零负载的读与写文档，宿主类用例一律等 CPU 空了独占跑；临时产物只落 `.tmp-test/`（93 MB 中间切件已删）；**唯一一条我没擅自处置的越界项**：仓库根那个非本批的 `tmpFilea27728`，登记在 §32 等一句授权。
 
+## 36. 更正两处我自己的错读，把提交态测试面的 35 处已入库类型形状错当场修掉，并结算 core 编译读数（2026-10-11 10:14–10:36 实测）
+
+**一、更正「HEAD 侧一条都没有」**（§34 那段的依据，也是 §35 表格里批次 A 那一行的依据）：这句来自一条坏管道。我当时写的是
+`git grep -c "$s" HEAD -- core/src | paste -sd+ | bc || echo 0`——`git grep -c` 的输出是 `HEAD:file:count` 形式的多行，
+`paste -sd+` 拼出来的串（`HEAD:core/src/a.cj:2HEAD:core/src/b.cj:1`）`bc` 必然报语法错，于是每条都掉进 `|| echo 0`，
+五个符号「齐刷刷为 0」。**0 是工具失败，不是没有命中。** 换成直接照打 `git grep -c "$s" HEAD -- core` 后的实测：
+`isDurableFrozen` 命中 4 个文件（`team_board.cj:2`、`team_board_test.cj:2`、`team_runner.cj:3`、`team_runner_test.cj:1`）、
+`freezeAfterDurableFailure` 2 个、`durableCheckpointBatched` 3 个、`protects` 4 个——**这些符号本来就在 HEAD**。
+但「命中」不等于「在此定义」，是自有定义还是悬空引用必须 `git grep -n` 逐行看；数数不够，这条判据已补进记忆。
+
+**二、更正「`registerBuiltinCommands` 属提交态阻塞」**：`git show HEAD:core/src/cmds_test.cj | grep -c registerBuiltinCommands` = **0**，
+即「调用方」与「类成员定义」**两侧都只在工作区未落库**，并发会话落库后即自洽。它是工作区在飞分歧，不是 HEAD 缺实现。
+
+**三、提交态测试面的真阻塞大头是无人持有、本线程可修的**：`SessionLog(Path(...))` 共 **35 处**——
+`git grep -c 'SessionLog(Path(' HEAD -- core` 给 `worktree_test.cj:28`、`worktree_tools_test.cj:5`、`worktree_setup_test.cj:2`
+（三个文件在 `git status` 里都**干净**，不在并发线手里）。而 `git show HEAD:core/src/session.cj` 第 116 行是
+`public init(path: String)`，且 `git log -S'public init(path: Path)' -- core/src/session.cj` **空输出**＝该签名历史上从未收过 `Path`
+⇒ 错在调用侧。修法形状也不是我猜的 API：同文件 `worktree_tools_test.cj:105/:297` 当时就写着 `.toString()`（同文件 2 对 3 混排就是铁证），
+`agent.cj:298`、`batch.cj:47`、`hook_settings.cj:22` 皆为同形。本批补齐缺的 **33 处**（另 2 处本就正确）。
+- 机械核验：`SessionLog(Path(` 总数 35 → 带 `.toString()` **35**、缺 **0**；`git diff --numstat` = `2 / 28 / 3` 行，
+  减 33 加 33，且「新增行里不含 `toString`」计数为 **0** ⇒ 除这 33 行外没有任何附带改动。
+- **没有为了变绿动一条断言**：这三个文件自身的期望值惯用法就是 `.toString()`（`worktree_test.cj:221` 用
+  `canonicalize(Path(wtBaseDir(root)).join("alpha")).toString()`），`SessionLog` 只当会话身份用；
+  `wtCoreRemoveRequiresCreatingSession` 要求两个实例身份串一致（475/480 现在两处是同一串），
+  `@Expect(tree.directory(), root)` 比的也是 String。原先这些行是编译错，不存在被破坏的既有行为。
+
+**四、把 §34 那 43 条错误按归属彻底拆开**（读留在盘上的原件 `apps/desktop/.tmp-test/core-test-ws.log`，197,770 B @10:05；
+剥码后 6,485 行，末段 `43 errors generated, 8 errors printed`）：
+- **35 条**＝上面这批 `mismatched types`，打印出的 3 条样本分别钉在 `worktree_setup_test.cj:288:26`、`:313:26`、`worktree_test.cj:191:43`；
+- **8 条**＝并发会话未落库的 `cmds_test.cj`：已打印 5 条钉在 76:5、77:34（`undeclared identifier 'it'`）、86:5、96:5、
+  108:13（`no matching function for operator '()'`），全部落在同一个 hunk `@@ -71,0 +72,51 @@`（`git diff --numstat` = 51 加 0 删）之内，另 3 条被默认打印上限遮住；
+- 35 + 8 = 43 这个「闭合」在当时算得对，但**归因错了**，按本节第五点的结算读数更正：那 8 条里只有 **5 条**属并发线未落库的 `cmds_test.cj`，
+  另 **3 条是已入库代码自带的**（`worktree_test.cj:450/451/452`，见本节第七点）。所以原先那句
+  「**没有一行落在已入库代码上**」**作废**——已入库代码自带两类形状错，一类我已修，一类我不臆造修法。
+- HEAD 侧同类漏网也扫过：`SessionLog(` 的实参形状除 `Path(...)` 外全是 String 形态（`"${root}/session.log"` 177、`path` 125、`p` 43、
+  `file` 15、`f.path` 6 等），与 43 = 35 + 8 互洽，不存在第四类形状错。
+
+**五、编译读数已结算**（工作区态那一轮，10:20:22 起跑 → 10:29:17 落盘；壳 `apps/desktop/.tmp-test/core-test-ws2.cmd`，日志与 rc 分文件配对，不覆盖 §34 原件；起跑前 `cjpm.exe`/`cjc.exe` 实查 **0/0**，非叠加）：
+`CJPMTEST2-rc=1`；剥码后 `Summary: TOTAL` **0 次**（仍是第三态，用例数拿不到）；末段 **`16 errors generated, 8 errors printed.`**；
+`core-test-ws2.log` 187,397 B @10:29:17 与 17 B 的 rc 文件配对；库层侧 `160 warnings printed` 复现。
+- **我原先写的可证伪预期是 `43 → 8`，实到 16，预期落空**。落空原因经打印集核对，不是「我改错了」：上一轮的 8 条打印上限把
+  `worktree_test.cj:450/451/452` 这三条同族红挤出了打印集；本轮它们进打印集，同时更深处另有若干条被**解封**
+  （先前被 `SessionLog` 类型错污染而未检查的后续表达式现在才被检查），这就是 `generated` 8 → 16 的机制。
+- **没证到的部分如实登记，不写成已全证**：打印出的 8 条**没有一条落在我改的 33 行上**；且本轮 `worktree_test.cj` 的
+  首个报错行是 **450**，说明该文件 1–449 行（含我改的 191/214/245/267/285/304/326/339/344/361/402/442）零错误。
+  但余下 8 条被 `printed=8` 上限遮住、落点**本轮未取得**，所以「33 行全部干净」只证到 449 行为止。
+- 取不全的原因也是实测的：`cjpm test --error-count-limit all` 被拒，原文
+  `Error: the customized key 'error-count-limit' is wrong, the example is 'cfg_1'` + `the path 'all' does not exist` + `Error: cjpm test failed`；
+  `cjpm test --help` 全表**没有任何转发给 cjc 的错误计数开关**。而 `cjpm test -V --dry-run` 里的 `--dry-run` **并不跳过构建**
+  （踩既有那条坑，等于又起一次全量编译），已按启动时间认领我自己那条 cjpm(13012)/cjpm(26412) 并 `taskkill //F //T` 收掉，
+  事后 `Get-Process cjpm,cjc` **空表＝零残留**。
+- 本批 3 个测试文件已按路径精确提交：`8c2bd57`（3 files changed, 33 insertions(+), 33 deletions(-)，ahead 140，**未 push**）。
+  **「`core cjpm test` 计数与 rc」这一格到本批结束仍是 BLOCKED**——修复把已入库那两类形状错消掉了一类，
+  但出不了 Summary 的前置在并发线手里（`cmds_test.cj` 的 5 条 + 库层那两处，见本节点七）。
+
+**六、顺手把批次 D 两条「改动前读数」是否失效查死了**（怕 §22/§35 那两句被并发线的新改动作废）：
+`layout-smoke 192 PASS / 0 FAIL` 出自 `.tmp-test/d-layout2.log`（10-11 08:18，8,778 B），`ui-smoke 296` 出自 `d-uismoke2.log`（08:08，28,082 B）。
+两条腿的输入面在这之后**没有任何变化**，两个独立证据同向：① `git log --since="2026-10-11 08:18" -- apps/desktop/renderer apps/desktop/layout-smoke.cjs apps/desktop/main.cjs apps/desktop/preload.cjs` **空输出**；
+② 带日期的 mtime 全部早于 08:18——`layout-smoke.cjs` **10-10 19:09**（连冒烟壳自己都没动）、`main.cjs` 10-11 03:11、
+`renderer/frame.css` 10-10 18:40、`renderer/product-design.css` 10-10 23:57、`renderer/pages/composer-menu.ts` 10-09 15:44、
+`provider-settings.ts` 10-11 00:52、`composer-commands.ts` 10-10 08:39。
+这些文件里 5 个是 `M`、1 个是 `??`（并发线在飞），但它们的**在飞状态在 08:18 那轮就已经在工作区里**，
+所以「192/0 与 296 是并发线在飞状态下的读数」这句限定要保留，而**不是**「读数已作废」。§35 表格里 D 那一行按此口径成立。
+
+**七、本轮新查出第二类已入库测试形状错（不是我造的，也不由我臆造修法）**：`worktree_test.cj:450/451/452`（同族实为 450–453 四行）报
+`'isSome' is not a member of class 'JsonBool' / 'JsonString' / 'JsonInt'`。
+- 这四行与 HEAD **逐字节相同**（`git show HEAD:core/src/worktree_test.cj` 取 444–455 行与工作区同区间 `diff` 无输出），
+  所以属**已入库代码自带**，与本批改动无因果关系——它是本轮 `generated` 从预期 8 涨到 16 的去向之一。
+- 作者意图是明确的（注释写「类型钉住：三个布尔位、五个字符串/整数位都不许换位」），但**同仓两种现成惯用法都不等于它**：
+  `isSome()` 是 `Option` 的方法（`agent.cj:610`、`ledger.cj:666`、`credential_test.cj:89`），而 Json 侧的写法是
+  `.asBool().getValue()` / `.asString().getValue()`（`batch_test.cj:31`、`computer_executor_test.cj:69-71`）。
+- 于是只有两条出路，都要么**替原作者定期望值**、要么**替该模块选一种类型钉法**：断值（我没有 `name`/`uncommittedCount`/`uniqueCommits` 的期望值）
+  或断类型（需我自选 `is JsonBool` 一类未在本仓验证过的写法）。该文件所属子系统的实现 `core/src/worktree_tools.cj` 在 **10:28:33 刚被并发会话写过**
+  （其 `git status` 为空＝写回内容与 HEAD 一致，故本轮编译输入在内容上仍是静态的，污染排除，但归属清楚）。
+  **结论：本批不臆造修法**，只把 file:line、报错原文、两种候选与解锁动作（该模块作者定期望值或定类型钉法）登记在此。
+- 对计数的影响：即便这四行修好也出不了 Summary——`cmds_test.cj` 那 5 条在并发线未落库的 hunk 里，库层另有 `GitQueryResult`
+  （定义在未入库的 `git_workbench.cj`，已入库的 `team_workspace.cj:18` 却引用它）与 HEAD `cmds.cj` 的写法待并发改动落库。
+  所以「core cjpm test 计数与 rc」仍是 **BLOCKED**，且现在**每一格的归属都点名到位**。
+
 
 
 
