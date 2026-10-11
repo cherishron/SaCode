@@ -761,6 +761,69 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **顺带登记一条仓库根卫生违规（不是我造的，也没擅动）**：提交前 `git status --short --untracked-files=all` 按顶层聚合时露出仓库根有一个**未跟踪且未被忽略**的文件 `tmpFilea27728`——`file` 判 JSON text、236 B、mtime **2026-10-10 10:54**（早于本批开工），内容形态是 `snapshotVersion/revocationVersion/nextDeviceId/devices/enrollments[{digest,principalId:"p-b",expiresAtUnixM…}]`，即某条设备撤销/注册线的一次落盘；`git check-ignore -v` 明确返回 NOT-IGNORED。按 AGENTS.md「仓库根只允许已入库的源码、文档与配置；出现未跟踪未忽略的顶层文件即视为违规」这条**成立**，但它的 mtime 与内容都不属于本批任何一条腿（本批临时产物全部落 `.tmp-test/`，§27 那次 325 文件扫描也确认没有密钥外泄），且并发会话可能正在读它——**所以我没有删也没有移**，等一句授权再处置（可逆做法：原字节移进 `apps/desktop/.tmp-test/`）。
 
+## 33. 批次 F 四项缺口第一次正式落笔：按后端实测契约逐条归类——一条是「模拟成功」、一条连可取消的在途状态都不存在（2026-10-11 10:03–10:05 实测）
+
+**先认一条文档缺口**：本文件此前**没有任何一节写过批次 F**（`grep -n "批次 F\|插件管理"` 全文 0 命中）——四项处置只存在于对话里，不满足「不默认算已解决」要留档的要求。本节补上，每条都指向可直接复核的源码处理体。
+
+证据主体是 `apps/host/src/main.cj` 的插件分支（按 `method ==` 判定；行号会随并发编辑漂移，故只用符号锚点）与宿主在 `initialize` 应答里自报的 `capabilities` 常量。
+
+| 项 | 后端实况（可复跑锚点） | 归类 | 处置 |
+| --- | --- | --- | --- |
+| remote source 远程源 | `method == "plugin/registries"` 的处理体是**硬编码** `{"registry":null,"fallbackRegistries":[]}`；`plugin/install/inspect` 落到 `PluginStore.inspectSource(sourcePath: String)`（`core/src/plugin_store.cj`），入参是**路径形状** | **模拟成功**（动词在能力清单里、返回是空壳）＋远程取源**后端未实现** | 本轮不实现（理由见下）；不接受「有 registries 动词」当作已支持远程源 |
+| entry enable 组件级启停 | `method == "plugin/entry/set-enabled"` 的处理体直接 `emit(errFrame(id, -32033, "plugin-entry-not-wired"))`；桌面侧他人未落库的 `plugins-ipc.cjs` 已在发这个动词 | **后端未实现**，但是**诚实失败**（不是假成功） | 本轮不实现；缺口归属在后端不在壳层，壳层接线已由并发线补上 |
+| install cancel 安装取消 | `initialize` 自报 `capabilities` 里**没有** `plugin/install/cancel`；`plugin/install/start` 是 `store.install(spec)` 之后**同步** `pluginInstallRequests[rid] = "done"`，`plugin/install/progress` 只从这张内存表读 phase | **后端未实现**＋语义空转：安装**没有在途窗口**可取消 | 本轮不实现；并连带登记 `install/start` 目前是**假异步**——真做 cancel 前必须先把安装改成真异步任务 |
+| build approval 构建审批 | `plugin/install/start` 的处理体只读 `requestId` 与 `spec`，**不读 `approvedBuilds`**；而 `preload.cjs` 的 `pluginsInstall` 把 `approvedBuilds` 一路传下来 | **传输契约错误**（参数在传输面被静默丢弃）＋后端无审批通道 | 本轮不实现；拒绝理由不是「难」，是后端连承接它的字段都没有 |
+
+**为什么这一轮不实现（三条可复核的理由，不是拖延）**：
+
+1. 落地要动的三个文件**全部被并发线持有**：`git status` 实测 `core/src/plugin_store.cj` **M**、`apps/host/src/main.cj` **M**、`apps/desktop/plugins-ipc.cjs` **??**（未跟踪）。在它们之上加动词＝覆盖或错接别人未复核的在途实现，而 AGENTS.md 与本目标都把「保护共享工作区他人改动」排在前面。
+2. 新写的 core 侧用例**当场拿不到绿证**：提交态仍按 §27 判 BLOCKED（双向签名漂移），工作区态计数此刻还在跑（§32）。
+3. 语义前置未解决：cancel 依赖「真实异步安装」，而实测是**同步置 done**。先加动词只会得到一个永远取消不到任何东西的假功能。
+
+**「能实现就实现并补测试」里能实现的那一半我做了**：新增 `apps/desktop/test/plugin-gap-contract.test.mjs`（**3 条用例**，真起宿主、真发协议帧，复用 `test-support/real-host-env.mjs` 的撤夹具＋随包锚口径），把上面三条「后端现状」变成**会随真实契约演进而转红**的断言：
+
+- 能力清单必须含 `plugin/install/start` 与 `plugin/install/progress`（**正控**，防止在空场上赢），且 `plugin/install/cancel` 必须为 `false`；
+- `plugin/registries` 返回 `registry === null` 且 `fallbackRegistries` 深等于空数组；
+- `plugin/entry/set-enabled` 用 `assert.rejects` 收到 `plugin-entry-not-wired`（不是假成功）。
+
+每条都写明「后端若真接上，这条必须转红」。**绿灯在这里的含义是「现状被钉住」，绝不是「功能可用」**。运行读数（tests/pass/fail/cancelled 与 rc）待 §32 那条 core 腿让出 CPU 后单独补记；这 3 条会把 `npm test` 分母从 671 抬到 674，届时批次 D 的定稿读数按新分母重记，不拿旧数顶。
+
+**§33 那句「待补记」的读数已到手（2026-10-11 10:07 实测，`.tmp-test/gap-1.log` / `gap-2.log`）**：
+
+- 第一次跑 **FAIL（tests 3 / pass 0 / fail 3，`GAP-rc=1`）**，三条同错 `host-unavailable`（`host-bridge.cjs:88` 的 `this.proc` 空）。**根因是我的夹具漏了 `await bridge.start(directory)`**——`HostBridge` 构造函数只存参数不 spawn（对照 `test/real-provider-read-tool.test.mjs:29-30` 的既有写法）。这条红与被测系统无关，先怀疑夹具这条规矩又一次是对的。
+- 补上 `start()` 后 **PASS（tests 3 / pass 3 / fail 0 / cancelled 0 / skipped 0，`GAP-rc=0`）**，三条 `ok` 逐条点名：能力清单含 `install/start` 与 `install/progress` 但不含 `install/cancel`、`plugin/registries` 返回 `registry=null` 且 `fallbackRegistries` 为空、`plugin/entry/set-enabled` 以 `assert.rejects` 收到 `plugin-entry-not-wired`。
+- 连带义务已完成：全套按新分母重跑 —— **`npm test` 674 / pass 674 / fail 0 / cancelled 0 / skipped 0，`CREDALLHOST-rc=0`**（`.tmp-test/cred-all-host-4.log` 136,121 B 与 `.tmp-test/cred-all-host-4.rc.txt` 197 B 配对，`grep -c "^not ok"` = 0），`tasklist` 里 `sacode-host.exe|electron.exe` 计数 **0**。批次 D 的定稿读数由 §28 的 671 升级为 **674**；`ui-smoke` 与 `layout-smoke` 的分母不受新增测试文件影响（它们数的是界面断言数），不重跑，如实标为 §22 读数。
+
+## 34. §30 那条「工作区窗口」的期望被证伪：core 在工作区态同样出不了 Summary，rc=1 / Summary 0 次 / `43 errors generated, 8 printed`（2026-10-11 09:52–10:06 实测）
+
+**先更正 §30 第三项的推论**。那节写「四处悬空符号已在工作区获得定义 ⇒ 工作区态现在有机会真跑出 Summary」——**定义确实有了，但形状不匹配**，所以这个「窗口」不存在：
+
+- `registerBuiltinCommands` 在工作区是 **类成员**：`core/src/agent.cj` 里该行缩进 4 空格、签名为 `public func registerBuiltinCommands(reg: CommandRegistry): Unit`（`grep -n -B3` 实测其上是类内注释与成员位）。
+- 而 `core/src/cmds_test.cj` 按 **包级自由函数**调用它（`registerBuiltinCommands(reg)`）。
+- 于是编译器给的仍是 `undeclared identifier`，不是「缺实现」也不是我可读的别的错。**这是并发线内部的 API 形状分歧**：`agent.cj` 与 `cmds_test.cj` 两份都是 M 态，改哪一侧是它们的设计决定，我不替任何一方定形状。
+
+**本轮实测读数（`cjpm test`，工作区态，含他人未落库源文件）**：`CJPMTEST-rc=1`；剥码后 **`Summary: TOTAL` 出现 0 次** ⇒ 第三态「测试根本没跑」，按判据**不许报任何用例数**；结尾 `43 errors generated, 8 errors printed.`（8 是 `cjc` 默认打印上限，同 §27）。把每条 `error:` 与其后第一个 `==>` 配对（`.tmp-test/err-histogram2.cjs`，避开 §26 那条「告警也带 `==>`」的误读陷阱）：
+
+| 打印出的 8 条 | 位置锚点 | 原文形状 |
+| --- | --- | --- |
+| 3 条 | `cmds_test.cj:76`、`:86`、`:96` | `undeclared identifier 'registerBuiltinCommands'` |
+| 1 条 | `cmds_test.cj:77` | `undeclared identifier 'it'`（前一条失败后的连锁） |
+| 1 条 | `cmds_test.cj:108` | `no matching function for operator '()' function call` |
+| 2 条 | `worktree_setup_test.cj:288`、`:313` | `mismatched types`（即 §27 那批 `SessionLog(Path(...))` 调用点） |
+| 1 条 | `worktree_test.cj:191` | `mismatched types`（同一类） |
+
+**同轮拿到的另一半事实是绿的**：库层那一段编译**已结算**且**零 error**（§32），`libcore.a` 6,414,900 B @09:52 全新落盘。也就是说 core 的**库面**在本轮工作区是编得过的，卡点全在**测试面**这两处形状分歧上。
+
+**批次 A 的验收口径因此照实结算（不缩、不顶替）**：
+
+| 验收项 | 判 | 依据 |
+| --- | --- | --- |
+| A3 桌面端到端出现 assistant/message、usage 落账、无密钥、零 `SSL_CERT_FILE` | **PASS** | §29 两轮，`A3-rc=0`，零残留 |
+| 结束后宿主零残留 | **PASS** | §28/§29/§33 三处 `tasklist` 计数 0 |
+| `core cjpm test` 计数与 rc | **BLOCKED（本轮再次实测未达成）** | 提交态 §27；**工作区态 §34：rc=1、Summary 0 次**，卡点为 `registerBuiltinCommands` 的类成员/包级调用形状分歧与 `SessionLog(Path)` 签名分歧，两份测试与两份实现都在并发线手里 |
+
+**所以批次 A 不能报完成**：链路本身（A1/A2/A3）有实测支撑，但目标文本明写的「core cjpm test 计数与 rc」这一条今天**两侧都拿不到**，且今天多了一条更硬的证据——即使把实现全借过来（§27）、即使符号定义已出现在工作区（本节），只要测试与实现不同源同批落库，`Summary` 就不会出现。**解锁动作不变且更具体**：并发线把 `cmds_test.cj`/`agent.cj`（以及 `session.cj` 的 `SessionLog` 构造与 `worktree*_test.cj` 的调用形状）**同一批**落库后，我再跑一次 `cjpm test` 取五计数。
+
 
 
 
