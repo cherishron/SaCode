@@ -1035,6 +1035,13 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
   不是 `Option`，`isSome()` 属 Option。用例注释写的是「三个布尔位、五个字符串/整数位都不许换位」，
   要同时保住「存在」与「种类」两件事，得知道作者想让 `asBool()` 在错种类时抛还是返回默认值；
   直接换成 `.value` 会把「类型钉住」悄悄变成「值等于 true」——那是缩范围凑绿。登记给原作者/并发线判断。
+- **这条不是保守，是被正向证伪的**（11:30 补测）：同一个用例往下第 4 行 `worktree_test.cj:455` 写着
+  `@Expect(tree.describe().contains("\"active\":false"), true)`——这份夹具里 `active` 就是 **false**，
+  所以任何 `…asBool().getValue() == true` 形态的替换**必然把这条改红**，「换个写法凑过去」这条路当场排除。
+  另一条旁证：仓内既有的 Json 字段断言一律**比值**（`computer_executor_test.cj:69` 的
+  `@Expect(data["ok"].asBool().getValue(), false)`、`batch_test.cj:31` 的 `.asString().getValue(), "qwen"`），
+  而**没有种类谓词可换**——`git grep -nE 'func (isBool|isString|isInt)\('` 命中 **0**（只有 `plugin_surface.cj`/`tabs.cj` 里无关的 `kind()`）。
+  要修就得替作者决定「钉存在」还是「钉种类」，本批不代做。
 
 **五、结算行的诚实边界，与「改前/改后」那一对差分。**
 改前那一轮 cjc(25008) 的 stdout 自 10:56:56 起停在 130,389 B，CPU 从 92 s 涨到 572 s（形态与补充四「CPU 走、stdout 静」同源），
