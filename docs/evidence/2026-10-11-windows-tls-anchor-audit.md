@@ -1102,6 +1102,41 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 
 **批次 D 判定：PASS**（当轮在当前树上重取，三条腿 rc 均 0，fail=0 且 cancelled=0，宿主零残留）。
 
+## 41. 批次 F 的定级在本文档与 batchF 专档之间不一致，按一条判据统一（`remote source` 不是「模拟成功」）（2026-10-11 11:31 复核）
+
+**冲突**：本文 §33/§34 那行把 `remote source` 记成「**模拟成功**（动词在能力清单里、返回是空壳）＋远程取源后端未实现」，
+而 `docs/evidence/2026-10-11-plugin-gap-disposition-batchF.md` 的「结论一句话」写的是
+「四项里有三项在 HEAD 上是**如实拒绝或空集**，一项是**模拟成功**（`install cancel`）」，其汇总表第 65 行把 remote source 记为
+「后端未实现，保持空清单」。**同一个缺口两种定级，会直接改变它下次被排到哪一档**（模拟成功是要立刻纠的假象，未实现是功能缺口），
+所以必须定一个说法。
+
+**判据（不看动词在不在清单里，看返回有没有声称事情成了）**：只有当返回体让调用方**读到「你要的结果已经拿到」**，
+而实际什么都没发生，才算模拟成功。按这条判据逐个核当轮原文：
+
+| 项 | HEAD 态（提交级，`git show HEAD:…`） | 工作树态（并发线未落库） | 按判据的定级 |
+| --- | --- | --- | --- |
+| `install cancel` | `main.cjs:725` 返回 `{ cancelled: true, output: "install-was-not-running" }`——**声称取消了一次在途安装**，而根本没有在途 | `main.cjs` 里这个函数已经不存在；未落库的 `plugins-ipc.cjs:52` 改成 `throw Error('plugin-install-cancel-not-wired')` | **模拟成功（仅提交态）**；工作树已是诚实拒绝 |
+| `plugin/registries` | 宿主**根本没有这个动词**——HEAD 的 `apps/host/src/main.cj` 只认 `plugin/describe`/`plugin/set-enabled`/`plugin/uninstall` 三个 | 新增的 `:894` 是 `emit(okFrame(idText, "{\"registry\":null,\"fallbackRegistries\":[]}"))` 硬编码空壳 | **后端未实现**（空壳返回的是「没有可用注册表」，没声称取到了远程源） |
+| `plugin/entry/set-enabled` | HEAD 亦无该动词（`grep -cE 'entry/set-enabled'` = **0**） | `:890` `emit(errFrame(idText, -32033, "plugin-entry-not-wired"))` | 后端未实现（诚实具名拒绝，不是假成功） |
+| build approval | 宿主处理体不读 `approvedBuilds`（HEAD `grep -c` = **0**） | 同样 **0**（两态都不读） | 传输契约错误（参数静默丢弃）＋后端无承接字段 |
+
+**所以定级是这样定的**：「模拟成功」这一档在**提交态**只有 `install cancel` 一条；在**工作树态**四项里一条都不是
+（`install cancel` 已被并发线改成具名拒绝，只是没落库）。本文 §33/§34 那行给 `remote source` 挂的「模拟成功」定语**作废**
+（原文保留不删），统一按**后端未实现**记账。**四项缺口分母不变，仍是 4 条未解决**（1 提交态假象 + 2 后端未实现 + 1 传输契约错误），
+没有任何一条被默认算已解决；这次只是钉住「哪一条是假象、在哪个态上是假象」。
+判据的价值在于可复核：换任何一条返回体，只要能问出「调用方读到的是『成了』还是『没有』」，定级就不会飘。
+
+**顺带登记我在这节里犯的两次探针错（都是会直接推错定级的假阴）**：
+1. 第一版动词集合用了 `'"plugin/[a-z/]+"'`，字符类里没有 `-`，于是把 `plugin/set-enabled`、`plugin/entry/set-enabled`、
+   `plugin/bundle/set-enabled` **全吞了**——HEAD 少报 1 个、工作树少报 3 个，我差点据此写出「HEAD 连 set-enabled 都没有」。
+   与既有的「字符类漏 `A-Z` 致驼峰被截断」同源：**含连字符的标识符集合，`-` 必须写进字符类**，
+   而且要用 `diff <(HEAD 集合) <(工作树集合)` 双向看，不能只数一边的条数。
+2. 第一版把 `plugin/registries` 的空壳返回和 `-32033` 具名拒绝写成了「HEAD 态」——实际**两个都只存在于工作树**
+   （`apps/host/src/main.cj` 是 `M`，那 8 个动词整体是并发线未落库新增的）。上表已按两态分栏改正。
+   教训：`git grep` 默认打的是**工作树**，凡要主张「提交态如何」必须显式 `git show HEAD:<file>`，不能拿工作树命中当 HEAD 命中。
+
+另：上一枚提交 `438d1ed` 的正文写「纯增 6 行」，实测 `git diff --numstat` 是 **7/0**，正文那条计数错，在此更正（不影响正文内容）。
+
 
 
 
