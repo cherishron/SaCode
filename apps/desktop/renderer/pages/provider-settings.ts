@@ -77,7 +77,7 @@ export const Page=defineComponent({
       catch(e){if(gen===generation&&!disposed){error.value=errText(e);}}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
-    const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict|conflict/.test(t))return '数据已被其他入口修改，请刷新后重试';return t||'操作失败';};
+    const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict|conflict/.test(t))return '数据已被其他入口修改。草稿已保留；请刷新查看最新配置，取消后重新编辑再保存';return t||'操作失败';};
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
     const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
     const startEdit=(p:Provider)=>{draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
@@ -134,6 +134,7 @@ export const Page=defineComponent({
         el('div','header',[
           el('h2',null,'供应商管理'),
           el('p','intro','管理模型提供商及其 API 密钥。'),
+          btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新供应商目录',disabled:loading.value||saving.value}),
           btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!writable.value||loading.value||saving.value||isEditing}),
         ]),
         loading.value?el('p','loading','正在加载…'):null,
