@@ -95,13 +95,13 @@ export const Page=defineComponent({
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const reload=async()=>{
-      if(!props.adapter)return;
+      if(!props.adapter||disposed)return;
       const gen=++generation;loading.value=true;error.value='';
       try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;customs.value=r.customs;providers.value=r.providers;revision.value=r.revision;writable.value=r.writable;}
       catch(e){if(gen===generation&&!disposed)error.value=errText(e);}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
-    const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict/.test(t))return '数据已被修改，请刷新后重试';return t||'操作失败';};
+    const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict/.test(t))return '数据已被修改。草稿已保留；请刷新查看最新配置，取消后重新编辑再保存';return t||'操作失败';};
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();bindingCustom.value=null;error.value='';message.value='';};
     const startAdd=()=>{draftRevision=revision.value;adding.value=true;editing.value=null;draft.value=blank();error.value='';};
     const startEdit=(c:CustomModel)=>{draftRevision=revision.value;editing.value=c.id;adding.value=false;draft.value={...c,requires:[...c.requires],bindings:c.bindings.map(b=>({...b}))};error.value='';message.value='';};
@@ -143,6 +143,7 @@ export const Page=defineComponent({
         el('div','header',[
           el('h2',null,'模型'),
           el('p','intro','创建自定义模型（路由/权重/预算），绑定上游供应商的模型。'),
+          btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新自定义模型目录',disabled:loading.value||saving.value}),
           btn('+ 添加模型',startAdd,'primary',{disabled:!writable.value||loading.value||saving.value||isEditing}),
         ]),
         loading.value?el('p','loading','正在加载…'):null,
