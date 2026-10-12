@@ -1183,7 +1183,7 @@ test('真实宿主 7 个 LSP 请求在无插件时如实失败并附非语义线
 // 这份清单与计数是 2026-10-09 在工作区态实测的：105 条，本批新增会话级工作树进出面 4 条
 // （worktreeDescribe / worktreeEnter / worktreeExit / worktreeCleanup）。
 // 增删通道必须同时改 preload.cjs 与这里：整串比对，为的就是「悄悄多出一条发任意方法的口子」当场红。
-test('预加载 IPC 面恰好 107 条按动作命名的通道，且没有发任意方法的口子', () => {
+test('预加载 IPC 面恰好 109 条按动作命名的通道，且没有发任意方法的口子', () => {
   const vm = require('node:vm');
   let exposed;
   vm.runInNewContext(readFileSync(jj(REPO, 'apps/desktop/preload.cjs'), 'utf8'), {
@@ -1209,10 +1209,10 @@ test('预加载 IPC 面恰好 107 条按动作命名的通道，且没有发任�
     'teamMessageSend', 'teamTaskAssign', 'teamTaskClaim', 'teamTaskComplete', 'teamTaskCreate', 'terminalOutput',
     'tipsAfterReply', 'tipsGet', 'tipsSetHidden', 'tipsStartup', 'toolCall', 'toolsList',
     'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userSend',
-    'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'worktreeCleanup',
+    'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
   ]);
-  assert.equal(Object.keys(exposed).length, 107, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 109, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1237,7 +1237,7 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 107, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
+  assert.equal(handlers.size, 109, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }

@@ -4,6 +4,7 @@ export { ClientScope, SlotCore } from './slot-core';
 export {WorkbenchTabs} from './workbench-tabs';
 export {createFilePreview} from './file-preview';
 export {AccountMenu} from './account-menu';
+export {ProjectPicker} from './project-picker';
 export {PermissionMenu} from './permission-menu';
 export {WorkspaceSearch} from './workspace-search';
 export {FileEditor,createFileEditor} from './file-editor';

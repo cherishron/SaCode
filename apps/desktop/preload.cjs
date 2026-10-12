@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld("sacode", {
   workspaceGitStatus: (sessionId, directory) => ipcRenderer.invoke('sacode:workspaceGitStatus', {sessionId,directory}),
   workspaceGitDiff: (sessionId, directory, path, scope) => ipcRenderer.invoke('sacode:workspaceGitDiff', {sessionId,directory,path,scope}),
   workspaceChoose: () => ipcRenderer.invoke("sacode:workspaceChoose"),
+  workspaceRecent: () => ipcRenderer.invoke('sacode:workspaceRecent'),
+  workspaceSelectRecent: (recentId, sessionId) => ipcRenderer.invoke('sacode:workspaceSelectRecent', {recentId,sessionId}),
   // path 为空串时列工作区根；目录树展开时按相对子路径取子目录。
   workspaceFiles: (path) => ipcRenderer.invoke("sacode:workspaceFiles", { path: path || "" }),
   // 会话级隔离工作树：进入/描述/退出/清理四个固定动作，没有 worktreeRequest 之类的转发口。

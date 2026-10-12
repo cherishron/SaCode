@@ -8,7 +8,7 @@
   function createWorkspaceAssembly(deps) {
     const {
       api, ref,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceRecent, workspaceRecentBusy,
       workspaceFiles, workspaceFilesBusy,
       fileTreeOpen, fileTreeChildren, fileTreeBusy,
       traceEvents, traceCursor, traceMore, traceBusy, traceError,
@@ -21,16 +21,23 @@
 
     async function doRefreshWorkspace() {
       const generation = getSessionGeneration(), result = await api.workspaceGet();
-      if (generation === getSessionGeneration()) workspace.value = result;
+      if (generation === getSessionGeneration()) {
+        if (workspace.value?.directory !== result.directory) {
+          fileTreeOpen.value = new Set(); fileTreeChildren.value = {}; workspaceFiles.value = [];
+        }
+        workspace.value = result;
+      }
     }
 
     async function refreshWorkspaceFiles() {
+      const generation = getSessionGeneration();
       workspaceFilesBusy.value = true;
       try {
         const result = await api.workspaceFiles('');
+        if (generation !== getSessionGeneration()) return;
         workspaceFiles.value = result.files || [];
-      } catch (e) { workspaceFiles.value = []; }
-      workspaceFilesBusy.value = false;
+      } catch (e) { if (generation === getSessionGeneration()) workspaceFiles.value = []; }
+      finally { if (generation === getSessionGeneration()) workspaceFilesBusy.value = false; }
     }
 
     async function toggleTreeDir(path) {
@@ -70,24 +77,42 @@
     }
 
     async function openWorkspace() {
+      if (workspaceBusy.value) return;
+      if (workspaceOpen.value) { workspaceOpen.value = false; return; }
+      const generation = getSessionGeneration();
       workspaceOpen.value = true;
-      try { await doRefreshWorkspace(); await refreshCatalog(); } catch (e) { workspaceNote.value = catalogError(e); }
+      workspaceNote.value = ''; workspaceRecentBusy.value = true;
+      try {
+        const result = await api.workspaceRecent();
+        if (generation !== getSessionGeneration()) { workspaceOpen.value = false; return; }
+        workspaceRecent.value = result.entries || [];
+        await doRefreshWorkspace();
+      } catch (e) { workspaceNote.value = catalogError(e); }
+      finally { workspaceRecentBusy.value = false; }
     }
 
-    async function chooseWorkspace() {
+    async function changeWorkspace(select) {
       if (fileEditor.state.busy || fileEditor.dirty()) { workspaceNote.value = '请先保存或放弃文件编辑中的修改。'; return; }
       if (sendBusy.value || workspaceBusy.value || budgetBusy.value || appearanceBusy.value || turn.value.running || approval.value) return;
-      workspaceBusy.value = true; workspaceNote.value = '请选择项目目录…';
+      const generation = getSessionGeneration();
+      workspaceBusy.value = true; workspaceNote.value = '请选择项目文件夹…';
       try {
-        const result = await api.workspaceChoose();
+        const result = await select();
+        if (generation !== getSessionGeneration()) return;
         if (result.cancelled) { workspaceNote.value = '已取消选择，目录未变更。'; return; }
-        await doRefreshWorkspace(); await refresh(); await refreshTools(); await refreshCatalog();
+        await doRefreshWorkspace(); await refreshWorkspaceFiles(); await refresh(); await refreshTools(); await refreshCatalog();
         workspaceNote.value = '已保存当前会话的项目目录。';
+        workspaceOpen.value = false;
       } catch (e) { workspaceNote.value = catalogError(e); }
       finally { workspaceBusy.value = false; }
     }
+    function chooseWorkspace() { return changeWorkspace(() => api.workspaceChoose()); }
+    function selectRecentWorkspace(recentId) {
+      if (!workspace.value?.sessionId) return;
+      return changeWorkspace(() => api.workspaceSelectRecent(recentId, workspace.value.sessionId));
+    }
 
-    return { refreshWorkspace: doRefreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace };
+    return { refreshWorkspace: doRefreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace };
   }
 
   root.SaCodeWorkspace = { createWorkspaceAssembly };

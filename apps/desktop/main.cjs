@@ -433,13 +433,19 @@ ipcMain.handle("sacode:usageSetBudget", async (_e, args) => {
 
 ipcMain.handle("sacode:sessionCatalog", async () => withHost(() => bridge.request("session/catalog")));
 ipcMain.handle("sacode:workspaceGet", async () => withHost(()=>bridge.request("workspace/get")));
+ipcMain.handle('sacode:workspaceRecent', async () => withHost(() => bridge.request('workspace/recent')));
+ipcMain.handle('sacode:workspaceSelectRecent', async (_e, args) => {
+  if (!args || Object.keys(args).length !== 2 || !isStr(args.recentId) || !args.recentId || args.recentId.length > 512
+    || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length > 300) throw Error('bad-recent-workspace');
+  return withHost(() => bridge.request('workspace/select-recent', {recentId:args.recentId,sessionId:args.sessionId}));
+});
 ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   const workspace=await bridge.request("workspace/get");
-  const choice=await chooseWorkspaceDirectory({title:"选择 SaCode 项目目录", properties:["openDirectory"],
-    defaultPath: workspace.configured && workspace.available ? workspace.directory : app.getPath("documents")});
+  // 直接让用户在原生文件夹选择器中选项目；不预填应用目录、文档目录或可编辑路径。
+  const choice=await chooseWorkspaceDirectory({title:"打开项目文件夹", buttonLabel:"选择项目", properties:["openDirectory"]});
   if(choice.canceled) return {cancelled:true};
   if(!Array.isArray(choice.filePaths) || choice.filePaths.length!==1 || !isStr(choice.filePaths[0])) throw new Error("bad directory selection");
-  return bridge.request("workspace/set-directory", {directory:choice.filePaths[0]});
+  return bridge.request("workspace/set-directory", {directory:choice.filePaths[0],sessionId:workspace.sessionId});
 }));
 ipcMain.handle("sacode:workspaceFiles", async (_e, args) => {
   // path 只收相对子路径：反斜杠、控制字符与超长一律拒，绝对路径也拒（宿主侧还会做边界复核）。

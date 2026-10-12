@@ -296,6 +296,7 @@ createApp({
     let sessionGeneration = 0;
     let selectedScrollId = 'initial';
     const workspaceOpen=ref(false), workspace=ref(null), workspaceBusy=ref(false), workspaceNote=ref("");
+    const workspaceRecent=ref([]),workspaceRecentBusy=ref(false);
     const workspaceFiles=ref([]), workspaceFilesBusy=ref(false);
     // 目录树展开态：openPaths 收已展开的相对子路径，treeChildren 收各路径的子目录列表，
     // 数据每次都从宿主拿——展开状态只是 UI 记忆，不是第二份文件系统事实。
@@ -548,7 +549,7 @@ createApp({
     // 工作区/文件树/会话轨迹：委托给 workspace-state.js（经典脚本，CSP 兼容）
     const workspaceAssembly = window.SaCodeWorkspace.createWorkspaceAssembly({
       api: window.sacode, ref,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceRecent, workspaceRecentBusy,
       workspaceFiles, workspaceFilesBusy,
       fileTreeOpen, fileTreeChildren, fileTreeBusy,
       traceEvents, traceCursor, traceMore, traceBusy, traceError,
@@ -558,7 +559,7 @@ createApp({
       turn, approval, sendBusy, budgetBusy, appearanceBusy,
       refresh, refreshTools, refreshCatalog,
     });
-    const { refreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace } = workspaceAssembly;
+    const { refreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace } = workspaceAssembly;
     const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
     // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
     for (const verb of ["save", "remove", "reorder", "pullModels"]) {
@@ -678,7 +679,7 @@ createApp({
       pluginsInventoryAdapter,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
-      workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
+      workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceRecent, workspaceRecentBusy, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, selectRecentWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
       sidebarQuery, catalogStatus,
       send, runTurn, cancelTurn, askTool, answerTool,
       queueRows, queuePending, updateQueue, goalEditorRequest,
@@ -733,7 +734,7 @@ createApp({
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
-        el('button','frame-icon',[navIcon('M3 7h8l2 2h8v12H3z M17 2v6 M14 5h6')],{id:'open-workspace','aria-label':'当前会话工作区',onClick:self.openWorkspace}),
+        el('button','frame-icon',[navIcon('M3 7h8l2 2h8v12H3z M17 2v6 M14 5h6')],{id:'open-workspace','aria-label':'选择项目文件夹','aria-haspopup':'dialog','aria-controls':'project-picker','aria-expanded':self.workspaceOpen,disabled:sessionLocked,onClick:self.openWorkspace}),
       ]),
       el('div','sidebar-session-list',[
         ...[...workspaceGroups].map(([directory,items])=>{
@@ -862,7 +863,7 @@ createApp({
     const composer = el("footer", "composer", [
       emptyConversation ? el('div','hero-heading',[h('img',{src:'assets/sacode-logo.png',alt:'SaCode',width:32,height:32}),el('span',null,'探索未至之境')]) : null,
       emptyConversation ? el('div','hero-workspace-row',[
-        el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择工作区'),el('span','chip-chevron','⌄')],{'aria-label':'选择工作区',title:self.workspace?.directory,onClick:self.openWorkspace}),
+        el('button','workspace-chip',[navIcon('M3 5h7l2 3h9v12H3z'),el('span',null,self.workspace?.configured?workspaceName:'选择项目'),el('span','chip-chevron','⌄')],{'aria-label':'选择项目文件夹','aria-haspopup':'dialog','aria-controls':'project-picker','aria-expanded':self.workspaceOpen,title:self.workspace?.directory,disabled:sessionLocked,onClick:self.openWorkspace}),
       ]) : null,
       h(window.SaCodeTodo.TodoPanel,{key:'todos-'+self.scrollSession,todos:Array.isArray(self.proj.todos)?self.proj.todos:[]}),
       h(window.SaCodeQueue.QueueDock,{key:'queue-'+self.scrollSession,sessionId:String(self.scrollSession),rows:self.queueRows,pending:self.queuePending,running:self.turn.running,mutable:true,updateQueue:self.updateQueue,onNotice:(_kind,text)=>{self.error=text;}}),
@@ -946,16 +947,9 @@ createApp({
       self.catalog?.entries.length && !self.catalog.entries.some(item=>self.catalogStatus==='all'||item.status===self.catalogStatus) ? el('p','empty-card','无匹配会话',{id:'catalog-filter-empty',role:'status'}) : null,
       el("p", "note", "切换前会保存当前会话；待审批工单和执行任务需要先处理完毕。项目目录随会话恢复。"),
     ]);
-    const workspaceDialog=h(window.SaCodeDialog,{open:self.workspaceOpen,title:"SaCode 工作区",class:"workspace-dialog",onClose:()=>{self.workspaceOpen=false;}},()=>[
-      el("div","catalog-toolbar",[el("h2",null,"当前会话项目目录"),el("button","btn","选择目录…",{id:"choose-workspace",disabled:sessionLocked,onClick:self.chooseWorkspace})]),
-      self.workspace ? el("section","workspace-panel",[
-        el("span","badge"+(self.workspace.configured && !self.workspace.available ? " badge-danger" : ""),self.workspace.configured ? self.workspace.available ? "目录可用" : "目录不可用" : "尚未选择项目目录"),
-        el("p","workspace-path",self.workspace.directory,{id:"workspace-directory"}),
-      el("p","note",self.workspace.configured ? self.workspace.available ? "相对文件路径以此项目目录为基准。" : "保存的项目目录已不存在或无法访问。请恢复该目录，或重新选择项目目录；文件操作不会自动改用默认目录。" : "当前使用默认运行目录。选择项目目录后，相对文件路径将以项目目录为基准。",{id:"workspace-description"}),
-      ]) : el("p","note","正在读取目录…"),
-      el("p","note",self.turn.running || self.approval ? "请先结算执行任务并处理待审批工单。" : self.workspaceNote,{id:"workspace-note",role:"status","aria-live":"polite"}),
-      el("p","note","项目目录按当前会话保存；切换会话时恢复对应目录。"),
-    ]);
+    const workspaceDialog=h(window.SaCodeSlots.ProjectPicker,{open:self.workspaceOpen,busy:sessionLocked,loading:self.workspaceRecentBusy,
+      workspace:self.workspace,recent:self.workspaceRecent,note:self.workspaceNote,onClose:()=>{self.workspaceOpen=false;},
+      onBrowse:self.chooseWorkspace,onSelect:self.selectRecentWorkspace});
     const size=self.globalAppearance.fontSize;
     const fontAxis=Number.isInteger(size)?{'--fs-content':size+'px','--line-content':(size+10)+'px','--line-user':(size+8)+'px','--content-delta':(size-14)+'px'}:{};
     const frameHandle = (name,left,value,min,max) => el('div','frame-divider',null,{id:name+'-divider',role:'separator',tabindex:0,

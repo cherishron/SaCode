@@ -25,13 +25,8 @@ func isWorktreeWriteMethod(method: String): Bool {
 // 会话有效目录（含 worktree 绑定）：起轮的工作目录与 workspace 面的高目录只能由这一处
 // 算出来。两处各算一份迟早漂移——「人在工作树里、工具还在主检出里跑」就是这么来的。
 func sessionWorkingDirectory(log: SessionLog): String {
-    var processDirectory = ""
-    try {
-        processDirectory = canonicalize(".").toString()
-    } catch (e: Exception) {
-        processDirectory = ""
-    }
-    return SessionWorkspace(log, fallback: processDirectory).effectiveDirectory()
+    // 桌面宿主的 cwd 是会话数据位置，不是用户项目。缺选择时必须为空，不能默默兜底。
+    return SessionWorkspace(log).directory()
 }
 
 // 活动绑定判定是「能不能改工作区绑定」的门。探不到就按「有绑定」拒——

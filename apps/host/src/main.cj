@@ -1022,7 +1022,7 @@ main(args: Array<String>) {
             continue
         }
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"team/describe\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"workspace/recent\",\"workspace/select-recent\",\"team/describe\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             continue
         }
         if (ExecutionApi.handles(method)) {
@@ -1314,6 +1314,13 @@ main(args: Array<String>) {
             continue
         }
         if (method == "extension/call") {
+            let requestedTool = jsonStr(body, "name")
+            if (SessionWorkspace(shared).directory().size == 0 &&
+                (requestedTool == "read" || requestedTool == "write" || requestedTool == "edit" || requestedTool == "glob" || requestedTool == "grep" ||
+                requestedTool == "bash" || requestedTool == "pwsh" || requestedTool == "run_code" || requestedTool.startsWith("lsp_"))) {
+                emit(errFrame(idText, -32016, "workspace-not-configured")); continue
+            }
+
             // 工具事件与 session/submit 同一持久化档位：租约内内存可见，退出结算时落盘
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
@@ -1742,7 +1749,7 @@ main(args: Array<String>) {
                     continue
                 }
                 let computerExecutor: ?ComputerToolExecutor = if (let Some(bound) <- turnComputer) { Some(bound.executor) } else { None }
-                modelTools = Some(ModelToolRuntime(shared, false, files: true, desk: modelDesk, approval: modelApproval, computer: computerExecutor,
+                modelTools = Some(ModelToolRuntime(shared, false, files: SessionWorkspace(shared).directory().size > 0 && SessionWorkspace(shared).available(), desk: modelDesk, approval: modelApproval, computer: computerExecutor,
                     workingDirectory: sessionWorkingDirectory(shared),
                     team: Some(teamRuntime.tools(activeId, activeId)), lspRouter: LspRouters.sharedRouter(), lspSession: activeId, lspToken: tk))
             }
@@ -2058,6 +2065,17 @@ main(args: Array<String>) {
             } catch (_: Exception) { emit(errFrame(idText, -32602, "bad-git-arguments")) }
             continue
         }
+        if (method == "workspace/recent") {
+            var items = "["
+            var count = 0
+            for (entry in recentWorkspaces(catalog)) {
+                if (count > 0) { items += "," }
+                items += "{\"id\":\"${jsonEscapeText(entry.id)}\",\"directory\":\"${jsonEscapeText(entry.directory)}\",\"available\":${entry.available}}"
+                count += 1
+            }
+            emit(okFrame(idText, "{\"entries\":${items}]}"))
+            continue
+        }
         if (method == "workspace/get") {
             var target = shared
             if (!leaseHeld || workspaceFault) {
@@ -2065,12 +2083,13 @@ main(args: Array<String>) {
                 if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
                 target = fresh
             }
-            let workspace = SessionWorkspace(target, fallback: canonicalize(".").toString())
+            let workspace = SessionWorkspace(target)
             let configured = if (workspace.directory().size > 0) { "true" } else { "false" }
             let available = if (workspace.available()) { "true" } else { "false" }
             emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(activeId)}\",\"revision\":${workspace.revision()},\"directory\":\"${jsonEscapeText(workspace.effectiveDirectory())}\",\"configured\":${configured},\"available\":${available},\"scope\":\"session\"}"))
             continue
         }
+
         if (method == "workspace/files") {
             var target2 = shared
             if (!leaseHeld || workspaceFault) {
@@ -2078,8 +2097,12 @@ main(args: Array<String>) {
                 if (!fresh2.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
                 target2 = fresh2
             }
-            let ws2 = SessionWorkspace(target2, fallback: canonicalize(".").toString())
+            let ws2 = SessionWorkspace(target2)
             let dir = ws2.effectiveDirectory()
+            if (dir.size == 0) {
+                emit(okFrame(idText, "{\"directory\":\"\",\"configured\":false,\"files\":[]}"))
+                continue
+            }
             // 子目录浏览：path 是工作区内的相对路径（目录树展开用）。
             // 逐段拒绝 ".."、反斜杠与控制字符，且规范化后必须仍落在工作区内——
             // 拼上来的路径越界就当成参数错误，不把文件系统交给协议面去猜。
@@ -2132,11 +2155,24 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(dir)}\",\"path\":\"${jsonEscapeText(sub)}\",\"files\":${entries}}"))
             continue
         }
-        if (method == "workspace/set-directory") {
+
+        if (method == "workspace/set-directory" || method == "workspace/select-recent") {
             if (approvalDesk.hasOpenTickets() || inflight.count() > 0 || jsAlive) {
                 emit(errFrame(idText, -32001, "session-resources-in-flight")); continue
             }
-            let wanted = jsonStr(body, "directory")
+            var wanted = jsonStr(body, "directory")
+            if (method == "workspace/select-recent") {
+                let recentId = jsonStr(body, "recentId")
+                wanted = ""
+                for (entry in recentWorkspaces(catalog)) {
+                    if (entry.id == recentId) { wanted = entry.directory }
+                }
+                if (wanted.size == 0) { emit(errFrame(idText, -32602, "unknown-recent-workspace")); continue }
+            }
+            let wantedSession = jsonStr(body, "sessionId")
+            if (wantedSession.size > 0 && wantedSession != activeId) {
+                emit(errFrame(idText, -32031, "workspace-session-changed")); continue
+            }
             try {
                 if (wanted.size == 0 || !FileInfo(canonicalize(wanted)).isDirectory()) { throw Exception("bad-workspace-directory") }
             } catch (e: Exception) {
@@ -2167,6 +2203,7 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"directory\":\"${jsonEscapeText(SessionWorkspace(shared).directory())}\",\"configured\":true,\"available\":true,\"saved\":true,\"changed\":${flag}}"))
             continue
         }
+
         // 会话级 worktree 的六条产品方法：入口只有这一处，Git 调用与磁盘副作用全在共享核心。
         // describe 是读面（与 workspace/get 同一档：不持租约时现读盘上那份）；其余五条与
         // workspace/set-directory 同一条写流程——资源门 → 接手租约 → 重载 → 核心调用 →
@@ -2561,7 +2598,8 @@ main(args: Array<String>) {
                 if (!fresh.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
                 target = fresh
             }
-            let workspace = SessionWorkspace(target, fallback: canonicalize(".").toString())
+            let workspace = SessionWorkspace(target)
+            if (workspace.directory().size == 0) { emit(errFrame(idText, -32016, "workspace-not-configured")); continue }
             let params = lspParseParams(paramsTextOf(body), verb)
             if (!params.ok) {
                 emit(errFrameData(idText, -32602, "bad-lsp-params",
