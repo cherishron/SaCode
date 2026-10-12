@@ -49,3 +49,13 @@
 四组各 108 项通过，共 432 项，退出码 0。私有供应商变异副本移除读取代次保护后，两条供应商乱序检查在四组均转红，退出码 1；自定义模型未做同类变异，不扩大其反证范围。重新编译未变异候选后四组 108 项恢复全绿。日志 provider-staged-results.json 与 read-generation-mutant-results.json 位于 apps/desktop/.tmp-test/models-matrix-1791813439777/。
 
 仍为模拟适配器下的实际 Electron 渲染验收，不替代当前源码 Host 重建、完整 IPC 或安装验收。
+
+## 常规测试入口与提交归档复验
+
+固定来源 e92145a13ce41a99442a4dd5a64842b0b195d303，通过 git archive 建立私有源码副本，仅覆盖本批 model-pages-render.test.mjs 入口改动。依赖连接既有隔离目录 ui-review-dependencies/node_modules，不修改共享依赖或锁文件；未纳入工作区并发实现。
+
+公开入口增加亮暗 × 1000/600px 四个独立 Node 测试、逐轮独占 TEMP/TMP、完整 JSON 检查集解析、空检查集拒绝与 Vue 错误检查、进程启动失败时清理超时器。fixture 纳入此前工作区已有的 CSP self 与真实样式加载。
+
+从归档副本运行 Node --test apps/desktop/test/model-pages-render.test.mjs apps/desktop/test/provider-form-boundary.test.mjs apps/desktop/test/provider-adapter-revision.test.mjs：17 tests / pass 17 / fail 0 / skipped 0，退出码 0；其中四个渲染测试各 108 项，共 432 项。不得把 17 项和 432 项加为同一分母。临时源码副本 apps/desktop/.tmp-test/model-public-entry-1791832085/。
+
+此结果证明模型页定向检查可经常规测试入口执行，不代表完整桌面套件、真实 Electron IPC、核心可编或安装包通过。
