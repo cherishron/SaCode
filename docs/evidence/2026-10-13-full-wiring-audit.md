@@ -90,3 +90,11 @@ Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；
 页面 enhance.js 的失败回执原先绕过草稿修订与会话代数校验；两条新增独占测试先复现旧会话网络错误覆盖当前错误、编辑后旧失败覆盖当前提示。身份校验移至成功/失败分支之前后，Node --test apps/desktop/test/state-wiring.test.mjs apps/desktop/test/prompt-enhance-ipc.test.mjs：9/9，退出码 0。纯控制器与模拟主进程校验，不替代 Electron 原生撤销顺序验收。
 
 上下文环当前链路 app.js → modelDirectory 容量 + tipsPressure → ContextMeter；settings-state.js 从 tipsAfterReply/tipsGet 回执更新压力。尚待核实同会话乱序、切会话迟到回执、可靠性丢失时旧读数清除，以及实际请求 token 计量来源。语音按钮当前禁用，不能算 F18 全域完成。
+
+## 第五轮：上下文读面与回执修复
+
+前置提交 53810b6。读取 tips_surface.cj，分子来自 currentContextTokens(log)，分母来自模型注册表窗口；tips/get 以 reliable 显式标识，after-reply 以 percent>=0 标识。已有 Host 无可靠分子时 reliable=false/percent=-1，提醒隐藏偏好跨进程留存、非法参数拒绝；结合设置测试，本轮独占 TMP 下 10/10，退出码 0。此测试不证明实际远端模型的采样正确或当前源码载荷一致。
+
+发现 settings-state.js 的无可靠数据回执不清除旧压力，且两条压力读取函数没有会话和乱序守卫。新增两条测试先红，修复为共享读取序号及会话代数校验，失败/无可靠/负用量清除当前压力，旧回执不更新当前状态。工作区测试 10/10；HEAD 加仅本批函数段的私有候选复跑 10/10，退出码 0。提交不含并发个人资料实现。
+
+仍未收口：session-state.js 切换会话目前不清空 tipsPressure 或回读提醒；app.js 将目录容量与 tipsPressure 分子组合，需验证模型变更时样本是否失效及容量身份是否一致。下一步需接会话切换清空/重读并完成实际采样探针，不能宣称上下文全链路已完成。

@@ -19,19 +19,30 @@
       try { const r = await api.tipsStartup(); if (r && r.id && r.text) tips.value = { kind: 'startup', text: r.text, reliable: false }; }
       catch (e) { tipsError.value = true; tipsNote.value = catalogError(e); }
     }
+    let pressureReadSequence = 0;
+    function acceptPressure(r, reliable) {
+      tipsPressure.value = reliable && r && Number.isFinite(r.window) && r.window > 0 && Number.isFinite(r.used) && r.used >= 0
+        ? { projectedTokens: r.used, contextWindow: r.window } : undefined;
+    }
     async function showContextTip() {
+      const generation = getSessionGeneration(), sequence = ++pressureReadSequence;
+      const current = () => generation === getSessionGeneration() && sequence === pressureReadSequence;
       try {
         const r = await api.tipsAfterReply();
-        if (r && Number.isFinite(r.window) && r.window > 0 && Number.isFinite(r.used) && r.used >= 0) tipsPressure.value = { projectedTokens: r.used, contextWindow: r.window };
+        if (!current()) return;
+        acceptPressure(r, !!r && Number.isFinite(r.percent) && r.percent >= 0);
         if (r && r.id && r.text) tips.value = { kind: 'context', text: r.text, reliable: Number.isFinite(r.percent) };
-      } catch (e) { tipsError.value = true; tipsNote.value = catalogError(e); }
+      } catch (e) { if (current()) { tipsPressure.value = undefined; tipsError.value = true; tipsNote.value = catalogError(e); } }
     }
     async function refreshTips() {
+      const generation = getSessionGeneration(), sequence = ++pressureReadSequence;
+      const current = () => generation === getSessionGeneration() && sequence === pressureReadSequence;
       try {
         const r = await api.tipsGet();
+        if (!current()) return;
         tipsHidden.value = !!r.hidden; tipsError.value = false;
-        if (r.reliable && Number.isFinite(r.window) && r.window > 0 && Number.isFinite(r.used)) tipsPressure.value = { projectedTokens: r.used, contextWindow: r.window };
-      } catch (e) { tipsError.value = true; }
+        acceptPressure(r, r.reliable === true);
+      } catch (e) { if (current()) { tipsPressure.value = undefined; tipsError.value = true; } }
     }
     async function setTipsHidden(value) {
       if (tipsBusy.value) return;

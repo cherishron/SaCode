@@ -103,3 +103,23 @@ test('用量回读跨会话时不覆盖当前读数', async () => {
   await controller.refreshUsage();
   assert.equal(current.deps.usage.value, '');
 });
+
+test('上下文压力无可靠读数时清除旧值', async () => {
+  const { deps, assembly } = fixture({ tipsGet: async () => ({ reliable: false, used: -1, window: 128000 }) });
+  deps.tipsPressure.value = { projectedTokens: 99, contextWindow: 128000 };
+  await assembly.refreshTips();
+  assert.equal(deps.tipsPressure.value, undefined);
+});
+
+test('上下文读取跨会话与同会话乱序均不能覆盖最新读数', async () => {
+  const pending = []; let generation = 0;
+  const { deps } = fixture({ tipsGet: () => new Promise(resolve => pending.push(resolve)) });
+  deps.getSessionGeneration = () => generation;
+  const assembly = globalThis.SaCodeSettings.createSettingsAssembly(deps);
+  const old = assembly.refreshTips(); generation++;
+  const first = assembly.refreshTips(); const last = assembly.refreshTips();
+  pending[2]({ reliable: true, used: 30, window: 100 }); await last;
+  pending[1]({ reliable: true, used: 20, window: 100 }); await first;
+  pending[0]({ reliable: true, used: 10, window: 100 }); await old;
+  assert.equal(deps.tipsPressure.value.projectedTokens, 30);
+});
