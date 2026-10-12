@@ -170,3 +170,11 @@ product-management.test.mjs 扩展三页夹具，新增受阻状态、保存/搜
 HostTeamRuntime 源码实读：describe 在 synchronized(mtx) 内 panel(state())；poll 整段同锁，调用 member 的日志 load/租约接管、deliver 的 durableCheckpointBatched、start 的工作区准备/日志检查点等。answer 同锁并在回答后 durable。TeamMemberRunner.poll 仅 handle 非 running 时才 result()，没有证明它直接等待正在执行的 Future；start 使用 DeferredProvider 把 config.open 放到执行线程，不能臆造主线程网络等待。锁域存在慢 I/O 与协议响应竞争的结构性风险，具体本轮4.8秒尚未通过操作计时定位，不能升级为已证根因。
 
 下一实施切片：先在私有 Host 副本测 teamRuntime 锁等待/持锁及各持久操作耗时；确认后将慢准备/持久结算与权威状态发布拆分，保留租约与一次性授权，描述不得启动执行或隐瞒未持久状态。覆盖在途响应、审批/停止并发、冻结/检查点失败，使用原5秒请求判据，不能以扩超时或跳过持久屏障收口。当前 Host 源码 main.cj 有并发在飞修改，隔离构建证据需注明源码快照，不能沿用旧二进制结果。
+
+## 第十四轮：固定提交 Host 构建发现基线阻断
+
+将 ca04115f4d9f 的 core 与 apps/host 用 git archive 导出到 apps/desktop/.tmp-test/team-host-fixed-ca04115f4d9f，不含工作区改动；snapshot.json 记录 committed-only。沿提交态已配置的 stdx1.1.3.1，本机 cjpm/cjc1.1.3，在独占 TEMP/TMP 下 cd apps/host && cjpm build；终态 rc=1，core 编译失败，4 errors / 112 warnings，未生成 Host。原件 apps/host/build.log 与 build.exit.txt 保存在该私有快照中。不是计时观察未完成，也不把零测试集计绿。
+
+明确错误位于提交态 core/src/cmds.cj：第11行带默认值的 parse 缺具名参数标记，expected ',' or ')' found '='；第64行使用非仓颉的对象形态返回类型 {spec:...,args:...}，产生 expected type/operator 与 delimiter 三条后续错误。工作区该文件已存在并发修复（parse! 与 CommandResolveResult 等），不能另外覆盖或整文件代提交。没有宣称吸收修复后的源码已可编，尚须核实调用方及测试依赖并固定落库。
+
+这改变下一优先级：在编译基线未收口前，旧 Host 团队延迟证据仅能描述旧二进制；不能拿它证明 ca04115 最新实现。先切清已有 cmds 修复及依赖、提交级复建，再做团队锁域计时。其他域审计仍可推进，不把一个构建阻断当成所有任务不可进展。
