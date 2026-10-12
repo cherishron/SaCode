@@ -21,13 +21,19 @@ export interface Adapter{
 // --- 校验（纯函数，前端比核心更严）---
 export function validateProvider(draft:Draft,providers:Provider[],editing:boolean):string{
   if(!draft.id||!/^[a-z][a-z0-9-]*$/.test(draft.id))return 'ID 只能以小写字母开头，包含小写字母、数字和短横线';
+  if(draft.id.length>64)return 'ID 最多 64 个字符';
+  if(draft.name.length>100)return '显示名称最多 100 个字符';
+  if(draft.baseUrl.length>512)return 'API 地址最多 512 个字符';
+  if(!['openai-completions','openai-responses','anthropic-messages'].includes(draft.protocol))return 'API 协议无效';
+  if(draft.transport!=='direct'&&draft.transport!=='relay')return '传输方式无效';
   if(!editing&&providers.some(p=>p.id===draft.id))return '已有供应商使用了这个 ID';
   if(!draft.name.trim())return '显示名称不能为空';
   if(!draft.baseUrl.trim())return '请输入 API 地址';
   try{const u=new URL(draft.baseUrl);const ok=u.protocol==='https:'||(u.protocol==='http:'&&(u.hostname==='127.0.0.1'||u.hostname==='localhost'));if(!ok||u.username||u.password||u.search||u.hash)return '请输入有效的 HTTP 或 HTTPS 地址';}catch{return '请输入有效的 HTTP 或 HTTPS 地址';}
   if(!editing&&!draft.key.trim())return '新增供应商需填写 API 密钥';
+  if(draft.key.length>4096)return 'API 密钥最多 4096 个字符';
   if(draft.key&&/[\x00-\x20\x7f]/.test(draft.key))return '密钥格式错误';
-  if(!Number.isInteger(draft.sortOrder)||draft.sortOrder<0)return '排序需为非负整数';
+  if(!Number.isInteger(draft.sortOrder)||draft.sortOrder<0||draft.sortOrder>1e9)return '排序需为 0–1000000000 的整数（0 表示未指定）';
   return'';
 }
 
