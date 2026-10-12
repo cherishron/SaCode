@@ -1,6 +1,19 @@
 package core
 import std.collection.ArrayList
 import std.fs.*
+import std.collection.HashMap
+import std.sync.Mutex
+
+// 普通 flush 兼容无参调用，但只能复用本进程真实 acquire 成功的对象，
+// 不能根据盘上 pid 自报写权。没有持有者时由 flush 自己短暂获取租约。
+let localWriterMtx = Mutex()
+let localWriters = HashMap<String, WriteLease>()
+func writerKey(path: String): String {
+    return canonicalize(Path(path).parent).join(Path(path).fileName).toString().toAsciiLower()
+}
+func localWriter(path: String): ?WriteLease {
+    return synchronized(localWriterMtx) { localWriters.get(writerKey(path)) }
+}
 
 // 会话写者租约：同一会话同时只允许一个写者；读侧（投影/回放）不受限。
 //
@@ -13,12 +26,12 @@ import std.fs.*
 // 崩溃持有者的接管走 takeoverIfStale()：只有盘上 pid 被 CFFI 判为「确认已死」才清重取。
 // pid 会被系统回收复用，因此两类误判都朝安全方向收敛——
 // 死者 pid 被别的活进程复用 → 判活为真 → 不接管（留着残留租约，宁可让人手工清）；
-// 持有者还活着却打不开句柄 → 判活为假 → 理论上可能被抢走，但本机自己的进程恒可打开，
-// 跨机共享盘不在本实现的取舍范围内（真要跨机得换带 fcntl 的锁服务）。
+// 持有者句柄打不开或身份无法确认 → 不接管，保留原租约；I/O 失败不冒充另一写者。
 public class WriteLease {
     let leasePath: String
     var token = ""
     var staging = ""
+    var acquireFailure = ""
 
     public init(sessionPath: String) {
         this.leasePath = "${sessionPath}.lease"
@@ -32,10 +45,17 @@ public class WriteLease {
         return token
     }
 
+    public func protects(sessionPath: String): Bool {
+        return leasePath == "${sessionPath}.lease" && token.size > 0 && currentOwner() == token
+    }
+
     // 失败获取用的中转文件；成功或清理后都应为空，留给测试盯「没留垃圾」
     public func stagingArtifact(): String {
         return staging
     }
+
+    // 失败只暴露稳定分类，不把系统异常、路径或凭据带进业务回执。
+    public func acquisitionFailure(): String { return acquireFailure }
 
     // 盘上的归属；文件不存在或读不出都返回空串，调用方据此判「没人拿着」
     public func currentOwner(): String {
@@ -84,22 +104,35 @@ public class WriteLease {
 
     // 崩溃持有者的接管入口：没被占就直接拿；被占且能确认持有者已死才清掉重拿。
     // 除此之外一律回 false——不删别人的租约，也不假装拿到。
-    public func takeoverIfStale(): Bool {
+    public func takeoverIfStale(probe!: (Int64) -> String = { pid => processLiveness(pid) }): Bool {
+        acquireFailure = ""
         if (!held()) {
             return acquire()
         }
+        try {
+            if (!FileInfo(leasePath).isRegular()) { acquireFailure = "io-failed"; return false }
+        } catch (_: Exception) { acquireFailure = "io-failed"; return false }
         let pid = holderPid()
         if (pid <= 0) {
+            acquireFailure = "owner-unknown"
             return false
         }
-        if (isProcessAlive(pid)) {
+        let owner = currentOwner()
+        var state = "unknown"
+        try { state = probe(pid) } catch (_: Exception) {}
+        if (state != "dead") {
+            acquireFailure = if (state == "alive") { "busy" } else { "owner-unknown" }
             return false
         }
+        // 查询过程中归属变化时不删除新写者的凭据；完整并发接管仍需独立机制。
+        if (currentOwner() != owner) { acquireFailure = "owner-unknown"; return false }
         try {
             if (!removeIfExists(leasePath, recursive: false)) {
+                acquireFailure = "io-failed"
                 return false
             }
         } catch (e: Exception) {
+            acquireFailure = "io-failed"
             return false
         }
         return acquire()
@@ -109,7 +142,9 @@ public class WriteLease {
         // 每次尝试都重新生成凭据：同一实例重试不得复用上一轮的归属
         token = ""
         staging = ""
+        acquireFailure = ""
         let dir = dirOf(leasePath)
+        var publishing = false
         try {
             let tmp = File.createTemp(Path(dir))
             let tmpPath = tmp.info.path.toString()
@@ -117,12 +152,20 @@ public class WriteLease {
             let mark = "writer=${ownProcessId()}-${tmp.info.path.fileName}"
             tmp.write(mark.toArray())
             tmp.close()
+            publishing = true
             rename(tmpPath, to: leasePath, overwrite: false)
             // 只有落位成功才算拿到，凭据以盘上那份为准
             token = mark
+            synchronized(localWriterMtx) { localWriters[writerKey(leasePath)] = this }
             staging = ""
             return true
         } catch (e: Exception) {
+            acquireFailure = "io-failed"
+            try {
+                if (publishing && exists(leasePath) && FileInfo(leasePath).isRegular()) {
+                    acquireFailure = "busy"
+                }
+            } catch (_: Exception) {}
             if (staging.size > 0) {
                 try {
                     removeIfExists(staging, recursive: false)
@@ -146,6 +189,7 @@ public class WriteLease {
         try {
             let gone = removeIfExists(leasePath, recursive: false)
             if (gone) {
+                synchronized(localWriterMtx) { localWriters.remove(writerKey(leasePath)) }
                 token = ""
             }
             return gone

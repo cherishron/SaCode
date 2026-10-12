@@ -13,6 +13,7 @@ foreign func GetCurrentProcessId(): UInt32
 foreign func OpenProcess(access: UInt32, inherit: Int32, pid: UInt32): CPointer<Unit>
 foreign func GetExitCodeProcess(handle: CPointer<Unit>, code: CPointer<UInt32>): Int32
 foreign func CloseHandle(handle: CPointer<Unit>): Int32
+foreign func GetLastError(): UInt32
 
 // PROCESS_QUERY_LIMITED_INFORMATION：只要「能不能问它的退出码」，不需要更多权限
 let QUERY_LIMITED: UInt32 = 4096
@@ -21,6 +22,23 @@ let STILL_ACTIVE: UInt32 = 259
 
 public func ownProcessId(): Int64 {
     return Int64(unsafe { GetCurrentProcessId() })
+}
+
+// 租约接管必须区分「确认已死」与「查询被拒绝／无法确认」。
+// 旧 Bool 接口保留供既有调用方使用，写租约只消费这个三态结果。
+public func processLiveness(pid: Int64): String {
+    if (pid <= 0 || pid >= Int64(4294967296)) { return "unknown" }
+    let handle = unsafe { OpenProcess(QUERY_LIMITED, 0, UInt32(pid)) }
+    if (handle.isNull()) {
+        let error = unsafe { GetLastError() }
+        // 非零、范围内的 pid 不存在时返回 ERROR_INVALID_PARAMETER；访问拒绝不等于死亡。
+        return if (error == 87) { "dead" } else { "unknown" }
+    }
+    var code: UInt32 = 0
+    let ok = unsafe { GetExitCodeProcess(handle, inout code) }
+    unsafe { CloseHandle(handle) }
+    if (ok == 0) { return "unknown" }
+    return if (code == STILL_ACTIVE) { "alive" } else { "dead" }
 }
 
 // 判活只回答「这个 pid 现在是不是活的」。打不开句柄（不存在、或没权限打开）

@@ -770,6 +770,17 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
     emit(okFrame(idText, "{\"transcriptView\":\"${jsonEscapeText(tv)}\",\"composerEnter\":\"${jsonEscapeText(ce)}\",\"sessionLog\":\"${jsonEscapeText(sl)}\",\"scope\":\"user\"${writeResult}}"))
 }
 
+func sessionLeaseError(id: String, lease: WriteLease): String {
+    let failure = lease.acquisitionFailure()
+    if (failure == "busy") {
+        return errFrameData(id, -32001, "already-owned", "{\"reason\":\"busy\",\"retryable\":true}")
+    }
+    if (failure == "owner-unknown") {
+        return errFrameData(id, -32001, "session-owner-unknown", "{\"reason\":\"outcome-unknown\",\"retryable\":false}")
+    }
+    return errFrameData(id, -32003, "session-storage-unavailable", "{\"reason\":\"persistence-failed\",\"retryable\":true}")
+}
+
 main(args: Array<String>) {
     let catalog = SessionCatalog(".")
     let teamRuntime = HostTeamRuntime(".", catalog)
@@ -1144,7 +1155,7 @@ main(args: Array<String>) {
         if (method == "session/append") {
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
-                    emit(errFrame(idText, -32001, "already-owned"))
+                    emit(sessionLeaseError(idText, lease))
                     continue
                 }
                 if (!loadForWrite(shared, meter)) {
@@ -1204,7 +1215,7 @@ main(args: Array<String>) {
         if (method == "session/submit") {
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
-                    emit(errFrame(idText, -32001, "already-owned"))
+                    emit(sessionLeaseError(idText, lease))
                     continue
                 }
                 if (!loadForWrite(shared, meter)) {
@@ -2206,10 +2217,15 @@ main(args: Array<String>) {
                 let id = catalog.create(jsonStr(body, "title"))
                 emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(id)}\",\"saved\":true}"))
             } catch (e: Exception) {
-                emit(errFrame(idText, -32004, e.message))
+                if (e.message == "bad-session-title") {
+                    emit(errFrameData(idText, -32602, e.message, "{\"reason\":\"invalid-input\",\"retryable\":false}"))
+                } else {
+                    emit(errFrameData(idText, -32003, "session-storage-unavailable", "{\"reason\":\"persistence-failed\",\"retryable\":true}"))
+                }
             }
             continue
         }
+
         if (method == "session/select") {
             // 换会话时把在途的增强作废：那笔结果属于上一个会话的输入框，
             // 留着一个已经不该被应用的迟到结果，早晚会落进错的草稿里。
@@ -2232,29 +2248,52 @@ main(args: Array<String>) {
             }
             let target = SessionLog(targetPath)
             if (!target.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
+            // 先获取目录索引与目标写权，预检失败时不释放原会话、不发布新选择。
+            // 活动会话就是根日志时复用自身租约，不能与自己抢同一份写权。
+            let indexPath = catalog.indexPath()
+            let indexIsActive = leaseHeld && p == indexPath
+            let indexLease = if (indexIsActive) { lease } else { WriteLease(indexPath) }
+            if (indexIsActive && !indexLease.protects(indexPath)) {
+                emit(errFrameData(idText, -32001, "session-owner-unknown", "{\"reason\":\"outcome-unknown\",\"retryable\":false}")); continue
+            }
+            if (!indexIsActive && !indexLease.takeoverIfStale()) {
+                emit(sessionLeaseError(idText, indexLease)); continue
+            }
+            let targetIsActive = leaseHeld && p == targetPath
+            let targetLease = if (targetPath == indexPath) { indexLease }
+                else if (targetIsActive) { lease } else { WriteLease(targetPath) }
+            var targetAcquired = false
+            var keepIndex = false
+            try {
+            if (targetPath != indexPath && !targetIsActive) {
+                if (!targetLease.takeoverIfStale()) { emit(sessionLeaseError(idText, targetLease)); continue }
+                targetAcquired = true
+            }
+            if (targetIsActive && !targetLease.protects(targetPath)) {
+                emit(errFrameData(idText, -32001, "session-owner-unknown", "{\"reason\":\"outcome-unknown\",\"retryable\":false}")); continue
+            }
             if (leaseHeld) {
-                if (!shared.flush()) { emit(errFrame(idText, -32003, "flush-failed")); continue }
-                lease.release()
-                leaseHeld = false
+                if (!lease.protects(p) || !shared.flush()) { emit(errFrame(idText, -32003, "flush-failed")); continue }
             }
             if (!target.load()) { emit(errFrame(idText, -32002, "replay-rejected")); continue }
-            let indexLease = WriteLease(catalog.indexPath())
-            if (!indexLease.takeoverIfStale()) {
-                emit(errFrame(idText, -32001, "already-owned")); continue
-            }
-            let index = SessionLog(catalog.indexPath())
+            let index = SessionLog(indexPath)
             if (!index.load()) {
-                indexLease.release(); emit(errFrame(idText, -32002, "catalog-index-rejected")); continue
+                emit(errFrame(idText, -32002, "catalog-index-rejected")); continue
             }
             try { catalog.select(index, wanted) } catch (e: Exception) {
-                indexLease.release(); emit(errFrame(idText, -32602, e.message)); continue
+                emit(errFrame(idText, -32602, e.message)); continue
             }
-            if (!index.flush()) {
+            if (!indexLease.protects(indexPath) || !index.flush()) {
                 // 失败保留根租约，由进程退出后按已死写者规则接管；不声称切换成功。
                 selectionFault = true
+                keepIndex = true
                 emit(errFrame(idText, -32003, "selection-flush-failed")); continue
             }
-            indexLease.release()
+            if (leaseHeld && !lease.release()) {
+                selectionFault = true
+                emit(errFrame(idText, -32003, "selection-failed-restart-required")); continue
+            }
+            leaseHeld = false
             startupFault = false
             activeId = wanted
             p = targetPath
@@ -2273,7 +2312,12 @@ main(args: Array<String>) {
             inflight = InflightCalls()
             emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(activeId)}\",\"selected\":true,\"saved\":true,\"theme\":\"${SessionAppearance(shared).theme()}\"}"))
             continue
+            } finally {
+                if (targetAcquired) { targetLease.release() }
+                if (!indexIsActive && !keepIndex) { indexLease.release() }
+            }
         }
+
         if (method == "session/catalog") {
             try {
                 var items = "["

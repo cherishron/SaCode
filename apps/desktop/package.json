@@ -36,6 +36,7 @@
       "models-guard.cjs",
       "customs-guard.cjs",
       "paths.cjs",
+      "data-paths.cjs",
       "layout-smoke.cjs",
       "tooltip-smoke.cjs",
       "frame-smoke.cjs",
@@ -64,7 +65,8 @@
     },
     "portable": {
       "artifactName": "sacode-portable.exe"
-    }
+    },
+    "afterPack": "./after-pack.cjs"
   },
   "devDependencies": {
     "@opentiny/tiny-robot": "^0.5.1",

@@ -30,7 +30,6 @@ export const AccountMenu=defineComponent({
         h('div',{class:'account-theme'},[h('span',{},'外观'),h('div',{},[['light','浅色','M12 3v2M12 19v2M3 12h2M19 12h2M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0'],['dark','深色','M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11'],['system','跟随系统','M3 4h18v13H3zM8 21h8M12 17v4']].map(([id,label,path])=>h('button',{type:'button','aria-label':label,'aria-pressed':props.theme===id,disabled:props.busy||!props.theme,onClick:()=>emit('theme',id)},icon(path))))]),
         props.note?h('p',{class:'note',role:'status','aria-live':'polite'},props.note):null,
         h('button',{type:'button',disabled:true,title:'尚无系统启动项宿主接口'},[icon('M12 3v9M6 6a9 9 0 1 0 12 0'),h('span',{},'开机自启'),h('small',{},'待接入')]),
-        h('button',{type:'button',onClick:()=>settings('general')},[icon('M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6'),h('span',{},'设置')]),
       ]):null,
     ]);
   },

@@ -4,7 +4,7 @@
   --surface-bubble:#eeede8; --text:#292c27; --text-muted:#757970;
   --border:#e5e4de; --accent:#386bd2; --accent-text:#fff;
   --input-surface:#fffefa; --panel-surface:#fffefa; --new-session-fill:transparent;
-  --send-fill:#30342e; --send-hover:#454b40;
+  --send-fill:#30342e; --send-hover:#454b40; --send-text:#fff;
 }
 @media(prefers-color-scheme:dark) {
   :root {
@@ -12,7 +12,7 @@
     --surface-bubble:#33352f; --text:#eeeee8; --text-muted:#aaaDA3;
     --border:#3c3e37; --accent:#8bafff; --accent-text:#20211f;
     --input-surface:#2d2f29; --panel-surface:#2d2f29;
-    --send-fill:#e5e8df; --send-hover:#fff;
+    --send-fill:#e5e8df; --send-hover:#fff; --send-text:#20211f;
   }
 }
 .navigation { overflow-x:hidden; }
@@ -27,7 +27,7 @@
 .heading h1 { font-weight:600; }
 .composer-card { border:1px solid var(--border); border-radius:18px; box-shadow:0 3px 12px #00000004; }
 .composer-controls { gap:8px; }
-.composer-primary { border-radius:50%; }
+.composer-primary { border-radius:50%; color:var(--send-text); }
 .side { background:var(--surface-2); border-left:1px solid var(--border); }
 .side-toolbar,.side-tabs { background:transparent; }
 .side-section { border-radius:10px; }
@@ -59,7 +59,7 @@
 .settings-dialog { --settings-module:var(--surface-3); --settings-nav-active:var(--surface-3); --settings-card-border:var(--border); }
 .settings-nav { background:var(--surface); }
 .settings-tab { border-radius:8px; }
-.settings-tab > svg { width:17px; height:17px; flex-shrink:0; }
+.settings-tab > svg { width:17px; height:17px; flex:0 0 17px; }
 .settings-section-title { margin:0 0 20px; font-size:21px; }
 .settings-page .settings-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:18px 0; border-bottom:1px solid var(--border); }
 .settings-page .settings-row .note { margin:6px 0 0; }
@@ -70,10 +70,10 @@
 .account-menu-root { position:relative; margin-top:auto; }
 .account-trigger { width:100%; display:flex; align-items:center; gap:10px; padding:10px 8px; color:var(--text); background:transparent; border:0; border-radius:9px; text-align:left; cursor:pointer; }
 .account-trigger:hover { background:var(--surface-3); }
-.account-avatar { width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--border); border-radius:50%; background:var(--surface-2); }
-.account-label { display:flex; flex:1; flex-direction:column; gap:3px; }
-.account-label strong { font-size:13px; font-weight:500; }
-.account-label small { font-size:11px; color:var(--text-muted); }
+.account-avatar { flex:none; width:24px; height:24px; display:grid; place-items:center; border:0; border-radius:50%; background:var(--surface-3); }
+.account-label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.account-label strong { font-size:12px; font-weight:500; }
+.account-trigger>svg { flex:none; width:14px; height:14px; color:var(--text-muted); }
 .account-popover { position:absolute; bottom:calc(100% + 8px); left:0; width:250px; max-width:calc(100vw - 32px); z-index:60; padding:7px; border:1px solid var(--border); border-radius:12px; background:var(--panel-surface); box-shadow:0 12px 36px #0002; }
 .account-popover > button { display:flex; align-items:center; gap:10px; width:100%; padding:10px; border:0; border-radius:7px; background:transparent; color:var(--text); text-align:left; cursor:pointer; }
 .account-popover button:hover:not(:disabled) { background:var(--surface-3); }
@@ -83,7 +83,6 @@
 .account-theme > div { display:flex; gap:4px; }
 .account-theme button { display:grid; place-items:center; width:32px; height:30px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; }
 .account-theme button[aria-pressed=true] { border-color:var(--border); background:var(--surface-3); }
-.navigation .nav-settings-row { margin-top:0; }
 .permission-menu-root { position:relative; }
 .permission-trigger { display:flex; align-items:center; justify-content:center; gap:4px; min-width:74px; max-width:100px; height:30px; padding:0 5px; color:var(--text-muted); border:0; border-radius:7px; background:transparent; cursor:pointer; font-size:12px; }
 .permission-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -118,7 +117,11 @@
 .workspace-search-errors { padding:10px; border:1px solid var(--border); border-radius:8px; }
 .workspace-search-errors .note { overflow-wrap:anywhere; }
 .workspace-search-limits { font-size:11px; line-height:1.6; }
-@media(max-width:1023px) { .account-label { display:none; } .account-trigger { justify-content:center; } }
+/* 标签随侧栏折叠状态收起，不因窗口宽度隐藏手动展开时的昵称。 */
+.app[data-sidebar-collapsed=true] .sidebar-footer { flex-direction:column; }
+.app[data-sidebar-collapsed=true] .account-label,.app[data-sidebar-collapsed=true] .account-trigger>svg { display:none; }
+.app[data-sidebar-collapsed=true] .account-trigger { justify-content:center; padding:4px; }
+.app[data-platform=win32][data-sidebar-collapsed=true] .sidebar-footer { display:none; }
 .goal-root { border:1px solid var(--border); background:var(--surface-3); box-shadow:none; border-radius:10px; }
 .goal-header { flex-wrap:nowrap; }
 .goal-header .goal-metrics { text-align:right; font-variant-numeric:tabular-nums; }

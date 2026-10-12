@@ -240,7 +240,7 @@ createApp({
     const workspaceSessionLimits = ref(new Map());
     const workspaceGroupExpanded = ref(new Set());
     // 检索词与状态筛选是核心目录投影上的纯派生量：不发宿主请求，也不写回用户的展开记忆。
-    const sidebarQuery = ref(''), sidebarStatus = ref('all');
+    const sidebarQuery = ref(''), catalogStatus = ref('all');
     const sidebarCollapsed = window.Vue.computed(() => sidebarClosed.value || (viewport.value < 1024 && !narrowExpanded.value));
     const frameColumns = window.Vue.computed(() => workbenchExpanded.value&&!pluginManagerOpen.value?{sidebar:0,center:0,rightbar:viewport.value}:window.SaCodeFrame.columns(viewport.value, sidebarCollapsed.value ? 0 : sidebarWidth.value,
       sideOpen.value&&!pluginManagerOpen.value ? rightWidth.value ?? viewport.value * .45 : 0, nativePlatform==='win32' || nativePlatform==='darwin' ? 0 : 56));
@@ -679,7 +679,7 @@ createApp({
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
-      sidebarQuery, sidebarStatus,
+      sidebarQuery, catalogStatus,
       send, runTurn, cancelTurn, askTool, answerTool,
       queueRows, queuePending, updateQueue, goalEditorRequest,
     };
@@ -695,9 +695,8 @@ createApp({
     // 检索匹配会话标题或所在工作区名；状态按核心目录发出的 status 原值筛，不在界面再造第二套状态词。
     const groupLabel = (directory)=>directory ? directory.split(/[\\/]/).filter(Boolean).pop() || directory : '未分组';
     const sidebarQueryText = String(self.sidebarQuery || '').trim().toLowerCase();
-    const sidebarSearching = sidebarQueryText.length > 0 || self.sidebarStatus !== 'all';
+    const sidebarSearching = sidebarQueryText.length > 0;
     const matchingSessions = sidebarSessions.filter((item)=>{
-      if (self.sidebarStatus !== 'all' && item.status !== self.sidebarStatus) return false;
       if (!sidebarQueryText) return true;
       return (item.title || '未命名会话').toLowerCase().includes(sidebarQueryText)
         || groupLabel(item.workspaceDirectory || '').toLowerCase().includes(sidebarQueryText);
@@ -731,11 +730,6 @@ createApp({
         el('input','sidebar-search',null,{id:'sidebar-search',type:'search',value:self.sidebarQuery,placeholder:'搜索会话',
           'aria-label':'搜索会话','aria-keyshortcuts':'Control+K Meta+K',disabled:sessionLocked,
           onInput:(e)=>{self.sidebarQuery=e.target.value;}})]),
-      el('div','sidebar-filter',[
-        ...[['all','全部'],['ready','可正常回放'],['truncated-tail','尾部不完整'],['replay-rejected','日志回放失败']].map(([status,label])=>
-          el('button','sidebar-filter-btn',label,{'data-sidebar-status':status,'aria-pressed':self.sidebarStatus===status,
-            disabled:sessionLocked,onClick:()=>{self.sidebarStatus=status;}})),
-      ]),
       el('div','workspace-heading',[
         el('span','nav-label','工作区'),
         el('button','frame-icon',[navIcon('M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14 M16 16l5 5')],{id:'open-catalog','aria-label':'本地会话列表',onClick:self.openCatalog}),
@@ -774,8 +768,12 @@ createApp({
         !matchingSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,sidebarSessions.length ? '无匹配会话' : '暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
       ]),
-      h(window.SaCodeSlots.AccountMenu,{theme:self.globalAppearance.theme,busy:self.appearanceBusy||self.fontBusy,note:self.appearanceNote,onTheme:self.setTheme,onSettings:id=>{self.settingsTab=id;self.settingsOpen=true;}}),
-      el('div','nav-settings-row',[el("button", "nav-item nav-settings", [navIcon("M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0") , el("span", "nav-label", "设置")], { id: "open-settings", "aria-label": "SaCode 设置", "aria-keyshortcuts":"Control+, Meta+,", tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']}, onClick: () => { self.settingsOpen = !self.settingsOpen; } })]),
+      el('footer','sidebar-footer',[
+        h(window.SaCodeSlots.AccountMenu,{theme:self.globalAppearance.theme,busy:self.appearanceBusy||self.fontBusy,note:self.appearanceNote,onTheme:self.setTheme,onSettings:id=>{self.settingsTab=id;self.settingsOpen=true;}}),
+        el('button','frame-icon sidebar-settings',[navIcon('M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0')],{
+          id:'open-settings','aria-label':'SaCode 设置','aria-keyshortcuts':'Control+, Meta+,',
+          tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']},onClick:()=>{self.settingsOpen=!self.settingsOpen;}}),
+      ],{'aria-label':'本地用户与设置'}),
     ], { "aria-label": "工作区与会话导航" });
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
@@ -926,11 +924,17 @@ createApp({
         id:"refresh-catalog", disabled:self.catalogBusy, onClick:self.refreshCatalog })]),
       self.catalog ? el("p", "note catalog-root", "目录："+self.catalog.root, {id:"catalog-root"}) : null,
       el("p", "note", self.turn.running || self.approval ? "请先结算执行任务并处理待审批工单。" : self.budgetBusy || self.appearanceBusy ? "正在保存当前会话配置，请稍后切换。" : self.catalogNote, {id:"catalog-note", role:"status", "aria-live":"polite"}),
+      el('div','catalog-filter',[
+        el('span','note','日志状态'),
+        ...[['all','全部'],['ready','可正常回放'],['truncated-tail','尾部不完整'],['replay-rejected','日志回放失败']].map(([status,label])=>
+          el('button','catalog-filter-btn',label,{'data-catalog-status':status,'aria-pressed':self.catalogStatus===status,
+            disabled:sessionLocked,onClick:()=>{self.catalogStatus=status;}})),
+      ],{role:'group','aria-label':'按会话日志状态筛选'}),
       el("label", "field-label", "新会话名称", {for:"new-session-title"}),
       el("div", "catalog-create", [el("input", "input", null, {id:"new-session-title", value:self.newSessionTitle, maxlength:80, disabled:self.catalogBusy,
         placeholder:"例如：整理项目文档", onInput:e=>{self.newSessionTitle=e.target.value;} }),
         el("button", "btn btn-primary", "新建会话", {id:"create-session", disabled:sessionLocked || !self.newSessionTitle.trim(), onClick:self.createSession})]),
-      el("div", "catalog-list", self.catalog ? self.catalog.entries.map(item=>el("article", "catalog-card", [
+      el("div", "catalog-list", self.catalog ? self.catalog.entries.filter(item=>self.catalogStatus==='all'||item.status===self.catalogStatus).map(item=>el("article", "catalog-card", [
         el("h3", "catalog-title", item.title || "未命名会话", {title:item.title || "未命名会话"}),
         el("span", "badge"+(item.status!=="ready" ? " badge-warn" : ""), item.current ? "当前会话" : "本地会话"),
         el("p", "note catalog-meta", item.status==="replay-rejected" ? "日志回放失败，摘要不可用" : "已保存 "+item.durable+" 条事件"+(item.status==="truncated-tail" ? " · 尾帧不完整" : "")),
@@ -939,6 +943,7 @@ createApp({
           disabled:sessionLocked || item.current || item.status==="replay-rejected", onClick:()=>self.selectSession(item.id)}),
       ], {"data-session-id":item.id})) : [], {id:"catalog-list", "aria-busy":String(self.catalogBusy)}),
       self.catalog && !self.catalog.entries.length ? el("p", "empty-card", "此目录暂无落盘会话。") : null,
+      self.catalog?.entries.length && !self.catalog.entries.some(item=>self.catalogStatus==='all'||item.status===self.catalogStatus) ? el('p','empty-card','无匹配会话',{id:'catalog-filter-empty',role:'status'}) : null,
       el("p", "note", "切换前会保存当前会话；待审批工单和执行任务需要先处理完毕。项目目录随会话恢复。"),
     ]);
     const workspaceDialog=h(window.SaCodeDialog,{open:self.workspaceOpen,title:"SaCode 工作区",class:"workspace-dialog",onClose:()=>{self.workspaceOpen=false;}},()=>[

@@ -83,14 +83,20 @@
       if (editorBlocked()) { catalogNote.value = '请先保存或放弃文件编辑中的修改。'; return; }
       if (catalogBusy.value || !newSessionTitle.value.trim()) return;
       catalogBusy.value = true; catalogNote.value = '正在新建会话…';
+      let createdId = '';
       try {
         if (taskRunning()) throw new Error('请先结算执行任务并处理待审批工单。');
         if (busy()) throw new Error('正在处理当前会话，请稍后新建。');
         const created = await api.sessionCreate(newSessionTitle.value);
-        newSessionTitle.value = '';
+        createdId = created.id;
         catalog.value = await api.sessionCatalog();
         await applySelection(created.id);
-      } catch (e) { catalogNote.value = catalogError(e); error.value = catalogNote.value; }
+        newSessionTitle.value = '';
+      } catch (e) {
+        // 日志已创建但打开失败时明确告诉用户从列表重试，不让重复点击新建产生多份日志。
+        catalogNote.value = (createdId ? '新会话已创建，但未能打开；请从会话列表重试。' : '') + catalogError(e);
+        error.value = catalogNote.value;
+      }
       finally { catalogBusy.value = false; }
     }
 

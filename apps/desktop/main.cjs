@@ -24,6 +24,9 @@ const HOST = hostExePath({
 const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
 const FRAME_SMOKE = process.argv.includes('--frame-smoke');
 const WILL_SMOKE = FRAME_SMOKE || process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
+const dataPaths = require('./data-paths.cjs').configureDataPaths({
+  app, env: process.env, isolated: WILL_SMOKE || !!SESSION_ARG,
+});
 // 冒烟态没传 --session-dir 时也必须落到一次性目录：默认的 sessionData 跨次累积，
 // 「全新会话」类断言会被上一次运行的旧日志蒙混过去（实测用量从 12 一路涨到 48）。
 // 只带 pid 还不够：Windows 会回收 pid，同 pid 的旧目录会被下一次运行接着写，
@@ -33,14 +36,17 @@ const WILL_SMOKE = FRAME_SMOKE || process.argv.includes("--smoke") || process.ar
 const FRESH_SMOKE_DIR = WILL_SMOKE && !SESSION_ARG;
 const SESSION_DIR = SESSION_ARG
   ? SESSION_ARG.slice("--session-dir=".length)
-  : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `sacode-smoke-${process.pid}-${Date.now()}`) : app.getPath("sessionData"));
+  : (FRESH_SMOKE_DIR ? join(app.getPath("temp"), `sacode-smoke-${process.pid}-${Date.now()}`) : dataPaths?.sessions || app.getPath("sessionData"));
 const SESSION_LOG = join(SESSION_DIR, "session.log");
 if(WILL_SMOKE) app.setPath('userData',join(SESSION_DIR,'electron-user-data'));
 
 // 冒烟只使用自己的配置根，不能修改真实用户的全局外观。
 const hostEnvironment = WILL_SMOKE
   ? { ...process.env, SACODE_USER_SETTINGS_DIR: join(SESSION_DIR, 'user-settings'), SACODE_COMPUTER_USE: '0' }
-  : { ...process.env };
+  : { ...process.env, ...(dataPaths ? {
+    SACODE_USER_SETTINGS_DIR: dataPaths.settings,
+    TEMP: dataPaths.temp, TMP: dataPaths.temp,
+  } : {}) };
 if (!WILL_SMOKE && hostEnvironment.SACODE_COMPUTER_USE === '1') {
   const computerPaths = computerUsePaths({
     packaged: app.isPackaged,
@@ -425,7 +431,7 @@ ipcMain.handle("sacode:usageSetBudget", async (_e, args) => {
   return withHost(() => bridge.request("usage/set-budget", { budget: b }));
 });
 
-ipcMain.handle("sacode:sessionCatalog", async () => bridge.request("session/catalog"));
+ipcMain.handle("sacode:sessionCatalog", async () => withHost(() => bridge.request("session/catalog")));
 ipcMain.handle("sacode:workspaceGet", async () => withHost(()=>bridge.request("workspace/get")));
 ipcMain.handle("sacode:workspaceChoose", async () => withHost(async()=>{
   const workspace=await bridge.request("workspace/get");
