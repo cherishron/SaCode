@@ -94,10 +94,11 @@ export const Page=defineComponent({
     const deleting=ref<CustomModel|null>(null),bindingCustom=ref<string|null>(null);
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
+    const readReady=ref(false);
     const reload=async()=>{
       if(!props.adapter||disposed)return;
-      const gen=++generation;loading.value=true;error.value='';message.value='';
-      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;customs.value=r.customs;providers.value=r.providers;revision.value=r.revision;writable.value=r.writable;return true;}
+      const gen=++generation;readReady.value=false;loading.value=true;error.value='';message.value='';
+      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;customs.value=r.customs;providers.value=r.providers;revision.value=r.revision;writable.value=r.writable;readReady.value=true;return true;}
       catch(e){if(gen===generation&&!disposed)error.value=errText(e);}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
@@ -106,7 +107,7 @@ export const Page=defineComponent({
     const startAdd=()=>{draftRevision=revision.value;adding.value=true;editing.value=null;draft.value=blank();error.value='';};
     const startEdit=(c:CustomModel)=>{draftRevision=revision.value;editing.value=c.id;adding.value=false;draft.value={...c,requires:[...c.requires],bindings:c.bindings.map(b=>({...b}))};error.value='';message.value='';};
     const save=async()=>{
-      if(!props.adapter||disposed||saving.value||loading.value||!writable.value)return;
+      if(!props.adapter||disposed||saving.value||loading.value||!writable.value||!readReady.value)return;
       const d={...draft.value,requires:[...draft.value.requires],bindings:draft.value.bindings.map(b=>({...b}))},inv=validateCustom(d,customs.value,editing.value!==null);
       if(inv){error.value=inv;return;}
       saving.value=true;error.value='';
@@ -115,7 +116,7 @@ export const Page=defineComponent({
       finally{if(!disposed)saving.value=false;}
     };
     const remove=async()=>{
-      if(!props.adapter||disposed||!deleting.value||saving.value||loading.value||!writable.value)return;
+      if(!props.adapter||disposed||!deleting.value||saving.value||loading.value||!writable.value||!readReady.value)return;
       const id=deleting.value.id,expectedRevision=deleteRevision;saving.value=true;error.value='';
       try{await props.adapter.remove(id,expectedRevision);if(disposed)return;deleting.value=null;const refreshed=await reload();if(!disposed)message.value=refreshed?'已删除':'已删除，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed)error.value=errText(e);}
@@ -144,8 +145,9 @@ export const Page=defineComponent({
           el('h2',null,'模型'),
           el('p','intro','创建自定义模型（路由/权重/预算），绑定上游供应商的模型。'),
           btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新自定义模型目录',disabled:loading.value||saving.value}),
-          btn('+ 添加模型',startAdd,'primary',{disabled:!writable.value||loading.value||saving.value||isEditing}),
+          btn('+ 添加模型',startAdd,'primary',{disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
         ]),
+        !readReady.value&&!loading.value?el('p','notice','当前目录尚未核实，修改操作已暂停。请刷新后继续。',{role:'status'}):null,
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
@@ -162,8 +164,8 @@ export const Page=defineComponent({
             c.requires.map(r=>el('span','tag',reqLabels[r]||r)),
           ]),
           el('div','actions',[
-            btn('编辑',()=>startEdit(c),'btn',{'aria-label':'编辑 '+(c.name||c.id),disabled:!writable.value||loading.value||saving.value||isEditing}),
-            btn('删除',()=>{deleting.value=c;deleteRevision=revision.value;error.value='';},'danger',{'aria-label':'删除 '+(c.name||c.id),disabled:!writable.value||loading.value||saving.value}),
+            btn('编辑',()=>startEdit(c),'btn',{'aria-label':'编辑 '+(c.name||c.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
+            btn('删除',()=>{deleting.value=c;deleteRevision=revision.value;error.value='';},'danger',{'aria-label':'删除 '+(c.name||c.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
           ]),
         ],{key:c.id}))),
         !customs.value.length&&!loading.value?el('p','empty','暂无自定义模型，点击「+ 添加模型」开始配置。'):null,
@@ -236,14 +238,14 @@ export const Page=defineComponent({
           ]),
 
           // 操作
-          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:loading.value||saving.value||!writable.value})]),
+          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ],{'aria-busy':saving.value,inert:saving.value?'':undefined}):null,
 
         // 删除确认
         deleting.value?h('div',{class:'cm-dialog',role:'alertdialog','aria-label':'确认删除'},[
           el('p',null,'确认删除 '+(deleting.value.name||deleting.value.id)+'？'),
           el('p','hint','此操作会移除该模型及其所有上游绑定。'),
-          el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:loading.value||saving.value||!writable.value})]),
+          el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ]):null,
       ]);
     };

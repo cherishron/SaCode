@@ -70,10 +70,11 @@ export const Page=defineComponent({
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
+    const readReady=ref(false);
     const reload=async()=>{
       if(!props.adapter||disposed)return;
-      const gen=++generation;loading.value=true;error.value='';message.value='';
-      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;return true;}
+      const gen=++generation;readReady.value=false;loading.value=true;error.value='';message.value='';
+      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;readReady.value=true;return true;}
       catch(e){if(gen===generation&&!disposed){error.value=errText(e);}}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
@@ -81,7 +82,7 @@ export const Page=defineComponent({
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
     const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
     const startEdit=(p:Provider)=>{draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
-    const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value;
+    const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value&&readReady.value;
     const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success='')=>{
       saving.value=true;error.value='';message.value='';
       try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?success:'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
@@ -135,8 +136,9 @@ export const Page=defineComponent({
           el('h2',null,'供应商管理'),
           el('p','intro','管理模型提供商及其 API 密钥。'),
           btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新供应商目录',disabled:loading.value||saving.value}),
-          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!writable.value||loading.value||saving.value||isEditing}),
+          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
         ]),
+        !readReady.value&&!loading.value?el('p','notice','当前目录尚未核实，修改操作已暂停。请刷新后继续。',{role:'status'}):null,
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
@@ -154,12 +156,12 @@ export const Page=defineComponent({
             el('span','tag '+(p.keyConfigured?'on':'off'),p.keyConfigured?'密钥已配置':'密钥缺失'),
           ]),
           el('div','actions',[
-            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||isEditing}),
-            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value}),
-            btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!writable.value||loading.value||saving.value}),
-            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||i===0}),
-            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||i===providers.value.length-1}),
-            btn('删除',()=>{deleteRevision=revision.value;deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value}),
+            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
+            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
+            btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!readReady.value||!writable.value||loading.value||saving.value}),
+            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||i===0}),
+            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||i===providers.value.length-1}),
+            btn('删除',()=>{deleteRevision=revision.value;deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
           ]),
         ],{key:p.id}))),
         !providers.value.length&&!loading.value?el('p','empty','暂无供应商，点击"添加供应商"开始配置。'):null,
@@ -178,14 +180,14 @@ export const Page=defineComponent({
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
           !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
           el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
-          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:loading.value||saving.value||!writable.value})]),
+          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ],{disabled:saving.value,'aria-busy':saving.value}):null,
 
         // 删除确认弹窗
         deleting.value?h('div',{class:'ps-dialog',role:'alertdialog','aria-label':'确认删除'},[
           el('p',null,'确认删除 '+(deleting.value.name||deleting.value.id)+'？'),
           el('p','hint','此操作会移除供应商配置和存储的 API 密钥。'),
-          el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:loading.value||saving.value||!writable.value})]),
+          el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ]):null,
       ]);
     };
