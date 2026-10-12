@@ -74,17 +74,35 @@ func sandboxConfineRejectsUnrecognizedMode() {
     }
     @Expect(blank, "SANDBOX_MODE_NOT_CONFINED")
 
-    // 不是「一律拒绝」式的假 fail-closed：认得的两档必须照常放行同一份 argv
-    var joined = ""
-    for (a in SandboxRuntime().confine(["ls", "-l"], "read-only")) {
-        joined += "${a}|"
+    // 认得的两档在**无 enforcing 后端**时同样拒绝：档位合法不等于隔离存在。
+    // 2026-10-12 从「照常放行同一份 argv」改为拒绝——原断言守的正是当日审查
+    // 证实的缺陷：read-only 档位下实测真写出了文件。
+    var readOnly = ""
+    try {
+        SandboxRuntime().confine(["ls", "-l"], "read-only")
+        readOnly = "passed-through"
+    } catch (e: Exception) {
+        readOnly = e.message
     }
-    @Expect(joined, "ls|-l|")
-    joined = ""
-    for (a in SandboxRuntime().confine(["echo", "ok"], "workspace-write")) {
-        joined += "${a}|"
+    @Expect(readOnly, "SANDBOX_UNAVAILABLE")
+    var writeMode = ""
+    try {
+        SandboxRuntime().confine(["echo", "ok"], "workspace-write")
+        writeMode = "passed-through"
+    } catch (e: Exception) {
+        writeMode = e.message
     }
-    @Expect(joined, "echo|ok|")
+    @Expect(writeMode, "SANDBOX_UNAVAILABLE")
+
+    // 档位校验先于后端校验：拼错的档位仍报 SANDBOX_MODE_NOT_CONFINED，
+    // 不被「反正没有后端」掩盖成同一个错误码。
+    var order = ""
+    try {
+        SandboxRuntime().confine(["ls"], "read-onlyy")
+    } catch (e: Exception) {
+        order = e.message
+    }
+    @Expect(order, "SANDBOX_MODE_NOT_CONFINED")
 }
 
 // 上面两条既有用例原先只判「有没有抛」——任何一次抛算都能过。

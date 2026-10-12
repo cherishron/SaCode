@@ -34,9 +34,13 @@ func isConfinedMode(mode: String): Bool {
 }
 
 public class SandboxRuntime {
-    public var backendAvailable: Bool = true
+    public var backendAvailable: Bool = false
+    let provider: ?(Array<String>, String) -> Array<String>
 
-    public init() {}
+    public init(provider!: ?(Array<String>, String) -> Array<String> = None) {
+        this.provider = provider
+        backendAvailable = provider.isSome()
+    }
 
     public static func withoutBackend(): SandboxRuntime {
         let r = SandboxRuntime()
@@ -45,15 +49,19 @@ public class SandboxRuntime {
     }
 
     public func confine(argv: Array<String>, mode: String): Array<String> {
-        if (!backendAvailable) {
-            throw Exception("SANDBOX_UNAVAILABLE")
-        }
         // 认不出的档位一律拒。原先只点名 danger-full-access，于是拼错的、空的、
         // 自定义的 mode 全都被当「没约束」原样透传——调用方以为沙箱生效了，
         // 实际一条都没拦，这是 fail-open。
         if (!isConfinedMode(mode)) {
             throw Exception("SANDBOX_MODE_NOT_CONFINED")
         }
-        return argv
+        if (!backendAvailable || provider.isNone()) { throw Exception("SANDBOX_UNAVAILABLE") }
+        let confined = provider.getOrThrow()(argv, mode)
+        // 提供方必须产出可执行向量；空或丢了可执行位说明后端没给出真正的启动形态。
+        // 这里**不**要求 argv 长度变化：AppContainer 在进程属性上绑 SID，argv 原样返回是
+        // 正确的隔离形态；而 `sandbox-exec`/`bwrap` 那类才会在 argv 上加参数。拿长度当
+        // 判据会把 AppContainer 后端误判成不可用（2026-10-12 修正）。
+        if (confined.size == 0 || confined[0].size == 0) { throw Exception("SANDBOX_UNAVAILABLE") }
+        return confined
     }
 }

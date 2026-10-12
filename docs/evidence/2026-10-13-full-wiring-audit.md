@@ -258,3 +258,11 @@ persistence_repair_test九条实际覆盖并发120次刷新、真实Windows读�
 读取git_workbench.cj全部实现：有限status/diff动作、literal pathspec、禁用外部diff/textconv、关闭可选索引锁、查询根目录校验，分流输出262144字节限额后排空。新增git_workbench_test.cj三条：写动作与越界路径在启动前拒绝；独占真实Git仓库区分working/index patch并逐字节比较索引不变，子目录查询拒绝父仓扩大；限额后管道读到EOF。与前77条候选合计TOTAL80/PASSED80/SKIPPED0/ERROR0/FAILED0，rc0，原件git-workbench-test.log/exit.txt。这次80是77+Git3，不是包含并发Hook3的此前80。
 
 仅吸收只读GitQueryResult/queryWorkspaceGit及测试，供已提交团队与工作台依赖，不开放Git写操作。当前目录路径准入与2秒进程等待是局部界限，输出线程收束/真实CLI与打包页面仍需端到端验收。Host v6保持同一句柄85803运行，尚无终态。
+
+## 第二十七轮：持久任务依赖与沙箱默认拒绝收口
+
+执行四组测试加入隔离候选后99/99，但补Shell回归时发现缺SandboxRuntime.provider契约。读取差异确认提交态backendAvailable默认true且confine原样返回argv，不能算真实隔离。吸收工作区无后端默认拒绝修复，并给ExecutionSupervisor新增显式executor注入（默认仍ShellExecutor拒绝）；真实进程测试仅注入固定无副作用测试后端。合并Shell与Sandbox回归115/115，再增加“providerReady=true不能替代沙箱提供方、不得产生owned-subprocess身份”反向用例，最终TOTAL116/PASSED116/SKIPPED0/ERROR0/FAILED0，rc0，原件execution-enforcing-v2.log/exit.txt。
+
+本批吸收execution_api/service/output/supervisor及测试、shlex与sandbox对应实现/测试，包含请求去重、精确授权、启动/停止/自然退出、损坏输出、恢复不重执行、取消/超时和双流限额事实。公开ExecutionApi仍providerAvailable=false且默认门禁关闭，不以测试passthrough证明产品隔离或真实公开执行已完成。
+
+重要载荷边界：正在编译的Host v6副本早于本次Sandbox/监督器注入修复，即便随后成功也只代表该旧候选快照，不能升级为最新安全载荷；需下一固定提交重新构建。保持原句柄85803，不把持续活动重启为新构建。
