@@ -118,3 +118,13 @@ Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；
 新增 models-save.cjs：注册表失败仍抛原错误且不写凭据；注册表成功、凭据写入或派生名称失败时返回新注册表视图与 saveStatus(configuration=saved,credential=failed,reason=credential-save-failed)，不转发底层敏感错误。旧提交态主进程 inline handler 与工作区提取态 models-ipc handler 均使用此共享操作；提取文件保持未落库，不整文件提交。package.json 仅新增该文件载荷项，主进程和包清单从 HEAD 构造精确候选排除并发改动。
 
 供应商适配器消费部分保存状态，拒绝报告整次成功，明确配置已保存/密钥未保存并保留页面草稿；正常成功保持旧返回形状。models-save-stage + provider-adapter-revision：9/9，rc=0；models-save-stage + models-ipc：6/6，rc=0。测试为阶段函数与适配器/IPC 字段守卫，不是实际 Electron 凭据失败场景。凭据单独重试、自动回读修订以及打包重建仍未实施，不能把本轮当成全功能收口。
+
+## 第九轮：文件编辑、Git 只读和载荷清单复验
+
+前置提交 edf998a。独占 TEMP/TMP、隔离 esbuild/vue 解析运行 Node --test git-workbench.test.mjs file-editor.test.mjs file-editor-recovery.test.mjs：24/24，rc=0。包括纯编辑控制器的畸形审批/读写回执、重复点击、卸载迟到回执、差异限额；真实已有 Host 的审批保存空白与中文、外部冲突拒绝、磁盘核对；真实 Git 仓库与 Host 的暂存/未暂存/重命名/未跟踪读取、身份及路径拒绝，以及 Git 不可用明确失败。测试中的“暂存”是夹具预先设置的索引状态，不是产品暂存动作通过。
+
+F08 链路：app.js/客户端槽位的 GitWorkbench → workspaceGitStatus/workspaceGitDiff → Host workspace/git-status 与 workspace/git-diff → 只读 Git 查询；git-workbench.ts 明确写“暂存、提交、推送尚未开放”。文件编辑器经审批工具路径可真实写入并拒绝外部冲突，但 CLI 同场景用户动作、实际 Electron 页面与最终载荷仍待验。不得把只读 Git 和文件写入合计成完整开发闭环。
+
+Node --test packaging-contract.test.mjs：7/7，rc=0；递归本地 CJS 清单覆盖（51 入口、52 文件、49 依赖边）包含 models-save.cjs，删项反证仍拒绝。清单和部分测试有并发未提交变化，这是工作区门禁；不是 edf998a 固定提交的完整打包验收，更不是新安装产物启动证明。
+
+模型凭据恢复仍缺有限独立动作：preload 没有凭据单独保存入口，仅 modelsSave 整次配置保存。下一步需要以核心派生凭据名称、提供方身份和有效修订建立有限重试契约，不能新增可由页面任意点名凭据的通道。模型部分保存可见性已修，单独重试尚未交付。
