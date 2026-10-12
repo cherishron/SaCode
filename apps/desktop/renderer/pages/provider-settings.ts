@@ -34,6 +34,20 @@ export function validateProvider(draft:Draft,providers:Provider[],editing:boolea
   if(draft.key.length>4096)return 'API 密钥最多 4096 个字符';
   if(draft.key&&/[\x00-\x20\x7f]/.test(draft.key))return '密钥格式错误';
   if(!Number.isInteger(draft.sortOrder)||draft.sortOrder<0||draft.sortOrder>1e9)return '排序需为 0–1000000000 的整数（0 表示未指定）';
+  // 内置供应商只允许启停，模型目录不进入整条 update。
+  if(!draft.declared){
+    if(!Array.isArray(draft.models)||draft.models.length<1||draft.models.length>128)return '请配置 1–128 个模型';
+    for(let i=0;i<draft.models.length;i++){
+      const m=draft.models[i],prefix='模型 '+(i+1)+'：';
+      if(!m||typeof m.id!=='string'||!m.id.trim()||m.id.length>200)return prefix+'ID 需为 1–200 个字符';
+      if(typeof m.name!=='string'||m.name.length>100)return prefix+'名称最多 100 个字符';
+      if(typeof m.contextWindow!=='string'||typeof m.maxTokens!=='string'||typeof m.image!=='boolean')return prefix+'上下文、输出上限或图片能力格式无效';
+      const arrays=[['inputModalities',['text','image','audio','video','embedding']],['outputModalities',['text','image','audio','video','embedding']],['supports',['tools','stream','structured-output','image-output']]] as const;
+      for(const [field,allowed] of arrays){const values=m[field];if(values!==undefined&&(!Array.isArray(values)||values.some(v=>!(allowed as readonly string[]).includes(v))||new Set(values).size!==values.length))return prefix+'能力声明无效：'+field;}
+      for(const [field,allowed] of [['meterUnit',['token','image','second','request','unknown']],['provenance',['provider-listed','user-entered','human-confirmed','unknown']],['availability',['available','unsupported','unknown']]] as const){if(m[field]!==undefined&&!(allowed as readonly string[]).includes(m[field]!))return prefix+'能力声明无效：'+field;}
+      if(['apiKey','api_key','key','token','secret','value'].some(field=>(m as any)[field]!==undefined&&(m as any)[field]!==null))return prefix+'不能包含密钥字段';
+    }
+  }
   return'';
 }
 
