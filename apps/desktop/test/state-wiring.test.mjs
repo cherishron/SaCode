@@ -8,13 +8,13 @@ function load(name, extra = {}) {
   vm.runInContext(readFileSync(new URL(`../renderer/${name}`, import.meta.url), 'utf8'), context);
   return context;
 }
-function fixture() {
+function fixture(api = {}) {
   let timer, revision = 0, generation = 0;
   const draft = { value: '原稿' }, error = { value: '' };
   const context = load('enhance.js', {
     setTimeout: callback => { timer = callback; return 1; }, clearTimeout: () => { timer = null; },
     document: { getElementById: () => ({}) },
-    window: { sacode: { promptEnhance: async () => {}, promptPoll: async () => ({ settled: true, ok: true, text: '改写' }), promptCancel: async () => {} },
+    window: { sacode: { promptEnhance: async () => {}, promptPoll: async () => ({ settled: true, ok: true, text: '改写' }), promptCancel: async () => {}, ...api },
       SaCodeComposerEdit: { replace: (_node, text) => { draft.value = text; return true; }, undo: (_node, text) => { draft.value = text; return true; } } },
   });
   const state = context.SaCodeEnhance.createEnhanceAssembly({ ref: value => ({ value }), draft, error,
@@ -52,4 +52,22 @@ test('会话代数实时读取，换会话后增强结果作废', async () => {
 test('取消在途增强后结果不能替换草稿', async () => {
   const { state, draft } = fixture(); await state.startEnhance(); await state.cancelEnhance();
   assert.equal(state.enhance.value.busy, false); assert.equal(draft.value, '原稿');
+});
+
+test('会话切换后的增强失败不得覆盖当前会话错误', async () => {
+  const f = fixture({ promptPoll: async () => { throw Error('旧会话网络失败'); } });
+  await f.state.startEnhance();
+  f.changeSession(); f.error.value = '当前会话错误';
+  await f.poll();
+  assert.equal(f.error.value, '当前会话错误');
+  assert.equal(f.state.enhance.value.busy, false);
+});
+
+test('编辑草稿后的失败回执不覆盖用户当前提示', async () => {
+  const f = fixture({ promptPoll: async () => ({ settled: true, ok: false, error: 'timeout' }) });
+  await f.state.startEnhance();
+  f.state.userEditDraft('新的草稿'); f.error.value = '当前编辑提示';
+  await f.poll();
+  assert.equal(f.error.value, '当前编辑提示');
+  assert.equal(f.draft.value, '新的草稿');
 });

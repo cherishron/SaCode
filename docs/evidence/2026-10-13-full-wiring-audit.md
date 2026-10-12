@@ -82,3 +82,11 @@ Node docs/qa/wiring-inventory.mjs 只读扫描 preload 单行 invoke、桌面处
 发现并实施：refreshQueue 吞掉读取失败且缺同会话乱序保护；updateQueue 在等待期间切会话会继续回读新会话。本批增加队列读取序号与会话绑定，失败显示真实原因并保留旧条目/待确认项，成功重试清除队列读取错误；无 nextTurn 数组的回执拒绝，投影与待确认裁决准备完成后才更新；更新回执跨会话不再回读新会话。
 
 Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；新增 5 条针对同会话乱序、失败保留与重试、迟到错误、更新后切会话、损坏回执。纯控制器测试不等于真实 Electron 页面；核心与宿主没有修改，不新增完成状态。
+
+## 第四轮：增强真实请求、结算与迟到失败保护
+
+前置提交 a56639c。独占 TEMP/TMP 运行 Node --test apps/desktop/test/prompt-enhance.test.mjs apps/desktop/test/model-context.test.mjs：7/7，退出码 0。真实已有 Host 与本地 HTTP/SSE 提供方夹具覆盖正文和历史入请求、响应落盘、增强固定模型/独立草稿/零工具、不写会话消息、用量一次结算、跨会话及重启保留、空白/未配置拒绝、取消不影响主轮次。不是远端模型或最新源码重建产物验收。
+
+页面 enhance.js 的失败回执原先绕过草稿修订与会话代数校验；两条新增独占测试先复现旧会话网络错误覆盖当前错误、编辑后旧失败覆盖当前提示。身份校验移至成功/失败分支之前后，Node --test apps/desktop/test/state-wiring.test.mjs apps/desktop/test/prompt-enhance-ipc.test.mjs：9/9，退出码 0。纯控制器与模拟主进程校验，不替代 Electron 原生撤销顺序验收。
+
+上下文环当前链路 app.js → modelDirectory 容量 + tipsPressure → ContextMeter；settings-state.js 从 tipsAfterReply/tipsGet 回执更新压力。尚待核实同会话乱序、切会话迟到回执、可靠性丢失时旧读数清除，以及实际请求 token 计量来源。语音按钮当前禁用，不能算 F18 全域完成。

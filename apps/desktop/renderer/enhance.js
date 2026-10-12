@@ -48,15 +48,16 @@
     function finishEnhance(frozen, result, failure) {
       if (enhanceFrozen !== frozen) { return; }
       enhanceFrozen = null;
+      // 失败与成功共用身份校验，旧请求不能更新新会话或新草稿的提示。
+      if (getDraftRevision() !== frozen.revision || getSessionGeneration() !== frozen.generation) {
+        enhance.value = { busy: false, undo: false };
+        return;
+      }
       const text = result && typeof result.text === "string" ? result.text : "";
       const usable = !failure && result && result.settled !== false && result.ok && !result.cancelled && text.trim().length > 0;
       if (!usable) {
         enhance.value = { busy: false, undo: false };
         if (!(result && result.cancelled)) { error.value = enhanceNotice(failure, result); }
-        return;
-      }
-      if (getDraftRevision() !== frozen.revision || getSessionGeneration() !== frozen.generation) {
-        enhance.value = { busy: false, undo: false };
         return;
       }
       if (!window.SaCodeComposerEdit.replace(document.getElementById("composer"),text)) {
