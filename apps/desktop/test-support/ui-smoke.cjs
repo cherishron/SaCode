@@ -20,6 +20,11 @@ async function uiSmoke(context) {
   };
   const js = (code) => win.webContents.executeJavaScript(code, true);
   const text = async (sel) => (await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : ""; })()`)) || "";
+  // 旧会话预算控件已移除；下列辅助直接检查核心投影及既有状态层，不冒充页面点击。
+  const usageSummary=()=>js("(()=>{const u=document.querySelector('#app')._vnode.component.proxy.usage;const verdict={recorded:'已计量','over-budget':'超出预算',absent:'未收到用量','bad-usage':'用量格式异常'}[u.verdict]||'未计量';return '用量 '+u.used+'/'+u.budget+' · '+verdict+(u.over?' · 已超档':'');})()");
+  const budgetNote=()=>js("document.querySelector('#app')._vnode.component.proxy.budgetNote");
+  const submitBudget=()=>js("(()=>{void document.querySelector('#app')._vnode.component.proxy.setBudget();return true;})()");
+
   const count = async (sel) => Number(await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`));
   const click = async (sel) => {
     // 常规发送和目录选择先等真实加载回执；重复点击验收仍在同帧直接操作。
@@ -616,8 +621,8 @@ async function uiSmoke(context) {
   // 用量读数必须由核心结算帧驱动。冒烟态现在总是从一次性目录起（见 SESSION_DIR），
   // 所以这里可以钉死绝对值：全新会话的第一笔就是 12，档位停在默认 200000。
   // 之前写成「12 的倍数」是被跨次累积的真实 sessionData 逼的妥协，不再需要。
-  const usageShown = await waitFor(async () => (await text("#turn-usage")).includes("用量 12/200000 · 已计量"));
-  const usageAfterFull = await text("#turn-usage");
+  const usageShown = await waitFor(async () => (await usageSummary()).includes("用量 12/200000 · 已计量"));
+  const usageAfterFull = await usageSummary();
   note(usageShown, `用量读数=${usageAfterFull}`);
   // 干净收束后正文必须回到日志这份真源：界面上那句助手话要出自核心投影，
   // 而不是出自 turn/poll 的瞬时帧——后者重启就没有了。
@@ -653,28 +658,25 @@ async function uiSmoke(context) {
     `取消轮后助手气泡组数=${assistantGroupsAfterCancel}（应与 ${assistantGroupsAfterFull} 一致，未新增）`
   );
   // 被取消的一轮不进计量：数值必须与上一轮结算时逐字一致，只允许判决词变成 absent
-  const usageAfterCancel = await text("#turn-usage");
+  const usageAfterCancel = await usageSummary();
   const cancelUnchanged = usageAfterCancel.includes(" · 未收到用量") &&
     usageAfterCancel.split(" · ")[0] === usageAfterFull.split(" · ")[0];
   note(cancelUnchanged, `取消轮不计量=${usageAfterFull} -> ${usageAfterCancel}`);
   // 预算控制面：调大必须由核心拒且停在原档；收紧后徽章档位跟着核心回的数字走。
-  const setBudgetField = (v) => js(
-    `(() => { const i = document.getElementById('budget-input'); i.value = ${JSON.stringify(v)};` +
-    " i.dispatchEvent(new Event('input', { bubbles: true })); return true; })()"
-  );
+  const setBudgetField = (v) => js(`document.querySelector('#app')._vnode.component.proxy.budgetDraft=${JSON.stringify(v)}`);
   await setBudgetField("999999");
-  note(await click("#apply-budget"), "已派发调大预算");
-  const widened = await waitFor(async () => (await text("#budget-note")).includes("仍停在 200000"));
-  note(widened, `调大预算=${await text("#budget-note")}`);
+  note(await submitBudget(), "已派发调大预算");
+  const widened = await waitFor(async () => (await budgetNote()).includes("仍停在 200000"));
+  note(widened, `调大预算=${await budgetNote()}`);
   await setBudgetField("100");
-  note(await click("#apply-budget"), "已派发收紧预算");
-  const tightened = await waitFor(async () => (await text("#turn-usage")).includes("/100"));
-  note(tightened, `收紧后读数=${await text("#turn-usage")}`);
+  note(await submitBudget(), "已派发收紧预算");
+  const tightened = await waitFor(async () => (await usageSummary()).includes("/100"));
+  note(tightened, `收紧后读数=${await usageSummary()}`);
   // 负数在渲染层就被挡（不给「把档位改成 NaN 从而谁都拦不住」留通路）
   await setBudgetField("-1");
-  note(await click("#apply-budget"), "已派发负数预算");
-  const negBlocked = await waitFor(async () => (await text("#budget-note")).includes("非负整数"));
-  note(negBlocked, `负数预算=${await text("#budget-note")}`);
+  note(await submitBudget(), "已派发负数预算");
+  const negBlocked = await waitFor(async () => (await budgetNote()).includes("非负整数"));
+  note(negBlocked, `负数预算=${await budgetNote()}`);
 
   // 6) 审批：拒绝与允许一次都必须由核心裁决，且界面如实显示两种结果
   note(await click("#tool-write"), "已点开需审批工具");
@@ -776,18 +778,17 @@ async function uiSmoke(context) {
   await js("(() => {const input=document.querySelector('#composer');input.value='快捷键发送验证';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()");
   await chord('Enter');
   note(await waitFor(async()=>Number((await text('#count-events')).split(' ')[1])===keyEvents+1) && (await text('#messages')).includes('快捷键发送验证'), "Ctrl+Enter 经核心记录且只新增一条消息");
-  await click('#open-budget');
-  await js("(() => {const input=document.querySelector('#budget-input');input.value='90';input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await setBudgetField('90');
   // 统计实际核心调用；延迟仅用于验收处理中状态，不替换请求或响应。
   const originalRequest=bridge.request.bind(bridge); let budgetRequests=0;
   bridge.request=async (method,...args) => { if(method==='usage/set-budget') { budgetRequests++; await nap(150); } return originalRequest(method,...args); };
-  const budgetPending=await js("(() => {document.querySelector('#apply-budget').click();document.querySelector('#apply-budget').click();return window.Vue.nextTick().then(()=>({locked:document.querySelector('#budget-input').disabled && document.querySelector('#apply-budget').disabled,busy:document.querySelector('#budget-panel').getAttribute('aria-busy')}));})()");
-  note(budgetPending.locked && budgetPending.busy==='true', "预算提交中锁定表单且报告忙碌状态");
-  note(await waitFor(async()=> (await text('#budget-note')).includes('已收紧到 90')), "预算变更通过核心校验");
+  const budgetPending=await js("(()=>{const ui=document.querySelector('#app')._vnode.component.proxy;void ui.setBudget();void ui.setBudget();return window.Vue.nextTick().then(()=>ui.budgetBusy);})()");
+  note(budgetPending===true, '预算状态层提交中标记忙碌');
+  note(await waitFor(async()=> (await budgetNote()).includes('已收紧到 90')), "预算变更通过核心校验");
   bridge.request=originalRequest;
   note(budgetRequests===1, "同帧重复提交只产生一次真实核心预算调用");
-  note(await js("!document.querySelector('#budget-input').disabled && !document.querySelector('#apply-budget').disabled"), "预算回执完成后恢复表单控件");
-  note((await text('#turn-usage')).includes('/90'), "预算变更同步更新核心用量投影");
+  note(await js("!document.querySelector('#app')._vnode.component.proxy.budgetBusy"), "预算回执完成后恢复状态层");
+  note((await usageSummary()).includes('/90'), "预算变更同步更新核心用量投影");
 
   // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
   // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、
@@ -805,15 +806,15 @@ async function uiSmoke(context) {
   // 超档必须当场拦得住：把档位收到低于一次消耗，再跑一轮就该失效。
   // 这段在 bridge.stop() 之前——stop 之后宿主已死，IPC 会超时。
   await setBudgetField("5");
-  note(await click("#apply-budget"), "已派发收紧到 5");
+  note(await submitBudget(), "已派发收紧到 5");
   // 收紧要等一次 IPC 往返：这里必须 waitFor，即时读文案会拿到上一步的旧值
-  const tightened5 = await waitFor(async () => (await text("#budget-note")).includes("已收紧到 5"));
-  note(tightened5, `收紧到 5=${await text("#budget-note")}`);
+  const tightened5 = await waitFor(async () => (await budgetNote()).includes("已收紧到 5"));
+  note(tightened5, `收紧到 5=${await budgetNote()}`);
   // 收紧后 refreshUsage 读 usage/status，核心回的 verdict=over-budget
-  const overTurn = await waitFor(async () => (await text("#turn-usage")).includes("已超档"));
-  note(overTurn, `超档读数=${await text("#turn-usage")}`);
-  const overSettled = await waitFor(async () => (await text("#turn-usage")).includes("· 超出预算"));
-  note(overSettled, `超档判决=${await text("#turn-usage")}`);
+  const overTurn = await waitFor(async () => (await usageSummary()).includes("已超档"));
+  note(overTurn, `超档读数=${await usageSummary()}`);
+  const overSettled = await waitFor(async () => (await usageSummary()).includes("· 超出预算"));
+  note(overSettled, `超档判决=${await usageSummary()}`);
   // 核心侧 -32014 是真闸门；界面这层同时要把按钮锁住，别让人连点靠错误提示循环
   const lockState = await js(
     "(() => { const e = document.getElementById('run-turn');" +
@@ -901,7 +902,7 @@ async function uiSmoke(context) {
   bridge.request=catalogRequestBefore;
   note(await count('.msg-text')===0, "旧会话延迟投影不会覆盖新会话界面");
   note(await count('.msg-text')===0, "新会话不继承原会话消息");
-  note((await text('#turn-usage')).includes('0/200000') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
+  note((await usageSummary()).includes('0/200000') && nativeTheme.themeSource===oldTheme, "新会话预算独立初始化，全局主题保持");
   note((await bridge.request('workspace/get')).configured===false, "新会话不继承旧会话项目目录");
   note(await js("document.querySelector('#composer').value === '' && document.activeElement.id==='composer'"), "新会话输入为空且焦点进入输入区");
   note(await waitFor(()=>js("Math.abs(document.querySelector('#composer').getBoundingClientRect().height-52)<1")), "新会话清空草稿并收缩到官方空会话高度");
@@ -915,7 +916,7 @@ async function uiSmoke(context) {
   note(await js(`document.querySelector('#composer').value===${JSON.stringify(originalSessionDraft)}`), "切回后恢复原会话草稿");
   note(await waitFor(()=>js(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${originalDraftHeight})<1`)), "切回后重新适配长草稿高度");
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
-  note((await text('#turn-usage')).includes('12/5') && nativeTheme.themeSource===oldTheme && (await bridge.request('appearance/get')).theme==='light', "原会话预算恢复，旧主题记录保留且不覆盖全局主题");
+  note((await usageSummary()).includes('12/5') && nativeTheme.themeSource===oldTheme && (await bridge.request('appearance/get')).theme==='light', "原会话预算恢复，旧主题记录保留且不覆盖全局主题");
   note((await bridge.request('workspace/get')).directory.includes('工作区 UI 项目'), "切回后恢复原会话项目目录");
 
   // ── 提示词增强：整段走真实链路 ──

@@ -57,7 +57,7 @@ export const Inventory = defineComponent({
           el('span', 'cardMainRow', [el('strong', 'cardTitle', title(entry)), el('span', 'cardTrailing', [
             state !== '已启用' ? el('span', 'tag', state, { 'data-kind': entry.phase === 'failed' ? 'failed' : 'neutral' }) : null,
             entry.phase ? el('span', 'phaseDot', null, { role: 'img', 'aria-label': phases[entry.phase], title: phases[entry.phase], 'data-phase': entry.phase }) : null,
-            el('span', 'chevron', '⌄', { 'aria-hidden': 'true' }),
+            el('span', 'chevron', h('svg', { width:14, height:14, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', 'stroke-width':1.7, 'aria-hidden':'true' }, [h('path', { d:'m6 9 6 6 6-6' })]), { 'aria-hidden': 'true' }),
           ])]),
           description(entry) ? el('span', 'cardDescription', description(entry)) : null,
           entry.entryId && entry.entryId.replace(/^include:/, '') !== title(entry) ? el('code', 'identity', entry.entryId.replace(/^include:/, '')) : null,

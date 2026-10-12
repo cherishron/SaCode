@@ -22,7 +22,7 @@ export const AccountMenu=defineComponent({
     }},[
       h('button',{type:'button',class:'account-trigger','aria-label':'本地用户快捷设置','aria-expanded':open.value,'aria-controls':'account-quick-settings',onClick:()=>{open.value=!open.value;if(open.value)nextTick(()=>root.value?.querySelector<HTMLButtonElement>('.account-popover button')?.focus());}},[
         h('span',{class:'account-avatar','aria-hidden':'true'},icon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21v-2a8 8 0 0 1 16 0v2')),
-        h('span',{class:'account-label'},[h('strong',{},'本地用户'),h('small',{},'无需官方账号')]),
+        h('span',{class:'account-label'},[h('strong',{},'本地用户')]),
         icon('m8 10 4 4 4-4'),
       ]),
       open.value?h('section',{id:'account-quick-settings',class:'account-popover','aria-label':'用户快捷设置'},[

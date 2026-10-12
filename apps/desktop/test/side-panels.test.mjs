@@ -56,13 +56,14 @@ test('side-panels.js 交出工作台面板装配入口', () => {
   assert.equal(typeof globalThis.SaCodeSidePanels?.renderPanels, 'function');
 });
 
-test('工具面板保留审批控件、预算控件与开发诊断标识', () => {
+test('工具面板保留审批与诊断，移除重复的用量预算入口', () => {
   const view = render();
   const found = ids(view.inspection);
   for (const id of ['tool-read', 'detail-read', 'approval', 'allow-once', 'deny', 'tool-counters',
-    'open-budget', 'turn-usage', 'budget-input', 'apply-budget', 'developer-diagnostics']) {
+    'developer-diagnostics']) {
     assert.ok(found.includes(id), '缺少控件 ' + id);
   }
+  for(const id of ['budget-panel','open-budget','turn-usage','budget-input','apply-budget']) assert.ok(!found.includes(id),'不应保留重复入口 '+id);
 });
 
 test('文件、轨迹、指南各面板交出 own 容器标识，预览正文按前缀出双份标识', () => {

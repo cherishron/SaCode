@@ -24,7 +24,7 @@ app.on('browser-window-created',(_event,win)=>win.setOpacity(0));
 Object.defineProperty(app,'isPackaged',{value:false});
 require('../main.cjs');
 const checks=[];
-const deadline=setTimeout(()=>{console.error('PRODUCT_DESIGN_TIMEOUT');app.exit(1);},40000);
+const deadline=setTimeout(()=>{console.error('PRODUCT_DESIGN_TIMEOUT');app.exit(1);},90000);
 app.whenReady().then(async()=>{
   const win=BrowserWindow.getAllWindows()[0];
   if(!win)throw Error('正式窗口未创建');
@@ -32,10 +32,19 @@ app.whenReady().then(async()=>{
   async function waitFor(source){for(let i=0;i<120;i++){if(await js(source))return;await new Promise(r=>setTimeout(r,50));}throw Error('等待失败：'+source);}
   function check(name,value){checks.push({name,pass:value===true});if(value!==true)throw Error(name);}
   await waitFor("!!document.querySelector('#composer') && !!window.sacode");
+  // 保留 Electron 原生按钮；通过真实窗口状态变更验证标题栏布局。
+  win.maximize();
+  await new Promise(r=>setTimeout(r,150));
+  check('原生窗口可以最大化',win.isMaximized());
+  check('最大化后标题内容避让右侧按钮',await js("document.querySelector('.top').getBoundingClientRect().right<=innerWidth-149"));
+  win.unmaximize();
+  await new Promise(r=>setTimeout(r,150));
+  check('原生窗口可以还原',!win.isMaximized());
   const projection=await js('window.sacode.projection()');
   check('正式 preload → IPC → Host 返回会话投影',Array.isArray(projection.messages));
   check('会话侧栏不展示日志完整性筛选',await js("(()=>{const nav=document.querySelector('nav.navigation');return !!nav&&![...nav.querySelectorAll('button,select,option,label')].some(node=>['全部','可回放','尾帧不完整','回放失败'].includes(node.textContent.trim()));})()"));
-  check('会话区移除独立用量与预算面板',await js("!document.querySelector('#budget-panel,#usage-panel,#budget-box,#budget-input,#set-budget,.budget-panel,.usage-panel')"));
+  check('会话区移除独立用量与预算面板',await js("(()=>{const chat=document.querySelector('.conversation-center');return !!chat&&!chat.querySelector('#budget-panel,#usage-panel,#budget-box,#budget-input,#set-budget,.budget-panel,.usage-panel');})()"));
+  check('模型与项目选择使用固定 SVG 下箭头',await js("!!document.querySelector('.model-select-chevron svg path')&&!!document.querySelector('.chip-chevron svg path')&&!document.querySelector('.model-select-chevron').textContent.includes('⌄')"));
   const settings=await js('window.sacode.globalSettingsGet()');
   check('当前 Host 支持通用设置读取契约',settings.scope==='user'&&typeof settings.composerEnter==='string');
   for(const theme of ['light','dark']){
@@ -46,10 +55,12 @@ app.whenReady().then(async()=>{
       win.setContentSize(width,764);
       await new Promise(r=>setTimeout(r,100));
       check(theme+'-'+width+'输入框不越界',await js("(()=>{const r=document.querySelector('.composer-card').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1&&document.documentElement.scrollWidth<=innerWidth;})()"));
+      check(theme+'-'+width+'标题栏避让原生窗口按钮',await js("(()=>{const r=document.querySelector('.top').getBoundingClientRect();const b=document.querySelector('#toggle-sidebar').getBoundingClientRect();return r.top===0&&r.height===42&&r.right<=innerWidth-149&&b.top>=0&&b.bottom<=42&&!document.querySelector('.brand span');})()"));
       writeFileSync(join(root,theme+'-'+width+'.png'),(await win.webContents.capturePage()).toPNG());
     }
   }
   win.setContentSize(1384,764);nativeTheme.themeSource='light';
+  await new Promise(r=>setTimeout(r,150));
   await js("document.querySelector('#open-catalog').focus();document.querySelector('#open-catalog').click()");
   await waitFor("!!document.querySelector('dialog[open] .dialog-close')");
   check('通用弹窗使用有名称的关闭图标',await js("(()=>{const b=document.querySelector('dialog[open] .dialog-close');return !!b.querySelector('svg')&&!!b.getAttribute('aria-label')&&!b.textContent.trim();})()"));
@@ -96,9 +107,9 @@ app.whenReady().then(async()=>{
   check('新增轨迹资源切换真实轨迹面板',await js("!document.querySelector('#side-page-trace').hidden"));
   await js("document.querySelector('[aria-label=\"关闭会话轨迹\"]').click()");
   await waitFor("!document.querySelector('#side-tab-trace')");
-  check('关闭资源标签保留其他标签',await js("!!document.querySelector('#side-tab-files')&&!!document.querySelector('#side-tab-inspect')"));
+  check('关闭资源标签保留其他标签',await js("!!document.querySelector('#side-tab-files')&&!!document.querySelector('#side-tab-diff')"));
   await js("document.querySelector('#side-tab-files').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',altKey:true,shiftKey:true,bubbles:true}))");
-  await waitFor("document.querySelector('.workbench-tab .side-tab').id==='side-tab-inspect'");
+  await waitFor("document.querySelector('.workbench-tab .side-tab').id==='side-tab-diff'");
   check('键盘重排资源标签',await js("document.querySelectorAll('.workbench-tab').length===2"));
   await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   writeFileSync(join(root,'workbench.png'),(await win.webContents.capturePage()).toPNG());
@@ -121,10 +132,12 @@ app.whenReady().then(async()=>{
   await js("[...document.querySelectorAll('.workbench-tab-close')].forEach(b=>b.click())");
   await waitFor("document.querySelector('.side-primary').textContent.includes('暂无打开的资源')");
   check('关闭最后资源后显示空工作台',await js("document.querySelectorAll('.workbench-tab').length===0"));
+  check('原型底部昵称与独立设置图标同排且无重复说明',await js("(()=>{const footer=document.querySelector('.sidebar-footer'),user=footer?.querySelector('.account-trigger'),settings=footer?.querySelector('#open-settings');if(!user||!settings)return false;const a=user.getBoundingClientRect(),b=settings.getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)<=2&&b.left>=a.right&&user.querySelectorAll('.account-label small').length===0&&settings.textContent.trim()===''&&!document.querySelector('.nav-settings-row');})()"));
   await js("document.querySelector('.account-trigger').focus();document.querySelector('.account-trigger').click()");
   await waitFor("!!document.querySelector('.account-popover')");
   await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   check('头像快捷菜单向上展开且不打开命令弹窗',await js("(()=>{const r=document.querySelector('.account-popover').getBoundingClientRect(),a=document.querySelector('.account-trigger').getBoundingClientRect();return r.bottom<=a.top&&!document.querySelector('dialog[open]');})()"));
+  check('昵称弹窗不重复提供设置入口，独立齿轮仍保留',await js("![...document.querySelectorAll('.account-popover > button')].some(b=>b.textContent.trim()==='设置')&&!!document.querySelector('.sidebar-footer #open-settings')"));
   check('开机自启没有宿主接口时不可伪保存',await js("[...document.querySelectorAll('.account-popover > button')].some(b=>b.disabled&&b.textContent.includes('开机自启'))"));
   await js("document.querySelector('.account-menu-root').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await waitFor("!document.querySelector('.account-popover')");
@@ -133,7 +146,7 @@ app.whenReady().then(async()=>{
   await waitFor("!!document.querySelector('.account-popover')");
   await js("[...document.querySelectorAll('.account-popover > button')].find(b=>b.textContent==='个人资料').click()");
   await waitFor("!!document.querySelector('dialog[open] #settings-page-profile')&&!document.querySelector('#settings-page-profile').hidden");
-  check('头像资料打开设置同一分类',await js("document.querySelector('#settings-page-profile').textContent.includes('持久化接口尚未接入')&&document.querySelectorAll('.settings-tab').length===9"));
+  check('头像资料打开真实昵称保存表单',await js("!!document.querySelector('#profile-nickname')&&!!document.querySelector('#save-profile')&&typeof window.sacode.profileUpdate==='function'&&document.querySelectorAll('.settings-tab').length===9"));
   await js("document.querySelector('#settings-tab-general').click()");
   check('通用设置没有重复假外观和猜测版本',await js("document.querySelector('#settings-page-general').querySelectorAll('.appearance-settings,.font-settings,.read-only-setting').length===0"));
   await js("document.querySelector('#settings-tab-appearance').click()");
@@ -145,7 +158,8 @@ app.whenReady().then(async()=>{
   await waitFor("document.querySelector('#theme-light').getAttribute('aria-pressed')==='true'&&!document.querySelector('#theme-light').disabled");
   await js("document.querySelector('#settings-tab-conversation').click()");
   await waitFor("!document.querySelector('#settings-page-conversation').hidden");
-  check('对话分类只呈现对应的三个真实偏好',await js("document.querySelector('#settings-page-conversation').querySelectorAll('.general-plugin-rows > section').length===3"));
+  check('对话分类呈现对应的四个真实偏好（含提示）',await js("document.querySelector('#settings-page-conversation').querySelectorAll('.general-plugin-rows > section').length===4"));
+  check('设置下拉箭头居中且为正文预留空间',await js("(()=>{const s=document.querySelector('#settings-page-conversation select');const c=getComputedStyle(s);return c.appearance==='none'&&c.backgroundImage.includes('select-chevron.svg')&&parseFloat(c.paddingRight)>=30;})()"));
   await js("(()=>{const s=document.querySelector('#settings-page-conversation select[aria-label=\"编辑器 Enter\"]');s.value='newline';s.dispatchEvent(new Event('change',{bubbles:true}));})()");
   await waitFor("document.querySelector('#settings-page-conversation select[aria-label=\"编辑器 Enter\"]').disabled===false");
   check('Enter 换行偏好保存到真实 Host',await js("window.sacode.globalSettingsGet().then(r=>r.composerEnter==='newline')"));
@@ -162,13 +176,34 @@ app.whenReady().then(async()=>{
   await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   await new Promise(r=>setTimeout(r,100));
   writeFileSync(join(root,'settings-appearance.png'),(await win.webContents.capturePage()).toPNG());
+  for(const theme of ['light','dark']) for(const width of [1384,700]) {
+    nativeTheme.themeSource=theme; win.setContentSize(width,764);
+    await new Promise(r=>setTimeout(r,100));
+  for(const id of ['general','appearance','conversation','model-center','plugins','shortcuts','privacy','profile','about']) {
+    await js(`document.querySelector('#settings-tab-${id}').click()`);
+    await new Promise(r=>setTimeout(r,100));
+    check(theme+'-'+width+' 设置分类 '+id+' 保持弹窗边界',await js("(()=>{const d=document.querySelector('.settings-dialog').getBoundingClientRect();const c=document.querySelector('.settings-content').getBoundingClientRect();return d.left>=0&&d.right<=innerWidth+1&&c.right<=d.right+1&&d.bottom<=innerHeight+1;})()"));
+    writeFileSync(join(root,'settings-'+id+'-'+theme+'-'+width+'.png'),(await win.webContents.capturePage()).toPNG());
+  }
+
+  }
+  nativeTheme.themeSource='light'; win.setContentSize(1384,764);
+  await new Promise(r=>setTimeout(r,100));
+  await js("document.querySelector('#settings-tab-model-center').click()");
+  await new Promise(r=>setTimeout(r,100));
+  for(let tab=0;tab<4;tab++) {
+    await js(`document.querySelectorAll('.model-center-tabs button')[${tab}].click()`);
+    await new Promise(r=>setTimeout(r,150));
+    writeFileSync(join(root,'model-center-'+tab+'.png'),(await win.webContents.capturePage()).toPNG());
+    check('模型中心页 '+tab+' 不横向溢出',await js("(()=>{const p=document.querySelector('.model-center-page');return !!p&&p.scrollWidth<=p.clientWidth+1;})()"));
+  }
   await js("document.querySelector('.settings-close').click()");
   await waitFor("!document.querySelector('dialog[open]')");
   check('输入区右侧按增强语音上下文发送排列',await js("(()=>{const children=[...document.querySelector('.composer-trailing').children];return children[0].id==='composer-enhance'&&children[1].classList.contains('composer-voice')&&children[2].classList.contains('context-meter-root')&&children[3].id==='send';})()"));
   check('语音尚未接入时不会模拟录音',await js("document.querySelector('.composer-voice').disabled"));
   await js("document.querySelector('.permission-trigger').click()");
   await waitFor("!!document.querySelector('.permission-popover')");
-  check('权限菜单保留四种模式且没有虚假生效',await js("(()=>{const buttons=[...document.querySelectorAll('.permission-popover button')];return buttons.length===4&&buttons.every(b=>b.disabled)&&buttons.map(b=>b.querySelector('strong').textContent).join('|')==='Plan|Build|Yolo|Auto Review';})()"));
+  check('权限菜单保留四种模式且没有虚假生效',await js("(()=>{const pop=document.querySelector('.permission-popover');const buttons=[...pop.querySelectorAll('button')].filter(b=>b.querySelector('strong'));return buttons.length===4&&buttons.map(b=>b.querySelector('strong').textContent).sort().join('|')==='auto|build|plan|yolo'&&pop.textContent.includes('工具仍以核心实际审批为准');})()"));
   await js("document.querySelector('.permission-menu-root').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await waitFor("!document.querySelector('.permission-popover')");
   check('权限菜单 Escape 回焦',await js("document.activeElement.classList.contains('permission-trigger')"));
@@ -264,6 +299,25 @@ app.whenReady().then(async()=>{
   await js("document.querySelector('#app')._vnode.component.proxy.selectSession('current')");
   await waitFor("document.querySelector('#side-page-terminal').textContent.includes('暂无终端输出')");
   check('切换会话不保留上一会话终端输出',await js("!document.querySelector('#side-page-terminal .terminal-output-record pre')"));
+  check('工作台不重复展示用量与预算',await js("!document.querySelector('#budget-panel,#open-budget,#budget-input,#apply-budget,#turn-usage')"));
+  // 已装配的工作台页逐页取亮暗截图；不为未接入资源造数据。
+  for(const theme of ['light','dark']) {
+    nativeTheme.themeSource=theme;
+    win.setContentSize(1384,764);
+    for(const id of ['files','search','preview','editor','diff','git','terminal','agents','trace','inspect','guide']) {
+      await js(`(()=>{const ui=document.querySelector('#app')._vnode.component.proxy;ui.sideOpen=true;ui.sideSplit=false;ui.sideTab='${id}';})()`);
+      await new Promise(r=>setTimeout(r,150));
+      if(id==='agents'||id==='trace') {
+        for(let attempt=0;attempt<650;attempt++){
+          const busy=await js(`(()=>{const ui=document.querySelector('#app')._vnode.component.proxy;return ${id==='agents'?'ui.teamBusy':'ui.traceBusy'};})()`);
+          if(!busy)break;await new Promise(r=>setTimeout(r,50));
+        }
+        check(theme+' 工作台 '+id+' 请求已结束',await js(`(()=>{const ui=document.querySelector('#app')._vnode.component.proxy;return !${id==='agents'?'ui.teamBusy':'ui.traceBusy'};})()`));
+      }
+      check(theme+' 工作台 '+id+' 页面存在',await js(`!!document.querySelector('#side-page-${id}:not([hidden])')`));
+      writeFileSync(join(root,'resource-'+id+'-'+theme+'.png'),(await win.webContents.capturePage()).toPNG());
+    }
+  }
   console.log('PRODUCT_DESIGN_PASS '+checks.length+' checks；真实 Host 读取，不代表当前源码 Host 重建通过');
   writeFileSync(join(root,'checks.json'),JSON.stringify({checks,projection},null,2));
   clearTimeout(deadline);win.close();

@@ -1,10 +1,10 @@
-// 工作台右侧面板装配：工具与审批、用量预算、开发诊断、工作区文件、会话轨迹、使用指南、文档预览。
+// 工作台右侧面板装配：工具与审批、开发诊断、工作区文件、会话轨迹、使用指南、文档预览。
 // 这批面板原先长在 app.js 的 render 里；这里只搬同一套装配，不新增状态——
 // 会话事实仍由 core 投影，界面只保留布局与控件接线。
 // 经典脚本（CSP script-src 'self'）。
 (function (root) {
   'use strict';
-  function renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries, verdictName }) {
+  function renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries }) {
     const toolBtns = self.tools.map((t) =>
       el("div", "tool-card", [
       el("button", "tool", [({ read: "读取文件", write: "写入文件" }[t.name] || t.name), el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
@@ -41,19 +41,6 @@
       self.outcome ? el("div", self.outcomeKind || "outcome", self.outcome, { id: "outcome" }) : null,
       el("p", "note", "未登记 " + self.toolCounters.misses + " · 安全校验拒绝 " + self.toolCounters.guardDenials, { id: "tool-counters" }),
       ], { id: "tools-panel", tabindex: -1 }),
-      el('section','side-section',[
-        el('h2',null,'用量与预算'),
-        el('button','btn','调整预算',{id:'open-budget',onClick:()=>self.openSide('budget-panel')}),
-        el('p','note',self.usage.used == null || self.usage.budget == null ? '尚未收到用量' :
-          '用量 '+self.usage.used+'/'+self.usage.budget+' · '+verdictName(self.usage.verdict)+(self.usage.over?' · 已超档':''),{id:'turn-usage','aria-live':'polite'}),
-        el('label',null,'收紧预算',{for:'budget-input'}),
-        el('div','budget-controls',[
-          el('input','input',null,{id:'budget-input',type:'number',min:0,step:1,value:self.budgetDraft,
-            disabled:self.budgetBusy,onInput:e=>{self.budgetDraft=e.target.value;}}),
-          el('button','btn','应用预算',{id:'apply-budget',disabled:self.budgetBusy,onClick:self.setBudget}),
-        ]),
-        el('p','note',self.budgetNote,{id:'budget-note',role:'status'}),
-      ],{id:'budget-panel',tabindex:-1,'aria-busy':self.budgetBusy}),
       el('details','diagnostics',[
         el('summary',null,'开发诊断'),
         el('p','note','以下轮次使用示例输出，用于验证核心执行、取消和持久化。'),
@@ -96,7 +83,7 @@
           ["记录任务", "在底部输入任务或补充信息，点击发送后写入当前本地会话。发送消息与启动执行是两个独立操作。"],
           ["运行与停止", "侧栏的开发诊断可验证执行与取消。当前轮次使用示例输出，真实模型任务尚未开放；执行中可点击输入区停止按钮。"],
           ["工具与审批", "在工具页查看工具说明。需要审批的操作只有允许一次或拒绝两种选择；查看详情不会执行工具。"],
-          ["预算与保存", "预算只能收紧。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
+          ["模型用量与保存", "在设置的模型中心查看用量、预算及费用统计。已保存表示内容已落盘，待保存表示仍有未提交记录；审批或工具调用后应留意保存状态。"],
           ["快捷键", "Ctrl+, 打开设置；Ctrl+L 聚焦输入；Ctrl+Shift+P 打开文档预览；输入区 Ctrl+Enter 发送。弹窗打开时全局操作暂停，Escape 只关闭最上层。"],
         ].map(([title, text]) => el("article", "guide-card", [el("h3", null, title), el("p", "note", text)])),
       ], { id: "guide-panel", tabindex: -1 }),

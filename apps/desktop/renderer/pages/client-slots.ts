@@ -2,6 +2,7 @@ import { defineComponent, h, onBeforeUnmount, ref, type Component, type PropType
 import { ClientScope, SlotCore, type Entry, type OwnerProps } from './slot-core';
 export { ClientScope, SlotCore } from './slot-core';
 export {WorkbenchTabs} from './workbench-tabs';
+export {ProductManagementPage} from './product-management';
 export {createFilePreview} from './file-preview';
 export {AccountMenu} from './account-menu';
 export {ProjectPicker} from './project-picker';

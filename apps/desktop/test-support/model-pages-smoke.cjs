@@ -1,15 +1,33 @@
-const {app,BrowserWindow}=require('electron');
+const {app,BrowserWindow,nativeTheme}=require('electron');
+const {mkdirSync,writeFileSync}=require('node:fs');const {join}=require('node:path');
+const captureDir=process.env.SACODE_MODEL_CAPTURE_DIR;
+if(captureDir)mkdirSync(captureDir,{recursive:true});
+if(['light','dark'].includes(process.env.SACODE_MODEL_THEME))nativeTheme.themeSource=process.env.SACODE_MODEL_THEME;
 app.whenReady().then(async()=>{
-  const win=new BrowserWindow({show:false,webPreferences:{nodeIntegration:false,contextIsolation:true}});
+  const win=new BrowserWindow({show:false,width:Number(process.env.SACODE_MODEL_WIDTH)||600,height:760,webPreferences:{nodeIntegration:false,contextIsolation:true}});
   // 渲染层报错时把 console 落到 stderr：executeJavaScript 只回「Script failed to execute」，
   // 不带具体信息，调试时只能靠这里看到 <script> 加载失败或顶层 ReferenceError。
   win.webContents.on('console-message',(_e,_lvl,msg,_line,_src)=>process.stderr.write('RENDERER: '+msg+'\n'));
+  let captureIndex=0;
+  win.webContents.on('console-message',async(_e,_lvl,msg)=>{
+    if(!msg.startsWith('SACODE_MODEL_CAPTURE:'))return;
+    try{if(captureDir){
+      const label=String(++captureIndex)+'-'+msg.slice(21).replace(/[^a-z0-9-]/gi,'');
+      await win.webContents.executeJavaScript('window.scrollTo(0,0);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+      writeFileSync(join(captureDir,label+'.png'),(await win.webContents.capturePage()).toPNG());
+      await win.webContents.executeJavaScript('window.scrollTo(0,document.documentElement.scrollHeight);new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+      writeFileSync(join(captureDir,label+'-bottom.png'),(await win.webContents.capturePage()).toPNG());
+      await win.webContents.executeJavaScript('window.scrollTo(0,0)');
+    }await win.webContents.executeJavaScript('window.__modelCaptureDone?.()');}
+    catch(e){console.error(e);app.exit(1);}
+  });
   // fixture 走末位 argv：electron 会把 --no-sandbox/--user-data-dir 等开关留在 argv 里，
   // 按固定下标取会被标志挤偏；末位永远是测试传入的 fixture 路径。
   await win.loadFile(process.argv[process.argv.length-1]);
   const checks=await win.webContents.executeJavaScript(`(async()=>{
     const checks=[],root=document.querySelector('#fixture'),errors=[];const check=(name,ok)=>checks.push({name,ok});
     const settle=async()=>{await Promise.resolve();await Vue.nextTick();await Promise.resolve();await Vue.nextTick();};
+    const capture=label=>new Promise(resolve=>{window.__modelCaptureDone=resolve;console.log('SACODE_MODEL_CAPTURE:'+label);});
     const provider={id:'fixture',name:'本地提供商',baseUrl:'http://127.0.0.1:3000',protocol:'openai-completions',enabled:true,models:[],sortOrder:0,transport:'direct',declared:false};
     const custom={id:'coding',name:'编程模型',description:'',enabled:true,category:'coding',requires:['text-output'],mode:'weighted',bindings:[],dailyTokens:-1,monthlyTokens:-1,dailyAmountMicro:-1,monthlyAmountMicro:-1,maxOutputTokens:-1,probeEnabled:true,probeMaxPerDay:3};
     for(const writable of [false,true])for(const [page,row,title] of [[ModelPages.Providers,provider,'供应商'],[ModelPages.Customs,custom,'自定义模型']]){
@@ -20,10 +38,13 @@ app.whenReady().then(async()=>{
       const remove=[...root.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='删除 '+row.name);
       check(title+'编辑删除只读护栏 '+writable,!!edit&&!!remove&&edit.disabled===!writable&&remove.disabled===!writable);
       if(writable&&edit){edit.click();await settle();check(title+'点击编辑打开字段',!!root.querySelector('input[aria-label="'+(title==='供应商'?'显示名称':'名称')+'"]'));}
+      if(writable){check(title+'编辑表单字段不越界',[...root.querySelectorAll('input,select,fieldset')].every(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1;}));check(title+'表单样式实际加载',getComputedStyle(root.querySelector('input')).borderTopStyle==='solid');}
+      if(writable)await capture(title==='供应商'?'provider-edit':'custom-edit');
       const cancel=[...root.querySelectorAll('button')].find(b=>b.textContent==='取消');if(cancel){cancel.click();await settle();}
       const add=[...root.querySelectorAll('button')].find(b=>b.textContent.includes('+ 添加'));
       check(title+'添加入口只读护栏 '+writable,!!add&&add.disabled===!writable);
       if(writable&&add){add.click();await settle();check(title+'新增表单打开',!!root.querySelector('input[aria-label="'+(title==='供应商'?'Provider ID':'ID')+'"]'));}
+      if(writable)await capture(title==='供应商'?'provider-create':'custom-create');
       ui.unmount();await settle();
     }
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});

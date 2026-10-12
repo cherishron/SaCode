@@ -60,7 +60,7 @@ function stopFixture(proc) {
 // 界面事实从渲染层取，核心事实从宿主取；两边都在 Node 里合成断言对象，
 // 免得把整段投影塞进 executeJavaScript 的字符串里。
 // 注意：这里的 js() 把源码包进 async IIFE 的函数体，取返回值必须显式写 return。
-const readDom = (js) => js("return ({errorText:(document.querySelector('.error')||{}).textContent||'',messages:(document.querySelector('#messages')||{}).textContent||'',usage:(document.querySelector('#turn-usage')||{}).textContent||'',aria:(document.querySelector('#send')||{}).getAttribute('aria-label')||'',draft:(document.querySelector('#composer')||{}).value||''})");
+const readDom = (js) => js("return ({errorText:(document.querySelector('.error')||{}).textContent||'',messages:(document.querySelector('#messages')||{}).textContent||'',usage:document.querySelector('#app')?._vnode?.component?.proxy?.usage||null,aria:(document.querySelector('#send')||{}).getAttribute('aria-label')||'',draft:(document.querySelector('#composer')||{}).value||''})");
 
 module.exports = async function ({ win, check, waitFor, bridge }) {
   const js = (source) => win.webContents.executeJavaScript(`(async()=>{${source}})()`, true);

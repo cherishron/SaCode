@@ -134,7 +134,7 @@ export const Page = defineComponent({
       catch (e) { failure.value = mutationError(e, '删除失败，提供商配置仍保留，请重试。'); }
       finally { busy.value = false; }
     };
-    const button = (text: string, action: () => void, cls = 'secondaryButton', more: any = {}) => el('button', cls, text, { type: 'button', disabled: busy.value, onClick: action, ...more });
+    const button = (text: any, action: () => void, cls = 'secondaryButton', more: any = {}) => el('button', cls, text, { type: 'button', disabled: busy.value, onClick: action, ...more });
     const input = (label: string, value: string, update: (s: string) => void, attrs: any = {}) => el('label', 'field', [
       el('span', 'fieldLabel', label), el('input', 'input', null, { value, disabled: busy.value || !writable.value, 'aria-label': label, onInput: (e: Event) => update((e.target as HTMLInputElement).value), ...attrs }),
     ]);
@@ -152,7 +152,7 @@ export const Page = defineComponent({
           el('div', 'modelRow', [
             input('模型 ID ' + (i + 1), m.id, v => { m.id = v; d.modelsCustomized = true; }, { placeholder: '模型 ID' }),
             input('显示名称 ' + (i + 1), m.name, v => { m.name = v; d.modelsCustomized = true; }, { placeholder: '留空时使用模型 ID' }),
-            button('⌄', () => { const id = String(i); expanded.value = expanded.value.includes(id) ? expanded.value.filter(x => x !== id) : [...expanded.value, id]; }, 'iconButton', { 'aria-label': '模型选项 ' + (i + 1), 'aria-expanded': expanded.value.includes(String(i)) }),
+            button(h('svg', { width:14, height:14, viewBox:'0 0 24 24', fill:'none', stroke:'currentColor', 'stroke-width':1.7, 'aria-hidden':'true' }, [h('path', { d:'m6 9 6 6 6-6' })]), () => { const id = String(i); expanded.value = expanded.value.includes(id) ? expanded.value.filter(x => x !== id) : [...expanded.value, id]; }, 'iconButton', { 'aria-label': '模型选项 ' + (i + 1), 'aria-expanded': expanded.value.includes(String(i)) }),
             button('×', () => { d.models.splice(i, 1); d.modelsCustomized = true; }, 'iconButton', { 'aria-label': '删除模型 ' + (i + 1), disabled: busy.value || !writable.value }),
           ]),
           el('div', 'modelAdvanced', [input('上下文窗口', m.contextWindow, v => { m.contextWindow = v; d.modelsCustomized = true; }, { placeholder: '使用提供商默认值' }), input('最大输出 token 数', m.maxTokens, v => { m.maxTokens = v; d.modelsCustomized = true; }, { placeholder: '使用提供商默认值' }),
