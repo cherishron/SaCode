@@ -136,6 +136,18 @@ app.whenReady().then(async()=>{
       check(kind+' '+action+' 读取失败禁止旧目录修改',root.querySelector('button[aria-label="删除 '+row.name+'"]').disabled&&root.textContent.includes('修改操作已暂停'));check(kind+' '+action+' 写入成功后读取失败显示明确状态',writes===1&&root.textContent.includes('目录刷新失败')&&root.textContent.includes('fixture-after-write-read-failed'));
       failRead=false;root.querySelector('button[aria-label="刷新'+(kind==='provider'?'供应商':'自定义模型')+'目录"]').click();await settle();check(kind+' '+action+' 刷新成功恢复目录操作',!root.querySelector('button[aria-label="删除 '+row.name+'"]').disabled&&!root.textContent.includes('修改操作已暂停'));check(kind+' '+action+' 读取重试不重复写入',writes===1&&!root.textContent.includes('fixture-after-write-read-failed')&&!root.textContent.includes('目录刷新失败'));ui.unmount();
     }
+    // 目录事件可在前一次读取未结束时再次到达，按请求代次丢弃迟到回执。
+    for(const kind of ['provider','custom']){
+      const pending=[];let invalidateReads;
+      const view=(name,writable)=>({providers:[{...validProvider,name}],customs:[{...multi,name}],catalog:[],revision:name,writable});
+      const adapter={describe:()=>new Promise((resolve,reject)=>pending.push({resolve,reject})),subscribe:fn=>{invalidateReads=fn;return()=>{};}};
+      const ui=Vue.createApp({setup:()=>()=>Vue.h(kind==='provider'?ModelPages.Providers:ModelPages.Customs,{adapter})});ui.config.errorHandler=e=>errors.push(String(e));ui.mount(root);await settle();pending[0].resolve(view('初始目录',true));await settle();
+      invalidateReads();invalidateReads();await settle();pending[2].resolve(view('最新只读目录',false));await settle();pending[1].reject(Error('fixture-stale-read-error'));await settle();
+      check(kind+' 较早失败不覆盖最新目录和权限',root.textContent.includes('最新只读目录')&&!root.textContent.includes('fixture-stale-read-error')&&root.querySelector('button[aria-label="编辑 最新只读目录"]').disabled);
+      invalidateReads();invalidateReads();await settle();pending[4].reject(Error('fixture-current-read-error'));await settle();pending[3].resolve(view('迟到可写目录',true));await settle();
+      check(kind+' 较早成功不清除当前失败或恢复写权限',root.textContent.includes('fixture-current-read-error')&&!root.textContent.includes('迟到可写目录')&&root.textContent.includes('修改操作已暂停')&&root.querySelector('button[aria-label="删除 最新只读目录"]').disabled);
+      invalidateReads();await settle();ui.unmount();pending[5].resolve(view('卸载后的目录',true));await settle();check(kind+' 卸载后的目录回执不重建页面',root.children.length===0);
+    }
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
