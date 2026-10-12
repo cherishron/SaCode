@@ -252,3 +252,9 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 persistence_repair_test九条实际覆盖并发120次刷新、真实Windows读句柄阻挡写入及重试、外来租约拒绝、UTF8坏尾重放、投影稳定、大批量检查点、失败冻结和租约丢失。与已有验收35条先44/44，加入会话/租约测试工作区80/80。session_test.cj含并发Hook测试，提交候选仅吸收3行死亡判据修正（越界PID不等于确认死亡，改注入dead）；剔除三条Hook测试后实际候选77/77，rc0，原件persistence-commit-candidate.log/exit.txt。
 
 本批只吸收session/lease/filewin/durable_checkpoint及对应测试夹具，不吞Hook改动。平台边界：非Windows nativeAppendDurableStatus返回unavailable，nativeReplaceFile明确拒绝，Linux/鸿蒙仍阻塞。并发租约接管的完整原子性未由此证明；不是整体会话格式迁移完成。Host构建同一句柄85803仍在LLVM编译，CPU超过1804秒，不宣称新Host已经可用。
+
+## 第二十六轮：Git只读工作台依赖验证
+
+读取git_workbench.cj全部实现：有限status/diff动作、literal pathspec、禁用外部diff/textconv、关闭可选索引锁、查询根目录校验，分流输出262144字节限额后排空。新增git_workbench_test.cj三条：写动作与越界路径在启动前拒绝；独占真实Git仓库区分working/index patch并逐字节比较索引不变，子目录查询拒绝父仓扩大；限额后管道读到EOF。与前77条候选合计TOTAL80/PASSED80/SKIPPED0/ERROR0/FAILED0，rc0，原件git-workbench-test.log/exit.txt。这次80是77+Git3，不是包含并发Hook3的此前80。
+
+仅吸收只读GitQueryResult/queryWorkspaceGit及测试，供已提交团队与工作台依赖，不开放Git写操作。当前目录路径准入与2秒进程等待是局部界限，输出线程收束/真实CLI与打包页面仍需端到端验收。Host v6保持同一句柄85803运行，尚无终态。
