@@ -23,3 +23,10 @@ test('中途冲突停止排序并传回原因', async () => {
   await assert.rejects(adapter.reorder(['b', 'a'], 4), /settings-conflict/);
   assert.equal(calls.length, 1);
 });
+
+test('内置供应商仅调用启停接口，不发送目录草稿或密钥', async () => {
+  const calls=[];
+  const adapter=createModelCenterAdapters({modelsSetEnabled:async(...args)=>calls.push(args),modelsSave:async()=>assert.fail('内置供应商不能整条更新')})['provider-settings'];
+  await adapter.save({id:'builtin',declared:true,enabled:false,name:'目录名称',baseUrl:'https://example.com',key:'不应发送'},7);
+  assert.deepEqual(calls,[['builtin',false,7]]);
+});

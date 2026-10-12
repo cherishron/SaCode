@@ -166,12 +166,13 @@ export const Page=defineComponent({
         // 编辑表单
         isEditing?el('fieldset','editor',[
           el('h3',null,adding.value?'添加供应商':'编辑 '+(d.name||d.id)),
+          d.declared?el('p','hint','内置供应商的名称、接口和协议由目录定义；此处仅保存启停，排序请使用列表中的上移或下移。'):null,
           adding.value?el('label','field',[el('span','lbl','Provider ID'),el('input','ipt',null,{value:d.id,'aria-label':'Provider ID',placeholder:'my-provider',onInput:(e:Event)=>d.id=(e.target as HTMLInputElement).value})]):null,
-          el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
-          el('label','field',[el('span','lbl','API 地址'),el('input','ipt',null,{value:d.baseUrl,'aria-label':'API 地址',type:'url',placeholder:'https://gateway.example/v1',onInput:(e:Event)=>d.baseUrl=(e.target as HTMLInputElement).value})]),
-          el('label','field',[el('span','lbl','API 协议'),h('select',{class:'ipt',value:d.protocol,'aria-label':'API 协议',onChange:(e:Event)=>d.protocol=(e.target as HTMLSelectElement).value as Protocol},Object.entries(protoLabels).map(([v,label])=>h('option',{value:v},label)))]),
-          el('label','field',[el('span','lbl','传输方式'),h('select',{class:'ipt',value:d.transport,'aria-label':'传输方式',onChange:(e:Event)=>d.transport=(e.target as HTMLSelectElement).value as Transport},[h('option',{value:'direct'},'直连'),h('option',{value:'relay'},'中继')])]),
-          el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
+          el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,disabled:d.declared,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
+          el('label','field',[el('span','lbl','API 地址'),el('input','ipt',null,{value:d.baseUrl,disabled:d.declared,'aria-label':'API 地址',type:'url',placeholder:'https://gateway.example/v1',onInput:(e:Event)=>d.baseUrl=(e.target as HTMLInputElement).value})]),
+          el('label','field',[el('span','lbl','API 协议'),h('select',{class:'ipt',value:d.protocol,disabled:d.declared,'aria-label':'API 协议',onChange:(e:Event)=>d.protocol=(e.target as HTMLSelectElement).value as Protocol},Object.entries(protoLabels).map(([v,label])=>h('option',{value:v},label)))]),
+          el('label','field',[el('span','lbl','传输方式'),h('select',{class:'ipt',value:d.transport,disabled:d.declared,'aria-label':'传输方式',onChange:(e:Event)=>d.transport=(e.target as HTMLSelectElement).value as Transport},[h('option',{value:'direct'},'直连'),h('option',{value:'relay'},'中继')])]),
+          el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),disabled:d.declared,'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
           !editing.value?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
           !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
