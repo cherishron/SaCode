@@ -244,3 +244,11 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 吸收web_network.cj已有修复：移除两份重复webUrlEncode，以UTF8字节及固定大写hex表实现百分号编码，避免不存在的radix/padStart调用；其他地址准入实现不变。新增web_encoding_test.cj两条，覆盖ASCII未保留字符、查询分隔符、空串、中文及单字节补零；与前33条最终TOTAL35/PASSED35/SKIPPED0/ERROR0/FAILED0，rc0，原件web-encoding-test.log/exit.txt。
 
 本轮发现web_search.cj相对HEAD差异已被并发修改为tinyfish分支返回，和此前候选叠加的import修复口径不同，不代提交、不以旧哈希代表当前文件。Host v6仍保持原副本继续编译，句柄85803存活，LLVM CPU已超过1483秒；未将持续活动误判为挂死。
+
+## 第二十五轮：Windows持久屏障及租约依赖收口
+
+完整读取SessionLog发布差异与原生文件提供方：逐字节核对已提交前缀、持有写者租约、同句柄追加并FlushFileBuffers；写入阶段失败冻结后续发布；普通flush在未打开写句柄时允许重试，显式准入失败冻结。坏尾修复与load共用口径，中段损坏/前缀分叉拒绝；投影改为新快照，不修改先前返回的消息数组。
+
+persistence_repair_test九条实际覆盖并发120次刷新、真实Windows读句柄阻挡写入及重试、外来租约拒绝、UTF8坏尾重放、投影稳定、大批量检查点、失败冻结和租约丢失。与已有验收35条先44/44，加入会话/租约测试工作区80/80。session_test.cj含并发Hook测试，提交候选仅吸收3行死亡判据修正（越界PID不等于确认死亡，改注入dead）；剔除三条Hook测试后实际候选77/77，rc0，原件persistence-commit-candidate.log/exit.txt。
+
+本批只吸收session/lease/filewin/durable_checkpoint及对应测试夹具，不吞Hook改动。平台边界：非Windows nativeAppendDurableStatus返回unavailable，nativeReplaceFile明确拒绝，Linux/鸿蒙仍阻塞。并发租约接管的完整原子性未由此证明；不是整体会话格式迁移完成。Host构建同一句柄85803仍在LLVM编译，CPU超过1804秒，不宣称新Host已经可用。

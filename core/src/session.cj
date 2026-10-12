@@ -89,7 +89,8 @@ func unescField(s: String): String {
 // 只有这五类进模型可见历史（不变量 7 冻的集合）；其余（turn/start、stream/chunk、tool/call …）
 // 持久但不进。
 func isSurfaceEvent(t: String): Bool {
-    return t == "system/message" || t == "developer/message" || t == "user/message" || t == "assistant/message" || t == "tool/result"
+    return t == "system/message" || t == "developer/message" || t == "user/message" || t == "assistant/message" || t ==
+        "tool/result"
 }
 
 // 锁只保证内存态自洽，跨进程的持久与可见仍然只由 flush 决定。
@@ -97,10 +98,11 @@ public class SessionLog {
     let path: String
     // 直接改 events/flushedCount 只允许在持锁方法内部；单线程测试可直读字段，
     // 生产路径（CLI/Host）一律走下面的守护访问器。
-    public let events = ArrayList<SessionEvent>()
+    public let events: ArrayList<SessionEvent> = ArrayList<SessionEvent>()
     public var flushedCount: Int64 = 0
     public var truncatedTail: Bool = false
     let mtx = Mutex()
+    var durableFrozen = false
     // 投影缓存的键：surface 事件数 + 代次（代次只在 load 这类整体替换时 +1）。
     // 不变量 9 要的是「无关事件不触发重算」——turn/start、stream/chunk 这些持久但
     // 不进模型历史的事件只动 events，不动 surface 计数，于是下一次 derive 直接交回
@@ -111,7 +113,7 @@ public class SessionLog {
     var projBuiltSurface: Int64 = -1
     var projBuiltGeneration: Int64 = -1
     var projBuilds: Int64 = 0
-    let projCache = ArrayList<String>()
+    var projCache = ArrayList<String>()
 
     public init(path: String) {
         this.path = path
@@ -130,36 +132,122 @@ public class SessionLog {
 
     // flush = 崩溃持久 + 跨进程可见；返回 false 表示未落盘，内存态不能当作已提交。
     //
-    // 发布前必须先过一道「只增不减」对照（见 mayOverwriteDurable）：内存里没有的事件，
-    // 不能替磁盘上的事件做主。这条是本模块的实质修复——File.writeTo 是打开即截断，
-    // 一次「草稿比磁盘短」的 flush 会把唯一真源改短，而且照样返回成功。
-    //
-    // 为什么不是「草稿写进临时文件再 rename 过去」：本机实测（400 次覆盖 + 3474 次
-    // 并发读）std.fs 的 rename(overwrite:true) 是「先删目标、再移入」，于是并发读者
-    // 有 88% 的次数看到的是**文件根本不存在**，另有 301 次直接读抛异常——
-    // 比原来「短暂看到半份」更糟，因为空会话会被当成合法回放。原地整写至少保证
-    // 目标始终在场。要真正的整份可见得换手段（追加发布），不是这条改名路径。
+    // 发布前逐字节核对已提交前缀，只允许追加；物理坏尾仅按 load 的口径修复。
+    // 不走 File.writeTo 的打开即截断，也不走 rename(overwrite:true) 的先删目标。
     public func flush(): Bool {
-        var text = ""
-        var ok = false
-        mtx.lock()
-        try {
-            for (ev in events) {
-                text += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
+        // 兼容现有无参调用：整段（取租约、发布、归还）都在本实例锁内。
+        // 同实例多线程不会借到即将归还的临时租约；外部已持有的租约只借用，不归还。
+        return synchronized(mtx) {
+            if (durableFrozen) {
+                return false
             }
-            if (mayOverwriteDurable(text)) {
-                File.writeTo(path, text.toArray())
-                flushedCount = Int64(events.size)
-                ok = true
+            var borrowed: ?WriteLease = None
+            var temporary: ?WriteLease = None
+            try {
+                borrowed = localWriter("${path}.lease")
+                if (borrowed.isNone()) {
+                    let candidate = WriteLease(path)
+                    if (!candidate.takeoverIfStale()) {
+                        return false
+                    }
+                    temporary = Some(candidate)
+                    borrowed = Some(candidate)
+                }
+                return publishLocked(borrowed.getOrThrow(), true)
+            } catch (_: Exception) {
+                return false
+            } finally {
+                if (let Some(lease) <- temporary) {
+                    lease.release()
+                }
             }
-        } catch (e: Exception) {
-            getStdErr().writeln("flush failed: ${e.message}")
-            ok = false
-        } finally {
-            // 异常一律在这里收敛：持锁抛出会让这把锁永远再也拿不到
-            mtx.unlock()
         }
-        return ok
+    }
+
+    public func isDurableFrozen(): Bool {
+        return synchronized(mtx) {
+            durableFrozen
+        }
+    }
+
+    public func freezeAfterDurableFailure(): Unit {
+        synchronized(mtx) {
+            durableFrozen = true
+        }
+    }
+
+    public func durableCheckpointBatched(lease: WriteLease): Bool {
+        // 提供方内部有界分块，但同一句柄完成核对、追加与屏障，避免每块重复打开文件。
+        return durableCheckpoint(lease)
+    }
+
+    public func durableCheckpoint(lease: WriteLease): Bool {
+        return synchronized(mtx) {
+            if (durableFrozen) {
+                return false
+            }
+            if (!lease.protects(path)) {
+                return false
+            }
+            var ok = false
+            try {
+                ok = publishLocked(lease, false)
+            } catch (_: Exception) {
+                ok = false
+            }
+            if (!ok) {
+                durableFrozen = true
+            }
+            return ok
+        }
+    }
+
+    private func publishLocked(lease: WriteLease, repairTail: Bool): Bool {
+        if (durableFrozen) {
+            return false
+        }
+        if (!lease.protects(path)) {
+            return false
+        }
+        var draft = ""
+        for (ev in events) {
+            draft += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
+        }
+        let disk = if (exists(path)) {
+            File.readFrom(path)
+        } else {
+            Array<Byte>()
+        }
+        // 使用与 load 同一口径，只丢它明确认定的物理坏尾；拒绝中段损坏和前缀分叉。
+        let previous = SessionLog(path)
+        if (!previous.load() || (!repairTail && previous.isTruncatedTail())) {
+            return false
+        }
+        var prefix = ""
+        for (ev in previous.snapshotEvents()) {
+            prefix += "${ev.seq}\t${escField(ev.eventType)}\t${escField(ev.data)}\n"
+        }
+        let kept = prefix.toArray()
+        let bytes = draft.toArray()
+        if (!draft.startsWith(prefix) || kept.size > disk.size) {
+            return false
+        }
+        for (i in 0..kept.size) {
+            if (kept[i] != disk[i]) {
+                return false
+            }
+        }
+        let outcome = nativeAppendDurableStatus(path, disk, bytes[kept.size..], kept.size)
+        let stillOwned = lease.protects(path)
+        if (outcome != "ok" || !stillOwned) {
+            // 未打开句柄就不存在半写风险；普通 flush 可重试，显式准入仍由外层冻结失败。
+            if (outcome != "not-opened" || !stillOwned) {
+                durableFrozen = true
+            }
+            return false
+        }
+        flushedCount = Int64(events.size)
+        return true
     }
 
     // 磁盘上每一条完整事件行都必须原样出现在草稿开头。草稿比磁盘短时，只允许少掉
@@ -249,11 +337,16 @@ public class SessionLog {
             return true
         }
         try {
-            let text = String.fromUtf8(File.readFrom(path))
+            let raw = File.readFrom(path)
+            var complete = raw.size
+            while (complete > 0 && raw[complete - 1] != 10) {
+                complete -= 1
+            }
+            let text = String.fromUtf8(raw[0..complete])
             events.clear()
             surfaceCount = 0
             generation += 1
-            truncatedTail = false
+            truncatedTail = complete != raw.size
             let lines = ArrayList<String>()
             for (line in text.split("\n")) {
                 if (line.size > 0) {
@@ -300,13 +393,18 @@ public class SessionLog {
     public func deriveMessages(): ArrayList<String> {
         mtx.lock()
         if (projBuiltSurface != surfaceCount || projBuiltGeneration != generation) {
-            projCache.clear()
+            let rebuilt = ArrayList<String>()
             for (ev in events) {
                 if (isSurfaceEvent(ev.eventType)) {
-                    let text = if (ev.eventType == "assistant/message" || ev.eventType == "tool/result") { modelSurfaceText(ev.data) } else { ev.data }
-                    projCache.add("${ev.eventType}: ${text}")
+                    let text = if (ev.eventType == "assistant/message" || ev.eventType == "tool/result") {
+                        modelSurfaceText(ev.data)
+                    } else {
+                        ev.data
+                    }
+                    rebuilt.add("${ev.eventType}: ${text}")
                 }
             }
+            projCache = rebuilt
             projBuiltSurface = surfaceCount
             projBuiltGeneration = generation
             projBuilds += 1

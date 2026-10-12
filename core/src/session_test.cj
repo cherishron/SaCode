@@ -415,11 +415,11 @@ func flushCannotRewriteADurableLineWithDifferentContent() {
 func onlyOneOfTwoTakersMayClaimACrashedHoldersLease() {
     let p = tmpPath("race")
     clean("race")
-    // pid 取一个必然打不开句柄的值：isProcessAlive 对它恒为 false
-    File.writeTo("${p}.lease", "writer=5000000000-stale".toArray())
+    // 此用例注入确认死亡；超出 UInt32 范围的 pid 属身份不明，不能作为死亡证据。
+    File.writeTo("${p}.lease", "writer=12345-stale".toArray())
     let a = WriteLease(p)
     let b = WriteLease(p)
-    @Expect(a.takeoverIfStale(), true)
+    @Expect(a.takeoverIfStale(probe: { _ => "dead" }), true)
     @Expect(b.takeoverIfStale(), false)
     // 输的一方不许改写盘上归属，更不许把赢家的租约清掉
     @Expect(b.currentOwner() == a.ownerToken(), true)
