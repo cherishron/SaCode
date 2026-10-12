@@ -152,3 +152,13 @@ product-management.test.mjs 扩展三页夹具，新增受阻状态、保存/搜
 页面工具 10/10 为 VM 模拟主进程/页面注册表。关键事实：main.cjs pageToolCall 通过 executeJavaScript 直接调用 tool.handler；page-tools.js 注册 readState/clickElement/inputText/scroll。字段校验与 WebMCP 转主进程成立，但没有核心一次性审批、任务身份、取消及日志结算，尤其 click/input 可触发后续产品动作。因此该组绿不能证明统一授权。后续需共享核心执行契约登记贡献工具、动作分类与不可变提案，副作用动作无核心许可拒绝；终结、错误、取消事实走同一结算。不能仅把执行迁至主进程当作安全闭环。
 
 本轮裁决：团队部分接通且真实用例存在重复失败；ACP 缺公开委派接线；页面工具缺统一授权/结算，为交付前优先缺口。审计仍未结束，CLI 同场景、真实 Electron 与最终载荷尚待核。
+
+## 第十二轮：团队超时逐请求定位与技能前置
+
+前置提交 957acb9。对失败用例在忽略目录创建仅增加请求计时/提供方计数的私有探针 team-trace.test.mjs，不记录请求正文或凭据。原测试 target 目录下追踪得到：member/create 3381ms、task/create 895ms、task/assign 2065ms、首次 describe 4847ms；发送消息 981ms、随后 describe 4820ms，后续空闲 describe 1–3ms。提供方两次真实夹具请求均发生，成员正文及消息持久/权限拒绝断言通过：1/1，rc=0，整体17.97秒。此前原用例两次 describe 超时仍有效，不能因本次通过撤销红项或报告稳定通过。
+
+目录变量必须保留：私有 .tmp-test 工作目录下两轮探针在 member/create 5001/5007ms 超时；其中后一轮使用独占 TMP。不能归为只需私有 TMP，不能据此断言死锁或某种目录缺陷；没有延长请求窗口。已有 Host 二进制哈希再次核为73131303DEF182F3F5728E09DE9D15265AA95137DD97CD0A25BEBF7A4B0519CC，11,183,104字节，时间2026-10-11 18:27:06。本轮没有重建源码。
+
+下一步定位重点：执行在途的 team/describe 是否同步等待成员过程、创建/分派的进程启动与日志读取是否阻塞协议线程；对比真实空闲和在途延迟，并检验非阻塞权威快照、取消与审批可响应。尚未定位根因，不改测试超时制造绿。
+
+仓颉技能前置：已在线读取 https://gitcode.com/Cangjie-SIG/CangjieSkills 展示的实际 README，当前页面分支为 cangjie-1.0.5，不能假定与本机1.1.3匹配；相应 cangjie-coding/SKILL.md 网页读取失败。仅完成 README 获取，未宣称已使用技能，未修改 .cj。后续需取得匹配版本技能及实际内容再开展核心诊断。
