@@ -48,10 +48,10 @@ export const Page=defineComponent({
     const loading=ref(false),saving=ref(false),error=ref(''),message=ref('');
     const editing=ref<string|null>(null),adding=ref(false),draft=ref<Draft>(blank());
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
-    let off:(()=>void)|undefined,generation=0,disposed=false;
+    let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const reload=async()=>{
-      if(!props.adapter)return;
+      if(!props.adapter||disposed)return;
       const gen=++generation;loading.value=true;error.value='';
       try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;}
       catch(e){if(gen===generation&&!disposed){error.value=errText(e);}}
@@ -59,40 +59,45 @@ export const Page=defineComponent({
     };
     const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict|conflict/.test(t))return '数据已被其他入口修改，请刷新后重试';return t||'操作失败';};
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
-    const startAdd=()=>{closeEdit();adding.value=true;draft.value.sortOrder=providers.value.length;};
-    const startEdit=(p:Provider)=>{editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
+    const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
+    const startEdit=(p:Provider)=>{draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
+    const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value;
+    const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success='')=>{
+      saving.value=true;error.value='';message.value='';
+      try{await action();if(disposed)return;done();await reload();if(!disposed)message.value=success;}
+      catch(e){if(!disposed)error.value=errText(e);}
+      finally{if(!disposed){saving.value=false;pulling.value=null;}}
+    };
     const save=async()=>{
-      if(!props.adapter||saving.value)return;
-      const d=draft.value,inv=validateProvider(d,providers.value,editing.value!==null);
+      if(!canMutate())return;
+      const d={...draft.value,models:(draft.value.models||[]).map(cloneModel)};
+      const inv=validateProvider(d,providers.value,editing.value!==null);
       if(inv){error.value=inv;return;}
-      saving.value=true;
-      try{await props.adapter.save(d,revision.value);closeEdit();await reload();message.value='已保存（能力按用户声明记录，未自动验证）';}
-      catch(e){error.value=errText(e);}
-      finally{saving.value=false;}
+      const expected=draftRevision;
+      await mutate(()=>props.adapter!.save(d,expected),closeEdit,'已保存（能力按用户声明记录，未自动验证）');
     };
     const remove=async()=>{
-      if(!props.adapter||!deleting.value)return;
-      try{await props.adapter.remove(deleting.value.id,revision.value);deleting.value=null;message.value='已删除';await reload();}
-      catch(e){error.value=errText(e);}
+      if(!canMutate()||!deleting.value)return;
+      const id=deleting.value.id,expected=deleteRevision;
+      await mutate(()=>props.adapter!.remove(id,expected),()=>{deleting.value=null;},'已删除');
     };
     const move=async(index:number,dir:'up'|'down')=>{
-      if(!props.adapter)return;
+      if(!canMutate())return;
       const list=[...providers.value],target=dir==='up'?index-1:index+1;
       if(target<0||target>=list.length)return;
       [list[index],list[target]]=[list[target],list[index]];
-      try{await props.adapter.reorder(list.map(p=>p.id),revision.value);await reload();}
-      catch(e){error.value=errText(e);}
+      const ids=list.map(p=>p.id),expected=revision.value;
+      await mutate(()=>props.adapter!.reorder(ids,expected));
     };
     const toggle=async(p:Provider)=>{
-      if(!props.adapter)return;
-      try{await props.adapter.save({...p,enabled:!p.enabled,key:''},revision.value);await reload();}
-      catch(e){error.value=errText(e);}
+      if(!canMutate())return;
+      const d={...p,models:(p.models||[]).map(cloneModel),enabled:!p.enabled,key:''},expected=revision.value;
+      await mutate(()=>props.adapter!.save(d,expected));
     };
     const pull=async(p:Provider)=>{
-      if(!props.adapter)return;pulling.value=p.id;
-      try{await props.adapter.pullModels(p.id,revision.value);message.value='已拉取模型目录';await reload();}
-      catch(e){error.value=errText(e);}
-      finally{pulling.value=null;}
+      if(!canMutate())return;
+      const id=p.id,expected=revision.value;pulling.value=id;
+      await mutate(()=>props.adapter!.pullModels(id,expected),()=>{},'已拉取模型目录');
     };
 
     onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void reload();});void reload();});
@@ -109,7 +114,7 @@ export const Page=defineComponent({
         el('div','header',[
           el('h2',null,'供应商管理'),
           el('p','intro','管理模型提供商及其 API 密钥。'),
-          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!writable.value||loading.value||isEditing}),
+          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!writable.value||loading.value||saving.value||isEditing}),
         ]),
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
@@ -128,12 +133,12 @@ export const Page=defineComponent({
             el('span','tag '+(p.keyConfigured?'on':'off'),p.keyConfigured?'密钥已配置':'密钥缺失'),
           ]),
           el('div','actions',[
-            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!writable.value||loading.value||isEditing}),
-            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!writable.value||loading.value}),
-            btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!writable.value||loading.value}),
-            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!writable.value||loading.value||i===0}),
-            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!writable.value||loading.value||i===providers.value.length-1}),
-            btn('删除',()=>{deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!writable.value||loading.value}),
+            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||isEditing}),
+            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value}),
+            btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!writable.value||loading.value||saving.value}),
+            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||i===0}),
+            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value||i===providers.value.length-1}),
+            btn('删除',()=>{deleteRevision=revision.value;deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!writable.value||loading.value||saving.value}),
           ]),
         ],{key:p.id}))),
         !providers.value.length&&!loading.value?el('p','empty','暂无供应商，点击"添加供应商"开始配置。'):null,
@@ -151,14 +156,14 @@ export const Page=defineComponent({
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
           !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
           el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
-          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:loading.value||saving.value})]),
+          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:loading.value||saving.value||!writable.value})]),
         ],{disabled:saving.value,'aria-busy':saving.value}):null,
 
         // 删除确认弹窗
         deleting.value?h('div',{class:'ps-dialog',role:'alertdialog','aria-label':'确认删除'},[
           el('p',null,'确认删除 '+(deleting.value.name||deleting.value.id)+'？'),
           el('p','hint','此操作会移除供应商配置和存储的 API 密钥。'),
-          el('div','actions',[btn('取消',()=>{deleting.value=null;}),btn('确认删除',()=>void remove(),'danger',{disabled:loading.value})]),
+          el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:loading.value||saving.value||!writable.value})]),
         ]):null,
       ]);
     };
