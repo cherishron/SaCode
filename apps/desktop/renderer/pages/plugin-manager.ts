@@ -40,7 +40,8 @@ const initialInstall=():Install=>({open:false,spec:'',phase:'idle',registry:'',r
 export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Object as PropType<Adapter>,contributions:Array as PropType<Contribution[]>},setup(props){
   const snapshot=ref<Snapshot>({available:false,packages:[],busy:[],install:initialInstall()}),status=ref<'unconnected'|'loading'|'ready'|'error'>(props.adapter?'loading':'unconnected');
   const selected=ref<string|null>(null),rowFilter=ref(''),actionError=ref(''),sending=ref(false),registryOpen=ref(false),customRegistry=ref(''),guideOpen=ref(false),detailsOpen=ref(false),expandedRuns=ref<string[]>([]);
-  const selectedRow=ref<string|null>(null);
+  const selectedRow=ref<string|null>(null),packageQuery=ref('');
+  const matchesPackage=(pkg:Package)=>[pkg.name,pkg.title,packageDescription(pkg),...pkg.rows.map(row=>[row.name,row.moduleName,row.descriptionZhCN,row.description].filter(Boolean).join(' '))].join(' ').toLocaleLowerCase().includes(packageQuery.value.trim().toLocaleLowerCase());
   const hasSnapshot=ref(false),refreshFailed=ref(false);
   // 未接线的能力由适配器如实报出：按钮照实禁用，说明写清楚缺哪条通道，
   // 界面不拿本地状态冒充后端，也不把「还没接」画成「装了但出错」。
@@ -131,7 +132,8 @@ export const Page=defineComponent({name:'SaCodePluginManager',props:{adapter:Obj
       el('header','pageHead',[el('div','heading',[el('h1','title','插件'),el('p','description','安装、启用和配置插件')]),el('div','actions',[button('刷新',()=>void mutation({kind:'refresh'}),{disabled:!props.adapter||sending.value}),button('添加插件',()=>void mutation({kind:'open-install'}),{disabled:!snapshot.value.available||sending.value||unwired().includes('install')})])]),
       status.value==='unconnected'?el('p','note','仓颉插件安装管理接口尚未接入。以下为官方配置入口，不能据此判断已安装插件。',{role:'status'}):status.value==='loading'?el('p','note','正在读取插件…',{role:'status'}):status.value==='error'?el('div','error',['无法读取全部插件。',button('重试',()=>void read())],{role:'alert'}):!snapshot.value.available?el('p','note','本部署没有可管理的配置，无法安装或启停插件。'):null,
       unwired().length?el('p','note','尚未接入的仓颉通道：'+unwired().join('、')+'。相关按钮已停用，界面不会用本地状态代替后端。',{role:'status'}):null,
-      official(),status.value==='ready'?el('section','group',[el('h2','groupTitle','已安装'),!snapshot.value.packages.some(p=>p.installed)?el('p','note','还没有安装任何插件。'):el('div','cards',snapshot.value.packages.filter(p=>p.installed).map(packageCard))]):null,
+      el('div','searchToolbar',[el('input','input',null,{type:'search',value:packageQuery.value,'aria-label':'搜索已安装扩展',placeholder:'搜索扩展名称、描述或贡献项',onInput:(event:Event)=>packageQuery.value=(event.target as HTMLInputElement).value}),packageQuery.value?button('清除搜索',()=>packageQuery.value=''):null]),
+      official(),status.value==='ready'?el('section','group',[el('h2','groupTitle','已安装'),!snapshot.value.packages.some(p=>p.installed)?el('p','note','还没有安装任何插件。'):!snapshot.value.packages.some(p=>p.installed&&matchesPackage(p))?el('p','note','没有匹配的已安装扩展，请调整搜索词。',{role:'status'}):el('div','cards',snapshot.value.packages.filter(p=>p.installed&&matchesPackage(p)).map(packageCard))]):null,
     ],refreshFailed.value?el('div','error',['刷新失败，保留上次读取的插件状态。',button('重试刷新',()=>void read())],{role:'alert'}):null,snapshot.value.notice?el('div','notice',[snapshot.value.notice,button('关闭提示',()=>void send({kind:'dismiss-notice'}))],{role:'status'}):null,
     actionError.value&&!snapshot.value.install.open?el('p','error',actionError.value,{role:'alert'}):null,
     snapshot.value.install.phase!=='idle'&&!snapshot.value.install.open?button('查看安装任务',()=>void send({kind:'open-install'})):null,

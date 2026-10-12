@@ -1,0 +1,22 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+import vm from 'node:vm';
+import {fileURLToPath} from 'node:url';
+const compiled=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/plugin-manager.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue']});
+test('已安装扩展按名称与真实贡献项搜索，清空恢复且不触发写操作',async()=>{
+  const mounts=[],commands=[];
+  const vue={defineComponent:x=>x,ref:value=>({value}),h:(type,props,children)=>({type,props,children}),onMounted:fn=>mounts.push(fn),onBeforeUnmount:()=>{},watch:()=>{},computed:fn=>({get value(){return fn();}})};
+  const ctx={module:{exports:{}},require:()=>vue,window:{SaCodeConfiguration:{definitions:[]}}};
+  vm.runInNewContext(compiled.outputFiles[0].text,ctx);
+  const pkg=(name,rows=[])=>({name,title:name,installed:true,enabled:true,optional:false,rows});
+  const render=ctx.module.exports.Page.setup({adapter:{read:async()=>({available:true,packages:[pkg('Alpha'),pkg('Beta',[{id:'r',name:'源码检索',enabled:true,phase:null}])],busy:[],install:{open:false,phase:'idle'}}),dispatch:async command=>commands.push(command)}});
+  mounts[0]();for(let i=0;i<8;i++)await Promise.resolve();
+  const flatten=value=>!value||typeof value!=='object'?[]:Array.isArray(value)?value.flatMap(flatten):[value,...flatten(value.children)];
+  const input=()=>flatten(render()).find(n=>n.props?.['aria-label']==='搜索已安装扩展');
+  input().props.onInput({target:{value:' 源码检索 '}});
+  const text=JSON.stringify(render());assert.ok(text.includes('Beta'));assert.ok(!text.includes('Alpha'));
+  input().props.onInput({target:{value:'missing'}});assert.ok(JSON.stringify(render()).includes('没有匹配的已安装扩展'));
+  flatten(render()).find(n=>n.type==='button'&&n.children==='清除搜索').props.onClick();
+  assert.ok(JSON.stringify(render()).includes('Alpha'));assert.equal(commands.length,0);
+});
