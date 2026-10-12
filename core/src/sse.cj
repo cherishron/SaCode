@@ -56,6 +56,7 @@ public class RealSseProvider <: Provider & Resource {
     var pendingIndex: Int64 = 0
     var usage: Option<Int64> = None
     var finish: Option<String> = None
+    public var reportedUsage: LedgerUsage = LedgerUsage.absent()
     public prop termination: String { get() { terminal } }
     public prop errorCode: String { get() { failure } }
     public prop doneReceived: Bool { get() { receivedDone } }
@@ -129,8 +130,9 @@ public class RealSseProvider <: Provider & Resource {
             if (let Some(resp) <- opened) {
                 try { resp.close() } catch (_: Exception) {}
             }
-            // 连接类失败：本批还分不出「未上线」与「已上线」（连接被拒/DNS/TLS 与
-            // 读超时在异常文案里同名），如实标 unattributed 且 reachedUpstream=false，
+            // 连接类失败：异常文案里有可分辨的原因（TLS 锚缺失、对端拒绝握手、
+            // DNS、连接被拒），但原文可能带路径与请求片段，所以只让稳定原因外传，
+            // 文本面仍是 http-request-error。unattributed 且 reachedUpstream=false：
             // 由 §5.2 末行口径不进任何一档计数——不默认算成模型故障。
             return SseOpenResult(None, Some(failureOf("transport", false, summary: "http-request-error",
                 reason: transportReason(e.message))))
@@ -329,6 +331,26 @@ public class RealSseProvider <: Provider & Resource {
             recognized = true
             if (!isNull(v)) {
                 let u = v.asObject()
+                let prompt = integer(u, "prompt_tokens")
+                let output = integer(u, "completion_tokens") ?? -1
+                var cacheRead = integer(u, "prompt_cache_hit_tokens") ?? -1
+                var cacheWrite: Int64 = -1
+                if (let Some(details) <- u.get("prompt_tokens_details")) {
+                    if (!isNull(details)) {
+                        let d = details.asObject()
+                        cacheRead = integer(d, "cached_tokens") ?? cacheRead
+                        cacheWrite = integer(d, "cache_creation_input_tokens") ?? -1
+                    }
+                }
+                var input = integer(u, "prompt_cache_miss_tokens") ?? -1
+                if (input < 0 && prompt.isSome()) {
+                    let p = prompt.getOrThrow()
+                    let read = max(cacheRead, 0)
+                    let written = max(cacheWrite, 0)
+                    if (read > p || written > p - read) { fail("protocol-error") }
+                    input = p - read - written
+                }
+                reportedUsage = LedgerUsage(input, output, cacheRead, cacheWrite, "vendor")
                 if (let Some(n) <- integer(u, "total_tokens")) { usage = Some(n) }
                 else {
                     let pt = integer(u, "prompt_tokens")

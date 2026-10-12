@@ -220,3 +220,9 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 新增workbench_projection_test.cj三条测试：目录无操作/非目录事件不增加修订、持久重放保持修订；终端分页跳过畸形chunk并保留游标；中文8192字节边界截断保持完整UTF8并拒绝非法分页。与审批17条共同运行，projection-replay-test.log最终TOTAL20/PASSED20/SKIPPED0/ERROR0/FAILED0，rc0。读取实现确认terminalOutputJson只投影日志，不启动进程或推断退出事实；SessionWorkspace.revision只数目录事件。
 
 吸收workspace.cj的7行修订读面及terminal_view.cj，与本批测试同提交，不包含其余共享修改。测试基底仍含前述未落库持久化依赖，不能当完整固定提交验收。Host v6同一构建仍在LLVM后端，继续保留句柄85803等待终态。
+
+## 第二十一轮：模型SSE用量维度读面验证
+
+读取sse.cj与Host model_routing：Host结算读取RealSseProvider.reportedUsage，提交态缺该字段。工作区实现按供应商usage提取input/output/cacheRead/cacheWrite，缺失维度保留-1，普通prompt扣缓存维度避免重复计费。新增sse_ledger_usage_test.cj四条：缺usage与仅total不冒充各维度0；标准缓存拆分；供应商命中/未命中维度；缓存超过prompt拒绝。
+
+首轮夹具缺finish_reason结束帧导致3 ERROR，纠正夹具后独占TMP复跑最终TOTAL24/PASSED24/SKIPPED0/ERROR0/FAILED0，rc0；原件sse-ledger-test.log与sse-ledger-v2.log均保留。该证据仅为可控字节流，未宣称真实供应商价格协议全覆盖或端到端费用准确。吸收sse用量读面与测试，不带其他账本/模型调用在飞实现；完整Host候选仍未终态。
