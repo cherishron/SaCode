@@ -214,3 +214,9 @@ Host v6仍在LLVM编译，句柄85803及其llc子进程13984已确认存活，CP
 ## 第十九轮：精确审批修复与原有回归收口
 
 approval-binding-candidate加入原有approval_test.cj，与新增三条测试共同运行：最终Summary TOTAL17/PASSED17/SKIPPED0/ERROR0/FAILED0，真实rc0；包括真实单调时钟过期、并发发号应答消费及错误工具不烧票。原件approval-regression.log/exit.txt。拟吸收共享approval.cj的完整精确参数与过期修复（51增19删），未包含执行、会话或Host其他在飞文件；与本批测试同提交，不能据17条绿扩大为全仓可构建或全链路授权完成。
+
+## 第二十轮：终端投影与工作区修订依赖收口
+
+新增workbench_projection_test.cj三条测试：目录无操作/非目录事件不增加修订、持久重放保持修订；终端分页跳过畸形chunk并保留游标；中文8192字节边界截断保持完整UTF8并拒绝非法分页。与审批17条共同运行，projection-replay-test.log最终TOTAL20/PASSED20/SKIPPED0/ERROR0/FAILED0，rc0。读取实现确认terminalOutputJson只投影日志，不启动进程或推断退出事实；SessionWorkspace.revision只数目录事件。
+
+吸收workspace.cj的7行修订读面及terminal_view.cj，与本批测试同提交，不包含其余共享修改。测试基底仍含前述未落库持久化依赖，不能当完整固定提交验收。Host v6同一构建仍在LLVM后端，继续保留句柄85803等待终态。

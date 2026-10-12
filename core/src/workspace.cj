@@ -16,6 +16,13 @@ public class SessionWorkspace {
         }
         return value
     }
+    public func revision(): Int64 {
+        var value: Int64 = 0
+        for (event in log.snapshotEvents()) {
+            if (event.eventType == "workspace/directory") { value += 1 }
+        }
+        return value
+    }
     public func effectiveDirectory(): String {
         let value = directory()
         return if (value.size == 0) { fallback } else { value }
