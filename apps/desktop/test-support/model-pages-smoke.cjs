@@ -76,6 +76,24 @@ app.whenReady().then(async()=>{
     const pick=root.querySelector('select[aria-label="供应商"]');pick.value=provider.id;pick.dispatchEvent(new Event('change',{bubbles:true}));await settle();
     check('用户更换供应商清除旧模型身份',root.querySelector('select[aria-label="模型"]').value==='');
     await capture('custom-missing-catalog');orphanUi.unmount();await settle();
+    let saveReply,saveReject,saveCalls=0,readCalls=0,writeAllowed=true,invalidate,snapshotRevision='save-r1',sentRevision;
+    const delayedAdapter={describe:async()=>{readCalls++;return{providers:[multiProvider],customs:[multi],revision:snapshotRevision,writable:writeAllowed};},upsert:async(_draft,revision)=>{sentRevision=revision;saveCalls++;return new Promise((resolve,reject)=>{saveReply=resolve;saveReject=reject;});},subscribe:fn=>{invalidate=fn;return()=>{};}};
+    const saveUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Customs,{adapter:delayedAdapter})});saveUi.config.errorHandler=e=>errors.push(String(e));saveUi.mount(root);await settle();root.querySelector('button[aria-label="编辑 '+multi.name+'"]').click();await settle();
+    const nameInput=root.querySelector('input[aria-label="名称"]');nameInput.value='保留的保存草稿';nameInput.dispatchEvent(new Event('input',{bubbles:true}));await settle();
+    const saveButton=[...root.querySelectorAll('button')].find(b=>b.textContent==='保存');saveButton.click();saveButton.click();await settle();
+    check('保存并发仅调用一次',saveCalls===1);
+    check('保存期间锁定编辑页',root.querySelector('.cm-editor').hasAttribute('inert')&&root.querySelector('.cm-editor').getAttribute('aria-busy')==='true');
+    saveReject(Error('fixture-save-rejected'));await settle();
+    check('保存失败保留草稿并显示原因',root.querySelector('input[aria-label="名称"]').value==='保留的保存草稿'&&root.textContent.includes('fixture-save-rejected'));
+    check('保存失败解除提交锁',!root.querySelector('.cm-editor').hasAttribute('inert')&&[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').disabled===false);
+    await capture('custom-save-failure');
+    writeAllowed=false;invalidate();await settle();check('权限撤回后禁止保存',root.querySelector('.cm-editor button.cm-primary').disabled);
+    writeAllowed=true;snapshotRevision='save-r2';invalidate();await settle();root.querySelector('.cm-editor button.cm-primary').click();await settle();check('刷新不提升旧草稿的提交修订',sentRevision==='save-r1');const readsBeforeUnmount=readCalls;saveUi.unmount();saveReply();await settle();
+    check('卸载后保存回执不再读取目录',readCalls===readsBeforeUnmount);
+    let deleteCalls=0,deleteReject,deleteSnapshot='delete-r1',deleteSentRevision,deleteInvalidate;
+    const deleteUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Customs,{adapter:{describe:async()=>({providers:[multiProvider],customs:[multi],revision:deleteSnapshot,writable:true}),remove:async(_id,revision)=>{deleteCalls++;deleteSentRevision=revision;return new Promise((_resolve,reject)=>deleteReject=reject);},subscribe:fn=>{deleteInvalidate=fn;return()=>{};}}})});
+    deleteUi.config.errorHandler=e=>errors.push(String(e));deleteUi.mount(root);await settle();root.querySelector('button[aria-label="删除 '+multi.name+'"]').click();await settle();deleteSnapshot='delete-r2';deleteInvalidate();await settle();
+    const confirm=[...root.querySelectorAll('button')].find(b=>b.textContent==='确认删除');confirm.click();confirm.click();await settle();check('删除重复提交仅调用一次',deleteCalls===1);check('刷新不提升删除提案修订',deleteSentRevision==='delete-r1');deleteReject(Error('fixture-delete-rejected'));await settle();check('删除失败保留确认与原因',!!root.querySelector('[role="alertdialog"]')&&root.textContent.includes('fixture-delete-rejected'));deleteUi.unmount();await settle();
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
