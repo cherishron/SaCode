@@ -238,3 +238,9 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 读取cmds.cj完整差异并将工作区cmds_test.cj加入独立验收副本。9条命令测试覆盖注册/未知/重名/空名、普通无解析器不推断参数、内置命令登记、review目标/effort/布尔选项与非法重复拒绝；与前24条合计最终TOTAL33/PASSED33/SKIPPED0/ERROR0/FAILED0，rc0，原件command-regression.log/exit.txt。源码与测试哈希核对后同批吸收具名parse参数、CommandResolveResult结构、仓颉合法空串/Option解析及内置解析器。不宣称review/compress/init真实执行已闭环，登记解析与执行分开判定。
 
 密钥独立重试需核心修订/提供方身份绑定，不能仅把credential/set透传给页面后宣称安全恢复；当前仍是明确部分保存提示。Host构建同一句柄85803尚未终态，继续等待。
+
+## 第二十四轮：URL编码编译冲突与行为收口
+
+吸收web_network.cj已有修复：移除两份重复webUrlEncode，以UTF8字节及固定大写hex表实现百分号编码，避免不存在的radix/padStart调用；其他地址准入实现不变。新增web_encoding_test.cj两条，覆盖ASCII未保留字符、查询分隔符、空串、中文及单字节补零；与前33条最终TOTAL35/PASSED35/SKIPPED0/ERROR0/FAILED0，rc0，原件web-encoding-test.log/exit.txt。
+
+本轮发现web_search.cj相对HEAD差异已被并发修改为tinyfish分支返回，和此前候选叠加的import修复口径不同，不代提交、不以旧哈希代表当前文件。Host v6仍保持原副本继续编译，句柄85803存活，LLVM CPU已超过1483秒；未将持续活动误判为挂死。
