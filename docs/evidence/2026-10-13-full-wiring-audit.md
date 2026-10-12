@@ -162,3 +162,11 @@ product-management.test.mjs 扩展三页夹具，新增受阻状态、保存/搜
 下一步定位重点：执行在途的 team/describe 是否同步等待成员过程、创建/分派的进程启动与日志读取是否阻塞协议线程；对比真实空闲和在途延迟，并检验非阻塞权威快照、取消与审批可响应。尚未定位根因，不改测试超时制造绿。
 
 仓颉技能前置：已在线读取 https://gitcode.com/Cangjie-SIG/CangjieSkills 展示的实际 README，当前页面分支为 cangjie-1.0.5，不能假定与本机1.1.3匹配；相应 cangjie-coding/SKILL.md 网页读取失败。仅完成 README 获取，未宣称已使用技能，未修改 .cj。后续需取得匹配版本技能及实际内容再开展核心诊断。
+
+## 第十三轮：仓颉技能取得与团队锁域定位
+
+前置提交 53997f3。在忽略目录 shallow clone 官方 CangjieSkills cangjie-1.0.5，精确提交 efdf73fec28a97986dbd6a13db0b71c88b707143；读取本地 README 及 .agents/skills/cangjie-coding/SKILL.md，通过规定 search_docs.py 同一进程批量查询 Future get timeout、Mutex synchronized。结果确认 Future.get 阻塞等待、锁域操作需核查；未运行 stdx 配置/clean，也未改变公共环境或 .cj。技能来源已核，但1.0.5与项目1.1.3差异仍须当前编译探针裁决。
+
+HostTeamRuntime 源码实读：describe 在 synchronized(mtx) 内 panel(state())；poll 整段同锁，调用 member 的日志 load/租约接管、deliver 的 durableCheckpointBatched、start 的工作区准备/日志检查点等。answer 同锁并在回答后 durable。TeamMemberRunner.poll 仅 handle 非 running 时才 result()，没有证明它直接等待正在执行的 Future；start 使用 DeferredProvider 把 config.open 放到执行线程，不能臆造主线程网络等待。锁域存在慢 I/O 与协议响应竞争的结构性风险，具体本轮4.8秒尚未通过操作计时定位，不能升级为已证根因。
+
+下一实施切片：先在私有 Host 副本测 teamRuntime 锁等待/持锁及各持久操作耗时；确认后将慢准备/持久结算与权威状态发布拆分，保留租约与一次性授权，描述不得启动执行或隐瞒未持久状态。覆盖在途响应、审批/停止并发、冻结/检查点失败，使用原5秒请求判据，不能以扩超时或跳过持久屏障收口。当前 Host 源码 main.cj 有并发在飞修改，隔离构建证据需注明源码快照，不能沿用旧二进制结果。
