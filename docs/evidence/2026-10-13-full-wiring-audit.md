@@ -104,3 +104,11 @@ Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；
 前置提交 bd4e407。session-state.js 在成功切换并递增会话代数后立即清除 tipsPressure/旧提醒，完成基础回读后 refreshTips；app.js 注入这三个已有状态/动作。新增 session-context-reset.test.mjs 先复现旧用量残留，修复后与会话及设置控制器测试共 21/21，退出码 0。该组为页面控制器夹具，不是实际 Electron/Host 会话切换验收；既有 session-state.test.mjs 包含并发新增用例，不纳入本批提交。
 
 核心采样核对：tips.cj occupancyKey 仅 messages.size 与尾消息，OccupancySample 未包含会话/模型身份；Host tips_surface 读取当前注册表窗口。不同会话相同消息形态及模型切换的采样归属仍需契约与实测修正，此处登记为明确缺口，不宣称上下文计量已闭合。app.js 提交候选从 HEAD 加一行注入构造，通过 Node --check，排除其他在飞页面变更。
+
+## 第七轮：模型配置与凭据的实际接线审计
+
+前置提交 72b53c1。Node --test models-ipc/provider-registry/model-write-approval/models-validate 四文件首次聚合结果 11 tests / 10 pass / 1 fail，rc=1；唯一失败为 models-validate 加载 esbuild 缺失，不是断言失败。使用忽略目录中已有隔离依赖、只对 esbuild/vue 的 ESM 解析定向映射后，models-validate 单独 5/5，rc=0；不得合并成首次全绿。其他 10 条包括 preload/字段守卫、真实已有 Host 的配置读写/冲突、凭据旋转/跨进程保留、注册表驱动请求、协议拒绝、环境密钥只读、本地模型夹具发起文件写的审批允许/拒绝链。后者不代表模型配置动作自身审批，也不代表所有协议或远端服务通过。
+
+沿调用链核：provider-settings → model-center-adapter.save → modelsSave → models-ipc.cjs → model/registry/update → credential/set。当前 models-ipc.cjs 属未落库并发提取文件，不整文件纳入此提交。故障注入原件 apps/desktop/.tmp-test/model-save-stage-probe.cjs：registry/update 返回新 revision 后 credential/set 失败，调用顺序已确认；返回只有 credential-store-unavailable，stageExposed=false。页面 mutate catch 保留原草稿/修订，后续重试面临 settings-conflict，不能明确报告配置已保存。
+
+修复契约：配置失败返回原有错误；配置已保存而密钥失败必须返回稳定阶段标识及配置修订，不回显密钥/底层敏感消息。页面保持草稿、明确显示“配置已保存，密钥未保存”，回读新目录并更新该提案修订；允许只重试凭据，不通过重复注册表写入恢复。需要同步 modelsSave 有限响应、适配器与供应商页面，以及“配置失败/凭据失败/成功、回读失败、跨会话迟到”测试。配置与凭据保持共享核心权威，不由页面猜测实际写入阶段。该修复尚未实施，不升级 F07 状态。
