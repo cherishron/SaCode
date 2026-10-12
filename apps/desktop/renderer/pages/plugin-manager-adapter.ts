@@ -209,6 +209,7 @@ const mapPackage = (p: InventoryPackage): Package => ({
 export const createPluginManagerAdapter = (faces: PluginFaces, unwired: string[] = []): Adapter => {
   let view: InventoryView | null = null, revision = -1, available = false, dirty = true, disposed = false;
   let inFlight: Promise<void> | undefined, rerun = false;
+  let readGeneration = 0;
   let install: Install = { open: false, spec: '', phase: 'idle', registry: '', registries: [], runs: [] };
   let requestId = '', confirm = '', notice = '', highlight = '', polls = 0, acknowledged = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -229,21 +230,40 @@ export const createPluginManagerAdapter = (faces: PluginFaces, unwired: string[]
     notice: notice || undefined, confirm: confirm || undefined, highlight: highlight || undefined, unwired: unwired.slice(),
   });
 
-  const readInventory = async (): Promise<void> => {
-    const next = normalizeInventory(await faces.describe());
+  const readInventory = async (generation: number): Promise<void> => {
+    const raw = await faces.describe();
+    if (disposed || generation !== readGeneration) reject('plugin-read-stale');
+    const next = normalizeInventory(raw);
     view = next; revision = next.revision; available = next.available;
     if (!next.available) { stopPolling(); patch({ phase: 'idle', runs: [] }); requestId = ''; }
   };
-  const load = (): Promise<void> => {
-    if (inFlight) { rerun = true; return inFlight; }
-    const run = (async () => { do { rerun = false; await readInventory(); } while (rerun && !disposed); })();
+  const load = (refresh = false): Promise<void> => {
+    // 普通 read 只加入已有读取；显式刷新才要求再取一次。写操作产生的 dirty 也不能被旧回执清掉。
+    if (inFlight) { if (refresh) rerun = true; return inFlight; }
+    const generation = readGeneration;
+    const run = (async () => {
+      try {
+        do {
+          rerun = false; dirty = false;
+          await readInventory(generation);
+        } while (!disposed && generation === readGeneration && (rerun || dirty));
+      } catch (e) {
+        if (generation === readGeneration) dirty = true;
+        throw e;
+      }
+    })();
     inFlight = run;
-    void run.finally(() => { if (inFlight === run) inFlight = undefined; });
+    // finally 会另造一个被拒的 Promise；清理的两个分支均成功，原始拒绝仍交给调用方。
+    const clear = (): void => { if (inFlight === run) inFlight = undefined; };
+    void run.then(clear, clear);
     return run;
   };
   const read = async (): Promise<Snapshot> => {
     arm();
-    if (dirty || !view) { dirty = false; await load(); }
+    const generation = readGeneration;
+    if (inFlight) await inFlight;
+    else if (dirty || !view) await load();
+    if (disposed || generation !== readGeneration) reject('plugin-read-stale');
     return snapshot();
   };
   const settle = (next: InstallProgressView): void => {
@@ -312,7 +332,7 @@ export const createPluginManagerAdapter = (faces: PluginFaces, unwired: string[]
   const dispatch = async (command: Command): Promise<void> => {
     arm();
     switch (command.kind) {
-      case 'refresh': dirty = true; await load(); return;
+      case 'refresh': dirty = true; await load(true); return;
       case 'edit-spec': patch({ spec: command.text, inputError: undefined }); return;
       case 'choose-registry': patch({ registry: command.url }); return;
       case 'open-install': {
@@ -417,7 +437,12 @@ export const createPluginManagerAdapter = (faces: PluginFaces, unwired: string[]
     read,
     dispatch,
     subscribe(invalidate: () => void) { listeners.add(invalidate); return () => { listeners.delete(invalidate); }; },
-    dispose() { disposed = true; stopPolling(); listeners.clear(); },
+    dispose() {
+      disposed = true; readGeneration += 1;
+      if (inFlight) dirty = true;
+      inFlight = undefined; rerun = false;
+      stopPolling(); listeners.clear();
+    },
   } as Adapter & { dispose(): void };
 };
 
