@@ -68,7 +68,7 @@ public class RealSseProvider <: Provider & Resource {
         readTimeout!: Duration = Duration.second * 30) {
         let opened = RealSseProvider.open(baseUrl, apiKey, requestJsonBody, token, readTimeout: readTimeout)
         if (let Some(f) <- opened.failure) {
-            throw Exception(f.message())
+            throw Exception(f.messageWithReason())
         }
         let p = opened.provider.getOrThrow()
         this.token = token
@@ -90,7 +90,7 @@ public class RealSseProvider <: Provider & Resource {
     // 于是「遵守供应商恢复时间」只能由夹具喂绿。
     public static func open(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
         readTimeout!: Duration = Duration.second * 30): SseOpenResult {
-        let c = ClientBuilder().tlsConfig(defaultTlsClientConfig()).autoRedirect(false).build()
+        let c = ClientBuilder().tlsConfig(tlsClientConfigForUrl(baseUrl)).autoRedirect(false).build()
         var opened: Option<HttpResponse> = None
         try {
             let req = HttpRequestBuilder().post().url("${baseUrl}/chat/completions")
@@ -132,7 +132,8 @@ public class RealSseProvider <: Provider & Resource {
             // 连接类失败：本批还分不出「未上线」与「已上线」（连接被拒/DNS/TLS 与
             // 读超时在异常文案里同名），如实标 unattributed 且 reachedUpstream=false，
             // 由 §5.2 末行口径不进任何一档计数——不默认算成模型故障。
-            return SseOpenResult(None, Some(failureOf("transport", false, summary: "http-request-error")))
+            return SseOpenResult(None, Some(failureOf("transport", false, summary: "http-request-error",
+                reason: transportReason(e.message))))
         }
     }
 

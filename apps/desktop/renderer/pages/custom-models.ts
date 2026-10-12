@@ -2,6 +2,7 @@
 // 管理自定义模型（路由/权重/预算）与上游绑定；读写穿过宿主适配器。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
+import {modelCapabilitySummary,type ModelCapabilities} from './model-capabilities';
 
 // --- 类型 ---
 export type Mode='weighted'|'round-robin';
@@ -21,7 +22,7 @@ export interface CustomModel{
 export interface Draft extends CustomModel{}
 // ProviderRef: 供应商读面带 models[] 才能在绑定编辑里选「拉取到的上游模型」，
 // 而不是手敲 providerId/modelId——后者正是「填入的模型对不上」的来源。
-export interface ProviderRef{id:string;name:string;models?:{id:string;name:string}[]}
+export interface ProviderRef{id:string;name:string;models?:({id:string;name:string}&ModelCapabilities)[]}
 export interface Adapter{
   describe():Promise<{customs:CustomModel[];providers:ProviderRef[];revision:string;writable:boolean}>;
   upsert(draft:Draft,expectedRevision:string):Promise<void>;
@@ -86,7 +87,7 @@ export const Page=defineComponent({
   name:'SaCodeCustomModels',
   props:{adapter:Object as PropType<Adapter>},
   setup(props){
-    const customs=ref<CustomModel[]>([]),providers=ref<{id:string;name:string}[]>([]);
+    const customs=ref<CustomModel[]>([]),providers=ref<ProviderRef[]>([]);
     const revision=ref(''),writable=ref(!props.adapter);
     const loading=ref(false),error=ref(''),message=ref('');
     const editing=ref<string|null>(null),adding=ref(false),draft=ref<Draft>(blank());
@@ -103,7 +104,7 @@ export const Page=defineComponent({
     const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict/.test(t))return '数据已被修改，请刷新后重试';return t||'操作失败';};
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();bindingCustom.value=null;error.value='';message.value='';};
     const startAdd=()=>{adding.value=true;editing.value=null;draft.value=blank();error.value='';};
-    const startEdit=(c:CustomModel)=>{editing.value=c.id;adding.value=false;draft.value={...c,bindings:[...c.bindings]};error.value='';message.value='';};
+    const startEdit=(c:CustomModel)=>{editing.value=c.id;adding.value=false;draft.value={...c,requires:[...c.requires],bindings:c.bindings.map(b=>({...b}))};error.value='';message.value='';};
     const save=async()=>{
       if(!props.adapter)return;
       const d=draft.value,inv=validateCustom(d,customs.value,editing.value!==null);
@@ -176,7 +177,7 @@ export const Page=defineComponent({
 
           // 能力要求
           el('fieldset','section',[el('legend',null,'能力要求'),
-            el('p','hint','至少选择一项。'),
+            el('p','hint','至少选择一项。编程对话实际请求需要文本输出、流式与工具调用；上游供应商页中的能力声明必须与这些要求匹配。'),
             REQUIRES_LIST.map(r=>el('label','check',[h('input',{type:'checkbox',checked:d.requires.includes(r),'aria-label':reqLabels[r],onChange:(e:Event)=>{const v=(e.target as HTMLInputElement).checked;if(v&&!d.requires.includes(r))d.requires=[...d.requires,r];else if(!v)d.requires=d.requires.filter(x=>x!==r);}}),reqLabels[r]])),
           ]),
 
@@ -223,6 +224,7 @@ export const Page=defineComponent({
                 numInp('缓存写（微）',b.priceCacheWriteMicro,v=>b.priceCacheWriteMicro=v,{min:'-1'}),
                 el('input','ipt',null,{value:b.currency,'aria-label':'货币',placeholder:'货币（如 CNY）',onInput:(e:Event)=>b.currency=(e.target as HTMLInputElement).value}),
               ]),
+              el('p','hint',(()=>{const m=modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId);return m?modelCapabilitySummary(m)+'。能力未确认时请到供应商 → 编辑 → 上游模型能力声明完成确认。':'请选择已登记的上游模型。';})()),
             ],{key:i})),
             !d.bindings.length?el('p','hint','尚未添加绑定。'):null,
             btn('+ 添加绑定',addBinding,'secondary',{disabled:!writable.value}),

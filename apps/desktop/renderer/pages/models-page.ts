@@ -1,8 +1,9 @@
 // 对照冻结 DSH ui-settings-models 的提供商列表与编辑流程；业务数据只经宿主适配器读写。
 import { defineComponent, h, ref, onMounted, onBeforeUnmount, type PropType } from 'vue';
+import {cloneModel,renderModelCapabilities,type ModelCapabilities} from './model-capabilities';
 
 export type Protocol = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
-export interface Model { id: string; name: string; contextWindow: string; maxTokens: string; image: boolean }
+export interface Model extends ModelCapabilities { id: string; name: string; contextWindow: string; maxTokens: string; image: boolean }
 export interface Provider {
   id: string; name: string; baseUrl: string; protocol: Protocol; models: Model[]; keyConfigured: boolean;
   declared?: boolean; defaultModels?: Model[]; modelsCustomized?: boolean; credentialWritable?: boolean;
@@ -23,7 +24,7 @@ const labels: Record<Protocol, string> = {
 };
 const blankModel = (): Model => ({ id: '', name: '', contextWindow: '', maxTokens: '', image: false });
 const blank = (): Draft => ({ id: '', name: '', baseUrl: '', protocol: 'openai-completions', models: [], keyConfigured: false, key: '', declared: true, modelsCustomized: true });
-const clone = (p: Provider): Draft => ({ ...p, models: p.models.map(m => ({ ...m })), key: '' });
+const clone = (p: Provider): Draft => ({ ...p, models: p.models.map(cloneModel), key: '' });
 const unavailable = '模型管理后端尚未接入，配置不会保存。';
 const el = (tag: string, cls: string, children: any, props: any = {}) => h(tag, { class: 'models-' + cls, ...props }, children);
 
@@ -155,7 +156,7 @@ export const Page = defineComponent({
             button('×', () => { d.models.splice(i, 1); d.modelsCustomized = true; }, 'iconButton', { 'aria-label': '删除模型 ' + (i + 1), disabled: busy.value || !writable.value }),
           ]),
           el('div', 'modelAdvanced', [input('上下文窗口', m.contextWindow, v => { m.contextWindow = v; d.modelsCustomized = true; }, { placeholder: '使用提供商默认值' }), input('最大输出 token 数', m.maxTokens, v => { m.maxTokens = v; d.modelsCustomized = true; }, { placeholder: '使用提供商默认值' }),
-            el('fieldset', 'modelInputTypes', [h('legend', '输入类型'), h('label', [h('input', { type: 'checkbox', checked: true, disabled: true }), '文本']), h('label', [h('input', { type: 'checkbox', checked: m.image, disabled: busy.value || !writable.value, onChange: (e: Event) => { m.image = (e.target as HTMLInputElement).checked; d.modelsCustomized = true; } }), '图片'])]),
+            renderModelCapabilities(m,i,busy.value||!writable.value,()=>{d.modelsCustomized=true;}),
           ], { hidden: !expanded.value.includes(String(i)) }),
         ], { key: i }))),
         !d.models.length ? el('p', 'modelEmpty', '模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。') : null,

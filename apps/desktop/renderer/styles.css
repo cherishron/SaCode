@@ -221,8 +221,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .composer-card textarea:focus { outline: none; }
 .composer-label { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .composer-controls { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding:2px 8px 6px; min-width:0; container-type:inline-size; }
-.composer-customSelect { max-width:200px; height:28px; padding:0 8px; border:.5px solid var(--border); border-radius:8px; background:var(--panel-surface); color:var(--text); font:inherit; font-size:12px; }
-.composer-customSelect:disabled { opacity:.5; }
+
 .composer-trailing { display:flex; align-items:center; flex:none; margin-left:auto; gap:12px; }
 .composer-primary { display:grid; place-items:center; flex:none; width:34px; height:34px; padding:0; border:0; border-radius:999px; corner-shape:round; background:var(--send-fill); color:#fff; font:13px/20px var(--font-ui); cursor:pointer; transition:background-color 100ms ease; transform:translateY(-2px); }
 .composer-primary:hover:not(:disabled) { background:var(--send-hover); }
@@ -329,6 +328,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .note { font-size: var(--fs-s); line-height: 1.5; color: var(--text-muted); overflow-wrap: anywhere; }
 .error { color: var(--danger); padding: var(--space-3) var(--space-5); font-size: var(--fs-m);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: min(120px, 25%); overflow: auto; flex-shrink: 0; }
+.btn-small { flex:none; height:26px; padding:0 10px; border:.5px solid var(--border); border-radius:8px; background:var(--panel-surface); color:var(--text); font:inherit; font-size:12px; cursor:pointer; }
+.btn-small:disabled { opacity:.5; cursor:default; }
+.model-capabilities { margin:12px 0; padding:12px; border:1px solid var(--border); border-radius:8px; min-width:0; }
+.model-capability-options { display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:12px; }
+.model-capability-check,.model-capability-state { display:flex; align-items:center; gap:8px; }
+.model-capability-state select { min-width:0; max-width:100%; font:inherit; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:4px; }
 .sacode-dialog { width: min(520px, calc(100vw - 48px)); max-height: calc(100dvh - 48px);
   padding: 0; border: 0; box-shadow: var(--elevation-prominent); border-radius: var(--radius-panel);
   background: var(--surface-2); color: var(--text); overflow: hidden; }

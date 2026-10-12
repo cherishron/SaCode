@@ -353,6 +353,7 @@ ipcMain.handle("sacode:taskStart", async (_e, args) => {
   if (customModelId !== undefined && (typeof customModelId !== "string" || customModelId.length > 256)) throw Error("bad-custom-model-id");
   return withHost(async () => {
     const turnRequestId = String(bridge.nextId);
+    // HostBridge.request 自行封装 params，禁止二次嵌套模型身份。
     const started = await bridge.request("task/start", customModelId ? { customModelId } : {});
     modelTurnRequestId = turnRequestId;
     modelApproval.discardPreviousRequests(bridge, turnRequestId);

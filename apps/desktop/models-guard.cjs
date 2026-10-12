@@ -5,6 +5,19 @@
 const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 const TRANSPORTS = ['direct', 'relay'];
 const SECRET_SLOTS = ['apiKey', 'api_key', 'key', 'token', 'secret', 'value'];
+const MODALITIES = ['text', 'image', 'audio', 'video', 'embedding'];
+const CAPABILITIES = ['tools', 'stream', 'structured-output', 'image-output'];
+function capabilityArray(value, allowed) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > allowed.length || value.some(v => !allowed.includes(v))
+    || new Set(value).size !== value.length) bad('bad-model-capabilities');
+  return [...value];
+}
+function capabilityEnum(value, allowed) {
+  if (value === undefined) return 'unknown';
+  if (!allowed.includes(value)) bad('bad-model-capabilities');
+  return value;
+}
 const isStr = (v) => typeof v === 'string';
 
 function bad(why) {
@@ -25,7 +38,14 @@ function sanitizeDraft(d) {
     if (!m || typeof m !== 'object' || !isStr(m.id) || m.id.length === 0 || m.id.length > 200
       || !isStr(m.name) || m.name.length > 100 || !isStr(m.contextWindow) || !isStr(m.maxTokens)
       || typeof m.image !== 'boolean') bad('bad-model-draft');
-    return { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, image: m.image };
+    for (const slot of SECRET_SLOTS) if (m[slot] !== undefined && m[slot] !== null) bad('bad-model-draft');
+    return { id: m.id, name: m.name, contextWindow: m.contextWindow, maxTokens: m.maxTokens, image: m.image,
+      inputModalities: capabilityArray(m.inputModalities, MODALITIES),
+      outputModalities: capabilityArray(m.outputModalities, MODALITIES),
+      supports: capabilityArray(m.supports, CAPABILITIES),
+      meterUnit: capabilityEnum(m.meterUnit, ['token', 'image', 'second', 'request', 'unknown']),
+      provenance: capabilityEnum(m.provenance, ['provider-listed', 'user-entered', 'human-confirmed', 'unknown']),
+      availability: capabilityEnum(m.availability, ['available', 'unsupported', 'unknown']) };
   });
   const sortOrder = d.sortOrder === undefined ? 0 : d.sortOrder;
   if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1e9) bad('bad-model-draft');

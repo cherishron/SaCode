@@ -2,11 +2,12 @@
 // 所有读写穿过宿主适配器，界面不留第二份提供商状态。
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
+import {cloneModel,renderModelCapabilities,type ModelCapabilities} from './model-capabilities';
 
 // --- 类型 ---
 export type Protocol='openai-completions'|'openai-responses'|'anthropic-messages';
 export type Transport='direct'|'relay';
-export interface Provider{id:string;name:string;baseUrl:string;protocol:Protocol;keyConfigured:boolean;declared:boolean;sortOrder:number;enabled:boolean;transport:Transport;credentialWritable?:boolean}
+export interface Provider{id:string;name:string;baseUrl:string;protocol:Protocol;keyConfigured:boolean;declared:boolean;sortOrder:number;enabled:boolean;transport:Transport;credentialWritable?:boolean;models?:({id:string;name:string;contextWindow:string;maxTokens:string;image:boolean}&ModelCapabilities)[]}
 export interface Draft extends Provider{key:string}
 export interface Adapter{
   describe():Promise<{providers:Provider[];catalog:Provider[];revision:string;writable:boolean}>;
@@ -44,7 +45,7 @@ export const Page=defineComponent({
   props:{adapter:Object as PropType<Adapter>},
   setup(props){
     const providers=ref<Provider[]>([]),catalog=ref<Provider[]>([]),revision=ref(''),writable=ref(!props.adapter);
-    const loading=ref(false),error=ref(''),message=ref('');
+    const loading=ref(false),saving=ref(false),error=ref(''),message=ref('');
     const editing=ref<string|null>(null),adding=ref(false),draft=ref<Draft>(blank());
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
     let off:(()=>void)|undefined,generation=0,disposed=false;
@@ -59,13 +60,15 @@ export const Page=defineComponent({
     const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict|conflict/.test(t))return '数据已被其他入口修改，请刷新后重试';return t||'操作失败';};
     const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
     const startAdd=()=>{closeEdit();adding.value=true;draft.value.sortOrder=providers.value.length;};
-    const startEdit=(p:Provider)=>{editing.value=p.id;adding.value=false;draft.value={...p,key:''};error.value='';message.value='';};
+    const startEdit=(p:Provider)=>{editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
     const save=async()=>{
-      if(!props.adapter)return;
+      if(!props.adapter||saving.value)return;
       const d=draft.value,inv=validateProvider(d,providers.value,editing.value!==null);
       if(inv){error.value=inv;return;}
-      try{await props.adapter.save(d,revision.value);message.value='已保存';closeEdit();await reload();}
+      saving.value=true;
+      try{await props.adapter.save(d,revision.value);closeEdit();await reload();message.value='已保存（能力按用户声明记录，未自动验证）';}
       catch(e){error.value=errText(e);}
+      finally{saving.value=false;}
     };
     const remove=async()=>{
       if(!props.adapter||!deleting.value)return;
@@ -136,7 +139,7 @@ export const Page=defineComponent({
         !providers.value.length&&!loading.value?el('p','empty','暂无供应商，点击"添加供应商"开始配置。'):null,
 
         // 编辑表单
-        isEditing?el('div','editor',[
+        isEditing?el('fieldset','editor',[
           el('h3',null,adding.value?'添加供应商':'编辑 '+(d.name||d.id)),
           adding.value?el('label','field',[el('span','lbl','Provider ID'),el('input','ipt',null,{value:d.id,'aria-label':'Provider ID',placeholder:'my-provider',onInput:(e:Event)=>d.id=(e.target as HTMLInputElement).value})]):null,
           el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
@@ -146,9 +149,10 @@ export const Page=defineComponent({
           el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
           !editing.value?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
+          !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
           el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
-          el('div','actions',[btn('取消',closeEdit),btn('保存',()=>void save(),'primary',{disabled:loading.value})]),
-        ]):null,
+          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:loading.value||saving.value})]),
+        ],{disabled:saving.value,'aria-busy':saving.value}):null,
 
         // 删除确认弹窗
         deleting.value?h('div',{class:'ps-dialog',role:'alertdialog','aria-label':'确认删除'},[

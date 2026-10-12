@@ -7,6 +7,7 @@ import stdx.crypto.common.*
 import stdx.crypto.x509.*
 import stdx.net.tls.*
 import stdx.net.tls.common.*
+import stdx.encoding.url.URL
 
 // 客户端 TLS 信任锚的统一出口。
 //
@@ -105,10 +106,26 @@ public func clientTlsConfigWithRoots(roots: Array<Certificate>): TlsClientConfig
     if (roots.size > 0) {
         config.verifyMode = CertificateVerifyMode.CustomCA(roots)
     }
+    // 模型流使用 HTTP/1.1。此前把握手失败归因于 ALPN 是误判；同配置对照已确认
+    // 两家服务缺 SNI 时失败、带 SNI 时成功，不能从 OpenSSL 的错误栈猜因果。
+    config.supportedAlpnProtocols = ["http/1.1"]
     return config
 }
 
 // 全部 https 出口该用的那一份配置。
 public func defaultTlsClientConfig(): TlsClientConfig {
     return clientTlsConfigWithRoots(tlsDefaultRoots())
+}
+
+// stdx 1.1.3 不自动从请求 URL 补 SNI。多域名服务器必须在握手时得到目标域名，
+// 否则可能返回默认站点的过期证书或直接拒绝握手；后续 HTTP Host 头不能补救。
+// 只从实际请求 URL 取主机，不把端口、路径、凭据或自定义 Host 头当成 SNI。
+public func tlsClientConfigForUrl(url: String): TlsClientConfig {
+    var config = defaultTlsClientConfig()
+    if (url.startsWith("https://")) {
+        let host = URL.parse(url).hostName
+        if (host.size == 0) { throw Exception("bad-tls-host") }
+        config.serverName = host
+    }
+    return config
 }

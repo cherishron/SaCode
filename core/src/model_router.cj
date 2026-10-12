@@ -200,7 +200,8 @@ public func route(request: RouteRequest, customs: CustomModelView, providers: Pr
             if (firstReject.size == 0) { firstReject = "capability-unsatisfied" }
             continue
         }
-        if (!fitsNeeds(s, request.needs)) {
+        // 自定义模型声明的要求与本轮实际请求要求都必须满足，不以宿主固定文本需求覆盖用户配置。
+        if (!fitsNeeds(s, model.requires) || !fitsNeeds(s, request.needs)) {
             if (firstReject.size == 0) { firstReject = "capability-unsatisfied" }
             continue
         }

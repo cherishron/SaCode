@@ -2,6 +2,7 @@ package core
 
 import std.collection.*
 import std.convert.*
+import std.env.getVariable
 
 // 结构化失败：把「哪一类失败」「请求是否已进入线路」「供应商给了什么恢复时间」
 // 从异常文案里解放出来。设计文档 §5.2 实测三段输入通路全缺——非 200 时先 close
@@ -23,8 +24,9 @@ public class TransportFailure {
     public let resetEpoch: Int64         // -1 = 供应商没给
     public let bodyLen: Int64            // -1 = 没有正文
     public let summary: String           // 脱敏摘要，不含正文原文
+    public let reason: String            // 稳定的失败原因；认不出就是 http-request-error
     public init(kind: String, reachedUpstream: Bool, status: Int64, retryAfterSeconds: Int64,
-        resetEpoch: Int64, bodyLen: Int64, summary: String) {
+        resetEpoch: Int64, bodyLen: Int64, summary: String, reason!: String = "") {
         this.kind = kind
         this.reachedUpstream = reachedUpstream
         this.status = status
@@ -32,6 +34,7 @@ public class TransportFailure {
         this.resetEpoch = resetEpoch
         this.bodyLen = bodyLen
         this.summary = summary
+        this.reason = reason
     }
 
     // 兼容既有调用方的文本面：http-status:<n> / http-request-error 的形态不能变，
@@ -41,12 +44,72 @@ public class TransportFailure {
         if (status > 0) { return "http-status:${status}" }
         return "http-request-error"
     }
+
+    // 给上层（宿主与界面）的形态：文本面保持不变，只在已知原因时挂一个后缀。
+    // 2026-10-12 实测：连接类失败一律塌成 http-request-error，界面只能显示
+    // 「连不上模型」——TLS 锚缺失、对端拒绝握手与真的断网长得一模一样，用户无从下手。
+    public func messageWithReason(): String {
+        if (reason.size > 0 && reason != "http-request-error" && kind == "transport") {
+            return "${message()}:${reason}"
+        }
+        return message()
+    }
 }
 
 public func failureOf(kind: String, reachedUpstream: Bool, status!: Int64 = -1,
     retryAfterSeconds!: Int64 = -1, resetEpoch!: Int64 = -1, bodyLen!: Int64 = -1,
-    summary!: String = ""): TransportFailure {
-    return TransportFailure(kind, reachedUpstream, status, retryAfterSeconds, resetEpoch, bodyLen, summary)
+    summary!: String = "", reason!: String = ""): TransportFailure {
+    return TransportFailure(kind, reachedUpstream, status, retryAfterSeconds, resetEpoch, bodyLen, summary, reason: reason)
+}
+
+// 原始异常文案只用来选出稳定原因，绝不原样外传：里面可能带 URL、证书路径甚至请求片段。
+// 顺序按「越靠前越具体」排列——先命中锚缺失，再命中握手/协议，最后才是笼统的网络类。
+public func transportReason(raw: String): String {
+    let mapped = classifyTransportReason(raw)
+    // 运维诊断通道：只有显式设置 SACODE_TRANSPORT_DEBUG=1 才会带上脱敏后的原文摘要，
+    // 用于判断「是缺哪张证书 / 对端发了什么 ClientHello」这类必须看原文的问题。
+    // 默认关闭；摘要里的引号内容与超长部分先削掉，避免把 URL、路径带出去。
+    if (getVariable("SACODE_TRANSPORT_DEBUG") == "1") {
+        return "${mapped}|${sanitizeTransportText(raw)}"
+    }
+    return mapped
+}
+
+private func classifyTransportReason(raw: String): String {
+    let text = raw.toAsciiLower()
+    // 这里只分类已观测错误，不把错误栈当根因。缺 SNI 也会让服务器返回默认站点的
+    // 过期证书；补 SNI 的同客户端对照已推翻「供应商不兼容」与「ALPN 根因」结论。
+    if (matchesAny(text, ["certificate expired", "certificate_expired"])) { return "tls-certificate-expired" }
+    if (matchesAny(text, ["certificate verify failed", "certificate_verify_failed", "certificate has expired"])) { return "tls-certificate-rejected" }
+    if (matchesAny(text, ["unable to get local issuer", "certificate_verify_failed_unknown", "self signed certificate", "self-signed certificate"])) { return "tls-anchor-missing" }
+    if (matchesAny(text, ["no application protocol"])) { return "tls-alpn-unsupported" }
+    if (matchesAny(text, ["alert internal error", "alert handshake", "handshake failure", "no shared cipher",
+        "wrong version number", "alert protocol version", "alert unknown ca", "sslv3", "tlsv1"])) { return "tls-handshake-rejected" }
+    if (matchesAny(text, ["getaddrinfo", "no such host", "name or service not known", "nodename nor servname"])) { return "dns-failed" }
+    if (matchesAny(text, ["connection refused", "actively refused"])) { return "connection-refused" }
+    if (matchesAny(text, ["connection reset", "connection closed", "broken pipe", "eof", "unexpected end"])) { return "connection-reset" }
+    if (matchesAny(text, ["timeout", "timed out"])) { return "timeout" }
+    return "http-request-error"
+}
+
+func matchesAny(text: String, needles: Array<String>): Bool {
+    for (needle in needles) {
+        if (text.contains(needle)) { return true }
+    }
+    return false
+}
+
+// 脱敏摘要：去掉引号包裹的内容（URL/路径最常出现的地方），只保留可打印字符，截断到 160 字节。
+func sanitizeTransportText(raw: String): String {
+    let bytes = ArrayList<Byte>()
+    var quoted = false
+    for (b in raw.toArray()) {
+        if (bytes.size >= 400) { break }
+        if (b == 39 || b == 34) { quoted = !quoted; continue }
+        if (quoted) { continue }
+        bytes.add(if (b >= 32 && b < 127) { b } else { UInt8(46) })
+    }
+    return String.fromUtf8(bytes.toArray())
 }
 
 // 只有这些头参与重试与恢复判定；其余（含 Set-Cookie/Authorization/Content-*）

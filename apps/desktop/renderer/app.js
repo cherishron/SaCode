@@ -508,6 +508,15 @@ createApp({
       } catch (e) { customModels.value = []; }
     }
     void loadCustomModels();
+    // 输入区只有一个模型入口，但它背后有两种来源：注册表默认指针与自定义模型。
+    // 两个指针同时生效时界面显示的那颗不一定是真正被发送的那颗，所以选中注册表模型
+    // 时顺手清掉自定义指针，让「显示 = 发送」恒等；反向则由选择器回调负责。
+    const composerDirectory = {
+      getSnapshot: () => modelDirectory.getSnapshot(),
+      subscribe: (invalidate) => modelDirectory.subscribe(invalidate),
+      load: () => Promise.all([modelDirectory.load(),loadCustomModels()]),
+      select: async (value) => { await modelDirectory.select(value); selectedCustomModel.value = ''; },
+    };
     const settingsAssembly = window.SaCodeSettings.createSettingsAssembly({
       api: window.sacode, globalAppearance, fontBusy, fontNote, appearanceBusy, appearanceNote,
       budgetDraft, budgetNote, budgetBusy, usage, generalPrefs, generalPrefsBusy, generalPrefsNote,
@@ -556,6 +565,12 @@ createApp({
       const inner = modelCenterAdapters["provider-settings"][verb].bind(modelCenterAdapters["provider-settings"]);
       modelCenterAdapters["provider-settings"][verb] = async (...args) => {
         try { return await inner(...args); } finally { void modelDirectory.load(); }
+      };
+    }
+    for (const verb of ["upsert", "remove", "bindingUpsert", "bindingRemove", "bindingReorder"]) {
+      const inner = modelCenterAdapters["custom-models"][verb].bind(modelCenterAdapters["custom-models"]);
+      modelCenterAdapters["custom-models"][verb] = async (...args) => {
+        try { return await inner(...args); } finally { void loadCustomModels(); }
       };
     }
     modelCenterOwner.value = { adapters: modelCenterAdapters };
@@ -624,13 +639,34 @@ createApp({
       if (tipsHidden.value !== true) await showStartupTip();
     });
 
+    // 失败重试：把会话里最后一条用户消息放回输入框再发一次。会话日志是只追加的，
+    // 重试会在日志里留下第二条同样的消息——这是「再问一次」的真实语义，不做假删除。
+    const lastUserMessage = window.Vue.computed(() => {
+      // 用气泡投影而不是原始投影：角色名是在 msgfold 的映射表里统一过的，
+      // 直接读原始行会拿到宿主侧的 role 串，两处口径不能各写各的。
+      const rows = bubbleMessages.value || [];
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const m = rows[i];
+        if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) return m.content;
+      }
+      return '';
+    });
+    const canRetryLastTurn = window.Vue.computed(() => !!error.value && !turn.value.running && !!lastUserMessage.value);
+    async function retryLastTurn() {
+      const text = lastUserMessage.value;
+      if (!text || sendBusy.value) return;
+      updateDraft(text);
+      await window.Vue.nextTick();
+      await send();
+    }
+
     return {
       fileEditor,fileEditorRevision,openFileEditor,
       frameColumns, sidebarWidth, sidebarCollapsed, toggleSidebar, beginFrameResize, resizeFrameKey, sideOpen, diagnosticsOpen, startNewSession,
-      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, canRetryLastTurn, retryLastTurn, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       worktreeState, worktreeController, worktreeLocked,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, pluginManagerOpen, pluginManagerAdapter,
-      appearanceBusy, appearanceNote, setTheme, modelDirectory, customModels, selectedCustomModel,
+      appearanceBusy, appearanceNote, setTheme, modelDirectory, composerDirectory, customModels, selectedCustomModel,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       generalSettings, generalPrefsNote, busySendSaving, busySendNote, busySendError, setBusySend,
       tips, tipsHidden, tipsBusy, tipsNote, tipsError, tipsPressure, setTipsHidden, dismissTips, refreshTips,
@@ -849,7 +885,7 @@ createApp({
         submit:accelerated=>self.send(accelerated),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),slashTrigger:self.slashTrigger,onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;},onCommand:(name)=>{if(name==='clear'){proj.value={...proj.value,messages:[]};}}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.modelDirectory,locked:self.turn.running}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),self.customModels.length ? el("select", "composer-customSelect", [h("option", { value: "" }, "默认模型")].concat(self.customModels.map((m) => h("option", { value: m.id, key: m.id }, m.name || m.id))), { id: "composer-custom-model", "aria-label": "本会话使用的自定义模型", value: self.selectedCustomModel, disabled: self.turn.running, onChange: (e) => { self.selectedCustomModel = e.target.value; } }) : null,el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),slashTrigger:self.slashTrigger,onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;},onCommand:(name)=>{if(name==='clear'){proj.value={...proj.value,messages:[]};}}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.composerDirectory,locked:self.turn.running,customs:self.customModels,customId:self.selectedCustomModel,onPickCustom:id=>{self.selectedCustomModel=id;}}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         // 同一颗图标位换三副面孔：进行中转圈、可回退时换回退箭头，用户一改就转回增强。
         self.enhance.busy
           ? h('path',{d:'M8 1.6a6.4 6.4 0 1 1-6.3 7.5',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round'})
@@ -942,7 +978,7 @@ createApp({
       ],{type:'button','data-turn-anchor':entry.id,'aria-label':`跳到第 ${index+1} 轮：${entry.title}`,
         'aria-current':index===self.turnActive?'true':null,
         onClick:()=>window.SaCodeConversationScroll.jumpTo(document.querySelector('.conversation-scroll'),entry.id)})),{'aria-label':'历史对话导航'}) : null,
-      self.error ? el('p','error',self.error,{id:'error',role:'alert'}) : null,
+      self.error ? el('div','error-bar',[el('p','error',self.error,{id:'error',role:'alert'}),self.canRetryLastTurn?el('button','btn btn-small',self.sendBusy?'重试中…':'重试上一条',{id:'retry-last-turn',type:'button',disabled:self.sendBusy,onClick:self.retryLastTurn}):null]) : null,
     ]);
     const center = self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[el('header','management-header',[el('h1',null,'扩展管理'),el('button','btn',[navIcon('m14 6-6 6 6 6'),el('span',null,'返回对话')],{id:'back-to-chat',type:'button',onClick:()=>{self.pluginManagerOpen=false;window.Vue.nextTick(()=>document.getElementById('open-extensions')?.focus());}})]),h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,

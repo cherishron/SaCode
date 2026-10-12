@@ -19,7 +19,17 @@
 
     function enhanceNotice(failure, result) {
       const raw = failure ? String(failure.message || failure) : String((result && result.error) || "");
+      // 顺序即优先级：具体原因排在笼统形态之前。传输层失败带稳定原因后缀
+      // （core/src/transport_failure.cj 的 transportReason），命中更细的那一条。
       const reasons = {
+        "tls-certificate-expired": "连接时收到的证书被判为过期，草稿已保留。请检查系统时间与 API 地址；这不等于目标服务的证书一定过期。",
+        "tls-certificate-rejected": "连接时证书验证未通过，草稿已保留。请检查系统时间、API 地址及证书配置，不要关闭证书校验。",
+        "tls-alpn-unsupported": "HTTPS 应用协议协商失败，草稿已保留。请检查客户端协议配置。",
+        "tls-anchor-missing": "本机信任根里没有这家模型服务的证书颁发机构，请求在 TLS 校验阶段就被拒，草稿已保留。请先更新 Windows 根证书或换一家已被信任的供应商。",
+        "tls-handshake-rejected": "HTTPS 握手未完成，草稿已保留。请检查 API 地址及客户端 TLS 配置；请求尚未进入密钥认证阶段。",
+        "dns-failed": "解析不到这家模型服务的域名，草稿已保留。请检查 API 地址是否写错。",
+        "connection-refused": "连接被拒绝，地址或端口不通，草稿已保留。请检查 API 地址。",
+        "connection-reset": "连接被中途断开，草稿已保留。",
         "model-not-configured": "还没有选择模型，请先在模型中心配好再增强。",
         "model-credential-unavailable": "当前模型的密钥没有配好，增强没有发出。",
         "protocol-not-supported": "当前模型的说法暂不支持增强，草稿已保留。",

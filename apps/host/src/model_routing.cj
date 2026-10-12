@@ -53,7 +53,8 @@ class HostModelRoute {
         for (m in customs.models) {
             if (m.id == customId && m.bindings.size > 0) { currency = m.bindings[0].currency }
         }
-        let out = route(RouteRequest(customId, ["text-output"]), customs, providers,
+        // 生产请求总是流式，并带模型工具目录；路由必须匹配真正发出的请求形状。
+        let out = route(RouteRequest(customId, ["text-output", "stream", "tools"]), customs, providers,
             RouteHealth.forUser().view(), credentialViewOf(providers, CredentialStore.forUser()),
             UsageLedger.forUser().routerView(currency), if (preview) { Cursor() } else { cursor }, routingEpoch())
         if (let Some(reject) <- out.rejection) { throw Exception("route-rejected:${reject.code}") }
@@ -94,7 +95,7 @@ class HostModelRoute {
         let opened = RealSseProvider.open(plan.baseUrl, creds.getOrThrow().value, request, token)
         if (let Some(failure) <- opened.failure) {
             recordRouteFailure(plan, failure)
-            throw Exception(failure.message())
+            throw Exception(failure.messageWithReason())
         }
         return AccountedModelProvider(opened.provider.getOrThrow(), plan, logicalId, sessionId, start, token)
     }
