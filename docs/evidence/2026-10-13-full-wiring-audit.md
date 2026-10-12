@@ -226,3 +226,9 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 读取sse.cj与Host model_routing：Host结算读取RealSseProvider.reportedUsage，提交态缺该字段。工作区实现按供应商usage提取input/output/cacheRead/cacheWrite，缺失维度保留-1，普通prompt扣缓存维度避免重复计费。新增sse_ledger_usage_test.cj四条：缺usage与仅total不冒充各维度0；标准缓存拆分；供应商命中/未命中维度；缓存超过prompt拒绝。
 
 首轮夹具缺finish_reason结束帧导致3 ERROR，纠正夹具后独占TMP复跑最终TOTAL24/PASSED24/SKIPPED0/ERROR0/FAILED0，rc0；原件sse-ledger-test.log与sse-ledger-v2.log均保留。该证据仅为可控字节流，未宣称真实供应商价格协议全覆盖或端到端费用准确。吸收sse用量读面与测试，不带其他账本/模型调用在飞实现；完整Host候选仍未终态。
+
+## 第二十二轮：模型中心费用读面非法数据保护
+
+继续核模型页发现groupByCurrency仅判断number类型，负数/非整数/NaN/Infinity与合计安全整数溢出可能成为展示值；modelTotals重复模型行直接覆盖，跨币种可冒充单模型用量。适配器现拒绝这些数值，整组费用返回null并注明待核算，重复或非法模型用量返回null；有效零值与正常同币种合计保留。provider-adapter-revision.test.mjs新增三组语义断言，与原五条合计8/8，rc0（Node22.23.2，可控API夹具）。
+
+这只是读面诚实保护，不能代替Int64金额跨IPC无损传输设计；密钥失败的独立重试入口当前仍缺，尚未新增通道。Host v6句柄85803仍存活，LLVM子进程13984累计CPU已到1291秒，未重启、未延长任何测试请求超时、未把未终态算绿。

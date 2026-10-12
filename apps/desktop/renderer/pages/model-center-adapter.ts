@@ -20,14 +20,17 @@ export function createModelCenterAdapters(api: any) {
   const groupByCurrency = (rows: any[]) => {
     const byCurrency = new Map<string, number>();
     for (const r of rows || []) {
-      const c = typeof r.currency === 'string' ? r.currency : '';
-      if (!c || typeof r.usedMicros !== 'number') continue;
-      byCurrency.set(c, (byCurrency.get(c) || 0) + r.usedMicros);
+      const c = typeof r?.currency === 'string' ? r.currency : '';
+      const total = (byCurrency.get(c) || 0) + r?.usedMicros;
+      // JSON 数字超过安全整数范围已失真，不能继续展示貌似精确的金额。
+      if (!c || !Number.isSafeInteger(r?.usedMicros) || r.usedMicros < 0
+          || !Number.isSafeInteger(total)) return { parts: [], single: null, invalid: true };
+      byCurrency.set(c, total);
     }
     const parts = Array.from(byCurrency.entries())
       .map(([currency, micro]) => ({ currency, micro }))
       .sort((a, b) => a.currency.localeCompare(b.currency));
-    return { parts, single: parts.length === 1 ? parts[0] : null };
+    return { parts, single: parts.length === 1 ? parts[0] : null, invalid: false };
   };
 
   const moneyNote = (parts: { currency: string; micro: number }[]) => {
@@ -98,10 +101,14 @@ export function createModelCenterAdapters(api: any) {
         // 两路都回答不了「这个模型用掉多少」，所以要单独的 modelTotals 读面。
         // 一个模型只有一个币种（断言 46），所以同模型不会出现两行。
         const usedByModel = new Map<string, { usedMicros: number; currency: string }>();
+        const invalidModels = new Set<string>();
         for (const r of ((stats && stats.modelTotals) || [])) {
           const id = (typeof r.customModelId === 'string' && r.customModelId)
             || (typeof r.key === 'string' ? r.key : '');
-          if (!id || typeof r.usedMicros !== 'number') continue;
+          if (!id) continue;
+          if (!Number.isSafeInteger(r.usedMicros) || r.usedMicros < 0
+              || typeof r.currency !== 'string' || !r.currency
+              || usedByModel.has(id)) { invalidModels.add(id); continue; }
           usedByModel.set(id, {
             usedMicros: r.usedMicros,
             currency: typeof r.currency === 'string' ? r.currency : '',
@@ -109,7 +116,7 @@ export function createModelCenterAdapters(api: any) {
         }
         const usedOf = (id: string) => {
           const u = usedByModel.get(id);
-          return u ? { micro: u.usedMicros, currency: u.currency } : null;
+          return u && !invalidModels.has(id) ? { micro: u.usedMicros, currency: u.currency } : null;
         };
         return { session: usage, models: view.customs.map((m: any) => ({
           id: m.id, name: m.name, enabled: m.enabled, bindings: m.bindings,
@@ -124,7 +131,8 @@ export function createModelCenterAdapters(api: any) {
             meterSource: '上游用量',
             note: stats === null
               ? '宿主尚未提供 ledger/stats，等接口变更单 §6 接线后本列自动点亮。'
-              : (chatGroup.parts.length === 0
+              : (chatGroup.invalid ? '账本金额无效或超出安全整数范围，当前费用待核算。'
+                : chatGroup.parts.length === 0
                 ? '账本里没有已结算的 chat 记录；在途预留与待核算不计入本列。'
                 : (chatGroup.parts.length > 1
                   ? `跨币种分列：${moneyNote(chatGroup.parts)}；账本不跨币种相加。`

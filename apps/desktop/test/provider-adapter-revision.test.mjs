@@ -35,3 +35,29 @@ test('配置部分保存必须传回明确失败提示，不报告密钥成功',
   const adapter = createModelCenterAdapters({ modelsSave: async () => ({ revision: 8, saveStatus: { configuration: 'saved', credential: 'failed' } }) })['provider-settings'];
   await assert.rejects(adapter.save({ id: 'p', declared: false, key: 'fixture' }, 7), /配置已保存，但密钥未保存/);
 });
+
+const budgetAdapter = stats => createModelCenterAdapters({
+  usageStatus: async () => ({}), customsDescribe: async () => ({models:[{id:'m'}],revision:1}),
+  modelsDescribe: async () => ({providers:[]}), ledgerStats: async () => stats,
+})['budget-stats'];
+
+test('金额非法或安全整数溢出时显示待核，不展示部分合计', async () => {
+  for (const values of [[10,-1],[NaN],[Infinity],[0.5],[Number.MAX_SAFE_INTEGER,1]]) {
+    const view=await budgetAdapter({usageKindTotals:values.map(usedMicros=>({key:'chat',currency:'CNY',usedMicros}))}).describe();
+    assert.equal(view.costs.model.amountMicro,null);
+    assert.match(view.costs.model.note,/待核算/);
+  }
+});
+
+test('模型金额无效或存在重复币种行时不以最后一行覆盖预算用量', async () => {
+  for (const rows of [[{key:'m',currency:'CNY',usedMicros:-1}],
+    [{key:'m',currency:'CNY',usedMicros:10},{key:'m',currency:'USD',usedMicros:20}]]) {
+    assert.equal((await budgetAdapter({modelTotals:rows}).describe()).models[0].used,null);
+  }
+});
+
+test('有效零金额保留，正常同币种合计和模型用量不受影响', async () => {
+  const view=await budgetAdapter({usageKindTotals:[{key:'chat',currency:'CNY',usedMicros:0},{key:'chat',currency:'CNY',usedMicros:10}],modelTotals:[{key:'m',currency:'CNY',usedMicros:0}]}).describe();
+  assert.equal(view.costs.model.amountMicro,10);
+  assert.deepEqual(view.models[0].used,{micro:0,currency:'CNY'});
+});
