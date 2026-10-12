@@ -209,8 +209,8 @@ export const Page=defineComponent({
             d.bindings.map((b,i)=>el('div','binding',[
               el('div','brow',[
                 el('span','order','第 ' + (i+1) + ' 位'),
-                el('label','field',[el('span','lbl','供应商'),h('select',{class:'ipt',value:b.providerId,title:b.providerId,'aria-label':'供应商',onChange:(e:Event)=>{b.providerId=(e.target as HTMLInputElement).value;b.modelId='';}},[h('option',{value:''},'选择供应商'),...providerChoices(providers.value).map(pid=>h('option',{value:pid},providers.value.find(p=>p.id===pid)?.name||pid))])]),
-                el('label','field',[el('span','lbl','模型'),h('select',{class:'ipt',value:b.modelId,title:modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId)?.name||b.modelId,'aria-label':'模型',onChange:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value},[h('option',{value:''},'选择模型'),...modelChoices(providers.value,b.providerId).map(m=>h('option',{value:m.id},m.name||m.id))])]),
+                el('label','field',[el('span','lbl','供应商'),h('select',{class:'ipt',value:b.providerId,title:b.providerId,'aria-label':'供应商',onChange:(e:Event)=>{b.providerId=(e.target as HTMLInputElement).value;b.modelId='';}},[h('option',{value:''},'选择供应商'),b.providerId&&!providers.value.some(p=>p.id===b.providerId)?h('option',{value:b.providerId,disabled:true},b.providerId+'（目录中不存在）'):null,...providerChoices(providers.value).map(pid=>h('option',{value:pid},providers.value.find(p=>p.id===pid)?.name||pid))])]),
+                el('label','field',[el('span','lbl','模型'),h('select',{class:'ipt',value:b.modelId,title:modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId)?.name||b.modelId,'aria-label':'模型',onChange:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value},[h('option',{value:''},'选择模型'),b.modelId&&!modelChoices(providers.value,b.providerId).some(m=>m.id===b.modelId)?h('option',{value:b.modelId,disabled:true},b.modelId+'（目录中不存在）'):null,...modelChoices(providers.value,b.providerId).map(m=>h('option',{value:m.id},m.name||m.id))])]),
                 el('label','check',[h('input',{type:'checkbox',checked:b.enabled,'aria-label':'启用绑定',onChange:()=>toggleBinding(b)}),'启用']),
                 d.mode==='weighted'?el('input','ipt',null,{type:'number',min:'1',max:'1000',value:String(b.weight),'aria-label':'权重',onInput:(e:Event)=>b.weight=parseInt((e.target as HTMLInputElement).value)||1}):null,
                 btn('↑',()=>moveBinding(i,'up'),'icon',{'aria-label':'上移',disabled:i===0}),
@@ -224,7 +224,7 @@ export const Page=defineComponent({
                 numInp('缓存写（微）',b.priceCacheWriteMicro,v=>b.priceCacheWriteMicro=v,{min:'-1'}),
                 el('input','ipt',null,{value:b.currency,'aria-label':'货币',placeholder:'货币（如 CNY）',onInput:(e:Event)=>b.currency=(e.target as HTMLInputElement).value}),
               ]),
-              el('p','hint',(()=>{const m=modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId);return m?modelCapabilitySummary(m)+'。能力未确认时请到供应商 → 编辑 → 上游模型能力声明完成确认。':'请选择已登记的上游模型。';})()),
+              el('p','hint',(()=>{const m=modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId);if(b.providerId&&!providers.value.some(p=>p.id===b.providerId))return '原供应商不在当前目录中，已保留绑定。请重新读取目录或选择其他供应商。';if(b.modelId&&!m)return '原模型不在当前供应商目录中，已保留绑定。请拉取模型目录或重新选择。';return m?modelCapabilitySummary(m)+'。能力未确认时请到供应商 → 编辑 → 上游模型能力声明完成确认。':'请选择已登记的上游模型。';})()),
             ],{key:i})),
             !d.bindings.length?el('p','hint','尚未添加绑定。'):null,
             btn('+ 添加绑定',addBinding,'secondary',{disabled:!writable.value}),

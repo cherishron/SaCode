@@ -66,3 +66,10 @@ side-panels 单测3/3；前端重打包通过；正式 Electron/main/preload/既
 最新证据目录 models-matrix-1791813439777，names-results.json；每组5个表单状态取顶/底截图。人工查看多绑定暗色窄窗的绑定价格及操作区，未发现横向越界。价格重排判据证明回执之外的界面编辑状态不串绑定；仍为适配器夹具验收，没有真实供应商写入、费用结算或新Host构建。
 
 9152bea保留 ui-smoke 原提交的CRLF；默认diff --check将新增CR行末标作空白，按 core.whitespace=cr-at-eol 检查无其他空白错误。没有为去掉提示重写整文件。
+## 目录缺失异常态（2026-10-12）
+
+已核对 origin/refactor/dsh-learning 推送到 7bcbe433c9e922d397aebc4da5ac423f593113a6。
+
+继续修复已保存绑定的供应商/模型不在当前目录时，原生select空白或显示“请选择”的误导状态。新增仅用于展示的禁选原ID选项，保留原绑定并提示目录缺失；用户主动更换供应商才清除旧模型。无自动写入、自动删除或假能力确认。
+
+真实Electron夹具矩阵亮暗 × 1000/600px，四组各40项，合计160项，均退出0。最新 missing-results.json 位于 models-matrix-1791813439777；目录为 *-missing，各有6个状态顶/底截图。人工查看 dark-600-missing/6-custom-missing-catalog-bottom.png，价格、身份与缺失提示均可见，字段无横向越界。此处依然是界面适配器夹具，不是供应商服务或核心写操作验收。

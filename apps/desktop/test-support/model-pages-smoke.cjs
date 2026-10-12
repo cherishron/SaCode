@@ -67,6 +67,15 @@ app.whenReady().then(async()=>{
     await capture('custom-multi-bindings');
     root.querySelector('button[aria-label="删除绑定"]').click();await settle();check('删除单个绑定保留其他绑定',root.querySelectorAll('.cm-binding').length===1&&firstSelect().value==='second');
     multiUi.unmount();await settle();
+    const orphan={...custom,bindings:[{...binding('missing-model'),providerId:'missing-provider'},binding('removed-model')]};
+    const orphanUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Customs,{adapter:{describe:async()=>({providers:[multiProvider],customs:[orphan],revision:'missing-r1',writable:true}),upsert:async()=>{throw Error('模拟夹具禁止保存');}}})});
+    orphanUi.config.errorHandler=e=>errors.push(String(e));orphanUi.mount(root);await settle();root.querySelector('button[aria-label="编辑 '+orphan.name+'"]').click();await settle();
+    check('缺失供应商仍显示原绑定身份',root.querySelector('select[aria-label="供应商"]').value==='missing-provider'&&root.querySelector('select[aria-label="供应商"]').selectedOptions[0].disabled);
+    check('缺失模型仍显示原绑定身份',root.querySelectorAll('select[aria-label="模型"]')[1].value==='removed-model'&&root.querySelectorAll('select[aria-label="模型"]')[1].selectedOptions[0].disabled);
+    check('缺失目录说明保留配置',root.textContent.includes('原供应商不在当前目录中，已保留绑定')&&root.textContent.includes('原模型不在当前供应商目录中，已保留绑定'));
+    const pick=root.querySelector('select[aria-label="供应商"]');pick.value=provider.id;pick.dispatchEvent(new Event('change',{bubbles:true}));await settle();
+    check('用户更换供应商清除旧模型身份',root.querySelector('select[aria-label="模型"]').value==='');
+    await capture('custom-missing-catalog');orphanUi.unmount();await settle();
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
