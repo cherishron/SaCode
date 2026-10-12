@@ -178,3 +178,13 @@ HostTeamRuntime 源码实读：describe 在 synchronized(mtx) 内 panel(state())
 明确错误位于提交态 core/src/cmds.cj：第11行带默认值的 parse 缺具名参数标记，expected ',' or ')' found '='；第64行使用非仓颉的对象形态返回类型 {spec:...,args:...}，产生 expected type/operator 与 delimiter 三条后续错误。工作区该文件已存在并发修复（parse! 与 CommandResolveResult 等），不能另外覆盖或整文件代提交。没有宣称吸收修复后的源码已可编，尚须核实调用方及测试依赖并固定落库。
 
 这改变下一优先级：在编译基线未收口前，旧 Host 团队延迟证据仅能描述旧二进制；不能拿它证明 ca04115 最新实现。先切清已有 cmds 修复及依赖、提交级复建，再做团队锁域计时。其他域审计仍可推进，不把一个构建阻断当成所有任务不可进展。
+
+## 第十五轮：依赖叠加与新 Host 的真实团队复验
+
+在第十四轮 ca04115 私有提交快照仅叠加工作区 cmds.cj（哈希留 cmds-overlay-hash.txt）后构建，rc=1。原语法错误消失，进一步暴露 GitQueryResult 缺失、webUrlEncode 重名、SessionLog 缺 isDurableFrozen/freezeAfterDurableFailure/durableCheckpointBatched 等。这证明 cmds 不能单独切为“恢复构建”；现有已提交团队依赖尚未落库的 Git/持久化等实现。
+
+另建 team-host-working-snapshot，逐字复制工作区 core/src、apps/host/src 共355个.cj并记录 source-hashes.json，私有配置仅指向仓库已有 stdx 绝对路径，不修改公共环境/配置。独占 TEMP/TMP 运行 cjpm build，rc=0（Host阶段30 warnings）；这是含未提交源码的哈希快照成功，不是固定提交通过。
+
+私有新Host: target/private-host-bin/sacode-host.exe，SHA256 E605F1657DD1E6AA26C98B0F0DA354EAD6C800CA74C9F2948015C4A133C61106，DLL及信任锚来自现有本机载荷，未做无SDK依赖验收。原5秒请求窗口下私有追踪1/1通过：member/create571ms，task/create8ms，assign9ms，消息发送3ms，在途describe43/45ms，其余1–2ms；整个场景2.29秒。随后指定新SACODE_HOST运行原team-host.test.mjs，3/3，rc=0，原件私有 apps/host/team-full.log 与 team-full.exit.txt。没有修改测试超时。
+
+裁决更新：此前旧Host重复超时仍保留，但不能扩大成当前哈希源码必然超时；当前工作区快照团队真实局部链通过，固定提交仍不可构建，产物一致性缺口成为收口前置。源码、DLL和配置差异尚未逐项归因，不能凭新快照更快宣称某个锁改动已修复。下一步核现有持久化/Git/命令/网络冲突修复的责任与提交切分，形成可复建提交后重打载荷，不能直接将355文件混批提交。
