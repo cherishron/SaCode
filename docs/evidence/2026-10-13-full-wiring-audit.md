@@ -142,3 +142,13 @@ Node --test packaging-contract.test.mjs：7/7，rc=0；递归本地 CJS 清单�
 本轮不修改仓颉实现；本地技能定向查找未得到可用 CangjieSkills 副本，后续 .cj 实施前须取得并读取相应技能或登记 SDK 探针替代限制。上表为源码定位，不宣称核心编译或服务实测通过。当前 Codex 负责审计及本批页面断言，核心/公共入口实施责任需与在飞路径确认。
 
 product-management.test.mjs 扩展三页夹具，新增受阻状态、保存/搜索/连接测试禁用判据；隔离依赖运行 5/5，rc=0。这是无服务时诚实呈现的检查，不升级任何管理能力完成状态。后续必须实现真实管理服务，不能以长期禁用替代需求交付。
+
+## 第十一轮：团队与页面工具的真实接线及红项
+
+前置提交 906e2ba。独占 TMP，隔离 esbuild/vue 解析及 Node require 路径运行 team-host/team-panel-entry/page-tools-ipc：24 条，15 pass / 9 fail，rc=1。页面 8 条红为夹具提取 app 装配段时缺 managementPage 注入；工作区补 ref 后页面专项 11/11，rc=0。该文件已有并发 team-state.js 装配夹具变更，新增注入与之耦合，暂不单独提交或整文件吸收，保留工作区供该线合并。
+
+真实团队首例 team/describe 超时；独占新 TMP 单独 --test-name-pattern=成员消息进入 复跑仍 1 条 / 0 pass / 1 fail，rc=1，17.2 秒请求超时、20.1 秒进程终结。不是运行观察超时，不保留假等待；原因尚未定位，不能归因并发或环境。另两条真实 Host 场景（精确审批成员认领/完成，团队创建及持久恢复）本轮通过，但不抵消该失败。团队动作与 ACP 外部委派是不同链路，不能用团队通过证明 ACP 入口完成。
+
+页面工具 10/10 为 VM 模拟主进程/页面注册表。关键事实：main.cjs pageToolCall 通过 executeJavaScript 直接调用 tool.handler；page-tools.js 注册 readState/clickElement/inputText/scroll。字段校验与 WebMCP 转主进程成立，但没有核心一次性审批、任务身份、取消及日志结算，尤其 click/input 可触发后续产品动作。因此该组绿不能证明统一授权。后续需共享核心执行契约登记贡献工具、动作分类与不可变提案，副作用动作无核心许可拒绝；终结、错误、取消事实走同一结算。不能仅把执行迁至主进程当作安全闭环。
+
+本轮裁决：团队部分接通且真实用例存在重复失败；ACP 缺公开委派接线；页面工具缺统一授权/结算，为交付前优先缺口。审计仍未结束，CLI 同场景、真实 Electron 与最终载荷尚待核。
