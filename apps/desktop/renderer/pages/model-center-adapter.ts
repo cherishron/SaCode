@@ -63,6 +63,7 @@ export function createModelCenterAdapters(api: any) {
         // 只写真正变了位的条目：每条 sort 都会 bump 一次修订号，全量重写会让
         // 一次拖动把 N 个无关条目都卷进冲突窗口。
         const view = await api.modelsDescribe();
+        if (view.revision !== expectedRevision) throw new Error('settings-conflict');
         const current = new Map((view.providers || []).map((p: any) => [p.id, p.sortOrder]));
         let revision = expectedRevision;
         for (let i = 0; i < keys.length; i++) {
