@@ -47,6 +47,26 @@ app.whenReady().then(async()=>{
       if(writable)await capture(title==='供应商'?'provider-create':'custom-create');
       ui.unmount();await settle();
     }
+    // 多绑定仅使用明确的模拟目录，不请求或写入真实供应商。
+    const longModel='跨文件代码理解与复杂接口重构模型-'+('长名称'.repeat(18));
+    const multiProvider={...provider,models:[{id:'first',name:longModel},{id:'second',name:'备用语义模型'}]};
+    const binding=modelId=>({providerId:provider.id,modelId,enabled:true,order:0,weight:10,priceInMicro:1200000,priceOutMicro:3600000,priceCacheReadMicro:-1,priceCacheWriteMicro:-1,priceVersion:1,currency:'CNY'});
+    const multi={...custom,bindings:[binding('first'),{...binding('second'),order:1,weight:20}]};
+    const multiUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Customs,{adapter:{describe:async()=>({providers:[multiProvider],customs:[multi],revision:'multi-r1',writable:true}),upsert:async()=>{throw Error('模拟夹具禁止保存');}}})});
+    multiUi.config.errorHandler=e=>errors.push(String(e));multiUi.mount(root);await settle();
+    root.querySelector('button[aria-label="编辑 '+multi.name+'"]').click();await settle();
+    check('多绑定实际显示两组',root.querySelectorAll('.cm-binding').length===2);
+    check('供应商显示名称并保留身份',root.querySelector('select[aria-label="供应商"]').selectedOptions[0].textContent===provider.name&&root.querySelector('select[aria-label="供应商"]').value===provider.id);
+    check('长模型名有完整悬浮说明',root.querySelector('select[aria-label="模型"]').title===longModel);
+    check('长模型名称与价格字段不越界',[...root.querySelectorAll('input,select,fieldset,.cm-binding')].every(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1;}));
+    check('价格与币种来自绑定',root.querySelectorAll('input[aria-label="输入价格（微）"]')[0].value==='1200000'&&root.querySelectorAll('input[aria-label="货币"]')[0].value==='CNY');
+    const firstSelect=()=>root.querySelector('select[aria-label="模型"]');
+    root.querySelector('button[aria-label="下移"]').click();await settle();check('绑定重排保留模型身份',firstSelect().value==='second');
+    const price=root.querySelector('input[aria-label="输入价格（微）"]');price.value='2400000';price.dispatchEvent(new Event('input',{bubbles:true}));await settle();
+    root.querySelectorAll('button[aria-label="上移"]')[1].click();await settle();check('重排后价格仍绑定原模型',root.querySelectorAll('input[aria-label="输入价格（微）"]')[1].value==='2400000'&&firstSelect().value==='first');
+    await capture('custom-multi-bindings');
+    root.querySelector('button[aria-label="删除绑定"]').click();await settle();check('删除单个绑定保留其他绑定',root.querySelectorAll('.cm-binding').length===1&&firstSelect().value==='second');
+    multiUi.unmount();await settle();
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。

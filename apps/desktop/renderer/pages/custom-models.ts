@@ -209,8 +209,8 @@ export const Page=defineComponent({
             d.bindings.map((b,i)=>el('div','binding',[
               el('div','brow',[
                 el('span','order','第 ' + (i+1) + ' 位'),
-                el('label','field',[el('span','lbl','供应商'),h('select',{class:'ipt',value:b.providerId,'aria-label':'供应商',onChange:(e:Event)=>{b.providerId=(e.target as HTMLInputElement).value;b.modelId='';}},[h('option',{value:''},'选择供应商'),...providerChoices(providers.value).map(pid=>h('option',{value:pid},pid))])]),
-                el('label','field',[el('span','lbl','模型'),h('select',{class:'ipt',value:b.modelId,'aria-label':'模型',onChange:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value},[h('option',{value:''},'选择模型'),...modelChoices(providers.value,b.providerId).map(m=>h('option',{value:m.id},m.name||m.id))])]),
+                el('label','field',[el('span','lbl','供应商'),h('select',{class:'ipt',value:b.providerId,title:b.providerId,'aria-label':'供应商',onChange:(e:Event)=>{b.providerId=(e.target as HTMLInputElement).value;b.modelId='';}},[h('option',{value:''},'选择供应商'),...providerChoices(providers.value).map(pid=>h('option',{value:pid},providers.value.find(p=>p.id===pid)?.name||pid))])]),
+                el('label','field',[el('span','lbl','模型'),h('select',{class:'ipt',value:b.modelId,title:modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId)?.name||b.modelId,'aria-label':'模型',onChange:(e:Event)=>b.modelId=(e.target as HTMLInputElement).value},[h('option',{value:''},'选择模型'),...modelChoices(providers.value,b.providerId).map(m=>h('option',{value:m.id},m.name||m.id))])]),
                 el('label','check',[h('input',{type:'checkbox',checked:b.enabled,'aria-label':'启用绑定',onChange:()=>toggleBinding(b)}),'启用']),
                 d.mode==='weighted'?el('input','ipt',null,{type:'number',min:'1',max:'1000',value:String(b.weight),'aria-label':'权重',onInput:(e:Event)=>b.weight=parseInt((e.target as HTMLInputElement).value)||1}):null,
                 btn('↑',()=>moveBinding(i,'up'),'icon',{'aria-label':'上移',disabled:i===0}),
