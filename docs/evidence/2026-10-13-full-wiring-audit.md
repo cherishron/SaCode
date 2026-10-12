@@ -188,3 +188,29 @@ HostTeamRuntime 源码实读：describe 在 synchronized(mtx) 内 panel(state())
 私有新Host: target/private-host-bin/sacode-host.exe，SHA256 E605F1657DD1E6AA26C98B0F0DA354EAD6C800CA74C9F2948015C4A133C61106，DLL及信任锚来自现有本机载荷，未做无SDK依赖验收。原5秒请求窗口下私有追踪1/1通过：member/create571ms，task/create8ms，assign9ms，消息发送3ms，在途describe43/45ms，其余1–2ms；整个场景2.29秒。随后指定新SACODE_HOST运行原team-host.test.mjs，3/3，rc=0，原件私有 apps/host/team-full.log 与 team-full.exit.txt。没有修改测试超时。
 
 裁决更新：此前旧Host重复超时仍保留，但不能扩大成当前哈希源码必然超时；当前工作区快照团队真实局部链通过，固定提交仍不可构建，产物一致性缺口成为收口前置。源码、DLL和配置差异尚未逐项归因，不能凭新快照更快宣称某个锁改动已修复。下一步核现有持久化/Git/命令/网络冲突修复的责任与提交切分，形成可复建提交后重打载荷，不能直接将355文件混批提交。
+
+## 第十六轮：最小构建依赖闭包复核
+
+以 b312025 提交归档为基底，在忽略目录 baseline-closure-candidate 逐层叠加工作区源码，未修改公共实现或暂存共享文件。首轮8文件叠加后核心可进入Host编译，但Host依赖尚未入库的ExecutionApi/Service/Run及GoalRunner.start。进一步补执行服务四文件、目标运行器/运行时，再补shlex的outputLimit监督契约、goal_scheduler轮次契约与goal_claim.claimedFor；每轮独占TEMP/TMP，日志build-v2至build-v5及真实退出码保留。
+
+v5核心编译阶段通过，Host仍5条编译错误：terminalOutputJson缺实现；main/team_runtime的askForCall双参数调用与提交态审批三参数契约不符；SessionWorkspace.revision缺失；RealSseProvider.reportedUsage缺失。终态rc=1，不能记为可构建基线。该结果进一步证明已提交入口与未提交核心依赖交叉，不能只提交最初8文件或把工作区全量成功当提交态通过。下一步核terminal_view、approval、workspace与sse各契约及调用方，固定候选再跑真实入口；未做发布或替换公共Host。
+
+## 第十七轮：Host缺失接口与审批占位实现核查
+
+在v5候选叠加terminal_view.cj、approval.cj、workspace.cj与sse.cj，逐文件SHA记录在私有host-dependencies-overlay.json。已读取实际差异：terminalOutputJson从日志只读分页；workspace.revision按目录事件派生；sse增加供应商LedgerUsage读面；approval工作区实现精确参数绑定、一次性消费及已批准未消费票的过期。
+
+重要风险：提交态approval.cj底部askForCall/consumeExactForCall/consumeForCall仍为工具名审批包装，argumentsMatch恒为true；它不是精确授权实现。工作区补丁移除这些占位并以不可变arguments匹配，不能只为补默认ttl参数而保留旧放行逻辑。必须覆盖参数挪用、旧未绑定票、过期、重复消费，并与执行/模型/团队调用方一起收口。
+
+v6构建核心阶段输出168 warnings，继续进入Host编译。观察时执行句柄85803与cjc进程32896均仍存活，尚无终态，不将等待或无错误输出算通过；后续读取同一执行句柄与build-v6.exit.txt，再用新Host复验模型写审批和持久任务入口。
+
+## 第十八轮：精确审批专项与提交态反证
+
+新增当前Codex自有approval_binding_test.cj三条用例，覆盖错误参数及工具名消费不得放行且不烧正确票、旧未绑定票不得进入精确授权、批准未消费票到期拒绝且过期事件幂等。独立approval-binding-candidate副本只保留生产文件和本批测试，独占TMP运行cjpm test：TOTAL3/PASSED3/SKIPPED0/ERROR0/FAILED0，rc0。
+
+将副本approval.cj替换为HEAD占位实现后，使用显式ttl以避免默认参数编译差异，binding-old-v2.log实际TOTAL3/PASSED0/ERROR0/FAILED3，rc1，逐项命中越权与过期缺陷。第一次恢复运行仍得到旧红结果；更新恢复文件mtime强制重编后binding-restored-v2.log重新TOTAL3/PASSED3/ERROR0/FAILED0，rc0。源文件恢复SHA在restored-approval-hash.json，不能把第一次恢复失败隐去。未提交新测试，因其依赖共享审批修复，需同批落库避免提交态红。
+
+Host v6仍在LLVM编译，句柄85803及其llc子进程13984已确认存活，CPU累计从237秒增长到572秒；无终态不报通过、不重启同一构建。
+
+## 第十九轮：精确审批修复与原有回归收口
+
+approval-binding-candidate加入原有approval_test.cj，与新增三条测试共同运行：最终Summary TOTAL17/PASSED17/SKIPPED0/ERROR0/FAILED0，真实rc0；包括真实单调时钟过期、并发发号应答消费及错误工具不烧票。原件approval-regression.log/exit.txt。拟吸收共享approval.cj的完整精确参数与过期修复（51增19删），未包含执行、会话或Host其他在飞文件；与本批测试同提交，不能据17条绿扩大为全仓可构建或全链路授权完成。

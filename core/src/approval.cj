@@ -16,7 +16,7 @@ import std.time.MonoTime
 // 四条 fail-closed 规则：
 // 1) 认得的决定只有 `allowed-once` 与 `denied`，其余（allowed-always、空串、乱码）不改判也不成功；
 // 2) 一次性就是字面意思的一次，consume 用过即失效；
-// 3) 过期即拒：pending 过了期限自动转 expired，consume 拿不到放行；
+// 3) 过期即拒：pending 和尚未消费的 allowed-once 过期自动转 expired；
 // 4) 票绑工具：consume 要同时报出「要执行的是哪个工具」，批给别的工具的票不放行。
 // 旧审批 ID 不可重用：已结算的工单不再接受第二次应答，也不产生第二条 decided。
 //
@@ -50,12 +50,15 @@ class ApprovalTicket {
     let tool: String
     var state: String
     let deadline: Int64
+    // 原始参数不可变；None 仅供旧入口兼容，Some 不允许按工具名绕过。
+    let arguments: Option<String>
 
-    public init(id: Int64, tool: String, deadline: Int64) {
+    public init(id: Int64, tool: String, deadline: Int64, arguments!: Option<String> = None) {
         this.id = id
         this.tool = tool
         this.state = "pending"
         this.deadline = deadline
+        this.arguments = arguments
     }
 }
 
@@ -79,6 +82,17 @@ public class ApprovalDesk {
     }
 
     public func askWithTtl(toolName: String, ttl: Int64): Int64 {
+        return askBound(toolName, ttl, None)
+    }
+
+    // 绑定确切工具参数；保留原始字节，不把 JSON 重编码当成同一授权。
+    // 这只是进程内绑定；旧 asked 事件不保存参数，重启不会恢复放行。
+    public func askForCall(toolName: String, arguments: String, ttl!: Int64 = 30): Int64 {
+        return askBound(toolName, ttl, Some(arguments))
+    }
+
+    private func askBound(toolName: String, ttl: Int64, arguments: Option<String>): Int64 {
+        if (toolName.size == 0 || ttl <= 0) { throw Exception("invalid-approval-proposal") }
         // 号必须从日志里已出现过的最大号往后接，不能靠进程内计数器从头数：
         // CLI 每次 `sacode call`、桌面每次重启宿主都是新进程，计数器归零就会在日志里
         // 再发一个 1 号，两条 `approval/asked 1:write` 让审计答不出「是哪一次批的」。
@@ -91,7 +105,7 @@ public class ApprovalDesk {
                 nextId = seen
             }
             nextId += 1
-            items.add(ApprovalTicket(nextId, toolName, clock() + ttl))
+            items.add(ApprovalTicket(nextId, toolName, clock() + ttl, arguments: arguments))
             log.append("approval/asked", "${nextId}:${toolName}")
             id = nextId
         } finally {
@@ -174,12 +188,29 @@ public class ApprovalDesk {
     // 挪用不烧票：这张票对它真正批过的动作还得能放行一次，
     // 否则一次误用就把人已给出的审批答复作废了。
     public func consume(id: Int64, tool: String): String {
+        return consumeBound(id, tool, None)
+    }
+
+    public func consumeForCall(id: Int64, tool: String, arguments: String): String {
+        return consumeBound(id, tool, Some(arguments))
+    }
+
+    // 持久任务不得沿用只绑定工具名的旧工单。
+    public func consumeExactForCall(id: Int64, tool: String, arguments: String): String {
+        return consumeBound(id, tool, Some(arguments), exact: true)
+    }
+
+    private func consumeBound(id: Int64, tool: String, arguments: Option<String>, exact!: Bool = false): String {
         mtx.lock()
         var grant = ""
         try {
             reap()
             if (let Some(t) <- find(id)) {
-                if (t.tool == tool && t.state == "allowed-once") {
+                var matches = t.arguments.isNone() && !exact
+                if (let Some(expected) <- t.arguments) {
+                    if (let Some(actual) <- arguments) { matches = expected == actual }
+                }
+                if (t.tool == tool && matches && t.state == "allowed-once") {
                     t.state = "used"
                     grant = "allowed-once"
                 }
@@ -188,6 +219,20 @@ public class ApprovalDesk {
             mtx.unlock()
         }
         return grant
+    }
+
+    // 仅用于区分拒绝原因；真正的匹配和消费仍在同一把锁内完成。
+    public func argumentsMatch(id: Int64, arguments: String): Bool {
+        mtx.lock()
+        var matches = false
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                matches = t.arguments.isNone()
+                if (let Some(expected) <- t.arguments) { matches = expected == arguments }
+            }
+        } finally { mtx.unlock() }
+        return matches
     }
 
     // 这张票批的是哪个工具；号不存在回空串。与 stateOf 同一类只读探查，
@@ -229,28 +274,15 @@ public class ApprovalDesk {
         return None
     }
 
-    // 过期结算幂等：state 一旦离开 pending 就不再重写，避免同一张工单落多条 expired 事件。
+    // 过期结算幂等：待决定或已批准未消费的票到期只落一次 expired；终态不改写。
     // 每次读状态都先扫一遍钟——过期不依赖有没有人恰好调用了某个推进接口。
     private func reap() {
         let now = clock()
         for (t in items) {
-            if (t.state == "pending" && now >= t.deadline) {
+            if ((t.state == "pending" || t.state == "allowed-once") && now >= t.deadline) {
                 t.state = "expired"
                 log.append("approval/expired", "${t.id}:${t.tool}")
             }
         }
     }
-
-    // Stub: askForCall / consumeExactForCall / consumeForCall / argumentsMatch
-    // 实际逻辑在未提交的 execution_*.cj 文件中
-    public func askForCall(toolName: String, args: String, ttl!: Int64): Int64 { return askWithTtl(toolName, ttl) }
-    public func consumeExactForCall(id: Int64, tool: String, args: String): String {
-        let grant = consume(id, tool)
-        return grant
-    }
-    public func consumeForCall(id: Int64, tool: String, args: String): String {
-        let grant = consume(id, tool)
-        return grant
-    }
-    public func argumentsMatch(id: Int64, args: String): Bool { return true }
 }
