@@ -103,6 +103,22 @@ app.whenReady().then(async()=>{
     check('供应商变更期间锁定表单与其他动作',root.querySelector('fieldset').disabled&&root.querySelector('button[aria-label="禁用 '+provider.name+'"]').disabled&&root.querySelector('button[aria-label="拉取 '+provider.name+' 模型目录"]').disabled);
     providerReject(Error('fixture-provider-rejected'));await settle();check('供应商失败保留草稿并解除锁定',root.querySelector('input[aria-label="显示名称"]').value==='保留供应商草稿'&&!root.querySelector('fieldset').disabled&&root.textContent.includes('fixture-provider-rejected'));
     await capture('provider-save-failure');[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').click();await settle();const readsBeforeProviderClose=providerReads;providerUi.unmount();providerResolve();await settle();check('供应商关闭后迟到保存不刷新',providerReads===readsBeforeProviderClose);
+    // 每种供应商动作单独验证，避免一种操作的锁掩盖另一种操作的缺口。
+    for(const action of ['remove','save','reorder','pullModels']){
+      let calls=0,reads=0,rev='action-r1',invalidateAction,resolveAction,rejectAction,sentArgs;
+      const actionAdapter={describe:async()=>{reads++;return{providers:[multiProvider,{...provider,id:'second-provider',name:'第二供应商'}],catalog:[],revision:rev,writable:true};},subscribe:fn=>{invalidateAction=fn;return()=>{};}};
+      actionAdapter[action]=async(...args)=>{calls++;sentArgs=args;return new Promise((resolve,reject)=>{resolveAction=resolve;rejectAction=reject;});};
+      const actionUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Providers,{adapter:actionAdapter})});actionUi.config.errorHandler=e=>errors.push(String(e));actionUi.mount(root);await settle();
+      let trigger;
+      if(action==='remove'){root.querySelector('button[aria-label="删除 '+provider.name+'"]').click();await settle();rev='action-r2';invalidateAction();await settle();trigger=[...root.querySelectorAll('button')].find(b=>b.textContent==='确认删除');}
+      else trigger=root.querySelector('button[aria-label="'+(action==='save'?'禁用 '+provider.name:action==='reorder'?'下移 '+provider.name:'拉取 '+provider.name+' 模型目录')+'"]');
+      trigger.click();trigger.click();await settle();check('供应商 '+action+' 阻止重复调用',calls===1);check('供应商 '+action+' 绑定请求修订',sentArgs[1]==='action-r1');
+      if(action==='save')check('供应商启停保留模型且仅切换启用',sentArgs[0].enabled===false&&sentArgs[0].models.length===2&&sentArgs[0].models[0].id==='first');
+      if(action==='reorder')check('供应商排序提交完整顺序',sentArgs[0].join(',')==='second-provider,fixture');
+      rejectAction(Error('fixture-'+action+'-rejected'));await settle();check('供应商 '+action+' 失败显示原因并可重试',root.textContent.includes('fixture-'+action+'-rejected')&&!trigger.disabled);
+      if(action==='remove')check('供应商删除失败保留确认提案',!!root.querySelector('[role="alertdialog"]'));
+      trigger.click();await settle();check('供应商 '+action+' 可重新提交',calls===2);const beforeClose=reads;actionUi.unmount();resolveAction();await settle();check('供应商 '+action+' 迟到回执不刷新',reads===beforeClose);
+    }
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
