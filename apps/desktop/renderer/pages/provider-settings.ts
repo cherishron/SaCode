@@ -72,8 +72,8 @@ export const Page=defineComponent({
 
     const reload=async()=>{
       if(!props.adapter||disposed)return;
-      const gen=++generation;loading.value=true;error.value='';
-      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;}
+      const gen=++generation;loading.value=true;error.value='';message.value='';
+      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;return true;}
       catch(e){if(gen===generation&&!disposed){error.value=errText(e);}}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
@@ -84,7 +84,7 @@ export const Page=defineComponent({
     const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value;
     const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success='')=>{
       saving.value=true;error.value='';message.value='';
-      try{await action();if(disposed)return;done();await reload();if(!disposed)message.value=success;}
+      try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?success:'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed)error.value=errText(e);}
       finally{if(!disposed){saving.value=false;pulling.value=null;}}
     };

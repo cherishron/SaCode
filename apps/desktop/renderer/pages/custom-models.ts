@@ -96,8 +96,8 @@ export const Page=defineComponent({
 
     const reload=async()=>{
       if(!props.adapter||disposed)return;
-      const gen=++generation;loading.value=true;error.value='';
-      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;customs.value=r.customs;providers.value=r.providers;revision.value=r.revision;writable.value=r.writable;}
+      const gen=++generation;loading.value=true;error.value='';message.value='';
+      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;customs.value=r.customs;providers.value=r.providers;revision.value=r.revision;writable.value=r.writable;return true;}
       catch(e){if(gen===generation&&!disposed)error.value=errText(e);}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
@@ -110,14 +110,14 @@ export const Page=defineComponent({
       const d={...draft.value,requires:[...draft.value.requires],bindings:draft.value.bindings.map(b=>({...b}))},inv=validateCustom(d,customs.value,editing.value!==null);
       if(inv){error.value=inv;return;}
       saving.value=true;error.value='';
-      try{await props.adapter.upsert(d,draftRevision);if(disposed)return;closeEdit();await reload();if(!disposed)message.value='已保存';}
+      try{await props.adapter.upsert(d,draftRevision);if(disposed)return;closeEdit();const refreshed=await reload();if(!disposed)message.value=refreshed?'已保存':'已保存，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed)error.value=errText(e);}
       finally{if(!disposed)saving.value=false;}
     };
     const remove=async()=>{
       if(!props.adapter||disposed||!deleting.value||saving.value||loading.value||!writable.value)return;
       const id=deleting.value.id,expectedRevision=deleteRevision;saving.value=true;error.value='';
-      try{await props.adapter.remove(id,expectedRevision);if(disposed)return;deleting.value=null;await reload();if(!disposed)message.value='已删除';}
+      try{await props.adapter.remove(id,expectedRevision);if(disposed)return;deleting.value=null;const refreshed=await reload();if(!disposed)message.value=refreshed?'已删除':'已删除，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed)error.value=errText(e);}
       finally{if(!disposed)saving.value=false;}
     };

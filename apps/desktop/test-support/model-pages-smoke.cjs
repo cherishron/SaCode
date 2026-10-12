@@ -127,6 +127,15 @@ app.whenReady().then(async()=>{
       if(action==='remove')check('供应商删除失败保留确认提案',!!root.querySelector('[role="alertdialog"]'));
       trigger.click();await settle();check('供应商 '+action+' 可重新提交',calls===2);const beforeClose=reads;actionUi.unmount();resolveAction();await settle();check('供应商 '+action+' 迟到回执不刷新',reads===beforeClose);
     }
+    // 写入成功与后续读取失败分别记录，禁止把读取重试变成重复写入。
+    for(const kind of ['provider','custom'])for(const action of ['save','remove']){
+      let failRead=false,writes=0;
+      const row=kind==='provider'?validProvider:multi;
+      const adapter={describe:async()=>{if(failRead)throw Error('fixture-after-write-read-failed');return{providers:[validProvider],customs:[multi],catalog:[],revision:'after-write-r1',writable:true};},save:async()=>{writes++;failRead=true;},upsert:async()=>{writes++;failRead=true;},remove:async()=>{writes++;failRead=true;}};
+      const ui=Vue.createApp({setup:()=>()=>Vue.h(kind==='provider'?ModelPages.Providers:ModelPages.Customs,{adapter})});ui.config.errorHandler=e=>errors.push(String(e));ui.mount(root);await settle();root.querySelector('button[aria-label="'+(action==='save'?'编辑 ':'删除 ')+row.name+'"]').click();await settle();[...root.querySelectorAll('button')].find(b=>b.textContent===(action==='save'?'保存':'确认删除')).click();await settle();
+      check(kind+' '+action+' 写入成功后读取失败显示明确状态',writes===1&&root.textContent.includes('目录刷新失败')&&root.textContent.includes('fixture-after-write-read-failed'));
+      failRead=false;root.querySelector('button[aria-label="刷新'+(kind==='provider'?'供应商':'自定义模型')+'目录"]').click();await settle();check(kind+' '+action+' 读取重试不重复写入',writes===1&&!root.textContent.includes('fixture-after-write-read-failed')&&!root.textContent.includes('目录刷新失败'));ui.unmount();
+    }
     window.SaCodeDialog=Vue.defineComponent({setup:(_,ctx)=>()=>Vue.h('div',{role:'dialog'},ctx.slots.default?.())});
     // 供应商槽位走新适配器契约（describe/save/remove/reorder/pullModels）：
     // fakeApi 把这几个动词桩掉，宿主投影形状与真实 describe 一致。
