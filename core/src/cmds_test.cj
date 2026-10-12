@@ -61,11 +61,78 @@ func commandEmptyNameRejected() {
 func commandResolveWithArgs() {
     let reg = CommandRegistry()
     reg.register("review", "代码审查")
-    // 通过 CommandSpec 的 parse 字段附加解析器（不改 register 签名）
-    let spec = reg.resolve("review")
-    // 直接演示 resolveWithArgs 的用法：先注册普通命令，再用 resolveWithArgs 解析带参
+    // 没有提供解析器的普通命令不自行推断参数。
     let result = reg.resolveWithArgs("review", "123 --effort high")
     @Expect(result.spec.name, "review")
     @Expect(result.args.get("target") ?? "", "")
     @Expect(result.args.get("effort") ?? "", "")
+}
+
+@Test
+func builtinCommandsRegistered() {
+    let reg = CommandRegistry()
+    registerBuiltinCommands(reg)
+    let names = reg.list().map { spec => spec.name }
+    @Expect(names.contains("review"), true)
+    @Expect(names.contains("compress"), true)
+    @Expect(names.contains("init"), true)
+}
+
+@Test
+func reviewCommandDispatched() {
+    let reg = CommandRegistry()
+    registerBuiltinCommands(reg)
+    let result = reg.resolveWithArgs("review", "src/main.cj --effort high --comment --fix --resume")
+    @Expect(result.spec.name, "review")
+    @Expect(result.args.get("target") ?? "", "src/main.cj")
+    @Expect(result.args.get("effort") ?? "", "high")
+    @Expect(result.args.get("comment") ?? "", "true")
+    @Expect(result.args.get("fix") ?? "", "true")
+    @Expect(result.args.get("resume") ?? "", "true")
+}
+
+@Test
+func reviewCommandRejectsMalformedOptions() {
+    let reg = CommandRegistry()
+    registerBuiltinCommands(reg)
+    for (raw in ["--effort", "--effort unknown", "--unknown", "one two", "--effort low --effort high"]) {
+        var rejected = false
+        try {
+            reg.resolveWithArgs("review", raw)
+        } catch (_: Exception) {
+            rejected = true
+        }
+        @Expect(rejected, true)
+    }
+}
+
+@Test
+func builtinCommandParsingRejectsUnknownNames() {
+    let reg = CommandRegistry()
+    registerBuiltinCommands(reg)
+
+    // 验证 3 个命令全部已注册
+    @Expect(reg.list().size, Int64(3))
+
+    // 验证 review 带参解析
+    let reviewResult = reg.resolveWithArgs("review", "src/main.cj --effort high")
+    @Expect(reviewResult.spec.name, "review")
+
+    // 验证 compress 无参解析
+    let compressResult = reg.resolveWithArgs("compress", "")
+    @Expect(compressResult.spec.name, "compress")
+    @Expect(compressResult.args.size, Int64(0))
+
+    // 验证 init 无参解析
+    let initResult = reg.resolveWithArgs("init", "")
+    @Expect(initResult.spec.name, "init")
+
+    // 验证未注册命令被拒
+    var threw = false
+    try {
+        reg.resolve("ghost")
+    } catch (e: Exception) {
+        threw = true
+    }
+    @Expect(threw, true)
 }

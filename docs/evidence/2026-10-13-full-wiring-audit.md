@@ -232,3 +232,9 @@ approval-binding-candidate加入原有approval_test.cj，与新增三条测试�
 继续核模型页发现groupByCurrency仅判断number类型，负数/非整数/NaN/Infinity与合计安全整数溢出可能成为展示值；modelTotals重复模型行直接覆盖，跨币种可冒充单模型用量。适配器现拒绝这些数值，整组费用返回null并注明待核算，重复或非法模型用量返回null；有效零值与正常同币种合计保留。provider-adapter-revision.test.mjs新增三组语义断言，与原五条合计8/8，rc0（Node22.23.2，可控API夹具）。
 
 这只是读面诚实保护，不能代替Int64金额跨IPC无损传输设计；密钥失败的独立重试入口当前仍缺，尚未新增通道。Host v6句柄85803仍存活，LLVM子进程13984累计CPU已到1291秒，未重启、未延长任何测试请求超时、未把未终态算绿。
+
+## 第二十三轮：命令注册表编译修复及参数回归
+
+读取cmds.cj完整差异并将工作区cmds_test.cj加入独立验收副本。9条命令测试覆盖注册/未知/重名/空名、普通无解析器不推断参数、内置命令登记、review目标/effort/布尔选项与非法重复拒绝；与前24条合计最终TOTAL33/PASSED33/SKIPPED0/ERROR0/FAILED0，rc0，原件command-regression.log/exit.txt。源码与测试哈希核对后同批吸收具名parse参数、CommandResolveResult结构、仓颉合法空串/Option解析及内置解析器。不宣称review/compress/init真实执行已闭环，登记解析与执行分开判定。
+
+密钥独立重试需核心修订/提供方身份绑定，不能仅把credential/set透传给页面后宣称安全恢复；当前仍是明确部分保存提示。Host构建同一句柄85803尚未终态，继续等待。
