@@ -174,3 +174,23 @@ function makeDeps(overrides = {}) {
     startTask: overrides.startTask,
   };
 }
+
+
+test('同会话队列乱序回读不覆盖最新条目', async()=>{
+ const deps=makeDeps(),pending=[];deps.api.queueDescribe=()=>new Promise(resolve=>pending.push(resolve));const assembly=createSendQueueAssembly(deps);
+ const old=assembly.refreshQueue(),latest=assembly.refreshQueue();pending[1]({nextTurn:[{id:'latest',source:{rpcId:'r2'}}]});await latest;pending[0]({nextTurn:[{id:'old',source:{rpcId:'r1'}}]});await old;assert.equal(deps.queueRows.value[0].id,'latest');
+});
+test('队列读取失败保留原条目与待确认项，重试可恢复', async()=>{
+ const rows=[{id:'retained',source:{rpcId:'r1'}}],pending=[{requestId:'r2'}],deps=makeDeps({queueRows:ref(rows),queuePending:ref(pending)});deps.api.queueDescribe=async()=>{throw Error('read-failed');};const assembly=createSendQueueAssembly(deps);
+ assert.equal(await assembly.refreshQueue(),false);assert.deepEqual(deps.queueRows.value,rows);assert.deepEqual(deps.queuePending.value,pending);assert.match(deps.error.value,/队列读取失败：read-failed/);
+ deps.api.queueDescribe=async()=>({nextTurn:[]});assert.equal(await assembly.refreshQueue(),true);assert.equal(deps.error.value,'');
+});
+test('跨会话迟到失败不污染当前错误', async()=>{
+ let generation=0,reject;const deps=makeDeps({getSessionGeneration:()=>generation,error:ref('当前会话错误')});deps.api.queueDescribe=()=>new Promise((_,r)=>reject=r);const reading=createSendQueueAssembly(deps).refreshQueue();generation++;reject(Error('old-error'));await reading;assert.equal(deps.error.value,'当前会话错误');
+});
+test('队列更新后切换会话不回读新会话', async()=>{
+ let generation=0,resolve,reads=0;const deps=makeDeps({getSessionGeneration:()=>generation});deps.api.queueUpdate=()=>new Promise(r=>resolve=r);deps.api.queueDescribe=async()=>{reads++;return{nextTurn:[]};};const writing=createSendQueueAssembly(deps).updateQueue('q1',{kind:'delete'});generation++;resolve();await writing;assert.equal(reads,0);
+});
+test('损坏队列回执不清空条目或待确认消息', async()=>{
+ const deps=makeDeps({queueRows:ref([{id:'keep'}]),queuePending:ref([{requestId:'keep'}])});deps.api.queueDescribe=async()=>({nextTurn:{}});await createSendQueueAssembly(deps).refreshQueue();assert.equal(deps.queueRows.value[0].id,'keep');assert.equal(deps.queuePending.value.length,1);assert.match(deps.error.value,/bad-queue-view/);
+});

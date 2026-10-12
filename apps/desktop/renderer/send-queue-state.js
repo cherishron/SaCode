@@ -23,19 +23,31 @@
       updateDraft, refresh, refreshCatalog, projectQueueRow,
     } = deps;
 
+    let queueReadSequence = 0;
     async function refreshQueue() {
-      const generation = getSessionGeneration();
-      let view;
-      try { view = await api.queueDescribe(); } catch (e) { return; }
-      if (generation !== getSessionGeneration()) return;
-      queueRows.value = (view.nextTurn || []).map(projectQueueRow);
-      const admitted = new Set(queueRows.value.map(row => row.source.rpcId));
-      queuePending.value = queuePending.value.filter(item => !admitted.has(item.requestId));
+      const generation = getSessionGeneration(), sequence = ++queueReadSequence;
+      const current = () => generation === getSessionGeneration() && sequence === queueReadSequence;
+      try {
+        const view = await api.queueDescribe();
+        if (!current()) return false;
+        if (!view || !Array.isArray(view.nextTurn)) throw new Error('bad-queue-view');
+        const rows = view.nextTurn.map(projectQueueRow);
+        const admitted = new Set(rows.map(row => row.source.rpcId));
+        queueRows.value = rows;
+        queuePending.value = queuePending.value.filter(item => !admitted.has(item.requestId));
+        if (error.value.startsWith('队列读取失败：')) error.value = '';
+        return true;
+      } catch (e) {
+        if (current()) error.value = '队列读取失败：' + cleanErr(e);
+        return false;
+      }
     }
 
     async function updateQueue(id, action) {
+      const generation = getSessionGeneration();
       const text = action.kind === 'edit' ? (action.content || []).map(block => block.type === 'text' ? block.text || '' : '').join('') : '';
       await api.queueUpdate(id, action.kind, text);
+      if (generation !== getSessionGeneration()) return;
       await refreshQueue();
     }
 

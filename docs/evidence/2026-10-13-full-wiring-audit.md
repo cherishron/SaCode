@@ -72,3 +72,13 @@ Node --test --test-name-pattern=LSP apps/desktop/test/bridge.test.mjs：4/4，�
 Node docs/qa/wiring-inventory.mjs 只读扫描 preload 单行 invoke、桌面处理函数候选、非 vendor renderer 文本引用，写入忽略目录 JSON。本轮定位 111 个动作，处理函数文本候选未出现空项；不能用此声明所有 handler 已实际注册。16 个动作未发现 renderer 文本引用，含 LSP 七动作以及 teamApprovalAnswer/teamMessageBroadcast/teamTaskClaim/teamTaskComplete/appearanceGet/appearanceSetTheme/modelsList/modelUpstreamUpsert/pageToolsList。旧接口、别名与通用贡献装配需人工裁决，未命中只记待核，不判死代码。
 
 输出 apps/desktop/.tmp-test/wiring-inventory-1791832617744.json。该库存包含工作区未提交处理函数，不能作为固定提交可运行证明；后续逐域核真实授权、状态和提供方仍未完成。
+
+## 第三轮：队列、目标控制、插件接线及缺口修复
+
+前置提交 7dfae32。页面调用定位：send-queue-state.js → queueDescribe/queueUpdate/queueEnqueue；app.js 的 GoalBar 适配器 → goal 六动作；plugin-manager-adapter → 插件有限 API。增强 enhance.js → promptEnhance/promptPoll/promptCancel，真实增强专项尚未在此轮运行，不升状态。
+
+独占 TEMP/TMP 运行 Node --test apps/desktop/test/goal-control.test.mjs apps/desktop/test/message-queue.test.mjs apps/desktop/test/plugin-manager-wiring.test.mjs：14/14，通过，退出码 0。分项为目标控制 1、队列 5、插件 8。实际已有 Host 覆盖目标持久化与跨会话/陈旧修订拒绝、队列提交去重/跨进程持久/轮次与步边界送达、插件本机生命周期及重启读面；部分插件守卫为模拟 request 单测。队列模型使用本地夹具，不代表真实远端模型。目标控制不包含 GoalRunner 自动完成，插件不包含远程市场完整提供方。
+
+发现并实施：refreshQueue 吞掉读取失败且缺同会话乱序保护；updateQueue 在等待期间切会话会继续回读新会话。本批增加队列读取序号与会话绑定，失败显示真实原因并保留旧条目/待确认项，成功重试清除队列读取错误；无 nextTurn 数组的回执拒绝，投影与待确认裁决准备完成后才更新；更新回执跨会话不再回读新会话。
+
+Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；新增 5 条针对同会话乱序、失败保留与重试、迟到错误、更新后切会话、损坏回执。纯控制器测试不等于真实 Electron 页面；核心与宿主没有修改，不新增完成状态。
