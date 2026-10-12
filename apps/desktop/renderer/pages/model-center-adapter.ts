@@ -56,7 +56,10 @@ export function createModelCenterAdapters(api: any) {
           await api.modelsSetEnabled(draft.id, draft.enabled !== false, expectedRevision);
           return;
         }
-        await api.modelsSave(rest, typeof key === 'string' ? key : '', expectedRevision);
+        const result = await api.modelsSave(rest, typeof key === 'string' ? key : '', expectedRevision);
+        if (result?.saveStatus?.configuration === 'saved' && result.saveStatus.credential === 'failed') {
+          throw new Error('配置已保存，但密钥未保存。请刷新核对配置，取消编辑后重新设置密钥；不要将此状态视为模型已可用。');
+        }
       },
       remove: (id: string, expectedRevision: number) => api.modelsRemove(id, expectedRevision),
       async reorder(keys: string[], expectedRevision: number) {

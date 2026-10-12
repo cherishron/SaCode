@@ -30,3 +30,8 @@ test('内置供应商仅调用启停接口，不发送目录草稿或密钥', as
   await adapter.save({id:'builtin',declared:true,enabled:false,name:'目录名称',baseUrl:'https://example.com',key:'不应发送'},7);
   assert.deepEqual(calls,[['builtin',false,7]]);
 });
+
+test('配置部分保存必须传回明确失败提示，不报告密钥成功', async () => {
+  const adapter = createModelCenterAdapters({ modelsSave: async () => ({ revision: 8, saveStatus: { configuration: 'saved', credential: 'failed' } }) })['provider-settings'];
+  await assert.rejects(adapter.save({ id: 'p', declared: false, key: 'fixture' }, 7), /配置已保存，但密钥未保存/);
+});

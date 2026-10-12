@@ -560,14 +560,7 @@ ipcMain.handle("sacode:modelsSave", async (_e, args) => {
   const draft = modelsGuard.sanitizeDraft(args && args.draft);
   const key = modelsGuard.sanitizeKey(args ? args.key : undefined);
   const expectedRevision = modelsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
-  const view = await withHost(() => bridge.request("model/registry/update", { draft, expectedRevision }));
-  if (key.length > 0) {
-    // 写凭据要用核心派生出的那个名字，而不是渲染层点名的：页面上根本没有这一栏。
-    const saved = (view.providers || []).find((p) => p.id === draft.id);
-    if (!saved || !saved.credentialRef) throw new Error("credential-ref-missing");
-    await withHost(() => bridge.request("credential/set", { ref: saved.credentialRef, value: key }));
-  }
-  return view;
+  return require('./models-save.cjs').saveModelConfiguration((method, params) => withHost(() => bridge.request(method, params)), draft, key, expectedRevision);
 });
 
 ipcMain.handle("sacode:modelsRemove", async (_e, args) => {

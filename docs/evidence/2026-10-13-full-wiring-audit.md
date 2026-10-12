@@ -112,3 +112,9 @@ Node --test apps/desktop/test/send-queue-state.test.mjs：16/16，退出码 0；
 沿调用链核：provider-settings → model-center-adapter.save → modelsSave → models-ipc.cjs → model/registry/update → credential/set。当前 models-ipc.cjs 属未落库并发提取文件，不整文件纳入此提交。故障注入原件 apps/desktop/.tmp-test/model-save-stage-probe.cjs：registry/update 返回新 revision 后 credential/set 失败，调用顺序已确认；返回只有 credential-store-unavailable，stageExposed=false。页面 mutate catch 保留原草稿/修订，后续重试面临 settings-conflict，不能明确报告配置已保存。
 
 修复契约：配置失败返回原有错误；配置已保存而密钥失败必须返回稳定阶段标识及配置修订，不回显密钥/底层敏感消息。页面保持草稿、明确显示“配置已保存，密钥未保存”，回读新目录并更新该提案修订；允许只重试凭据，不通过重复注册表写入恢复。需要同步 modelsSave 有限响应、适配器与供应商页面，以及“配置失败/凭据失败/成功、回读失败、跨会话迟到”测试。配置与凭据保持共享核心权威，不由页面猜测实际写入阶段。该修复尚未实施，不升级 F07 状态。
+
+## 第八轮：模型部分保存阶段回执实施
+
+新增 models-save.cjs：注册表失败仍抛原错误且不写凭据；注册表成功、凭据写入或派生名称失败时返回新注册表视图与 saveStatus(configuration=saved,credential=failed,reason=credential-save-failed)，不转发底层敏感错误。旧提交态主进程 inline handler 与工作区提取态 models-ipc handler 均使用此共享操作；提取文件保持未落库，不整文件提交。package.json 仅新增该文件载荷项，主进程和包清单从 HEAD 构造精确候选排除并发改动。
+
+供应商适配器消费部分保存状态，拒绝报告整次成功，明确配置已保存/密钥未保存并保留页面草稿；正常成功保持旧返回形状。models-save-stage + provider-adapter-revision：9/9，rc=0；models-save-stage + models-ipc：6/6，rc=0。测试为阶段函数与适配器/IPC 字段守卫，不是实际 Electron 凭据失败场景。凭据单独重试、自动回读修订以及打包重建仍未实施，不能把本轮当成全功能收口。
