@@ -555,6 +555,7 @@ createApp({
       selectedCustomModel, previewFloating, detailName,
       budgetDraft, budgetNote, appearanceNote, workspaceNote,
       queuePending, focusComposer: focusComposerCaret,
+      tipsPressure, tips, refreshTips,
       outcome, outcomeKind, enhance,
     });
     const { applySelection, selectSession, createSession, startNewSession, refreshCatalog, openCatalog } = sessionAssembly;

@@ -44,6 +44,8 @@
       await api.sessionSelect(id);
       fileEditor.reset();
       incrementSessionGeneration();
+      if (deps.tipsPressure) deps.tipsPressure.value = undefined;
+      if (deps.tips) deps.tips.value = null;
       selectedScrollId.value = id;
       if (oldId) sessionDrafts.set(oldId, draft.value);
       // 换会话时把在途增强撤掉：那份迟到结果属于上一个会话的输入框，
@@ -64,6 +66,7 @@
       // 换会话=换绑定：上一个会话的名称草稿与状态都必须收起，面板重新读这一条会话的绑定。
       resetWorktreePanel(); await worktreeController.restore();
       await refreshGlobalAppearance();
+      if (deps.refreshTips) await deps.refreshTips();
       workspaceNote.value = '';
       catalog.value = await api.sessionCatalog();
       catalogOpen.value = false;
