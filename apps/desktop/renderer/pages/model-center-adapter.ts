@@ -67,8 +67,9 @@ export function createModelCenterAdapters(api: any) {
         const current = new Map((view.providers || []).map((p: any) => [p.id, p.sortOrder]));
         let revision = expectedRevision;
         for (let i = 0; i < keys.length; i++) {
-          if (current.get(keys[i]) === i) continue;
-          const after = await api.modelsSort(keys[i], i, revision);
+          // 核心把 0 视为未指定顺序；显式顺序从 1 开始。
+          if (current.get(keys[i]) === i + 1) continue;
+          const after = await api.modelsSort(keys[i], i + 1, revision);
           revision = after.revision;
         }
       },
