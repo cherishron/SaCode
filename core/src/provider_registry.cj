@@ -521,6 +521,18 @@ public class ProviderRegistry {
         addInstanceFromCatalog(id, credentialRef)
     }
 
+    // 产品入口不允许无修订创建；凭据引用由实例身份派生。
+    public func addCatalogInstance(id: String, expectedRevision: Int64): Unit {
+        if (id.size == 0 || expectedRevision < 0) { throw Exception("settings-rejected") }
+        let lease = WriteLease(file)
+        if (!lease.acquire()) { throw Exception("provider-settings-busy") }
+        try {
+            reload()
+            guardRevision(expectedRevision)
+            addInstanceFromCatalog(id, "")
+        } finally { lease.release() }
+    }
+
     // 号池的存储形态：同一目录项可反复添加，每次建一份新实例。
     // 目录项只是模板（地址、协议、初始模型列表），实例 id 由核心生成——
     // 拿目录 id 当唯一键就等于「一个品牌只能加一份」，与号池口径冲突。

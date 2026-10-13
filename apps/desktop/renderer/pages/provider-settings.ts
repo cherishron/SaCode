@@ -14,6 +14,7 @@ export interface Adapter{
   save(draft:Draft,expectedRevision:string):Promise<void>;
   saveCredential?(id:string,key:string,expectedRevision:string):Promise<void>;
   setDefault?(id:string,model:string,expectedRevision:string):Promise<void>;
+  createInstance?(catalogId:string,expectedRevision:string):Promise<void>;
   remove(id:string,expectedRevision:string):Promise<void>;
   reorder(keys:string[],expectedRevision:string):Promise<void>;
   pullModels(providerId:string,expectedRevision:string):Promise<void>;
@@ -72,6 +73,7 @@ export const Page=defineComponent({
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
     const credentialRetry=ref<{revision:string;snapshot:string}|null>(null);
     const defaultProviderId=ref(''),defaultModel=ref('');
+    const selectedCatalog=ref('');
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const readReady=ref(false);
@@ -136,6 +138,11 @@ export const Page=defineComponent({
       const expected=revision.value;
       await mutate(()=>props.adapter!.setDefault!(p.id,model,expected),()=>{},'默认模型已保存');
     };
+    const createInstance=async()=>{
+      if(!canMutate()||!props.adapter?.createInstance||!catalog.value.some(p=>p.id===selectedCatalog.value))return;
+      const id=selectedCatalog.value,expected=revision.value;
+      await mutate(()=>props.adapter!.createInstance!(id,expected),()=>{selectedCatalog.value='';},'供应商实例已添加，请配置密钥并核对模型目录');
+    };
 
     onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void reload();});void reload();});
     onBeforeUnmount(()=>{disposed=true;generation++;off?.();});
@@ -159,6 +166,10 @@ export const Page=defineComponent({
         error.value?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
         writable.value===false?el('p','notice','当前部署的设置文档为只读。',{role:'status'}):null,
+        el('div','actions',[
+          el('select','ipt',[el('option',null,'选择内置供应商',{value:''}),...catalog.value.map(p=>el('option',null,p.name||p.id,{value:p.id}))],{'aria-label':'内置供应商目录',value:selectedCatalog.value,disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing||!props.adapter?.createInstance,onChange:(e:Event)=>{selectedCatalog.value=(e.target as HTMLSelectElement).value;}}),
+          btn('添加实例',()=>void createInstance(),'btn',{disabled:!selectedCatalog.value||!readReady.value||!writable.value||loading.value||saving.value||isEditing||!props.adapter?.createInstance}),
+        ]),
 
         // 供应商列表
         el('ul','list',providers.value.map((p,i)=>el('li','row',[

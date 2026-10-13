@@ -366,3 +366,13 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第四十二轮：禁用供应商默认选择共享规则
 
 ProviderRegistry.setDefault加入enabled拒绝，避免页面守卫被直接Host/CLI绕过。新增测试覆盖已选默认→禁用→拒绝改选且修订/默认不变→重新启用后成功。按已读取CangjieSkills通过search_docs批量查询ExpectThrows/Exception message；复用明确1.1.3 stdx环境，不修改公共配置。首轮218条217通过1ERROR，直跑独占用例定位清理非空目录漏recursive参数；修正测试后私有v2终态TOTAL218/PASSED218/SKIPPED0/ERROR0/FAILED0、rc0，生产与测试两文件哈希同候选。局部核心回归，不是全仓/新Host验收；旧debug Host不含此修复，后续重建后需真实拒绝探针。
+
+
+## 第四十三轮：目录实例准入与接线在途
+
+新增核心addCatalogInstance：显式非负修订、WriteLease内回放校验及实例创建，凭据名由实例身份派生；SessionLog.flush借用本机持有租约。私有核心TOTAL219/PASSED219/SKIPPED0/ERROR0/FAILED0、rc0。新model/registry/create-instance严格catalogId/expectedRevision两个字段，Host在途轮次拒绝，IPC拒绝额外凭据引用及不安全整数；preload及页面目录选择/添加与适配器已在工作区接入，未提交。IPC+既有凭据真实Host回归5/5 rc0，只新IPC参数守卫已验，新Host目录动作与页面尚未验证。一次错误调用未指定SACODE_HOST/TMP导致旧公开Host与系统Temp失败2条，改为明确私有debug Host及独占TMP后5/5，不归因源码。须固定候选重建与真实目录添加后再提交。
+
+
+## 第四十四轮：目录添加真实Host与Electron验收
+
+固定HEAD派生Host main三处create-instance接线，叠加本批核心及RPC文件，cjpm build -g --jobs1 rc0。私有runtime-bin沿既有DLL/CA，新Host SHA256 E5952DB2258078F5F1D4519DA5B4F7A219EAA0705AD1BDED013463173CECA14B，不替换公共产物。独占TMP联合model-catalog-instance-host、model-credential-electron-host两场景、model-default-host共4/4 rc0：新实例身份及凭据引用独立、陈旧/未知/额外引用拒绝、跨重启；实际Vue供应商页从空目录选stepfun添加实例，继续密钥与默认选择，状态落核心。另适配器及IPC16/16 rc0。该验收不调用远端供应商且专用窗口部分IPC由夹具装配，发布/完整主窗口未完成。新目录动作是create-instance，旧add-catalog仍兼容但未暴露给本批页面。共享Host/preload/provider页面暂存固定候选或精选hunk，不吸收并发入口重构与新增表单。

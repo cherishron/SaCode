@@ -79,6 +79,7 @@ export function createModelCenterAdapters(api: any) {
       },
       saveCredential: (id: string, key: string, expectedRevision: number) => api.modelsSaveCredential(id, key, expectedRevision),
       setDefault: (id: string, model: string, expectedRevision: number) => api.modelsSetDefault(id, model, expectedRevision),
+      createInstance: (catalogId: string, expectedRevision: number) => api.modelsCreateInstance(catalogId, expectedRevision),
       remove: (id: string, expectedRevision: number) => api.modelsRemove(id, expectedRevision),
       async reorder(keys: string[], expectedRevision: number) {
         // 只写真正变了位的条目：每条 sort 都会 bump 一次修订号，全量重写会让

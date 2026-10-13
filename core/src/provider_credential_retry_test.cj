@@ -3,6 +3,32 @@ import std.fs.*
 import std.unittest.*
 
 @Test
+func providerCatalogInstanceRequiresRevisionAndExclusiveWriter() {
+    let root = "${coreTestRoot()}/provider-catalog-admission"
+    Directory.create(root, recursive: true)
+    let file = "${root}/providers.log"
+    let registry = ProviderRegistry(file)
+    registry.addCatalogInstance("stepfun", 0)
+    let first = registry.describe()
+    @Expect(first.providers.size, 1)
+    @ExpectThrows[Exception](registry.addCatalogInstance("stepfun", 0))
+    @ExpectThrows[Exception](registry.addCatalogInstance("stepfun", -1))
+    @ExpectThrows[Exception](registry.addCatalogInstance("missing", first.revision))
+    @Expect(registry.describe().revision, first.revision)
+    let holder = WriteLease(file)
+    @Expect(holder.acquire(), true)
+    @ExpectThrows[Exception](registry.addCatalogInstance("stepfun", first.revision))
+    @Expect(holder.release(), true)
+    registry.addCatalogInstance("stepfun", first.revision)
+    let second = registry.describe()
+    @Expect(second.providers.size, 2)
+    @Expect(second.providers[0].credentialRef != second.providers[1].credentialRef, true)
+    @Expect(second.providers[0].id != second.providers[1].id, true)
+    @Expect(second.revision, first.revision + 1)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
 func providerDefaultRejectsDisabledProviderWithoutChangingSelection() {
     let root = "${coreTestRoot()}/provider-disabled-default"
     Directory.create(root, recursive: true)

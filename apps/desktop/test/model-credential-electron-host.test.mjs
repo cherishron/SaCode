@@ -19,13 +19,19 @@ for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自�
   writeFileSync(join(dir,'fixture.html'),`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'"><div id="fixture"></div><script src="vue.js"></script><script src="page.js"></script><script src="checks.js"></script>`);
   writeFileSync(join(dir,'checks.js'),`(async()=>{
     try {
+      const wait=async(predicate)=>{for(let i=0;i<100;i++){await Vue.nextTick();if(predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('page-state-timeout');};
+      const button=text=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent===text);
+      if(${builtin}){
+        const initial=Vue.createApp(ModelPage.Page,{adapter:ModelPage.createModelCenterAdapters(window.sacode)['provider-settings']});initial.mount('#fixture');
+        await wait(()=>document.querySelector('select[aria-label="内置供应商目录"]')&&!document.querySelector('select[aria-label="内置供应商目录"]').disabled);
+        const catalog=document.querySelector('select[aria-label="内置供应商目录"]');catalog.value='stepfun';catalog.dispatchEvent(new Event('change',{bubbles:true}));await Vue.nextTick();button('添加实例').click();
+        await wait(()=>document.body.textContent.includes('供应商实例已添加'));initial.unmount();
+      }
       const r=await window.sacode.modelsSaveCredential('${builtin?'stepfun':'electron'}','fixture-electron-key',1);
       if(r.saved!==true)throw Error('missing-saved-fact');
       let refused=false;try{await window.sacode.modelsSaveCredential('${builtin?'stepfun':'electron'}','fixture-stale-key',0);}catch(e){refused=String(e).includes('settings-conflict');}
       if(!refused)throw Error('stale-not-refused');
       const app=Vue.createApp(ModelPage.Page,{adapter:ModelPage.createModelCenterAdapters(window.sacode)['provider-settings']});app.mount('#fixture');
-      const wait=async(predicate)=>{for(let i=0;i<100;i++){await Vue.nextTick();if(predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('page-state-timeout');};
-      const button=text=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent===text);
       await wait(()=>button('编辑')&&!button('编辑').disabled);
       const tag=document.querySelector('.ps-tag');if(!tag||tag.textContent!=='${builtin?'内置':'自定义'}')throw Error('wrong-provider-origin-label');
       button('编辑').click();await Vue.nextTick();
@@ -47,8 +53,8 @@ for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自�
     app.whenReady().then(async()=>{
       await bridge.start(${JSON.stringify(dir)});
       const empty=await bridge.request('model/registry/describe');
-      const saved=${builtin?"await bridge.request('model/registry/add-catalog',{id:'stepfun',credentialRef:''})":"await bridge.request('model/registry/update',{draft:{id:'electron',name:'Electron测试',baseUrl:'https://example.com/v1',protocol:'openai-completions',models:[{id:'m',name:'模型',contextWindow:'',maxTokens:'',image:false}]},expectedRevision:empty.revision})"};
-      if(saved.revision!==1)throw Error('unexpected-fixture-revision');
+      const saved=${builtin?"empty":"await bridge.request('model/registry/update',{draft:{id:'electron',name:'Electron测试',baseUrl:'https://example.com/v1',protocol:'openai-completions',models:[{id:'m',name:'模型',contextWindow:'',maxTokens:'',image:false}]},expectedRevision:empty.revision})"};
+      if(saved.revision!==${builtin?0:1})throw Error('unexpected-fixture-revision');
       registerModelCredentialIpc(ipcMain,(method,args)=>bridge.request(method,args),require(${JSON.stringify(join(desktop,'models-guard.cjs'))}));
       ipcMain.handle('sacode:modelsDescribe',()=>bridge.request('model/registry/describe'));
       ipcMain.handle('sacode:modelsCatalog',()=>bridge.request('model/registry/catalog'));

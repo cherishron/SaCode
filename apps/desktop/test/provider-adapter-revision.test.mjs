@@ -12,6 +12,13 @@ test('默认模型读面与写入保留宿主身份及提案修订',async()=>{
   const view=await adapter.describe();assert.equal(view.defaultProviderId,'p');assert.equal(view.defaultModel,'m');
   await adapter.setDefault('p','m',4);assert.deepEqual(calls,[['p','m',4]]);
 });
+
+test('目录实例添加仅发送目录身份和原提案修订，冲突不重试',async()=>{
+  const calls=[];
+  const adapter=createModelCenterAdapters({modelsCreateInstance:async(...args)=>{calls.push(args);throw Error('settings-conflict');}})['provider-settings'];
+  await assert.rejects(adapter.createInstance('stepfun',4),/settings-conflict/);
+  assert.deepEqual(calls,[['stepfun',4]]);
+});
 test('旧排序提案即使无需写入也拒绝冲突', async () => {
   let writes = 0;
   const adapter = createModelCenterAdapters({ modelsDescribe: async () => ({ revision: 2, providers: [{ id: 'a', sortOrder: 1 }] }), modelsSort: async () => { writes++; } })['provider-settings'];
