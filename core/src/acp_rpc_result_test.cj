@@ -53,3 +53,31 @@ func acpHandshakeSendsDeclaredCapabilitiesAndAbsoluteWorkspace() {
         @Expect(acpReadCreatedSession(session), "fixture")
     } finally { process.kill() }
 }
+
+@Test
+func acpCloseCapabilityRequiresExplicitObjectAndValidInitialization() {
+    @Expect(acpSupportsSessionClose("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{\"sessionCapabilities\":{\"close\":{}}}}}"), true)
+    @Expect(acpSupportsSessionClose("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{}}}"), false)
+    @ExpectThrows[Exception](acpSupportsSessionClose("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":1,\"agentCapabilities\":{\"sessionCapabilities\":{\"close\":true}}}}"))
+}
+
+@Test
+func acpCloseIsGatedAndCarriesNegotiatedSessionWithRealPipe() {
+    let root = "${coreTestRoot()}/acp-close-capability"
+    Directory.create(root, recursive: true)
+    try {
+        for (scenario in ["supported", "unsupported"]) {
+            let path = canonicalize(root).toString()+"/${scenario}.log"
+            let fixture = "const fs=require('node:fs'),scenario=process.argv[1],log=process.argv[2];const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',s=>{const f=JSON.parse(s);fs.appendFileSync(log,s+'\\n');if(f.method==='initialize'){console.log(JSON.stringify({jsonrpc:'2.0',id:f.id,result:{protocolVersion:1,agentCapabilities:scenario==='supported'?{sessionCapabilities:{close:{}}}:{}}}));}else if(f.method==='session/new'){console.log(JSON.stringify({jsonrpc:'2.0',id:f.id,result:{sessionId:'fixture'}}));if(scenario==='unsupported')setTimeout(()=>process.exit(0),300);}else if(f.method==='session/close'){console.log(JSON.stringify({jsonrpc:'2.0',id:f.id,result:{}}));process.exit(f.params.sessionId==='fixture'?0:2);}});"
+            let process = AcpProcess("node", ["-e", fixture, scenario, path], workingDirectory: Path("."))
+            @Expect(process.start(), true)
+            try {
+                acpValidateInitialization(process.acpInitialize(1, "SaCode", "test").getOrThrow())
+                @Expect(acpReadCreatedSession(process.sessionNew(root).getOrThrow()), "fixture")
+                @Expect(process.close(), 0)
+                let recorded = String.fromUtf8(File.readFrom(path))
+                @Expect(recorded.contains("session/close"), scenario == "supported")
+            } finally { process.kill() }
+        }
+    } finally { removeIfExists(root, recursive: true) }
+}

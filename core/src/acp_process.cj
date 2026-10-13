@@ -33,6 +33,9 @@ public class AcpProcess {
 
     // 委派是否在运行态：DelegationService 置位/复位，restart 前检查
     var busy = false
+    let negotiationLock = Mutex()
+    var closeSupported = false
+    var activeSession = ""
 
     var proc: Option<SubProcess> = None
     var reader: Option<Future<Int64>> = None
@@ -55,6 +58,10 @@ public class AcpProcess {
             return true
         }
         why = ""
+        negotiationLock.lock()
+        closeSupported = false
+        activeSession = ""
+        negotiationLock.unlock()
         try {
             // stderr 改为 Pipe：可回收诊断（design §2.4.4），不污染协议面
             let p = launch(command, arguments, workingDirectory: Some(wd),
@@ -287,7 +294,16 @@ public class AcpProcess {
     // initialize：能力协商（protocolVersion + client 信息）
     public func acpInitialize(protocolVersion: Int64, clientName: String, clientVersion: String, timeoutMs!: Int64 = 8000): Option<String> {
         let params = "{\"protocolVersion\":${protocolVersion},\"clientCapabilities\":{},\"clientInfo\":{\"name\":\"${jsonEscapeText(clientName)}\",\"version\":\"${jsonEscapeText(clientVersion)}\"}}"
-        return request(nextId(), "initialize", params, timeoutMs: timeoutMs)
+        let reply = request(nextId(), "initialize", params, timeoutMs: timeoutMs)
+        var supported = false
+        if (let Some(raw) <- reply) {
+            try { supported = acpSupportsSessionClose(raw) } catch (_: Exception) { supported = false }
+        }
+        negotiationLock.lock()
+        closeSupported = supported
+        activeSession = ""
+        negotiationLock.unlock()
+        return reply
     }
 
     // session/new：创建委派会话
@@ -298,7 +314,15 @@ public class AcpProcess {
             return None
         }
         let params = "{\"cwd\":\"${jsonEscapeText(absolute)}\",\"mcpServers\":[]}"
-        return request(nextId(), "session/new", params, timeoutMs: timeoutMs)
+        let reply = request(nextId(), "session/new", params, timeoutMs: timeoutMs)
+        var session = ""
+        if (let Some(raw) <- reply) {
+            try { session = acpReadCreatedSession(raw) } catch (_: Exception) { session = "" }
+        }
+        negotiationLock.lock()
+        activeSession = session
+        negotiationLock.unlock()
+        return reply
     }
 
     // session/prompt：发送任务提示
@@ -345,7 +369,14 @@ public class AcpProcess {
         if (!running) {
             return Int64(-1)
         }
-        request(nextId(), "session/close", "{}", timeoutMs: 2000)
+        negotiationLock.lock()
+        let supported = closeSupported
+        let session = activeSession
+        negotiationLock.unlock()
+        if (supported && session.size > 0) {
+            let params = "{\"sessionId\":\"${jsonEscapeText(session)}\"}"
+            request(nextId(), "session/close", params, timeoutMs: 2000)
+        }
         return settle(3000)
     }
 

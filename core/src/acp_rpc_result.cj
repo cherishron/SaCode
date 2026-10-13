@@ -26,3 +26,15 @@ public func acpReadCreatedSession(raw: String): String {
     if (session.size == 0) { throw Exception("provider-unavailable:empty-acp-session") }
     return session
 }
+
+public func acpSupportsSessionClose(raw: String): Bool {
+    acpValidateInitialization(raw)
+    let capabilities = acpRpcResult(raw).get("agentCapabilities").getOrThrow().asObject()
+    if (let Some(session) <- capabilities.get("sessionCapabilities")) {
+        if (let Some(close) <- session.asObject().get("close")) {
+            close.asObject()
+            return true
+        }
+    }
+    return false
+}

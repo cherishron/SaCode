@@ -519,3 +519,9 @@ acp-cancel-race-green.log TOTAL258/PASSED258/SKIPPED0/ERROR0/FAILED0，rc0。私
 官方2026-10-13读取 https://agentclientprotocol.com/protocol/v1/initialization 和 session-setup：initialize发送clientInfo/clientCapabilities（原client错误），当前空能力对象不宣称尚未接线的fs/terminal/elicitation；session/new canonicalize成绝对cwd并发送mcpServers=[]，无效目录不发请求。旧10月8日探针脚本同样使用client字段，历史输出仍保留，但只能说明当时供应方宽容接受，不证明正确契约。MCP服务注入、可选session能力消费仍待插件/授权装配。
 
 新增真实Node管道验证clientInfo、空能力、无client别名、绝对cwd及空MCP数组；首轮测试误把init关键字当变量导致编译失败（无Summary，不作通过读数），改handshake后acp-handshake-contract-v2.log TOTAL263/PASSED263/SKIPPED0/ERROR0/FAILED0、rc0。该测试不调用真实模型或远端认证，不证明真实委派。核心初始结果目前只校版本，不完整验证/保存agentCapabilities、authMethods，必须继续补协商投影与认证/能力门控后接产品入口。
+
+## 第六十七轮：ACP可选关闭能力与会话绑定
+
+按官方session-setup可选close契约，原close无协商且params={}违反协议。初始化结果读取agentCapabilities.sessionCapabilities.close对象声明，未声明/非法/协商失败禁用；session/new仅保存JSON验证成功的身份；关闭仅有声明且有非空身份时带sessionId发送。进程重新start清空旧能力与会话，状态访问独立互斥。未声明时只收束本机进程，保留forced/退出事实，不造协议成功或任务完成。
+
+acp-close-gate.log 265/265；补重启状态清空后acp-close-gate-v2.log TOTAL265/PASSED265/SKIPPED0/ERROR0/FAILED0、rc0。真实Node管道两分支：支持则日志实际出现session/close并检查fixture身份；不支持则日志不出现，子进程自然退出。纯契约覆盖合法声明、缺声明、非法boolean声明。重启完整通讯及session/list/resume/认证等可选能力门控仍未完成；不升级ACP产品全链路，不含最新提交全量核心或真实供应方验收。
