@@ -6,6 +6,11 @@ import std.unittest.*
 // 验收：正向 生成审批卡并回传用户决定；
 // 失败/越权 跨委派复用被拒；恢复/并发 重启不恢复放行、工单进程内绑定。
 
+// 假钟使用不可变对象引用，避免逃逸 lambda 捕获可变局部变量。
+class AcpApprovalClock {
+    var now: Int64 = 0
+}
+
 @Test
 func acpApprovalBridgeAskAndAnswerAllowedOnce() {
     let path = "acp-approval-ask-allow.log"; removeIfExists(path)
@@ -21,6 +26,8 @@ func acpApprovalBridgeAskAndAnswerAllowedOnce() {
     // 批准 → consumeExactForCall 精确匹配
     let granted = bridge.answerPermission(id, "allowed-once")
     @Expect(granted, true)
+    @Expect(desk.stateOf(id), "used")
+    @Expect(bridge.answerPermission(id, "allowed-once"), false)
 }
 
 @Test
@@ -105,8 +112,8 @@ func acpApprovalBridgeExpiredRejected() {
     // 过期工单：设短 TTL → 等 → 过期
     let path = "acp-approval-expired.log"; removeIfExists(path)
     let log = SessionLog(path); let lease = WriteLease(path)
-    var fakeNow = Int64(0)
-    let desk = ApprovalDesk(log, clock: { => fakeNow })
+    let fake = AcpApprovalClock()
+    let desk = ApprovalDesk(log, clock: { => fake.now })
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
@@ -114,7 +121,7 @@ func acpApprovalBridgeExpiredRejected() {
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo")
     let id = bridge.askPermission("delegation-1", proposal)
     // 推进假钟到过期后
-    fakeNow = Int64(200)
+    fake.now = Int64(200)
     // 过期后批准 → consumeExactForCall 找不到 allowed-once → 失败
     let expired = bridge.answerPermission(id, "allowed-once")
     @Expect(expired, false)

@@ -77,6 +77,7 @@ public class AcpApprovalBridge {
         let proposal = proposalOpt.getOrThrow()
         if (decision == "allowed-once") {
             let args = permissionArguments(delegationId, proposal)
+            if (!desk.answer(approvalId, "allowed-once")) { return false }
             let grant = desk.consumeExactForCall(approvalId, proposal.tool, args)
             return grant == "allowed-once"
         }

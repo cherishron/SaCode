@@ -525,3 +525,11 @@ acp-cancel-race-green.log TOTAL258/PASSED258/SKIPPED0/ERROR0/FAILED0，rc0。私
 按官方session-setup可选close契约，原close无协商且params={}违反协议。初始化结果读取agentCapabilities.sessionCapabilities.close对象声明，未声明/非法/协商失败禁用；session/new仅保存JSON验证成功的身份；关闭仅有声明且有非空身份时带sessionId发送。进程重新start清空旧能力与会话，状态访问独立互斥。未声明时只收束本机进程，保留forced/退出事实，不造协议成功或任务完成。
 
 acp-close-gate.log 265/265；补重启状态清空后acp-close-gate-v2.log TOTAL265/PASSED265/SKIPPED0/ERROR0/FAILED0、rc0。真实Node管道两分支：支持则日志实际出现session/close并检查fixture身份；不支持则日志不出现，子进程自然退出。纯契约覆盖合法声明、缺声明、非法boolean声明。重启完整通讯及session/list/resume/认证等可选能力门控仍未完成；不升级ACP产品全链路，不含最新提交全量核心或真实供应方验收。
+
+## 第六十八轮：审批桥遗留差异纳入与当前固定基线
+
+当前f6f8b4973d2dd7ad62f5c3154322627d7db38f50经git archive core/extjs建立只读current-core-f6f8b4973d2d，source.zip SHA256 EF0D16898BAEA1135DF1BE798F5AFD3D0591B8027CE618519708C06D98B9D485。启动私有TMP完整cjpm test --no-color --no-progress --parallel1 --timeout-each=30s，full-core.log/full-core.exit.txt；记录时cjc PID21032仍活、CPU157.83，无Summary，不记通过，不重启。
+
+跟进工作区ACP审批两份遗留：bridge批准此前未desk.answer，直接consume pending导致合法批准失败；补answer后精确一次性consume。测试用对象假钟代替逃逸lambda捕获var，补used与二次批准拒绝。逐hunk核对并吸收已完成修复，不吞并其他共享路径。此前私有265集未包含acp_approval_test且其bridge仍HEAD原版，本轮曾口头误说包含、已立即哈希核对撤回；265不能证明审批桥，旧专项范围不扩大。
+
+将这两份实源复制专项候选，acp-approval-included.log TOTAL275/PASSED275/SKIPPED0/ERROR0/FAILED0、rc0，增加恰10条审批桥。工作区bridge SHA256 0EFCFFEF544948392A5A8D8078DB3816E1725C561D26C9BFF02837AEF4F59DF1，test 8AB1504E305023ABD14EAF21112DB31B2FE10C122D82ECF14D883AD8D5072475。仅审批桥进程内行为，未证明委派身份/会话/修订绑定、持久审批及真实协议回传；pendingFor仍返回全局pending，elicitation为未接线入口。当前全量基线结果必须后续单独结算。
