@@ -12,7 +12,7 @@
 |F04|目标|部分接通|goal_runner/claim/evidence；goal 控制 RPC；goal-bar；CLI goal|真实轮次 claim+evidence 自动完成与恢复产物验收|
 |F05|快捷引用|部分接通|cmds/skill/xref/attach；附件接口和 composer 页面|命令技能 MCP 搜索选择到实际调用及修订引用|
 |F06|压缩用量|部分接通／压缩缺实现|meter/ledger 与 usage/ledger 接口；compact.cj 仅 CompactionLedger 事件记录|真实摘要生成与上下文原子替换、在途工具保护|
-|F07|模型中心|部分接通|配置/凭据核心、Host 注册表接口、IPC 和页面；本轮定向检查|配置成功密钥失败的阶段回执；完整 Electron IPC 和新产物|
+|F07|模型中心|配置CRUD主窗口链已验证；全域仍部分接通|供应商实例添加、自定义表单、编辑/删除、凭据独立重试、默认选择；真实Host与完整主窗口定向证据见§54–56|费用/路由/全部协议真实提供方、模型实际调用、统一固定源码产物与默认安全启动仍待验；不把配置成功等同模型可用|
 |F08|编辑 Git|部分接通|fs_tools/git_workbench；workspace/files/git-status/git-diff；文件编辑页面|显式暂存/提交/推送授权入口与真实差异、冲突验收|
 |F09|终端验证|部分接通／提供方阻塞|执行监督输出核心；Host/CLI 执行动作；terminal-output/execution-task|公开执行提供方、PTY、真实报告；退出 0 不等于测试通过|
 |F10|ACP|缺公开入口|acp 核心八组契约/进程/委派/审批/门控/设置/权重/探测文件|当前 Host/CLI/preload 定向检索未见 ACP 分派；持久事实与真实外部委派|
@@ -26,7 +26,7 @@
 |F18|语音增强|部分接通|prompt_enhance/voice_exec；增强 RPC/页面|真实 ASR 提供方、撤销与迟到回执当前快照复验|
 |F19|数据导入|部分接通／范围不足|migration_pack 与模型配置导入接口/页面|通用来源预览映射、去重追加、损坏报告和取消恢复|
 |F20|设置交付|部分接通／产物不齐|settings/global_appearance；设置页；源码声明 profile/recent|已有二进制未声明 profile/get/workspace/recent；统一重建、安装升级卸载|
-|F21|LSP|契约接通／真实语义阻塞|lsp_contract 七 verb；Host 分派；CLI 工具注册；preload 七通道|renderer 定向检索未发现 lsp* API 消费；sharedRouter 语言插件装配待核；真实语义、诊断注入与 rename 审查|
+|F21|LSP|契约接通／真实语义阻塞|七verb、Host/CLI/IPC；只读不推进GoalEvidence，权限模式允许LSP查询和rename预览|尚未发现产品语言插件LspServer注册及页面API消费；真实语义服务器、诊断产品注入、rename审查仍待验|
 
 ## 本轮已有宿主探针
 
@@ -452,3 +452,10 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 完整main扩展编辑模型（空密钥仍保留原凭据）和删除，先红deleted-provider-credential-retained，证明旧Host只删配置但页面承诺删密钥。新增核心removeWithCredential：显式修订、注册表WriteLease内重载/校验；本实例独立用户凭据先unset成功再发布配置移除，共享引用或环境来源保留并返回具名结果。凭据清理失败配置不先删除，重试可以完成；发布失败后凭据可能已清理，不能宣称跨文件原子事务。CredentialStore既有文件写并发/持久屏障缺口未被本批解决。
 
 核心首轮230/230、共享与环境232/232、真实目录阻断清理失败并修复重试最终TOTAL233/PASSED233/SKIPPED0/ERROR0/FAILED0 rc0。Host固定候选叠加核心及remove分派，调试build rc0，返回原注册表投影加credentialRemoval；真实请求1/1 rc0涵盖陈旧拒绝、独立删除、共享最后引用清理与环境保留。页面据回执显示清理/保留/未确认，15/15 rc0。重编实际主窗口页面+新Host后此前失败定向套件MODEL_MAIN_SMOKE PASS rc0（deletion-main.log），默认其他供应商保持。不是正式安装或全UI验收。
+
+
+## 第五十七轮：模型阶段更新及ACP/LSP重新取证
+
+当前提交641cc78。重新检索Host/CLI所有源码和preload，仍无acp/分派或AcpDelegationService实例；不能用team动作证明ACP。AcpDelegationService仅核心及其测试引用，当前工作区文件另有未提交作者改动。create经过gate后写内存索引、启动procFactory/process并协商，未消费checkpoint；其默认checkpoint返回true，尚不能保证启动前委派事实持久及恢复不重复执行。在途容量计数仅running/awaiting-permission/awaiting-input，initializing未计入，属于需并发探针验证的风险，未以源码推测直接宣称已复现。未代改并发ACP文件。
+
+LspRouter有register接口，产品入口仅sharedRouter路由；未见具体语言插件注册，七IPC页面消费仍缺。更新F07/F21首表，移除已完成的配置阶段旧缺口；F07仍保留费用调度/全部协议/当前统一产物，整表不按已修页面数量宣称产品完成。下一实施优先是页面工具统一授权、ACP启动持久准入与真实插件LSP装配，同时固定产物门禁保留。
