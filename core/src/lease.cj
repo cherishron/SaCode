@@ -10,6 +10,24 @@ import std.sync.Mutex
 let localWriterMtx = Mutex()
 let localWriters = HashMap<String, WriteLease>()
 
+// 进程内写者登记的键必须唯一标识「同一个文件的同一份写权」，所以要先规范化目录，
+// 保留原始文件名的大小写形态。
+//
+// 大小写折叠只对 Windows 成立：该平台文件系统默认不区分大小写，不折叠就会把
+// session.log 与 SESSION.LOG 当成两个键。反过来在区分大小写的平台折叠是危险的——
+// 两个不同文件会共用一个键，随后者复用前者真实 acquire 的租约，可能把租约写到
+// 另一个文件上。不折叠的那一侧是安全侧：同一磁盘文件仍共用同一个租约文件，
+// 竞争者会在独占落位时被拒，而不是错拿别人的写权。
+@When[os == "Windows"]
+func normalizeWriterPath(path: Path): String {
+    return path.toString().toAsciiLower()
+}
+
+@When[os != "Windows"]
+func normalizeWriterPath(path: Path): String {
+    return path.toString()
+}
+
 func writerKey(path: String): String {
     let parent = Path(path).parent.toString()
     let directory = if (parent.size == 0) {
@@ -17,7 +35,7 @@ func writerKey(path: String): String {
     } else {
         parent
     }
-    return canonicalize(directory).join(Path(path).fileName).toString().toAsciiLower()
+    return normalizeWriterPath(canonicalize(directory).join(Path(path).fileName))
 }
 
 func localWriter(path: String): ?WriteLease {
