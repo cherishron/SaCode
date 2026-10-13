@@ -1,9 +1,16 @@
 import {defineComponent,h,ref,watch,onBeforeUnmount} from 'vue';
+import {AcpSessionController,type AcpLiveView} from './acp-live';
 interface Delegation {delegationId:string;sessionId:string;taskId:string;requestId:string;peerId:string;protocolSessionId:string;phase:string;revision:number;result:string;source:string}
 const labels:Record<string,string>={completed:'已结束',cancelled:'已确认取消',incomplete:'未完整结束','outcome-unknown':'运行结果未知'};
 export const AcpHistoryPanel=defineComponent({
   name:'SaCodeAcpHistory',props:{active:Boolean,sessionId:String,api:Object},setup(props){
     const rows=ref<Delegation[]>([]),busy=ref(false),error=ref(''),loaded=ref(false);let serial=0,disposed=false;
+    const live=ref<AcpLiveView[]>([]),draft=ref(''),acting=ref(false),actionError=ref('');let epoch=0,requestId='',taskId='';
+    const controller=new AcpSessionController(props.api,view=>{live.value=[...live.value.filter(v=>v.delegation.delegationId!==view.delegation.delegationId),view];});
+    async function perform(action:()=>Promise<void>){if(acting.value)return;const ticket=epoch;acting.value=true;actionError.value='';try{await action();}catch(e){if(!disposed&&ticket===epoch)actionError.value=String((e as Error).message||e);}finally{if(!disposed&&ticket===epoch)acting.value=false;}}
+    async function start(){if(!draft.value.trim())return;const ticket=epoch,text=draft.value;if(!requestId){requestId=crypto.randomUUID();taskId=crypto.randomUUID();}
+      await perform(async()=>{await controller.create(taskId,requestId,text);if(!disposed&&ticket===epoch){draft.value='';requestId='';taskId='';}});}
+    async function refreshLive(){await perform(async()=>{for(const view of live.value)await controller.refresh(view.delegation.delegationId);});}
     async function load(){const ticket=++serial,id=props.sessionId||'';if(!props.active||!id)return;busy.value=true;error.value='';
       try{const api=props.api as {acpDelegationList?:(id:string)=>Promise<any>};if(!api?.acpDelegationList)throw Error('ACP 读取入口未接通');
         const reply=await api.acpDelegationList(id);if(disposed||ticket!==serial||id!==props.sessionId||!props.active)return;
@@ -12,11 +19,37 @@ export const AcpHistoryPanel=defineComponent({
       }catch(e){if(!disposed&&ticket===serial){rows.value=[];loaded.value=false;error.value=String((e as Error).message||e);}}
       finally{if(!disposed&&ticket===serial)busy.value=false;}
     }
-    watch(()=>[props.active,props.sessionId],()=>{++serial;rows.value=[];busy.value=false;error.value='';loaded.value=false;if(props.active)void load();},{immediate:true});
-    onBeforeUnmount(()=>{disposed=true;++serial;});
+    watch(()=>[props.active,props.sessionId],()=>{++serial;++epoch;controller.bind(props.sessionId||'',!!props.active);live.value=[];draft.value='';requestId='';taskId='';acting.value=false;actionError.value='';rows.value=[];busy.value=false;error.value='';loaded.value=false;if(props.active)void load();},{immediate:true});
+    onBeforeUnmount(()=>{disposed=true;++serial;++epoch;controller.bind('',false);});
     return()=>h('section',{class:'side-section acp-history','aria-label':'ACP 委派记录'},[
       h('header',{class:'row spread'},[h('h2',{},'ACP 委派'),h('button',{class:'btn',type:'button',disabled:busy.value,onClick:()=>void load()},'刷新记录')]),
-      h('p',{class:'note'},'读取当前会话的持久事实。恢复不启动进程，也不重发任务。启动、审批与取消入口尚未开放。'),
+      h('p',{class:'note'},'OpenCode 委派。须先由宿主装配并确认提供方就绪；恢复历史不启动进程、不重发任务。'),
+      h('form',{class:'stack',onSubmit:(event:Event)=>{event.preventDefault();void start();}},[
+        h('label',{class:'note'},'委派任务'),h('textarea',{class:'input','aria-label':'OpenCode 委派任务',value:draft.value,disabled:acting.value,placeholder:'描述任务范围、限制与验收条件',onInput:(event:Event)=>{const next=(event.target as HTMLTextAreaElement).value;if(next!==draft.value){draft.value=next;requestId='';taskId='';}}}),
+        h('button',{class:'btn',type:'submit',disabled:acting.value||!draft.value.trim()},acting.value?'正在处理…':requestId?'重试同一请求':'提交给 OpenCode'),
+      ]),
+      actionError.value?h('p',{class:'resource-error',role:'alert'},actionError.value):null,
+      live.value.length?h('section',{class:'stack','aria-label':'当前持有的 ACP 活任务'},[
+        h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void refreshLive()},'刷新活任务'),
+        ...live.value.map(view=>h('article',{class:'tool-card',key:view.delegation.delegationId},[
+          h('strong',{},'OpenCode · '+(labels[view.delegation.phase]||view.delegation.phase)),
+          h('p',{class:'note'},view.delegation.delegationId+' · 修订 '+view.delegation.revision),
+          h('p',{class:'note'},view.serverExitObserved?'进程退出已确认':view.serverAlive?'进程仍存活':'进程退出尚未确认'),
+          view.delegation.result?h('p',{class:'note'},view.delegation.result):null,
+          view.workerError?h('p',{class:'resource-error'},view.workerError):null,
+          ...view.updates.map((text,index)=>h('details',{key:index},[h('summary',{},'提供方消息 '+(index+1)),h('pre',{},text)])),
+          ...view.permissions.map(permission=>h('section',{class:'tool-card',key:permission.approvalId},[
+            h('strong',{},'工具审批 · '+permission.toolCallId),h('pre',{},permission.argumentsJson),
+            h('p',{class:'note'},permission.state+' · '+permission.approvalState),
+            h('button',{class:'btn',disabled:acting.value||permission.state!=='pending'||permission.approvalState!=='pending'||!permission.policyAllowsGrant||!permission.allowOnceOption,onClick:()=>void perform(()=>controller.answer(view,permission.approvalId,true))},'仅允许这一次'),
+            h('button',{class:'btn',disabled:acting.value||permission.state!=='pending'||permission.approvalState!=='pending'||!permission.denyOnceOption,onClick:()=>void perform(()=>controller.answer(view,permission.approvalId,false))},'拒绝'),
+          ])),
+          h('div',{class:'row'},[
+            h('button',{class:'btn',disabled:acting.value||view.workerFinished,onClick:()=>void perform(()=>controller.control(view,'cancel'))},'请求取消'),
+            h('button',{class:'btn',disabled:acting.value||view.serverExitObserved,onClick:()=>void perform(()=>controller.control(view,'close'))},'关闭进程'),
+          ]),
+        ])),
+      ]):null,
       busy.value?h('p',{class:'note',role:'status'},'正在读取委派记录…'):null,
       error.value?h('p',{class:'note',role:'alert'},error.value):null,
       loaded.value&&!rows.value.length?h('p',{class:'note'},'当前会话暂无 ACP 委派记录。'):null,
@@ -24,6 +57,7 @@ export const AcpHistoryPanel=defineComponent({
         h('div',{class:'row spread'},[h('strong',{},row.peerId),h('span',{class:'note'},labels[row.phase]||row.phase)]),
         h('p',{class:'note'},row.delegationId+' · 任务 '+row.taskId+' · 修订 '+row.revision),
         row.result?h('p',{class:'note'},row.result):null,
+        h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void perform(()=>controller.refresh(row.delegationId))},'查询本进程持有状态'),
       ])),
     ]);
   },
