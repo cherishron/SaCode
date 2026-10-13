@@ -470,6 +470,23 @@ public class ProviderRegistry {
         return ProviderView(entries.toArray(), revision, true, defProvider, defModel)
     }
 
+    // 凭据重试只绑定当前供应商；持有注册表写租约期间禁止配置发布。
+    public func saveCredential(id: String, expectedRevision: Int64, value: String, store: CredentialStore): Unit {
+        if (id.size == 0 || expectedRevision < 0 || value.size == 0 || value.size > 8192) {
+            throw Exception("settings-rejected")
+        }
+        let lease = WriteLease(file)
+        if (!lease.acquire()) { throw Exception("provider-settings-busy") }
+        try {
+            reload()
+            guardRevision(expectedRevision)
+            let provider = find(id)
+            if (provider.id.size == 0 || provider.credentialRef.size == 0) {
+                throw Exception("settings-rejected")
+            }
+            store.set(provider.credentialRef, value)
+        } finally { lease.release() }
+    }
     public func activeProvider(): ProviderRecord {
         reload()
         return find(defProvider)

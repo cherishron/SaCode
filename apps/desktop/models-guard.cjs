@@ -58,7 +58,7 @@ function sanitizeDraft(d) {
 
 // 版本号是乐观并发的凭据：非整数与负数在主进程就拒收，不拿去让核心猜。
 function sanitizeRevision(rev) {
-  if (!Number.isInteger(rev) || rev < 0) bad('bad-model-revision');
+  if (!Number.isSafeInteger(rev) || rev < 0) bad('bad-model-revision');
   return rev;
 }
 

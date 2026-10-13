@@ -282,3 +282,9 @@ v3 终态：TOTAL178/PASSED178/SKIPPED0/ERROR0/FAILED0，rc0；正向同轮 todo
 
 复核 model_agent 未提交差异仍包含 LSP 只读/rename预览不计进展及 structured 失败结果直传。将该文件与现有 lsp_contract_test 加入178条隔离候选复跑；为避免额外纳入整个 model_agent_test，私有测试仅将三个流夹具 AgentChunks 构造改用已存在的等价 RunnerChunks（相同 Provider/Resource 接口与序列），生产源码未改夹具。lsp-goal-regression.log / exit.txt 记录终态；执行句柄40499，未预报通过。真实语言服务器和页面消费仍缺，此批只验L1契约。
 第二十九轮终态：LSP38条加入目标与相关回归178条后，TOTAL216/PASSED216/SKIPPED0/ERROR0/FAILED0，rc0。覆盖无服务器非语义回退、扩展路由、注销迟到结果、参数与位置校验、rename预览不落盘、诊断进入模型但不提供GoalEvidence、结构化失败内容。model_agent生产文件与隔离候选SHA一致；本批吸收已验证LSP计数排除与structured结果直传，不宣称真实语言服务器可用。
+
+## 第三十轮：绑定供应商修订的凭据重试核心
+
+新增ProviderRegistry.saveCredential：非负明确修订、有限非空值；注册表写租约内重放并核对修订、按供应商派生引用，凭据写入后释放。禁止调用方指定任意引用，配置变更/缺供应商/租约占用/无修订拒绝且不改密钥；成功不重写注册表。独占TEMP回归新增一条含上述多个断言，首次夹具coreTestRoot误传参数导致编译失败（零Summary），修正后v2实际TOTAL217/PASSED217/SKIPPED0/ERROR0/FAILED0，rc0，源码哈希匹配。CredentialStore现有明文文件提供方及自身写入并发/持久性边界不因此升级。
+
+models-guard修订校验从isInteger改isSafeInteger，拒绝浮点精度丢失后冒充CAS版本；model-revision-precision专项1/1，rc0。该批仅核心方法与IPC守卫，不宣称Host/IPC/页面重试已接通，下一步有限provider credential动词及独立重试UI，不重写配置。
