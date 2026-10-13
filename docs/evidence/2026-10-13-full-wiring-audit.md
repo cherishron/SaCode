@@ -466,3 +466,8 @@ LspRouter有register接口，产品入口仅sharedRouter路由；未见具体语
 AcpDelegationService默认checkpoint由true改false，创建完成内存提案后、procFactory前强制调用检查；缺失/false/抛异常统一failed+persistence-failed:delegation-create，不构造进程。同请求回原失败条目，不自动重启。新增用例零factory证明及明确true许可后原spawn失败链；既有spawn失败测试显式供测试许可，不假装持久事实。先234/234，加入10条已有委派回归后TOTAL244/PASSED244/SKIPPED0/ERROR0/FAILED0 rc0（acp-admission-v2）。工作区原有sha256任务全文摘要修复与长体冲突测试同时实测通过，吸收这两处已完成差异，不覆盖其他ACP审批文件。
 
 这仍是可信入口注入checkpoint的准入钩子；未实现委派事实写入/恢复投影，不宣称真实持久委派完成。Host/CLI公开ACP入口仍缺，initializing容量与身份绑定等风险仍在，下一步必须实际SessionLog记录不可变提案及恢复不重放。此前Gitee推送失败已终结，本轮重试3e5720f成功，不重启未终态操作。
+
+
+## 第五十九轮：ACP请求身份与初始化容量
+
+委派内部保存不可变workspace，requestId复用同时核taskDigest/taskId/peerId/workspace；同正文但身份变化明确revision-conflict，不返回别的委派。新identity测试245/245 rc0。容量计入pending/initializing等全部非终态，避免仅running/awaiting计数放过启动中的委派。新增可信checkpoint重入探针：四个初始化预约重叠，第五个busy并未留条目，零factory；最终TOTAL246/PASSED246/SKIPPED0/ERROR0/FAILED0 rc0（acp-capacity-regression）。本轮并发证据为重入初始化重叠，不扩大为多线程实际进程隔离或跨进程协调。仍需真实持久提案与恢复投影、终态记录和完整外部委派入口。

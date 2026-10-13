@@ -54,9 +54,10 @@ class AcpDelegationEntry {
     var cancelToken: TurnToken
     // taskText 摘要用于幂等校验
     var taskDigest: String
+    let workspace: String
 
     init(id: String, sessionId: String, taskId: String, requestId: String,
-        peerId: String, taskDigest: String) {
+        peerId: String, taskDigest: String, workspace: String) {
         this.id = id
         this.sessionId = sessionId
         this.taskId = taskId
@@ -69,6 +70,7 @@ class AcpDelegationEntry {
         this.result = ""
         this.cancelToken = TurnToken()
         this.taskDigest = taskDigest
+        this.workspace = workspace
     }
 
     func snapshot(): AcpDelegationSnapshot {
@@ -113,14 +115,14 @@ public class AcpDelegationService {
         // 幂等检查：同 requestId
         if (let Some(existingId) <- requestIdIndex.get(requestId)) {
             if (let Some(existing) <- delegations.get(existingId)) {
-                if (existing.taskDigest == taskDigest) {
+                if (existing.taskDigest == taskDigest && existing.taskId == taskId && existing.peerId == peerId && existing.workspace == workspace) {
                     // 同键同摘要：回原委派
                     let snap = existing.snapshot()
                     mtx.unlock()
                     return snap
                 } else {
                     mtx.unlock()
-                    throw Exception("revision-conflict:requestId-digest-mismatch")
+                    throw Exception("revision-conflict:requestId-binding-mismatch")
                 }
             }
         }
@@ -128,7 +130,7 @@ public class AcpDelegationService {
         // 并发上限检查
         var active = Int64(0)
         for ((_, entry) in delegations) {
-            if (entry.phase == "running" || entry.phase == "awaiting-permission" || entry.phase == "awaiting-input") {
+            if (entry.phase != "completed" && entry.phase != "failed" && entry.phase != "cancelled" && entry.phase != "rejected" && entry.phase != "incomplete") {
                 active += 1
             }
         }
@@ -140,7 +142,7 @@ public class AcpDelegationService {
         // 创建委派条目
         let seq = idGen.fetchAdd(1) + 1
         let delegationId = "delegation-${seq}"
-        let entry = AcpDelegationEntry(delegationId, sessionId, taskId, requestId, peerId, taskDigest)
+        let entry = AcpDelegationEntry(delegationId, sessionId, taskId, requestId, peerId, taskDigest, workspace)
         delegations[delegationId] = entry
         requestIdIndex[requestId] = delegationId
         mtx.unlock()
