@@ -386,3 +386,10 @@ app.js现有modelCenterAdapters装配仅包裹save/remove/reorder/pullModels，�
 ## 第四十六轮：固定桌面快照与完整UI冒烟失败
 
 固定8b91110 git archive桌面/scripts，packaging-contract3/3 rc0（46入口47文件44依赖边、删项反证）。初次私有依赖目录缺@opentiny/vue-button，未沿用旧组件；快照独立npm install --ignore-scripts --no-audit --no-fund rc0，790包，未改公共lock/依赖。随后pack-vendor/tinyvue/tinyrobot/pages/next-sdk全rc0。使用同本批私有debug Host拷到快照dist，独占用户/会话/TMP、no-sandbox测试模式。完整main --smoke协议PASS、stop forced=false code0；该分支不证明窗口。真正--ui-smoke rc1：preload旧白名单未登记多项已提交API、时间线节点探针缺失、旧测试要求状态筛选但实际[]，随后脚本异常中断。窗口附件及会话目录/搜索多项通过，不以通过数量掩盖中断。原件fixed-desktop-8b91110/full-ui-smoke.log。用户已要求移除日志完整性常驻筛选，不恢复过期UI以满足旧断言；后续更新当前设计的验收契约并定位时间线探针。不能宣称完整窗口收口。
+
+
+## 第四十七轮：UI契约诊断与固定允许面校正
+
+在8b91110私有桌面只叠加当前未提交ui-smoke测试作诊断，未改变产品源码。该测试有其他会话新增插件真实安装场景，固定Host不支持其链路，出现approval/get-mode -32601及插件点击失败，随后关闭按钮不可达中断、rc1；原件ui-contract.log。不得把这条工作区测试当固定提交验收，也不删除失败场景制造绿。当前工作区已有人调整日志筛选到目录弹窗及trace资源打开，保留作者改动，不整文件吞并。
+
+本批仅修正固定preload显式允许清单：111项从固定源码逐名校验，运行实际preload的VM读到名称和function类型完全一致，额外键拒绝断言保留；候选语法rc0。暂存HEAD派生仅静态清单替换，未带其他新增测试。完整UI与approval模式/插件产品接线仍未收口。
