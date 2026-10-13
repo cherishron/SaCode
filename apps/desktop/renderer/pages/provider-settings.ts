@@ -15,10 +15,18 @@ export interface Adapter{
   saveCredential?(id:string,key:string,expectedRevision:string):Promise<void>;
   setDefault?(id:string,model:string,expectedRevision:string):Promise<void>;
   createInstance?(catalogId:string,expectedRevision:string):Promise<void>;
-  remove(id:string,expectedRevision:string):Promise<void>;
+  remove(id:string,expectedRevision:string):Promise<{credentialRemoval?:string}|void>;
   reorder(keys:string[],expectedRevision:string):Promise<void>;
   pullModels(providerId:string,expectedRevision:string):Promise<void>;
   subscribe?(invalidate:()=>void):()=>void;
+}
+
+export function removalNotice(result:unknown):string{
+  const status=(result as any)?.credentialRemoval;
+  if(status==='credential-removed')return '已删除';
+  if(status==='shared-credential-retained')return '配置已删除；共享凭据仍由其他供应商使用';
+  if(status==='environment-credential-retained')return '配置已删除；环境凭据由系统管理，仍予保留';
+  return '删除结果缺少凭据清理回执，请刷新核对';
 }
 
 // --- 校验（纯函数，前端比核心更严）---
@@ -89,9 +97,9 @@ export const Page=defineComponent({
     const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
     const startEdit=(p:Provider)=>{credentialRetry.value=null;draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
     const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value&&readReady.value;
-    const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success='')=>{
+    const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success:string|(()=>string)='')=>{
       saving.value=true;error.value='';message.value='';
-      try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?success:'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
+      try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?(typeof success==='function'?success():success):'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed){error.value=errText(e);if((e as any)?.configurationRevision!==undefined)credentialRetry.value={revision:(e as any).configurationRevision,snapshot:JSON.stringify(draft.value)};}}
       finally{if(!disposed){saving.value=false;pulling.value=null;}}
     };
@@ -113,7 +121,8 @@ export const Page=defineComponent({
     const remove=async()=>{
       if(!canMutate()||!deleting.value)return;
       const id=deleting.value.id,expected=deleteRevision;
-      await mutate(()=>props.adapter!.remove(id,expected),()=>{deleting.value=null;},'已删除');
+      let result:unknown;
+      await mutate(async()=>{result=await props.adapter!.remove(id,expected);},()=>{deleting.value=null;},()=>removalNotice(result));
     };
     const move=async(index:number,dir:'up'|'down')=>{
       if(!canMutate())return;
@@ -226,7 +235,7 @@ export const Page=defineComponent({
         // 删除确认弹窗
         deleting.value?h('div',{class:'ps-dialog',role:'alertdialog','aria-label':'确认删除'},[
           el('p',null,'确认删除 '+(deleting.value.name||deleting.value.id)+'？'),
-          el('p','hint','此操作会移除供应商配置和存储的 API 密钥。'),
+          el('p','hint','移除供应商配置并清理其独立存储的密钥；共享或环境凭据会保留。'),
           el('div','actions',[btn('取消',()=>{deleting.value=null;},'btn',{disabled:saving.value}),btn(saving.value?'删除中…':'确认删除',()=>void remove(),'danger',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ]):null,
       ]);

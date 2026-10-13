@@ -482,7 +482,11 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
                 }
                 registry.updateObject(draft.getOrThrow(), jsonNum(body, "expectedRevision"))
             } else if (method == "model/registry/remove") {
-                registry.remove(jsonStr(body, "id"), jsonNum(body, "expectedRevision"))
+                let status = registry.removeWithCredential(jsonStr(body, "id"), jsonNum(body, "expectedRevision"), creds)
+                let result = JsonValue.fromStr(providerViewJson(registry.describe(), creds)).asObject()
+                result.put("credentialRemoval", JsonString(status))
+                emit(okFrame(idText, result.toString()))
+                return
             } else if (method == "model/registry/set-default") {
                 registry.setDefault(jsonStr(body, "providerId"), jsonStr(body, "model"), jsonNum(body, "expectedRevision"))
             } else if (method == "model/registry/add-catalog") {

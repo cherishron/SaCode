@@ -673,6 +673,29 @@ public class ProviderRegistry {
         commit("provider/remove", id)
     }
 
+    public func removeWithCredential(id: String, expectedRevision: Int64, store: CredentialStore): String {
+        if (expectedRevision < 0) { throw Exception("settings-rejected") }
+        let lease = WriteLease(file)
+        if (!lease.acquire()) { throw Exception("provider-settings-busy") }
+        try {
+            reload()
+            guardRevision(expectedRevision)
+            let provider = find(id)
+            if (provider.id.size == 0) { throw Exception("settings-rejected") }
+            var shared = false
+            for (other in describe().providers) {
+                if (other.id != id && other.credentialRef == provider.credentialRef) { shared = true }
+            }
+            var status = "credential-removed"
+            if (shared) { status = "shared-credential-retained" }
+            else if (!store.describe(provider.credentialRef).writable) { status = "environment-credential-retained" }
+            else { store.unset(provider.credentialRef) }
+            // 凭据写失败不能先移除配置；发布失败时配置仍可重试删除。
+            commit("provider/remove", id)
+            return status
+        } finally { lease.release() }
+    }
+
     public func setDefault(providerId: String, model: String, expectedRevision: Int64): Unit {
         reload()
         let rec = find(providerId)

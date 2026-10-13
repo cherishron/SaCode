@@ -3,6 +3,77 @@ import std.fs.*
 import std.unittest.*
 
 @Test
+func providerRemovalCredentialWriteFailureLeavesConfigurationForRetry() {
+    let root = "${coreTestRoot()}/provider-remove-failure"
+    Directory.create(root, recursive: true)
+    let registry = ProviderRegistry("${root}/providers.log")
+    registry.addCatalogInstance("stepfun", 0)
+    let view = registry.describe()
+    let blocked = "${root}/credentials.env"
+    Directory.create(blocked)
+    let store = CredentialStore(blocked, { _ => "" })
+    @ExpectThrows[Exception](registry.removeWithCredential(view.providers[0].id, view.revision, store))
+    @Expect(registry.describe().revision, view.revision)
+    @Expect(registry.describe().providers.size, 1)
+    removeIfExists(blocked, recursive: true)
+    store.set(view.providers[0].credentialRef, "retry-key")
+    @Expect(registry.removeWithCredential(view.providers[0].id, view.revision, store), "credential-removed")
+    @Expect(store.describe(view.providers[0].credentialRef).configured, false)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func providerRemovalPreservesEnvironmentCredential() {
+    let root = "${coreTestRoot()}/provider-remove-environment"
+    Directory.create(root, recursive: true)
+    let registry = ProviderRegistry("${root}/providers.log")
+    registry.addCatalogInstance("stepfun", 0)
+    let view = registry.describe()
+    let provider = view.providers[0]
+    let store = CredentialStore("${root}/credentials.env", { _ => "environment-key" })
+    @Expect(registry.removeWithCredential(provider.id, view.revision, store), "environment-credential-retained")
+    @Expect(store.describe(provider.credentialRef).configured, true)
+    @Expect(registry.describe().providers.size, 0)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func providerRemovalPreservesCredentialReferencedByAnotherProvider() {
+    let root = "${coreTestRoot()}/provider-remove-shared"
+    Directory.create(root, recursive: true)
+    let registry = ProviderRegistry("${root}/providers.log")
+    for (id in ["first", "second"]) {
+        registry.update("{\"id\":\"${id}\",\"name\":\"shared\",\"baseUrl\":\"https://example.com/v1\",\"protocol\":\"openai-completions\",\"credentialRef\":\"SHARED_KEY\",\"models\":[{\"id\":\"m\",\"name\":\"m\",\"contextWindow\":\"\",\"maxTokens\":\"\",\"image\":false}]}", registry.describe().revision)
+    }
+    let store = CredentialStore("${root}/credentials.env", { _ => "" })
+    store.set("SHARED_KEY", "shared-key")
+    @Expect(registry.removeWithCredential("first", registry.describe().revision, store), "shared-credential-retained")
+    @Expect(store.describe("SHARED_KEY").configured, true)
+    @Expect(registry.describe().providers.size, 1)
+    @Expect(registry.removeWithCredential("second", registry.describe().revision, store), "credential-removed")
+    @Expect(store.describe("SHARED_KEY").configured, false)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func providerRemovalDeletesOwnCredentialAndRejectsStaleAttempt() {
+    let root = "${coreTestRoot()}/provider-remove-key"
+    Directory.create(root, recursive: true)
+    let registry = ProviderRegistry("${root}/providers.log")
+    let store = CredentialStore("${root}/credentials.env", { _ => "" })
+    registry.addCatalogInstance("stepfun", 0)
+    let view = registry.describe()
+    let provider = view.providers[0]
+    registry.saveCredential(provider.id, view.revision, "owned-key", store)
+    @ExpectThrows[Exception](registry.removeWithCredential(provider.id, view.revision - 1, store))
+    @Expect(store.describe(provider.credentialRef).configured, true)
+    @Expect(registry.removeWithCredential(provider.id, view.revision, store), "credential-removed")
+    @Expect(store.describe(provider.credentialRef).configured, false)
+    @Expect(registry.describe().providers.size, 0)
+    removeIfExists(root, recursive: true)
+}
+
+@Test
 func providerCatalogInstanceRequiresRevisionAndExclusiveWriter() {
     let root = "${coreTestRoot()}/provider-catalog-admission"
     Directory.create(root, recursive: true)

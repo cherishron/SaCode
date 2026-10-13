@@ -445,3 +445,10 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 审计固定HEAD空草稿仍declared=true且无模型ID输入，新增误走内置启停。工作区已有其他会话的两处补全（空草稿declared=false/初始模型、模型ID/名称及增删行），本轮逐差异确认后仅叠加此文件到独立桌面候选重编pack-pages rc0，不重复重写。扩展完整main定向验收：添加主窗口自定义供应商，填写ID/name/baseUrl/key/modelId/modelName并保存，真实Host核declared=false、keyConfigured、modelID及既有默认不变，MODEL_MAIN_SMOKE PASS rc0（custom-main.log）。无远端模型请求。
 
 工作区model-center页面及适配器联合27/27 rc0，含新增草稿与字段提交两测试、已有装配/安全校验。本批吸收上述已验收表单差异及对应测试，之前不吸收它们的在途边界现按实测解除；不吸收其他未完成路径。完整默认安全启动和安装包仍待验收。
+
+
+## 第五十六轮：供应商删除真实凭据清理与保留事实
+
+完整main扩展编辑模型（空密钥仍保留原凭据）和删除，先红deleted-provider-credential-retained，证明旧Host只删配置但页面承诺删密钥。新增核心removeWithCredential：显式修订、注册表WriteLease内重载/校验；本实例独立用户凭据先unset成功再发布配置移除，共享引用或环境来源保留并返回具名结果。凭据清理失败配置不先删除，重试可以完成；发布失败后凭据可能已清理，不能宣称跨文件原子事务。CredentialStore既有文件写并发/持久屏障缺口未被本批解决。
+
+核心首轮230/230、共享与环境232/232、真实目录阻断清理失败并修复重试最终TOTAL233/PASSED233/SKIPPED0/ERROR0/FAILED0 rc0。Host固定候选叠加核心及remove分派，调试build rc0，返回原注册表投影加credentialRemoval；真实请求1/1 rc0涵盖陈旧拒绝、独立删除、共享最后引用清理与环境保留。页面据回执显示清理/保留/未确认，15/15 rc0。重编实际主窗口页面+新Host后此前失败定向套件MODEL_MAIN_SMOKE PASS rc0（deletion-main.log），默认其他供应商保持。不是正式安装或全UI验收。

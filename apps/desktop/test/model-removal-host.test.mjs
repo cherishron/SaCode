@@ -1,0 +1,31 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createRequire} from 'node:module';
+const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+test('真实Host删除独立凭据并保留共享及环境凭据',{timeout:30000},async t=>{
+  assert.ok(process.env.SACODE_HOST,'需要新Host');
+  const dir=mkdtempSync(join(tmpdir(),'sacode-remove-'));
+  const bridge=new HostBridge(process.env.SACODE_HOST,{...process.env,SACODE_USER_SETTINGS_DIR:join(dir,'settings'),DELETE_ENV_TEST:'fixture-env-key'});
+  t.after(()=>bridge.stop());await bridge.start(dir);
+  const add=async(id,ref)=>{
+    const view=await bridge.request('model/registry/describe');
+    const result=await bridge.request('model/registry/update',{draft:{id,name:id,baseUrl:'https://example.com/v1',protocol:'openai-completions',...(ref?{credentialRef:ref}:{}),models:[{id:'m',name:'m',contextWindow:'',maxTokens:'',image:false}]},expectedRevision:view.revision});
+    return {view:result,provider:result.providers.find(p=>p.id===id)};
+  };
+  const own=await add('own');await bridge.request('model/registry/save-credential',{providerId:'own',expectedRevision:own.view.revision,key:'fixture-owned-key'});
+  await assert.rejects(bridge.request('model/registry/remove',{id:'own',expectedRevision:own.view.revision-1}),/settings-conflict/);
+  assert.equal((await bridge.request('credential/describe',{ref:own.provider.credentialRef})).configured,true);
+  assert.equal((await bridge.request('model/registry/remove',{id:'own',expectedRevision:own.view.revision})).credentialRemoval,'credential-removed');
+  assert.equal((await bridge.request('credential/describe',{ref:own.provider.credentialRef})).configured,false);
+  const env=await add('env','DELETE_ENV_TEST');assert.equal((await bridge.request('model/registry/remove',{id:'env',expectedRevision:env.view.revision})).credentialRemoval,'environment-credential-retained');
+  assert.equal((await bridge.request('credential/describe',{ref:'DELETE_ENV_TEST'})).configured,true);
+  await add('first','SHARED_KEY');const second=await add('second','SHARED_KEY');
+  await bridge.request('model/registry/save-credential',{providerId:'first',expectedRevision:second.view.revision,key:'fixture-shared-key'});
+  const firstRemoved=await bridge.request('model/registry/remove',{id:'first',expectedRevision:second.view.revision});assert.equal(firstRemoved.credentialRemoval,'shared-credential-retained');
+  assert.equal((await bridge.request('credential/describe',{ref:'SHARED_KEY'})).configured,true);
+  const lastRemoved=await bridge.request('model/registry/remove',{id:'second',expectedRevision:firstRemoved.revision});assert.equal(lastRemoved.credentialRemoval,'credential-removed');
+  assert.equal((await bridge.request('credential/describe',{ref:'SHARED_KEY'})).configured,false);
+});
