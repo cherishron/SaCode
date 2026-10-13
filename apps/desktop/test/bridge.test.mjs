@@ -1251,4 +1251,18 @@ test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
   exposed.acpDelegationList('current');exposed.acpDelegationDescribe('current','delegation-1');
   assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:acpDelegationList',{sessionId:'current'}],['sacode:acpDelegationDescribe',{sessionId:'current',delegationId:'delegation-1'}]]);
   assert.equal(exposed.acpRequest,undefined);
+  calls.length=0;
+  exposed.acpDelegationCreate('current','task','request','opencode','仅读接口');
+  exposed.acpDelegationPoll('current','d1');
+  exposed.acpDelegationAnswer('current','d1',1,'denied','');
+  exposed.acpDelegationCancel('current','d1',2);
+  exposed.acpDelegationClose('current','d1',2);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['sacode:acpDelegationCreate',{sessionId:'current',taskId:'task',requestId:'request',peerId:'opencode',taskText:'仅读接口'}],
+    ['sacode:acpDelegationPoll',{sessionId:'current',delegationId:'d1'}],
+    ['sacode:acpDelegationAnswer',{sessionId:'current',delegationId:'d1',approvalId:1,decision:'denied',optionId:''}],
+    ['sacode:acpDelegationCancel',{sessionId:'current',delegationId:'d1',revision:2}],
+    ['sacode:acpDelegationClose',{sessionId:'current',delegationId:'d1',revision:2}],
+  ]);
 });
+
