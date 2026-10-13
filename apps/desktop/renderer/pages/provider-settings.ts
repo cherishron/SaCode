@@ -158,7 +158,7 @@ export const Page=defineComponent({
           el('div','info',[
             el('strong','name',p.name||p.id),
             el('code','id',p.id),
-            el('span','tag',p.declared?'自定义':'内置'),
+            el('span','tag',p.declared?'内置':'自定义'),
             el('span','tag',protoLabels[p.protocol]||p.protocol),
             el('span','tag',p.transport==='direct'?'直连':'中继'),
             el('span','tag '+(p.enabled?'on':'off'),p.enabled?'已启用':'已禁用'),
@@ -178,7 +178,7 @@ export const Page=defineComponent({
         // 编辑表单
         isEditing?el('fieldset','editor',[
           el('h3',null,adding.value?'添加供应商':'编辑 '+(d.name||d.id)),
-          d.declared?el('p','hint','内置供应商的名称、接口和协议由目录定义；此处仅保存启停，排序请使用列表中的上移或下移。'):null,
+          d.declared?el('p','hint','内置供应商的名称、接口和协议由目录定义；此处可保存启停和密钥，排序请使用列表中的上移或下移。'):null,
           adding.value?el('label','field',[el('span','lbl','Provider ID'),el('input','ipt',null,{value:d.id,'aria-label':'Provider ID',placeholder:'my-provider',onInput:(e:Event)=>d.id=(e.target as HTMLInputElement).value})]):null,
           el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,disabled:d.declared,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
           el('label','field',[el('span','lbl','API 地址'),el('input','ipt',null,{value:d.baseUrl,disabled:d.declared,'aria-label':'API 地址',type:'url',placeholder:'https://gateway.example/v1',onInput:(e:Event)=>d.baseUrl=(e.target as HTMLInputElement).value})]),

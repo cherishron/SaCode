@@ -339,3 +339,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第三十七轮：修复内置供应商密钥被静默忽略
 
 实际页面对 credentialWritable 内置供应商显示密钥输入，但适配器 declared 分支原先只调用 set-enabled，直接丢弃填写的 key。增加成功与部分失败两条独占测试，先11条/9通过/2失败复现；改为启停成功后凭据单独沿回执revision保存，不发送内置目录草稿。凭据失败只给安全文案及configurationRevision供现有重试，启停失败不会继续凭据动作。适配器与重试状态13/13 rc0；实际Electron页面/Host保存与部分保存渲染回归2/2 rc0（独占builtin-key目录）。内置凭据分支本轮验证为适配器受控API，仍需完整内置供应商真实Host页面场景，不扩大到所有内置提供方已可用。
+
+
+## 第三十八轮：内置供应商实际页面凭据闭环与来源标识
+
+真实Electron场景参数化为自定义和内置stepfun实例。内置实例由真实Host add-catalog生成，页面编辑密钥经真实适配器set-enabled回执、独立credential IPC落盘；两类均验证保存后revision=2、keyConfigured与实际凭据新值、陈旧写入未落盘，2/2 rc0。没有调用供应商远端API。随后发现declared来源标签反向，修复为内置/自定义并更新内置编辑可保存密钥提示，增加实际DOM来源标签断言，两场景再次2/2 rc0。共享provider-settings仅吸收HEAD派生两处文案差异，其他工作区模型表单变更保留。正式release进程23372/27900本轮仍存活CPU3695/2761秒，未重启。
