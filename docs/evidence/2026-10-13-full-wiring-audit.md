@@ -513,3 +513,9 @@ acp-cancel-race-green.log TOTAL258/PASSED258/SKIPPED0/ERROR0/FAILED0，rc0。私
 原create把任意initialize回复当成功，并文本扫描sessionId（空白、转义、嵌套字段可误取），错误session/new也能running。新增acpRpcResult/Initialization/CreatedSession校验：仅合法JSON-RPC response/result对象、远端error拒绝并保留数字错误码、协议version1、顶层非空sessionId。移除文本扫描；阶段失败关闭本次自有进程，取消判断仍先于失败状态覆盖。AcpProcess按已解析顶层ID入ReplyTable，避免旧字节扫描对空白或嵌套id误配。
 
 私有acp-rpc-results.log TOTAL261/PASSED261，最终acp-rpc-results-v2.log TOTAL262/PASSED262/SKIPPED0/ERROR0/FAILED0、rc0。四种真实Node子进程错误/版本/空会话场景均failed，协议ID实际管道响应含嵌套id=999及顶层空白id=1仍正确配对。纯结果解析覆盖转义会话ID、嵌套伪身份、空身份及初始化错误。夹具非真实供应方，不证明能力协商完整、客户端capabilities装配、prompt/审批/内容/终态及产品入口。候选沿用之前隔离核心，不是当前提交全量验收。
+
+## 第六十六轮：ACP初始化请求与会话参数对齐
+
+官方2026-10-13读取 https://agentclientprotocol.com/protocol/v1/initialization 和 session-setup：initialize发送clientInfo/clientCapabilities（原client错误），当前空能力对象不宣称尚未接线的fs/terminal/elicitation；session/new canonicalize成绝对cwd并发送mcpServers=[]，无效目录不发请求。旧10月8日探针脚本同样使用client字段，历史输出仍保留，但只能说明当时供应方宽容接受，不证明正确契约。MCP服务注入、可选session能力消费仍待插件/授权装配。
+
+新增真实Node管道验证clientInfo、空能力、无client别名、绝对cwd及空MCP数组；首轮测试误把init关键字当变量导致编译失败（无Summary，不作通过读数），改handshake后acp-handshake-contract-v2.log TOTAL263/PASSED263/SKIPPED0/ERROR0/FAILED0、rc0。该测试不调用真实模型或远端认证，不证明真实委派。核心初始结果目前只校版本，不完整验证/保存agentCapabilities、authMethods，必须继续补协商投影与认证/能力门控后接产品入口。

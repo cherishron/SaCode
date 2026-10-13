@@ -39,3 +39,17 @@ func acpResponsePairsTopLevelIdDespiteWhitespaceAndNestedId() {
         @Expect(process.unsolicited(), 0)
     } finally { process.kill() }
 }
+
+@Test
+func acpHandshakeSendsDeclaredCapabilitiesAndAbsoluteWorkspace() {
+    let fixture = "const path=require('node:path');const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',s=>{const f=JSON.parse(s),p=f.params;let ok=false,r;if(f.method==='initialize'){ok=p.protocolVersion===1&&p.clientInfo?.name==='SaCode'&&p.clientInfo?.version==='test'&&p.clientCapabilities&&Object.keys(p.clientCapabilities).length===0&&!Object.hasOwn(p,'client');r={protocolVersion:1,agentCapabilities:{},verified:ok};}else if(f.method==='session/new'){ok=path.isAbsolute(p.cwd)&&Array.isArray(p.mcpServers)&&p.mcpServers.length===0;r={sessionId:ok?'fixture':''};}console.log(JSON.stringify({jsonrpc:'2.0',id:f.id,...(ok?{result:r}:{error:{code:-32602,message:'invalid-client-contract'}})}));});"
+    let process = AcpProcess("node", ["-e", fixture], workingDirectory: Path("."))
+    @Expect(process.start(), true)
+    try {
+        let handshake = process.acpInitialize(1, "SaCode", "test").getOrThrow()
+        acpValidateInitialization(handshake)
+        @Expect(handshake.contains("\"verified\":true"), true)
+        let session = process.sessionNew(".").getOrThrow()
+        @Expect(acpReadCreatedSession(session), "fixture")
+    } finally { process.kill() }
+}

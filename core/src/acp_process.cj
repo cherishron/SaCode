@@ -286,13 +286,18 @@ public class AcpProcess {
 
     // initialize：能力协商（protocolVersion + client 信息）
     public func acpInitialize(protocolVersion: Int64, clientName: String, clientVersion: String, timeoutMs!: Int64 = 8000): Option<String> {
-        let params = "{\"protocolVersion\":${protocolVersion},\"client\":{\"name\":\"${jsonEscapeText(clientName)}\",\"version\":\"${jsonEscapeText(clientVersion)}\"}}"
+        let params = "{\"protocolVersion\":${protocolVersion},\"clientCapabilities\":{},\"clientInfo\":{\"name\":\"${jsonEscapeText(clientName)}\",\"version\":\"${jsonEscapeText(clientVersion)}\"}}"
         return request(nextId(), "initialize", params, timeoutMs: timeoutMs)
     }
 
     // session/new：创建委派会话
     public func sessionNew(cwd: String, timeoutMs!: Int64 = 8000): Option<String> {
-        let params = "{\"cwd\":\"${jsonEscapeText(cwd)}\"}"
+        var absolute = ""
+        try { absolute = canonicalize(cwd).toString() } catch (e: Exception) {
+            why = "session-new-invalid-workspace: ${e}"
+            return None
+        }
+        let params = "{\"cwd\":\"${jsonEscapeText(absolute)}\",\"mcpServers\":[]}"
         return request(nextId(), "session/new", params, timeoutMs: timeoutMs)
     }
 
