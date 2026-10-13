@@ -133,7 +133,7 @@ public class ToolRuntime {
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
         sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
         lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None,
-        worktree!: ?WorktreeTools = None, computer!: ?ComputerToolExecutor = None) {
+        worktree!: ?WorktreeTools = None, computer!: ?ComputerToolExecutor = None, page!: ?PageToolExecutor = None) {
         this.log = log
         this.registry = registry
         this.workingDirectory = workingDirectory
@@ -148,6 +148,14 @@ public class ToolRuntime {
         this.terminalBuffer = TerminalBuffer(log)
         this.jobStore = JobStore()
         registerBuiltinExecutors()
+        if (let Some(bound) <- page) {
+            for (spec in pageToolSpecs()) {
+                executors.add(spec.name, { name, args => pageStep(bound, name, args) })
+            }
+            for (spec in pageModelToolSpecs()) {
+                executors.add(spec.name, { name, args => pageStep(bound, name, args) })
+            }
+        }
         if (let Some(bound) <- team) {
             for (spec in teamToolSpecs()) {
                 executors.add(spec.name, { name, args => teamStep(bound, name, args) })
@@ -271,6 +279,19 @@ public class ToolRuntime {
     // 桌面工具派发：只回传真实终态。已投递动作即便随后被取消，committed/截图仍按原样保留，
     // 这里不把「取消」改写「未执行」；完整结果走 modelProtocol 的 runtime/result，
     // 模型可见的那条 tool/result 由轮次循环带引用另写。
+    private func pageStep(exec: PageToolExecutor, name: String, args: String): ApprovalOutcome {
+        if (PermissionPolicy().decide(ModeController(log).current(), name) == "deny") {
+            lastDetail.stage = "page-policy-denied"; recordResult("denied:${name}:policy")
+            return ApprovalOutcome(false, "page-policy-denied")
+        }
+        let result = exec.execute(pageProtocolName(name), args, lspToken)
+        lastDetail.argsAfterPre = args
+        lastDetail.stage = if (result.allowed) { "ran" } else { "page-failed" }
+        // 页面回执不证明文件或任务完成，不能冒充机械完成证据。
+        lastDetail.verified = false
+        recordResult(result.why)
+        return result
+    }
     private func computerStep(exec: ComputerToolExecutor, verb: String, args: String): ApprovalOutcome {
         let result = exec.perform(verb, args, token: lspToken)
         let payload = JsonObject()
@@ -315,10 +336,11 @@ public class ToolRuntime {
         if (registry.requiresApproval(name)) {
             // 桌面动作不接受自报审批：调用方说「批过了」不作数，只能凭 desk 发的精确工单走
             // executeWithApproval()。留在这条入口上等于给绕过审批面开了一道口子。
-            if (name.startsWith("computer.")) {
+            if (name.startsWith("computer.") || name.startsWith("page.") || name.startsWith("page_")) {
+                let source = if (name.startsWith("computer.")) { "computer" } else { "page" }
                 lastDetail.stage = "approval-denied"
-                recordResult("denied:${name}:computer-exact-approval-required")
-                return ApprovalOutcome(false, "computer-exact-approval-required")
+                recordResult("denied:${name}:${source}-exact-approval-required")
+                return ApprovalOutcome(false, "${source}-exact-approval-required")
             }
             // 退出会话 worktree 只认 desk 发过号的工单：调用方自报「批过了」在这条路上
             // 不作数——keep 会挪走后续所有工具的地基，remove 还要删目录，
@@ -356,7 +378,7 @@ public class ToolRuntime {
             // computer.* 与退出会话 worktree 都要「绑着原始参数」的工单：只登记工具名
             // （desk.ask 那条旧路）的票不能放行删目录与挪地基——沿用 consumeExactForCall
             // 这条既有语义，不另发明审批。
-            let exactApproval = policyApproval || name.startsWith("computer.") || name == worktreeExitToolName
+            let exactApproval = policyApproval || name.startsWith("computer.") || name.startsWith("page.") || name.startsWith("page_") || name == worktreeExitToolName
             let grant = if (exactApproval) {
                 desk.consumeExactForCall(approvalId, name, args)
             } else {

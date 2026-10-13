@@ -325,7 +325,8 @@ func allowedDuringTurn(method: String): Bool {
     // 增强与轮次各走各的车道：turn 在跑时也要能润色下一条草稿，
     // 反过来增强在途时桌面的取消必须答得上来——否则「支持取消」只是一句空话。
     let enhanceSide = method == "prompt/enhance" || method == "prompt/poll" || method == "prompt/cancel"
-    return turnSide || readSide || callSide || approvalSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method) || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || method == "execution/stop"
+    return turnSide || readSide || callSide || approvalSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method) || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || method == "execution/stop" ||
+        (isPageToolMethod(method) && method != "page/tool/prepare" && method != "page/tool/call")
 }
 
 // 队列读写都是「按动作命名」的有限方法：界面说不出任意一条路径，也拿不到通用转发。
@@ -839,6 +840,7 @@ class HostRuntime {
     var extRt = ToolRuntime(shared, extReg, workingDirectory: sessionWorkingDirectory(shared))
     // 审批工单与工具运行态共用同一份日志：asked/decided/expired 都是可回放的事件
     var approvalDesk = ApprovalDesk(shared)
+    var pageRuntime: ?HostPageRuntime = None
     var executionService: Option<ExecutionService> = None
     let executionRuns = ArrayList<ExecutionRun>()
     var executionSettled = true
@@ -1063,7 +1065,7 @@ class HostRuntime {
 
     func handleRpc12(method: String, idText: String): Bool {
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             return true
         }
         return false
@@ -1904,7 +1906,8 @@ class HostRuntime {
                 let computerExecutor: ?ComputerToolExecutor = if (let Some(bound) <- turnComputer) { Some(bound.executor) } else { None }
                 modelTools = Some(ModelToolRuntime(shared, false, files: SessionWorkspace(shared).directory().size > 0 && SessionWorkspace(shared).available(), desk: modelDesk, approval: modelApproval, computer: computerExecutor,
                     workingDirectory: sessionWorkingDirectory(shared),
-                    team: Some(teamRuntime.tools(activeId, activeId)), lspRouter: LspRouters.sharedRouter(), lspSession: activeId, lspToken: tk))
+                    team: Some(teamRuntime.tools(activeId, activeId)), lspRouter: LspRouters.sharedRouter(), lspSession: activeId, lspToken: tk,
+                    page: if (let Some(bound) <- pageRuntime) { if (bound.sessionId == activeId) { Some(PageToolExecutor(bound.channel, activeId)) } else { None } } else { None }))
             }
             // 系统提示必须落日志再进请求：modelRequestJson 只从会话日志重建 messages，
             // 内存里拼一条不发进日志，模型永远收不到（「Model-visible means logged」）。
@@ -2916,6 +2919,14 @@ class HostRuntime {
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
         try {
+        if (let Some(bound) <- pageRuntime) {
+            if (bound.busy()) {
+                let safe = (isPageToolMethod(method) && method != "page/tool/prepare" && method != "page/tool/call") ||
+                    method == "initialize" || method == "session/projection" || method == "session/catalog" || method == "workspace/get" ||
+                    method == "approval/answer" || method == "approval/status" || method == "approval/get-mode" || method == "approval/set-mode"
+                if (!safe) { emit(errFrame(idText, -32028, "page-call-in-flight")); continue }
+            }
+        }
         if (executionRuns.size > 0) {
             let run = executionRuns[0]
             if (run.settled()) {
@@ -2945,6 +2956,7 @@ class HostRuntime {
             emit(errFrame(idText, -32026, "session-durable-frozen"))
             continue
         }
+        if (handlePageToolRpc(this, method, body, idText)) { continue }
         if (handleRpc0(method, body, idText)) { continue }
         if (handleRpc1(method, body, idText)) { continue }
         // 插件清单：逐条通道落地，缺通道适配器保持 unconnected（不冒充本地状态）
@@ -3084,6 +3096,9 @@ class HostRuntime {
     }
     let jf = if (jsForced) { "true" } else { "false" }
     let ts = if (turnSettled) { "true" } else { "false" }
+    if (let Some(bound) <- pageRuntime) {
+        if (!bound.shutdown()) { executionSettled = false; getStdErr().writeln("host-exit-page-unsettled: lease retained") }
+    }
     let es = if (executionSettled) { "true" } else { "false" }
     // 无 id 的通知帧：调用方（Electron 主进程 / 测试）在退出前拿到一份结算账，
     // 事后能区分「在途调用被收束」和「进程直接没了」。

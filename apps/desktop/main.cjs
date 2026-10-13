@@ -358,6 +358,7 @@ ipcMain.handle("sacode:taskStart", async (_e, args) => {
   const customModelId = args?.customModelId;
   if (customModelId !== undefined && (typeof customModelId !== "string" || customModelId.length > 256)) throw Error("bad-custom-model-id");
   return withHost(async () => {
+    if (pageToolsWindow()) await pageToolBridge.attach(true);
     const turnRequestId = String(bridge.nextId);
     // HostBridge.request 自行封装 params，禁止二次嵌套模型身份。
     const started = await bridge.request("task/start", customModelId ? { customModelId } : {});
@@ -804,6 +805,20 @@ function pageToolsWindow() {
   return win && !win.isDestroyed() ? win : null;
 }
 
+const pageToolBridge = require('./page-tool-bridge.cjs').createPageToolBridge({
+  bridge, getWindow: pageToolsWindow,
+  askPermission: async (proposal) => {
+    const target = pageToolsWindow();
+    if (!target) return false;
+    const result = await dialog.showMessageBox(target, {
+      type: 'question', title: '页面工具审批', message: proposal.name,
+      detail: JSON.stringify(JSON.parse(proposal.argumentsJson), null, 2),
+      buttons: ['允许一次', '拒绝'], defaultId: 1, cancelId: 1, noLink: true,
+    });
+    return result.response === 0;
+  },
+});
+
 ipcMain.handle("sacode:pageToolsList", async () => {
   const target = pageToolsWindow();
   if (!target) return [];
@@ -820,16 +835,14 @@ ipcMain.handle("sacode:pageToolCall", async (_e, args) => {
   const name = args && args.name;
   const callArgs = args && args.args;
   if (!name || typeof name !== "string") throw new Error("bad-page-tool-name");
+  if (Buffer.byteLength(name, 'utf8') > 256 || Object.keys(args).some(key => key !== 'name' && key !== 'args')) throw new Error('bad-page-tool-name');
   if (callArgs !== undefined && (callArgs === null || typeof callArgs !== "object" || Array.isArray(callArgs))) {
     throw new Error("bad-page-tool-args");
   }
   const target = pageToolsWindow();
   if (!target) return { error: "no-window" };
   try {
-    const result = await target.webContents.executeJavaScript(
-      `(async () => { const tools = window.DshPageTools && window.DshPageTools.tools; if (!Array.isArray(tools)) return JSON.stringify({ error: "page-tools-not-loaded" }); const want = ${JSON.stringify(name)}; const tool = tools.find((t) => t && t.name === want); if (!tool || typeof tool.handler !== "function") return JSON.stringify({ error: "tool-not-found" }); try { return JSON.stringify(await tool.handler(${JSON.stringify(callArgs ?? {})})); } catch (e) { return JSON.stringify({ error: String((e && e.message) || e) }); } })()`
-    );
-    return JSON.parse(result);
+    return await withHost(() => pageToolBridge.invoke(name, callArgs ?? {}));
   } catch (e) {
     return { error: e.message };
   }
@@ -883,6 +896,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", async () => {
+  pageToolBridge.dispose();
   // 先让宿主走完 EOF 结算（落盘未 flush 的写入并归还写租约），再退出
   await bridge.stop();
   app.quit();

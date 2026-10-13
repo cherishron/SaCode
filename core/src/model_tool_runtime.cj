@@ -15,6 +15,7 @@ public class ModelToolRuntime {
         sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
         worktree!: ?WorktreeTools = None,
         computer!: ?ComputerToolExecutor = None,
+        page!: ?PageToolExecutor = None,
         desk!: ApprovalDesk = ApprovalDesk(log), approval!: (ModelToolCall) -> Int64 = { _ => Int64(0) },
         guard!: (String, String) -> Bool = { _, _ => true },
         lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(),
@@ -60,6 +61,9 @@ public class ModelToolRuntime {
         if (let Some(_) <- team) {
             for (spec in teamToolSpecs()) { registry.register(spec) }
         }
+        if (let Some(_) <- page) {
+            for (spec in pageModelToolSpecs()) { registry.register(spec) }
+        }
         // 会话 worktree：入口绑定了实例才登记声明面。exit 那条 requiresApproval=true，
         // 免审批档不能替人批「挪地基 / 删目录」，审批语义在 ToolRuntime 的精确工单那一段收口。
         if (let Some(_) <- worktree) {
@@ -76,7 +80,7 @@ public class ModelToolRuntime {
         this.runtime = ToolRuntime(log, registry, workingDirectory: workingDirectory, sandboxRuntime: sandboxRuntime,
             agentOwned: true, todoAllowParallel: allowParallel, modelProtocol: true,
             lspRouter: lspRouter, lspSession: lspSession, lspToken: lspToken, team: team, webTools: webBound,
-            worktree: worktree, computer: computer)
+            worktree: worktree, computer: computer, page: page)
         this.desk = desk
         this.approval = approval
         this.guard = guard

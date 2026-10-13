@@ -7,7 +7,7 @@ public class PermissionPolicy {
 
     private static func autoToolAllow(name: String): Bool {
         // LSP rename仅返回变更预览，真正写入仍走F08审查。
-        let allow = ["read", "grep", "glob", "web_fetch", "web_search", "ls", "cat", "head", "tail", "wc", "file",
+        let allow = ["read", "grep", "glob", "web_fetch", "web_search", "ls", "cat", "head", "tail", "wc", "file", "page.readState", "page_read_state",
             "lsp_define", "lsp_lookup", "lsp_references", "lsp_implementation", "lsp_call_hierarchy", "lsp_diagnostics", "lsp_rename"]
         for (a in allow) {
             if (name == a) { return true }

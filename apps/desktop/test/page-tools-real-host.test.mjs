@@ -1,0 +1,58 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createRequire} from 'node:module';
+import vm from 'node:vm';
+const require=createRequire(import.meta.url);
+const {HostBridge}=require('../host-bridge.cjs');
+const {createPageToolBridge}=require('../page-tool-bridge.cjs');
+
+test('真实Host的页面工具审批、拒绝、一次性消费、取消与持久结果',{timeout:90000},async t=>{
+  assert.ok(process.env.SACODE_HOST,'需要本批构建的Host');
+  const root=mkdtempSync(join(tmpdir(),'sacode-page-host-'));
+  const bridge=new HostBridge(process.env.SACODE_HOST,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});
+  await bridge.start(root);t.after(()=>bridge.stop());
+  let clicks=0,permission=false,prompts=0;
+  const button={innerText:'真实页面夹具',tagName:'BUTTON',click(){clicks++;}};
+  const document={URL:'file:///fixture',body:{innerText:'page fixture'},querySelector:selector=>selector==='.app[data-page-session]'?{getAttribute:()=> 'current'}:selector==='#btn'?button:null};
+  const context=vm.createContext({window:{},document,setInterval:()=>0,clearInterval:()=>{},setTimeout:()=>0,Event:class{}});
+  vm.runInContext(readFileSync(new URL('../renderer/page-tools.js',import.meta.url),'utf8'),context);
+  const target={webContents:{executeJavaScript:code=>vm.runInContext(code,context)}};
+  const driver=createPageToolBridge({bridge,getWindow:()=>target,askPermission:async()=>{prompts++;return permission;},intervalMs:10});
+  t.after(()=>driver.dispose());
+  assert.deepEqual(await driver.invoke('page.readState',{selector:'#btn'}),{text:'真实页面夹具',tag:'BUTTON'});
+  await bridge.request('approval/set-mode',{mode:'plan'});
+  await assert.rejects(driver.invoke('page.clickElement',{selector:'#btn'}),/approval-mode-denied/);
+  assert.equal(clicks,0);assert.equal(prompts,0);
+  await bridge.request('approval/set-mode',{mode:'build'});
+  assert.deepEqual(await driver.invoke('page.clickElement',{selector:'#btn'}),{error:'page-approval-denied'});
+  assert.equal(clicks,0);permission=true;
+  assert.deepEqual(await driver.invoke('page.clickElement',{selector:'#btn'}),{ok:true});assert.equal(clicks,1);
+  await assert.rejects(bridge.request('page/tool/claim',{sessionId:'other',requestId:'forged'}),/page-session-changed/);
+  await assert.rejects(bridge.request('page/tool/claim',{sessionId:'current',requestId:'forged'}));
+  const exact='{"selector":"#btn"}';
+  const ticket=await bridge.request('page/tool/prepare',{sessionId:'current',name:'page.clickElement',arguments:exact});
+  assert.equal((await bridge.request('approval/answer',{approvalId:ticket.approvalId,decision:'allowed-once'})).accepted,true);
+  const invoke=(argumentsJson)=>bridge.request('page/tool/call',{sessionId:'current',name:'page.clickElement',arguments:argumentsJson,approvalId:ticket.approvalId},40000);
+  assert.match((await invoke('{"selector":"#different"}')).error,/approval-arguments-mismatch/);assert.equal(clicks,1);
+  assert.deepEqual(await invoke(exact),{ok:true});assert.equal(clicks,2);
+  assert.match((await invoke(exact)).error,/approval-not-granted:used/);assert.equal(clicks,2);
+  driver.dispose();
+  const pending=bridge.request('page/tool/call',{sessionId:'current',name:'page.readState',arguments:'{}',approvalId:0},40000);
+  for(let i=0;i<100;i++){
+    const queued=await bridge.request('page/tool/poll',{sessionId:'current'});
+    if(queued.requests.length)break;
+    await new Promise(r=>setTimeout(r,10));
+  }
+  const stopped=await bridge.request('page/tool/cancel',{sessionId:'current'});
+  assert.equal(stopped.stopRequested,true);assert.equal(stopped.outcome,'unconfirmed');
+  assert.ok((await pending).error);assert.equal(clicks,2);
+  await bridge.stop();
+  const log=readFileSync(join(root,'session.log'),'utf8');
+  assert.match(log,/page-tool\/dispatch/);assert.match(log,/page-tool\/result/);
+  assert.match(log,/approval\/decided\t\d+:denied/);
+  assert.match(log,/tool\/runtime\/result\tdenied:page.clickElement:approval-used/);
+  assert.doesNotMatch(log,/goal\/evidence/);
+});

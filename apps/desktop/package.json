@@ -31,6 +31,7 @@
       "preload.cjs",
       "host-bridge.cjs",
       "acp-ipc.cjs",
+      "page-tool-bridge.cjs",
       "team-ipc.cjs",
       "team-adapter.cjs",
       "worktree-ipc.cjs",

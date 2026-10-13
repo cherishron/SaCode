@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
+import {EventEmitter} from 'node:events';
 import {fileURLToPath} from 'node:url';
 import {dirname, join as jj} from 'node:path';
 import vm from 'node:vm';
@@ -12,6 +13,7 @@ const nodeRequire = createRequire(import.meta.url);
 // 计时器给空实现，否则注册表末尾的轮询会把测试进程吊住。
 function makePage({ withRegistry = true, modelContext = null } = {}) {
   const elements = {
+    '.app[data-page-session]': {getAttribute:()=> 'current'},
     '#btn': { innerText: '按钮', tagName: 'BUTTON', clicked: false, click() { this.clicked = true; } },
   };
   const doc = {
@@ -41,8 +43,10 @@ function makePage({ withRegistry = true, modelContext = null } = {}) {
 function loadMain({ page, ready = true } = {}) {
   const handlers = new Map();
   const scripts = [];
-  const state = { destroyed: false };
+  const state = { destroyed: false, visible: false };
   const wins = [];
+  const startupFailures = [];
+  const exitCodes = [];
   const electron = {
     app: {
       isPackaged: false,
@@ -52,19 +56,22 @@ function loadMain({ page, ready = true } = {}) {
       setPath: () => {},
       on: () => {},
       quit: () => {},
+      // 模拟退出 API，但退出不能把启动失败变成测试成功。
+      exit: (code) => { exitCodes.push(code); },
     },
-    BrowserWindow: class {
+    BrowserWindow: class extends EventEmitter {
       static getAllWindows() { return wins; }
       constructor() {
-        this.webContents = {
-          on: () => {}, send: () => {}, loadFile: () => Promise.resolve(), session: { on: () => {} },
+        super();
+        this.webContents = Object.assign(new EventEmitter(), {
+          send: () => {}, loadFile: () => Promise.resolve(), session: { on: () => {} },
           executeJavaScript: async (code) => { scripts.push(code); return vm.runInContext(code, page.ctx); },
-        };
-        this.on = () => {};
-        this.once = () => {};
+        });
         this.isDestroyed = () => state.destroyed;
-        this.loadFile = () => Promise.resolve();
-        this.show = () => {};
+        this.isVisible = () => state.visible;
+        // 真实可见性模块监听加载完成；不能用空 once 绕过这条启动路径。
+        this.loadFile = async () => { this.webContents.emit('did-stop-loading'); };
+        this.show = () => { state.visible = true; };
         this.loadURL = () => Promise.resolve();
         this.setTitleBarOverlay = () => {};
         wins.push(this);
@@ -73,7 +80,7 @@ function loadMain({ page, ready = true } = {}) {
     },
     ipcMain: { handle: (name, fn) => { handlers.set(name, fn); }, on: () => {} },
     nativeTheme: { shouldUseDarkColors: false, on: () => {}, themeSource: 'system' },
-    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showMessageBox: async()=>({response:1}) },
     shell: { openExternal: async () => {} },
     Menu: { buildFromTemplate: () => ({ popup: () => {} }), setApplicationMenu: () => {}, getApplicationMenu: () => null },
     Tray: class { constructor() {} on() {} setImage() {} setToolTip() {} destroy() {} },
@@ -84,9 +91,26 @@ function loadMain({ page, ready = true } = {}) {
     require: (id) => {
       if (id === 'electron') return electron;
       if (id === './host-bridge.cjs') {
-        return { HostBridge: class { constructor() {} async start() {} async request() { return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
+        return { HostBridge: class {
+          constructor() { this.queue=[]; this.proc=null; }
+          async start() { this.proc={}; }
+          async request(method,args) {
+            if(method==='page/tool/attach')return{sessionId:'current'};
+            if(method==='page/tool/prepare'){
+              if(!['page.readState','page.clickElement','page.inputText','page.scroll'].includes(args.name))throw Error('unregistered-tool');
+              return{sessionId:'current',approvalId:args.name==='page.readState'?0:1};
+            }
+            if(method==='page/tool/call')return new Promise(resolve=>{this.resolve=resolve;this.queue.push({sessionId:'current',requestId:'core-owned',name:args.name,arguments:args.arguments});});
+            if(method==='page/tool/poll')return{sessionId:'current',requests:this.queue};
+            if(method==='page/tool/claim')return{allowed:true};
+            if(method==='page/tool/result'){this.queue=[];this.resolve(JSON.parse(args.result));return{accepted:true};}
+            if(method==='approval/answer')return{accepted:true};
+            return {ok:true};
+          }
+          async stop() { this.proc=null;return { code: 0 }; } killNow() { this.proc=null; }
+        } };
       }
-      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
+      if (id === './paths.cjs') return { ...nodeRequire(jj(dirname(fileURLToPath(import.meta.url)), '..', id)), hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => nodeRequire };
@@ -100,7 +124,11 @@ function loadMain({ page, ready = true } = {}) {
     },
     __dirname: '/tmp',
     process: { argv: [], env: {}, pid: 1, platform: 'win32', on: () => {}, exit: () => {}, resourcesPath: '/tmp' },
-    console: { log: () => {}, error: () => {}, warn: () => {} },
+    console: {
+      log: (...args) => { startupFailures.push(args.map(String).join(' ')); },
+      error: console.error,
+      warn: console.warn,
+    },
     Buffer,
     setTimeout,
     clearTimeout,
@@ -109,7 +137,12 @@ function loadMain({ page, ready = true } = {}) {
     URL,
   };
   vm.runInNewContext(readFileSync(new URL('../main.cjs', import.meta.url), 'utf8'), ctx, { filename: 'main.cjs' });
-  return { handlers, scripts, state, settle: () => new Promise((r) => setImmediate(r)) };
+  return { handlers, scripts, state, settle: async () => {
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(startupFailures, [], `主进程启动失败：${startupFailures.join('\n')}`);
+    assert.deepEqual(exitCodes, [], `主进程启动期间退出：${exitCodes.join(',')}`);
+    if (ready) assert.equal(state.visible, true, '加载完成后窗口未显示');
+  } };
 }
 
 async function call(m, action, args) {
@@ -144,20 +177,20 @@ test('pageToolCall 走真实注册表执行 handler 并回传结果', async () =
   assert.deepEqual(out, { text: '按钮', tag: 'BUTTON' });
 });
 
-test('pageToolCall 工具不存在时如实回 tool-not-found，不抛', async () => {
+test('pageToolCall 未接入核心的工具不能执行', async () => {
   const page = makePage();
   const m = loadMain({ page });
   await m.settle();
-  assert.deepEqual(plain(await call(m, 'pageToolCall', { name: 'page.none', args: {} })), { error: 'tool-not-found' });
+  assert.deepEqual(plain(await call(m, 'pageToolCall', { name: 'page.none', args: {} })), { error: 'unregistered-tool' });
 });
 
-test('工具名里的引号与反斜杠只能当数据：奇名照样按值命中，且不得在页面里多执行一句', async () => {
+test('未获核心声明的奇名不能在页面中自行执行', async () => {
   const page = makePage();
   const odd = "a');page.__pwned=1;('b\\";
   page.host.window.DshPageTools.register(odd, '带引号的名字', { type: 'object' }, async () => ({ ok: 'odd-name' }));
   const m = loadMain({ page });
   await m.settle();
-  assert.deepEqual(plain(await call(m, 'pageToolCall', { name: odd, args: {} })), { ok: 'odd-name' });
+  assert.deepEqual(plain(await call(m, 'pageToolCall', { name: odd, args: {} })), { error: 'unregistered-tool' });
   assert.equal(page.host.window.__pwned, undefined);
 });
 
