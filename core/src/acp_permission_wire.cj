@@ -71,6 +71,13 @@ public class AcpPermissionReplies {
             return true
         } finally { mtx.unlock() }
     }
+    public func containsExact(frame: AcpInboundFrame): Bool {
+        mtx.lock()
+        try {
+            if (let Some(saved) <- pending.get(frame.idJson)) { return generation == frame.generation && saved.generation == frame.generation && saved.raw == frame.raw }
+            return false
+        } finally { mtx.unlock() }
+    }
     public func discard(frame: AcpInboundFrame) {
         mtx.lock()
         try {
@@ -86,9 +93,9 @@ public class AcpPermissionReplies {
                 if (generation != frame.generation || saved.generation != frame.generation || saved.raw != frame.raw) { return false }
                 if (!authorize()) { return false }
                 pending.remove(frame.idJson)
-                return send()
-            }
-            return false
+            } else { return false }
         } finally { mtx.unlock() }
+        // 管道I/O不占登记锁，防止读线程回压与回传写互相阻塞。
+        return send()
     }
 }

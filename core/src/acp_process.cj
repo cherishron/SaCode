@@ -231,6 +231,7 @@ public class AcpProcess {
             })
         } catch (_: Exception) { return false }
     }
+    func hasPendingPermission(frame: AcpInboundFrame): Bool { return alive() && permissions.containsExact(frame) }
     public func nextInbound(): ?AcpInboundFrame { return inbound.take() }
     public func invalidInboundCount(): Int64 { return invalidFrames.load() }
     // stderr 读线程体：有界地收集诊断字节，超出上限截断尾部

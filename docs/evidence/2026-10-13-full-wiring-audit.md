@@ -15,7 +15,7 @@
 |F07|模型中心|配置CRUD主窗口链已验证；全域仍部分接通|供应商实例添加、自定义表单、编辑/删除、凭据独立重试、默认选择；真实Host与完整主窗口定向证据见§54–56|费用/路由/全部协议真实提供方、模型实际调用、统一固定源码产物与默认安全启动仍待验；不把配置成功等同模型可用|
 |F08|编辑 Git|部分接通|fs_tools/git_workbench；workspace/files/git-status/git-diff；文件编辑页面|显式暂存/提交/推送授权入口与真实差异、冲突验收|
 |F09|终端验证|部分接通／提供方阻塞|执行监督输出核心；Host/CLI 执行动作；terminal-output/execution-task|公开执行提供方、PTY、真实报告；退出 0 不等于测试通过|
-|F10|ACP|缺公开入口|acp 核心八组契约/进程/委派/审批/门控/设置/权重/探测文件|当前 Host/CLI/preload 定向检索未见 ACP 分派；持久事实与真实外部委派|
+|F10|ACP|核心持久准入与权限回传已专项验证；缺公开入口|准入日志与保守恢复、委派修订审批、原请求与进程代际绑定、同日志持久批准→真实管道回传，见§60–73|Host/CLI/IPC/页面装配、真实供应方、内容路由、取消待决回传、任务终态结算及统一产物仍待验|
 |F11|知识记忆|缺管理入口|知识页面目前只保留内存草稿、保存禁用；既有引用不等于知识索引|权威存储、用户/项目索引失效、检索进入模型|
 |F12|扩展|部分接通|plugin 核心、Host 有限接口、插件管理页|市场提供方、完整贡献撤销和在途卸载；真实生命周期需当前快照复验|
 |F13|自动化 Hooks|缺产品管理入口|schedule/workflow/webhook 核心候选；自动化页面保存禁用|持久管理、调度启动、错过策略、执行授权和恢复|
@@ -563,3 +563,13 @@ acp-elicitation-fail-closed.log --filter acp*：TOTAL287/PASSED47/SKIPPED240/ERR
 acp-permission-wire-v2.log --filter acp*：TOTAL291/PASSED51/SKIPPED240/ERROR0/FAILED0，rc0。真实Node管道完成initialize/session-new→两权限请求→一次批准/一次拒绝→原prompt确认，默认无权威回调拒绝、永久选项拒绝、改提案拒绝、重复回传拒绝。纯探针覆盖写失败消费、拒绝后再批准、跨代际旧回复拒绝与旧reader拒入。批准回调在测试中显式为夹具许可，尚未对到实际ApprovalDesk/持久屏障/Host用户工单，不称真实授权产品闭环。新增核心契约文件登记本轮；未接真模型或供应方。
 
 本批仅权限回传代际边界；整进程restart普通ReplyTable复用及全部RPC竞争仍需独立复核，不能扩成全部恢复可靠。固定31b4a79全量核心session94520仍在编、cjc21996；无Summary，不升级通过。下一步将精确工单与持久批准事实接入该回调，并逐请求结算送达/unknown。
+
+## 第七十三轮：同日志持久工单到实际权限回传
+
+新增AcpPermissionDelivery（本轮新增文件登记），直接复用同一ApprovalDesk/SessionLog/WriteLease与真实委派进程；要求持久准入journal同路径，拒不同审批日志、缺租约和不存在的原请求。发号保存request事实并checkpoint；决定在委派身份/修订锁内，由原请求登记表调用实际desk.answer、持久批准事实、精确一次性consume，成功后才写协议管道。写失败保持outcome-unknown且不重发，回传后结算发布失败同样unknown。事实含会话/任务/任务请求/供应方/委派/协议会话/修订/进程代际/审批号/原请求ID/提案摘要/决定/选项。管道I/O移到登记锁外，避免读回压锁与回传写相互等待。
+
+acp-permission-delivery-v6.log --filter acp*：TOTAL297/PASSED57/SKIPPED240/ERROR0/FAILED0、rc0。6条新增流程测试用真实Node进程、实际AcpDelegationService/准入日志/工单/持久屏障/回传，覆盖批准成功、真实磁盘分歧不发送、缺租约不发号、真实子进程退出后回传写失败unknown且不重发、恢复不继承批准也不启动工厂、不同日志拒绝。首轮生成代码漏换行、第二轮夹具构造lambda捕获this.root均编译失败，无Summary；修复后54通过。FD0关闭探针未真正断流，曾56通过/1失败；改确认子进程wait退出后断流，最终57通过。未以修改生产判据迁就错误探针。
+
+固定31b4a79旧全量诊断副本仅归档core/extjs，结果TOTAL1323/PASSED1245/SKIPPED2/ERROR52/FAILED24、rc1；缺scripts是本轮准备遗漏，其中SSE错误实际MODULE_NOT_FOUND，不能记为源码SSE缺陷。团队工作区另有硬编码D:/Project/.../core/target/team-workspace-20261008/tmp不存在，不能将全部52归准备原因。保留原件/failure-cases.txt但不作有效完整仓库验收。已完整git archive同SHA至full-repo-31b4a79d79e2，源码ZIP SHA256 7B98CAC6425AC7B42520B243383A4D9153901FD8B8215D619A4385F33F513931；复跑session52026/cjc16944仍在编，无Summary，不重启。
+
+本批已接核心实际工单、持久事实与协议管道，不是假许可回调；提供方仍为本地协议夹具，没有真实外部模型请求、公共Host/CLI/页面或安装载荷验证。公开接线、内容投影、取消时待决请求回复、任务终态事实及跨进程身份监督仍未完成，不升级F10全域通过。

@@ -260,6 +260,15 @@ public class AcpDelegationService {
         throw Exception("not-found:delegation-${id}")
     }
 
+    func permissionProcess(id: String): ?AcpProcess {
+        mtx.lock()
+        try {
+            if (let Some(entry) <- delegations.get(id)) {
+                if ((entry.phase == "running" || entry.phase == "awaiting-permission") && !entry.cancelToken.cancelled()) { return entry.proc }
+            }
+            return None
+        } finally { mtx.unlock() }
+    }
     // 与取消/状态变更共用锁；批准与精确消费不得跨修订竞争放行。
     func withCurrentPermission(expected: AcpDelegationSnapshot, decide: () -> Bool): Bool {
         mtx.lock()
