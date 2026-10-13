@@ -1,6 +1,5 @@
 package core
 import std.collection.ArrayList
-import std.io.*
 import std.convert.*
 
 // 共享模型工具循环：一次 turn 可经历多次模型请求，每步以日志中的调用/结果继续。

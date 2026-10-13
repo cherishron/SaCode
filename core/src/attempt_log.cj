@@ -25,16 +25,16 @@ public class AttemptLog {
 
     // 返回 false = 标记没写下去：调用方必须不发（fail-closed），不许「先发再补记」。
     public func markDispatched(logicalRequestId: String, attemptId: String, routeKey: String): Bool {
-        let data = "{\"logicalRequestId\":\"${jsonEscapeText(logicalRequestId)}\","
-            + "\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"routeKey\":\"${jsonEscapeText(routeKey)}\"}"
+        let data = "{\"logicalRequestId\":\"${jsonEscapeText(logicalRequestId)}\"," +
+            "\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"routeKey\":\"${jsonEscapeText(routeKey)}\"}"
         return appendEvent("attempt/dispatched", data)
     }
 
     public func markFailed(attemptId: String, failure: TransportFailure): Bool {
-        let data = "{\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"kind\":\"${jsonEscapeText(failure.kind)}\","
-            + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},\"status\":${failure.status},"
-            + "\"retryAfterSeconds\":${failure.retryAfterSeconds},\"bodyLen\":${failure.bodyLen},"
-            + "\"summary\":\"${jsonEscapeText(failure.summary)}\"}"
+        let data = "{\"attemptId\":\"${jsonEscapeText(attemptId)}\",\"kind\":\"${jsonEscapeText(failure.kind)}\"," +
+            "\"reachedUpstream\":${boolText(failure.reachedUpstream)},\"status\":${failure.status}," +
+            "\"retryAfterSeconds\":${failure.retryAfterSeconds},\"bodyLen\":${failure.bodyLen}," +
+            "\"summary\":\"${jsonEscapeText(failure.summary)}\"}"
         return appendEvent("attempt/failed", data)
     }
 

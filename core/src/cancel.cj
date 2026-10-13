@@ -2,7 +2,6 @@ package core
 
 import std.collection.ArrayList
 import std.sync.*
-import std.io.*
 import stdx.encoding.json.*
 
 // 流记录保存完整结构；可选元数据用 JSON null 区分缺失与空字符串。

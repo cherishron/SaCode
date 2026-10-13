@@ -168,40 +168,6 @@ public func webSearchRequestBody(provider: String, query: String, model!: String
         }
         messages.add(message)
         object.put("messages", messages)
-    } else if (provider == "perplexity" || provider == "deepseek-official") {
-        let deepseek = provider == "deepseek-official"
-        object.put("model", JsonString(if (model.size > 0) { model }
-            else { if (deepseek) { "deepseek-v4-flash" } else { "sonar" } }))
-        object.put("max_tokens", JsonInt(if (maxTokens > 0) { maxTokens }
-            else { if (deepseek) { Int64(4096) } else { Int64(1024) } }))
-        let messages = JsonArray()
-        let message = JsonObject()
-        message.put("role", JsonString("user"))
-        if (deepseek) {
-            let blocks = JsonArray()
-            let block = JsonObject()
-            block.put("type", JsonString("text"))
-            block.put("text", JsonString("Perform a web search for the query: ${query}"))
-            blocks.add(block)
-            message.put("content", blocks)
-            let tools = JsonArray()
-            let tool = JsonObject()
-            tool.put("type", JsonString("web_search_20250305"))
-            tool.put("name", JsonString("web_search"))
-            tool.put("max_uses", JsonInt(maxUses))
-            tools.add(tool)
-            object.put("tools", tools)
-        } else {
-            message.put("content", JsonString(query))
-            if (recency.size > 0) {
-                if (recency != "day" && recency != "week" && recency != "month" && recency != "year") {
-                    throw Exception("web-bad-recency")
-                }
-                object.put("search_recency_filter", JsonString(recency))
-            }
-        }
-        messages.add(message)
-        object.put("messages", messages)
     } else if (provider == "tavily") {
         object.put("query", JsonString(query))
         object.put("max_results", JsonInt(maxResults))

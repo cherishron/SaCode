@@ -293,15 +293,12 @@ public class RemoteAccessEndpoints {
             auditBootstrap("", "", "auth/enroll", "denied", "ticket-failures-exceeded")
             return AuthResponse.deny(429, "ticket-locked")
         }
-        // try 表达式两支一个是 Option<DeviceRecord> 一个是裸 None，推不出类型；
-        // 改成先声明槽位，try 支只做赋值并返回 Bool。
+        // 先声明可选槽位，try 只负责登记与异常审计，不制造未使用的 Bool 结果。
         var enrolled: Option<DeviceRecord> = None
-        let ok = try {
+        try {
             enrolled = Some(store.enroll(secret, deviceName, kind))
-            true
         } catch (_: Exception) {
             auditBootstrap("", "", "auth/enroll", "denied", "invalid-enrollment")
-            false
         }
         if (let Some(record) <- enrolled) {
             limiter.clearTicket(digest)
@@ -330,12 +327,10 @@ public class RemoteAccessEndpoints {
             return AuthResponse.deny(400, "token-fields-missing")
         }
         var exchanged: Option<AccessToken> = None
-        let ok = try {
+        try {
             exchanged = Some(store.exchangeToken(deviceId, credential))
-            true
         } catch (_: Exception) {
             auditBootstrap(deviceId, "", "auth/token", "denied", "invalid-credential")
-            false
         }
         if (let Some(t) <- exchanged) {
             auditBootstrap(deviceId, "", "auth/token", "allowed", "")

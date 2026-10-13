@@ -78,8 +78,8 @@ public class RemoteRequestSchema {
         let bytes = name.toArray()
         if (bytes.size <= 0 || bytes.size > REQUEST_METHOD_MAX_LEN) { return SCHEMA_DENY_METHOD }
         for (b in bytes) {
-            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
-                || b == 45 || b == 46 || b == 47 || b == 95
+            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) ||
+                b == 45 || b == 46 || b == 47 || b == 95
             if (!ok) { return SCHEMA_DENY_METHOD }
         }
         return ""

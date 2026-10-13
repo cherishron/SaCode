@@ -240,9 +240,9 @@ public class ModelSpec {
             i += 1
         }
         supArr += "]"
-        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"contextWindow\":\"${jsonEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\",\"image\":${image},"
-            + "\"inputModalities\":${inArr},\"outputModalities\":${outArr},\"supports\":${supArr},"
-            + "\"meterUnit\":\"${jsonEscapeText(meterUnit)}\",\"provenance\":\"${jsonEscapeText(provenance)}\",\"availability\":\"${jsonEscapeText(availability)}\"}"
+        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\",\"contextWindow\":\"${jsonEscapeText(contextWindow)}\",\"maxTokens\":\"${jsonEscapeText(maxTokens)}\",\"image\":${image}," +
+            "\"inputModalities\":${inArr},\"outputModalities\":${outArr},\"supports\":${supArr}," +
+            "\"meterUnit\":\"${jsonEscapeText(meterUnit)}\",\"provenance\":\"${jsonEscapeText(provenance)}\",\"availability\":\"${jsonEscapeText(availability)}\"}"
     }
     // 只认显式登记：`unknown` 在能力过滤里不等于满足，名字像也不算。
     public func hasCapability(need: String): Bool {

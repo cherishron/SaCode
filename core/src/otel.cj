@@ -1,5 +1,4 @@
 package core
-import std.collection.*
 
 // Otel ledger：log-only `otel/span` 事件承载 `<spanName>`；`enable()/disable()`
 // 是本地开关（不落事件），未启用时 record 抛 `otel-not-enabled`；空 spanName 抛

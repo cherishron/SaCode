@@ -46,11 +46,11 @@ public class BindingRecord {
         this.currency = currency
     }
     public func toJson(): String {
-        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
-            + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},"
-            + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
-            + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
-            + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
+        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\"," +
+            "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight}," +
+            "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro}," +
+            "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro}," +
+            "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
     }
     // 复制修改：class 字段是 let，逐字段重建（同 ProviderRecord 的 withX 系列）
     public func withOrder(next: Int64): BindingRecord {
@@ -126,15 +126,15 @@ public class CustomModelRecord {
             i += 1
         }
         bnd += "]"
-        return "{${head}\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
-            + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { "false" }},"
-            + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
-            + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
-            + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\","
-            + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
-            + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
-            + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "false" }},"
-            + "\"probeMaxPerDay\":${probeMaxPerDay}}"
+        return "{${head}\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\"," +
+            "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { "false" }}," +
+            "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd}," +
+            "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder}," +
+            "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\"," +
+            "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens}," +
+            "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro}," +
+            "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "false" }}," +
+            "\"probeMaxPerDay\":${probeMaxPerDay}}"
     }
     // 复制修改：绑定数组换了就重建记录，其它十八个字段原样带着
     public func withBindings(next: Array<BindingRecord>): CustomModelRecord {
@@ -498,10 +498,10 @@ public class CustomModelRegistry {
     // 导入 = 「候选进入调度」，不是「替用户决定价格」：币种留空 = 未定价，
     // 四档费率全 -1，账本侧对应用 待核算 状态承接（§7.1）。
     private static func importedBindingJson(providerId: String, modelId: String, order: Int64): String {
-        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
-            + "\"enabled\":true,\"order\":${order},\"weight\":1,"
-            + "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1,"
-            + "\"priceVersion\":0,\"currency\":\"\"}"
+        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\"," +
+            "\"enabled\":true,\"order\":${order},\"weight\":1," +
+            "\"priceInMicro\":-1,\"priceOutMicro\":-1,\"priceCacheReadMicro\":-1,\"priceCacheWriteMicro\":-1," +
+            "\"priceVersion\":0,\"currency\":\"\"}"
     }
 
     private func guardRevision(expectedRevision: Int64): Unit {

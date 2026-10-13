@@ -3,7 +3,6 @@ package daemon
 import core.*
 import std.collection.ArrayList
 import std.env.*
-import std.fs.*
 import std.io.*
 import std.process.*
 import std.sync.*

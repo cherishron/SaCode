@@ -2,7 +2,6 @@ package core
 
 import std.collection.*
 import stdx.encoding.json.*
-import stdx.crypto.digest.*
 
 // 迁移包（B5）：配置导出/导入的核心逻辑。
 //
@@ -126,11 +125,11 @@ public class MigrationProviderEntry {
             i += 1
         }
         arr += "]"
-        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
-            + "\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\","
-            + "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } else { "false" }},"
-            + "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }},"
-            + "\"transport\":\"${jsonEscapeText(transport)}\",\"models\":${arr}}"
+        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\"," +
+            "\"baseUrl\":\"${jsonEscapeText(baseUrl)}\",\"protocol\":\"${jsonEscapeText(protocol)}\"," +
+            "\"credentialRef\":\"${jsonEscapeText(credentialRef)}\",\"declared\":${if (declared) { "true" } else { "false" }}," +
+            "\"sortOrder\":${sortOrder},\"enabled\":${if (enabled) { "true" } else { "false" }}," +
+            "\"transport\":\"${jsonEscapeText(transport)}\",\"models\":${arr}}"
     }
 
     public static func fromJson(obj: JsonObject): Option<MigrationProviderEntry> {
@@ -209,11 +208,11 @@ public class MigrationBindingEntry {
     }
 
     public func toJson(): String {
-        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\","
-            + "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight},"
-            + "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro},"
-            + "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro},"
-            + "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
+        return "{\"providerId\":\"${jsonEscapeText(providerId)}\",\"modelId\":\"${jsonEscapeText(modelId)}\"," +
+            "\"enabled\":${if (enabled) { "true" } else { "false" }},\"order\":${order},\"weight\":${weight}," +
+            "\"priceInMicro\":${priceInMicro},\"priceOutMicro\":${priceOutMicro}," +
+            "\"priceCacheReadMicro\":${priceCacheReadMicro},\"priceCacheWriteMicro\":${priceCacheWriteMicro}," +
+            "\"priceVersion\":${priceVersion},\"currency\":\"${jsonEscapeText(currency)}\"}"
     }
 
     public static func fromJson(obj: JsonObject): Option<MigrationBindingEntry> {
@@ -328,15 +327,15 @@ public class MigrationCustomModelEntry {
             i += 1
         }
         bnd += "]"
-        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\","
-            + "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { "false" }},"
-            + "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd},"
-            + "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder},"
-            + "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\","
-            + "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens},"
-            + "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro},"
-            + "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "false" }},"
-            + "\"probeMaxPerDay\":${probeMaxPerDay}}"
+        return "{\"id\":\"${jsonEscapeText(id)}\",\"name\":\"${jsonEscapeText(name)}\"," +
+            "\"description\":\"${jsonEscapeText(description)}\",\"enabled\":${if (enabled) { "true" } else { "false" }}," +
+            "\"category\":\"${jsonEscapeText(category)}\",\"requires\":${req},\"bindings\":${bnd}," +
+            "\"mode\":\"${jsonEscapeText(mode)}\",\"sortOrder\":${sortOrder}," +
+            "\"params\":\"${jsonEscapeText(params)}\",\"modalityBudget\":\"${jsonEscapeText(modalityBudget)}\"," +
+            "\"dailyTokens\":${dailyTokens},\"monthlyTokens\":${monthlyTokens}," +
+            "\"dailyAmountMicro\":${dailyAmountMicro},\"monthlyAmountMicro\":${monthlyAmountMicro}," +
+            "\"maxOutputTokens\":${maxOutputTokens},\"probeEnabled\":${if (probeEnabled) { "true" } else { "false" }}," +
+            "\"probeMaxPerDay\":${probeMaxPerDay}}"
     }
 
     public static func fromJson(obj: JsonObject): Option<MigrationCustomModelEntry> {
@@ -465,10 +464,10 @@ public class MigrationBundle {
             i += 1
         }
         refs += "]"
-        return "{\"format\":\"${jsonEscapeText(format)}\",\"kind\":\"${jsonEscapeText(kind)}\","
-            + "\"generatedAt\":${generatedAt},\"schemaVersion\":${schemaVersion},"
-            + "\"checksum\":\"${jsonEscapeText(checksum)}\","
-            + "\"providers\":${prov},\"customModels\":${cust},\"credentialRefs\":${refs}}"
+        return "{\"format\":\"${jsonEscapeText(format)}\",\"kind\":\"${jsonEscapeText(kind)}\"," +
+            "\"generatedAt\":${generatedAt},\"schemaVersion\":${schemaVersion}," +
+            "\"checksum\":\"${jsonEscapeText(checksum)}\"," +
+            "\"providers\":${prov},\"customModels\":${cust},\"credentialRefs\":${refs}}"
     }
 
     // 从 JSON 解析
@@ -572,9 +571,9 @@ public class MigrationBundle {
 
     // 读面摘要：不含条目内容
     public func safeSummary(): String {
-        return "format=${format} kind=${kind} schemaVersion=${schemaVersion} "
-            + "providers=${providers.size} customModels=${customModels.size} "
-            + "credentialRefs=${credentialRefs.size}"
+        return "format=${format} kind=${kind} schemaVersion=${schemaVersion} " +
+            "providers=${providers.size} customModels=${customModels.size} " +
+            "credentialRefs=${credentialRefs.size}"
     }
 }
 
@@ -603,8 +602,8 @@ public class MigrationPlanEntry {
     public func toJson(): String {
         let prov = if (let Some(p) <- provider) { p.toJson() } else { "null" }
         let cust = if (let Some(c) <- customModel) { c.toJson() } else { "null" }
-        return "{\"kind\":\"${jsonEscapeText(kind)}\",\"id\":\"${jsonEscapeText(id)}\","
-            + "\"action\":\"${jsonEscapeText(action)}\",\"provider\":${prov},\"customModel\":${cust}}"
+        return "{\"kind\":\"${jsonEscapeText(kind)}\",\"id\":\"${jsonEscapeText(id)}\"," +
+            "\"action\":\"${jsonEscapeText(action)}\",\"provider\":${prov},\"customModel\":${cust}}"
     }
 }
 
@@ -630,8 +629,8 @@ public class MigrationPlan {
             i += 1
         }
         arr += "]"
-        return "{\"entries\":${arr},\"needsCredentialConfirmation\":${if (needsCredentialConfirmation) { "true" } else { "false" }},"
-            + "\"bundleKind\":\"${jsonEscapeText(bundleKind)}\"}"
+        return "{\"entries\":${arr},\"needsCredentialConfirmation\":${if (needsCredentialConfirmation) { "true" } else { "false" }}," +
+            "\"bundleKind\":\"${jsonEscapeText(bundleKind)}\"}"
     }
 
     // 有多少条需要实际写入
@@ -702,8 +701,8 @@ public class MigrationApplyResult {
             i += 1
         }
         errs += "]"
-        return "{\"imported\":${imported},\"updated\":${updated},\"unchanged\":${unchanged},"
-            + "\"errors\":${errs},\"credentialRefWritten\":${credentialRefWritten}}"
+        return "{\"imported\":${imported},\"updated\":${updated},\"unchanged\":${unchanged}," +
+            "\"errors\":${errs},\"credentialRefWritten\":${credentialRefWritten}}"
     }
 
     public func isSuccess(): Bool {

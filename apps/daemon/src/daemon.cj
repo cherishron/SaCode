@@ -355,7 +355,7 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
     try {
         if (ledgerOn) {
             // 建账前必须拿到 operationId：没有它就没有键，也就没有「同一次操作」这件事。
-            if (operationId.size == 0) { return errRpc(idText, LEDGER_ERR_OPERATION_ID_REQUIRED, "operation-id-required") }
+            if (!idempotencyLedger.acceptsKey(operationId: operationId)) { return errRpc(idText, LEDGER_ERR_OPERATION_ID_REQUIRED, "operation-id-required") }
             // 三个归属字段按审计同一套净化规则取值，账本与审计说的是同一个资源；
             // 内容摘要覆盖整个 params——万一两条请求净化后撞进同一个键而内容不同，
             // 只会得到 -32018 拒绝，不会互相顶掉回执（fail-closed）。
@@ -783,8 +783,8 @@ main(args: Array<String>): Int64 {
     // 告警走 stderr：那行 `127.0.0.1:port` 是测试与客户端解析端口的唯一锚点，
     // 不能因为多打一条信息就把它挪位或换格式。
     if (accessConfig.bind == "0.0.0.0" && (getVariable("SACODE_REMOTE_ALLOWED_HOSTS") ?? "") == "") {
-        getStdErr().writeln("remote-host-warning: bind=0.0.0.0 且未配 SACODE_REMOTE_ALLOWED_HOSTS，"
-            + "只有回环主机名可用；LAN 客户端要按网卡地址显式加白")
+        getStdErr().writeln("remote-host-warning: bind=0.0.0.0 且未配 SACODE_REMOTE_ALLOWED_HOSTS，" +
+            "只有回环主机名可用；LAN 客户端要按网卡地址显式加白")
         getStdErr().flush()
     }
     while (!daemonStopping.load()) { sleep(50 * Duration.millisecond) }

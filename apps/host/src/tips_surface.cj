@@ -10,8 +10,8 @@ import std.time.*
 // 渲染层没有「自己算一份占用」的通路，任一不可靠就不出容量提醒（宁可闭嘴）。
 
 func isTipsMethod(method: String): Bool {
-    return method == "tips/get" || method == "tips/startup"
-        || method == "tips/after-reply" || method == "tips/set-hidden"
+    return method == "tips/get" || method == "tips/startup" ||
+        method == "tips/after-reply" || method == "tips/set-hidden"
 }
 
 // 墙上秒：冷却窗口要跨进程比（CLI 与桌面宿主共用同一份历史），

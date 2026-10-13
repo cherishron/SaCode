@@ -587,7 +587,6 @@ func wtParsePayload(text: String, allowed: Array<String>): WtFields {
 
 let wtBindKeys: Array<String> = ["name", "directory", "branch", "originalDirectory"]
 let wtCreateKeys: Array<String> = ["name", "directory"]
-let wtUnbindKeys: Array<String> = ["name", "directory", "action", "restoredDirectory"]
 let wtAgentKeys: Array<String> = ["agentId", "directory", "branch", "state"]
 
 class WtBinding {
@@ -645,10 +644,10 @@ func wtJsonBool(value: Bool): String {
 
 func wtJsonOf(active: Bool, name: String, directory: String, original: String, branch: String,
               dirty: Bool, uncommittedCount: Int64, uniqueCommits: Int64): String {
-    return "{\"active\":${wtJsonBool(active)},\"name\":${wtJsonQuote(name)},\"directory\":${wtJsonQuote(directory)},"
-        + "\"originalDirectory\":${wtJsonQuote(original)},\"branch\":${wtJsonQuote(branch)},"
-        + "\"dirty\":${wtJsonBool(dirty)},\"uncommittedCount\":${uncommittedCount},"
-        + "\"uniqueCommits\":${uniqueCommits}}"
+    return "{\"active\":${wtJsonBool(active)},\"name\":${wtJsonQuote(name)},\"directory\":${wtJsonQuote(directory)}," +
+        "\"originalDirectory\":${wtJsonQuote(original)},\"branch\":${wtJsonQuote(branch)}," +
+        "\"dirty\":${wtJsonBool(dirty)},\"uncommittedCount\":${uncommittedCount}," +
+        "\"uniqueCommits\":${uniqueCommits}}"
 }
 
 // ---------- 生命周期 ----------
@@ -897,8 +896,8 @@ public class SessionWorktree {
                 }
                 log.append(wtEventAgent, wtBuildPayload([["agentId", id], ["directory", record.directory],
                     ["branch", record.branch], ["state", "finished"]]))
-                return "{\"agentId\":${wtJsonQuote(id)},\"directory\":${wtJsonQuote(record.directory)},"
-                    + "\"retained\":${wtJsonBool(retained)},\"removed\":${wtJsonBool(removed)}}"
+                return "{\"agentId\":${wtJsonQuote(id)},\"directory\":${wtJsonQuote(record.directory)}," +
+                    "\"retained\":${wtJsonBool(retained)},\"removed\":${wtJsonBool(removed)}}"
             }
             wtFail("worktree-agent-unknown", detail: id)
         }

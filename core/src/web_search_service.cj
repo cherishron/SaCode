@@ -140,7 +140,10 @@ public class WebSearchService {
         let operations = Array<Future<WebSearchResult>>(queries.size, { index =>
             spawn {
                 try {
-                    if (shared.cancelled()) { throw Exception("web-cancelled") }
+                    if (shared.cancelled()) {
+                        throw Exception("web-cancelled")
+                    }
+                    // 保留请求体生成的校验/异常时机，并复用结果，避免 POST 重复生成。
                     let body = if (provider.id == "parallel") {
                         buildParallelMcpRequest(queries[index])
                     } else {
@@ -153,11 +156,7 @@ public class WebSearchService {
                     let response = if (isTinyfish) {
                         transport(endpoint + "?query=" + queries[index], "GET", "", key, shared, false)
                     } else {
-                        transport(endpoint, "POST", if (isParallel) { buildParallelMcpRequest(queries[index]) } else {
-                            webSearchRequestBody(provider.id, queries[index], model: provider.model,
-                                maxTokens: provider.maxTokens, maxUses: provider.maxUses, searchType: provider.searchType,
-                                highlights: provider.highlights, recency: provider.recency)
-                        }, key, shared, provider.id == "deepseek-official")
+                        transport(endpoint, "POST", body, key, shared, provider.id == "deepseek-official")
                     }
                     if (shared.cancelled()) { throw Exception("web-cancelled") }
                     if (response.status == 429) {

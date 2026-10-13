@@ -1,7 +1,6 @@
 package core
 
 import std.collection.ArrayList
-import std.interop.*
 
 // 文件提供方仅接收路径和字节，不借 shell 执行用户输入。BOOL/DWORD/HANDLE
 // 与 procwin 使用同一 ABI；所有数组指针都在同步调用结束后配对释放。

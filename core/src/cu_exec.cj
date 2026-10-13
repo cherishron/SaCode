@@ -1,8 +1,5 @@
 package core
 
-import std.collection.*
-import std.io.*
-import std.process.*
 import std.time.MonoTime
 
 // 电脑执行契约（H/W70）：校验请求并审计尝试。

@@ -2,7 +2,6 @@ package core
 
 import std.collection.*
 import std.fs.*
-import std.io.*
 import std.sync.*
 import std.time.*
 import stdx.crypto.crypto.*

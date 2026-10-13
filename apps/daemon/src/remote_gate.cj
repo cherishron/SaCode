@@ -3,7 +3,6 @@ package daemon
 import core.*
 import std.sync.*
 import std.time.*
-import std.env.*
 
 // 远程接入的门面：把 RemoteIdentityStore / RemoteAccessAuthorizer /
 // RemoteAuditLog 三块拼成「一句请求 → 一条决定」，daemon.cj 只在 /rpc
@@ -80,8 +79,8 @@ public class RemoteRequestGate {
     public static func sanitizeId(raw: String): String {
         if (raw.size == 0) { return "" }
         for (b in raw.toArray()) {
-            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122)
-                || b == 45 || b == 46 || b == 58 || b == 95 || b == 47
+            let ok = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) ||
+                b == 45 || b == 46 || b == 58 || b == 95 || b == 47
             if (!ok) { return "sanitized-invalid" }
         }
         if (raw.size > 64) { return raw[0..64] }
@@ -126,9 +125,9 @@ public class RemoteRequestGate {
                 // 这类更基础的原因暴露出来，然后再判「归属是不是本机」。
                 // 空 boundWorkspace 表示这台实例不启用这条核验（测试夹具、
                 // 未绑定工作区的开发态），保持向后兼容。
-                if (decision.allowed
-                    && boundWorkspace.size != 0
-                    && ws != boundWorkspace) {
+                if (decision.allowed &&
+                    boundWorkspace.size != 0 &&
+                    ws != boundWorkspace) {
                     recordDenied(c.deviceId, c.principalId, method, ws, sid, op,
                         "workspace-not-bound")
                     return GateOutcome(false, "workspace-not-bound", ctx)

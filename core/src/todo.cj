@@ -15,7 +15,9 @@ public class TodoItem {
 
 // 与 ECMAScript trim 的空白集合一致，避免只有全角空格的任务进入清单。
 func trimTodoContent(raw: String): String {
-    let marks = [" ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", " ", "　", "﻿"]
+    let marks = ["\u{A0}", "\u{1680}", "\u{2000}", "\u{2001}", "\u{2002}", "\u{2003}", "\u{2004}", "\u{2005}",
+        "\u{2006}", "\u{2007}", "\u{2008}", "\u{2009}", "\u{200A}", "\u{2028}", "\u{2029}", "\u{202F}", "\u{205F}",
+        "\u{3000}", "\u{FEFF}"]
     var text = raw.trimAscii()
     var changed = true
     while (changed) {

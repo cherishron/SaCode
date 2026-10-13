@@ -47,6 +47,30 @@ func errFrameData(id: String, code: Int64, message: String, data: String): Strin
     return "{\"jsonrpc\":\"2.0\",\"id\":${id},\"error\":{\"code\":${code},\"message\":\"${jsonEscapeText(message)}\",\"data\":${data}}}"
 }
 
+// 会话切换只归还本次取得的租约；索引发布不确定时保持原来的保留策略。
+class SessionSelectionLeases {
+    let index: WriteLease
+    let target: WriteLease
+    let ownsIndex: Bool
+    var targetAcquired = false
+    var keepIndex = false
+
+    init(index: WriteLease, target: WriteLease, ownsIndex: Bool) {
+        this.index = index
+        this.target = target
+        this.ownsIndex = ownsIndex
+    }
+
+    func release(): Unit {
+        if (targetAcquired) {
+            target.release()
+        }
+        if (ownsIndex && !keepIndex) {
+            index.release()
+        }
+    }
+}
+
 func bytesOf(s: String): Array<Byte> {
     return s.toArray()
 }
@@ -787,7 +811,7 @@ func sessionLeaseError(id: String, lease: WriteLease): String {
     return errFrameData(id, -32003, "session-storage-unavailable", "{\"reason\":\"persistence-failed\",\"retryable\":true}")
 }
 
-main(args: Array<String>) {
+main() {
     let catalog = SessionCatalog(".")
     let teamRuntime = HostTeamRuntime(".", catalog)
     let teamSchedulerToken = TurnToken()
@@ -2323,12 +2347,11 @@ main(args: Array<String>) {
             let targetIsActive = leaseHeld && p == targetPath
             let targetLease = if (targetPath == indexPath) { indexLease }
                 else if (targetIsActive) { lease } else { WriteLease(targetPath) }
-            var targetAcquired = false
-            var keepIndex = false
+            let selectionLeases = SessionSelectionLeases(indexLease, targetLease, !indexIsActive)
             try {
             if (targetPath != indexPath && !targetIsActive) {
                 if (!targetLease.takeoverIfStale()) { emit(sessionLeaseError(idText, targetLease)); continue }
-                targetAcquired = true
+                selectionLeases.targetAcquired = true
             }
             if (targetIsActive && !targetLease.protects(targetPath)) {
                 emit(errFrameData(idText, -32001, "session-owner-unknown", "{\"reason\":\"outcome-unknown\",\"retryable\":false}")); continue
@@ -2347,7 +2370,7 @@ main(args: Array<String>) {
             if (!indexLease.protects(indexPath) || !index.flush()) {
                 // 失败保留根租约，由进程退出后按已死写者规则接管；不声称切换成功。
                 selectionFault = true
-                keepIndex = true
+                selectionLeases.keepIndex = true
                 emit(errFrame(idText, -32003, "selection-flush-failed")); continue
             }
             if (leaseHeld && !lease.release()) {
@@ -2374,8 +2397,7 @@ main(args: Array<String>) {
             emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(activeId)}\",\"selected\":true,\"saved\":true,\"theme\":\"${SessionAppearance(shared).theme()}\"}"))
             continue
             } finally {
-                if (targetAcquired) { targetLease.release() }
-                if (!indexIsActive && !keepIndex) { indexLease.release() }
+                selectionLeases.release()
             }
         }
 

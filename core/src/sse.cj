@@ -3,7 +3,6 @@ package core
 import std.io.*
 import std.collection.ArrayList
 import stdx.net.http.*
-import stdx.net.tls.*
 import stdx.encoding.json.*
 
 // 结构化打开结果：要么给出可用的 provider，要么给出结构化失败。

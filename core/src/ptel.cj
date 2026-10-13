@@ -1,5 +1,4 @@
 package core
-import std.collection.*
 
 // Product telemetry ledger：log-only `product-telemetry/emit` 事件承载 `<eventName>`；
 // `enable()/disable()` 是本地开关，未启用 emit 抛 `product-telemetry-not-enabled`；

@@ -1,6 +1,5 @@
 package cli
 import core.*
-import std.io.*
 import std.env.getStdErr
 
 func runApprovalModeCommand(args: Array<String>): Int64 {

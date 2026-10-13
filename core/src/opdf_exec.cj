@@ -2,7 +2,6 @@ package core
 
 import std.collection.*
 import std.fs.*
-import std.io.*
 import std.process.*
 import std.time.MonoTime
 

@@ -23,16 +23,40 @@ class WebConnectionState {
     let mutex = Mutex()
     let done = AtomicBool(false)
     var socket: Option<TcpSocket> = None
+    // HTTP 对象只由请求线程登记和释放；watchdog 仍只通过 close 关闭 socket。
+    var client: Option<Client> = None
+    var response: Option<HttpResponse> = None
     func attach(value: TcpSocket): Unit {
         synchronized(mutex) {
-            if (done.load()) { value.close(); throw Exception("web-cancelled") }
+            if (done.load()) {
+                value.close();
+                throw Exception("web-cancelled")
+            }
             socket = Some(value)
         }
     }
     func close(): Unit {
         synchronized(mutex) {
-            if (let Some(value) <- socket) { try { value.close() } catch (_: Exception) {} }
+            if (let Some(value) <- socket) {
+                try {
+                    value.close()
+                } catch (_: Exception) {}
+            }
         }
+    }
+    func closeHttpResources(): Unit {
+        if (let Some(value) <- response) {
+            try {
+                value.close()
+            } catch (_: Exception) {}
+        }
+        response = None
+        if (let Some(value) <- client) {
+            try {
+                value.close()
+            } catch (_: Exception) {}
+        }
+        client = None
     }
 }
 
@@ -62,8 +86,6 @@ public class WebHttpTransport {
                 sleep(Duration.millisecond * 10)
             }
         }
-        var client: Option<Client> = None
-        var response: Option<HttpResponse> = None
         try {
             let addresses = IPAddress.resolve(target.host)
             webCheckResolvedAddresses(Array<String>(addresses.size, { index => addresses[index].toString() }))
@@ -78,7 +100,7 @@ public class WebHttpTransport {
             let connection = ClientBuilder().noProxy().cookieJar(None).autoRedirect(false)
                 .connector(connector).tlsConfig(defaultTlsClientConfig())
                 .readTimeout(Duration.millisecond * timeoutMs).writeTimeout(Duration.millisecond * timeoutMs).build()
-            client = Some(connection)
+            state.client = Some(connection)
             let builder = HttpRequestBuilder().url(url).method(method)
                 .header("accept", "application/json, text/*;q=0.9, */*;q=0.1")
                 .header("user-agent", "SaCode/0.2")
@@ -88,7 +110,7 @@ public class WebHttpTransport {
                 builder.header("x-api-key", apiKey).header("anthropic-version", "2023-06-01")
             }
             let received = connection.send(builder.build())
-            response = Some(received)
+            state.response = Some(received)
             if (let Some(length) <- received.bodySize) {
                 if (length > maxBytes) { throw Exception("web-body-too-large") }
             }
@@ -112,8 +134,7 @@ public class WebHttpTransport {
         } finally {
             state.done.store(true)
             state.close()
-            if (let Some(value) <- response) { try { value.close() } catch (_: Exception) {} }
-            if (let Some(value) <- client) { try { value.close() } catch (_: Exception) {} }
+            state.closeHttpResources()
             watchdog.get()
         }
     }

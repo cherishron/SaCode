@@ -1,6 +1,5 @@
 package host
 import core.*
-import std.io.*
 import std.time.*
 import std.collection.ArrayList
 

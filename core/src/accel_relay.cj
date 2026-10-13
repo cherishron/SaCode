@@ -1,8 +1,5 @@
 package core
 
-import std.collection.*
-import stdx.net.http.*
-import stdx.net.tls.*
 
 // 加速转发核心（B4）：只决定「走哪条线」，不做调度、不做预算、不重试已可能送达的请求。
 //

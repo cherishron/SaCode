@@ -2,7 +2,6 @@ package daemon
 import core.*
 
 import std.collection.*
-import std.fs.*
 
 // session/events 的服务端补读面（设计 §6）。会话日志是唯一真源，这里只做「读盘 + 按游标切页」，
 // 不产生任何副作用：所以 durable=false，也不进幂等账。

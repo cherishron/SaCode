@@ -189,14 +189,40 @@ class HookConnection {
     let lock = Mutex()
     let done = AtomicBool(false)
     var socket: Option<TcpSocket> = None
+    // 请求线程拥有 HTTP 对象，watchdog 只负责 socket 中断，避免并发释放 HTTP 状态。
+    var client: Option<Client> = None
+    var response: Option<HttpResponse> = None
     func attach(value: TcpSocket): Unit {
         synchronized(lock) {
-            if (done.load()) { value.close(); throw Exception("hook-timeout") }
+            if (done.load()) {
+                value.close();
+                throw Exception("hook-timeout")
+            }
             socket = Some(value)
         }
     }
     func close(): Unit {
-        synchronized(lock) { if (let Some(s) <- socket) { try { s.close() } catch (_: Exception) {} } }
+        synchronized(lock) {
+            if (let Some(s) <- socket) {
+                try {
+                    s.close()
+                } catch (_: Exception) {}
+            }
+        }
+    }
+    func closeHttpResources(): Unit {
+        if (let Some(value) <- response) {
+            try {
+                value.close()
+            } catch (_: Exception) {}
+        }
+        response = None
+        if (let Some(value) <- client) {
+            try {
+                value.close()
+            } catch (_: Exception) {}
+        }
+        client = None
     }
 }
 
@@ -243,8 +269,6 @@ func hookHttp(rawUrl: String, headers: HashMap<String, String>, allowedEnv: Arra
             sleep(Duration.millisecond * 5)
         }
     }
-    var client: Option<Client> = None
-    var response: Option<HttpResponse> = None
     try {
         let addresses = IPAddress.resolve(host)
         if (addresses.size == 0) { throw Exception("hook-dns-empty") }
@@ -262,18 +286,17 @@ func hookHttp(rawUrl: String, headers: HashMap<String, String>, allowedEnv: Arra
         let connection = ClientBuilder().noProxy().autoRedirect(false).cookieJar(None)
             .connector(connector).tlsConfig(defaultTlsClientConfig()).readTimeout(Duration.millisecond * timeout)
             .writeTimeout(Duration.millisecond * timeout).build()
-        client = Some(connection)
+        state.client = Some(connection)
         let request = HttpRequestBuilder().url(url).method("POST").header("content-type", "application/json").body(hookInputJson(input))
         for ((key, value) in expanded) { request.header(key, value) }
         let received = connection.send(request.build())
-        response = Some(received)
+        state.response = Some(received)
         if (received.status < 200 || received.status >= 300) { return HookResult(decision: HookDecision.Allow) }
         let (body, truncated) = hookDrain(received.body)
         if (!truncated && !state.done.load()) { return hookParse(body) }
     } catch (_: Exception) {} finally {
         state.done.store(true); state.close()
-        if (let Some(r) <- response) { try { r.close() } catch (_: Exception) {} }
-        if (let Some(c) <- client) { try { c.close() } catch (_: Exception) {} }
+        state.closeHttpResources()
         watchdog.get()
     }
     return HookResult(decision: HookDecision.Allow)

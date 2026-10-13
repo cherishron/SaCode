@@ -1,7 +1,6 @@
 package core
 
 import std.collection.ArrayList
-import std.interop.*
 import std.sync.*
 
 // Ctrl+C / 控制台关闭事件的中断接线。

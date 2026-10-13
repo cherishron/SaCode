@@ -1,7 +1,6 @@
 package core
 
 import std.fs.*
-import std.io.*
 import std.process.*
 import std.sync.AtomicInt64
 import std.time.*

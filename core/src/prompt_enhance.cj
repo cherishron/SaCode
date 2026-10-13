@@ -1,16 +1,14 @@
 package core
-import std.io.*
-import std.sync.*
 
 // 提示词增强：把「这一条草稿」交给当前会话选中的模型重述得更清楚。
 // 它是草稿辅助面，不是执行面——请求里既不带工具定义，也不带会话历史，
 // 结果只回给调用方，永不落进会话日志（会话日志是唯一真源，混进去就等于替用户说了话）。
-let ENHANCE_INSTRUCTION = "你是需求表述助手。请把用户接下来给出的这一条草稿改写得更清楚、更有条理，"
-    + "并保留他原本的意图、语气、感受和已经明确写出的约束。"
-    + "可以在必要时把内容整理成背景、目标、要求、验收条件这类结构，但不要强行套用模板，也不要让篇幅无谓变长。"
-    + "不要添加用户没有提到的功能、技术栈、时间、预算或限制。"
-    + "信息不足时保留那份不确定，明确写成待确认，不要编造事实。"
-    + "只输出改写后的草稿本身，不要解释你做了什么，也不要加前后缀说明。"
+let ENHANCE_INSTRUCTION = "你是需求表述助手。请把用户接下来给出的这一条草稿改写得更清楚、更有条理，" +
+    "并保留他原本的意图、语气、感受和已经明确写出的约束。" +
+    "可以在必要时把内容整理成背景、目标、要求、验收条件这类结构，但不要强行套用模板，也不要让篇幅无谓变长。" +
+    "不要添加用户没有提到的功能、技术栈、时间、预算或限制。" +
+    "信息不足时保留那份不确定，明确写成待确认，不要编造事实。" +
+    "只输出改写后的草稿本身，不要解释你做了什么，也不要加前后缀说明。"
 
 public class EnhanceResult {
     public let text: String
@@ -28,10 +26,10 @@ public func enhanceRequestJson(model: String, draft: String): String {
     if (draft.trimAscii().size == 0) { throw Exception("enhance-empty-draft") }
     if (model.trimAscii().size == 0) { throw Exception("enhance-empty-model") }
     if (draft.size > 8000) { throw Exception("enhance-draft-too-large") }
-    return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":["
-        + "{\"role\":\"system\",\"content\":\"${jsonEscapeText(ENHANCE_INSTRUCTION)}\"},"
-        + "{\"role\":\"user\",\"content\":\"${jsonEscapeText(draft)}\"}"
-        + "],\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+    return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[" +
+        "{\"role\":\"system\",\"content\":\"${jsonEscapeText(ENHANCE_INSTRUCTION)}\"}," +
+        "{\"role\":\"user\",\"content\":\"${jsonEscapeText(draft)}\"}" +
+        "],\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
 }
 
 public class PromptEnhancer {

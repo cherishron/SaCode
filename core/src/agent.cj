@@ -1226,18 +1226,27 @@ func sameFileBytes(left: Array<Byte>, right: Array<Byte>): Bool {
 // 独占临时文件先写完整，再原子落位；目标抢先出现时不替换它。
 func publishNewFile(path: String, bytes: Array<Byte>): Unit {
     let parent = Path(path).parent.toString()
-    let dir = if (parent.size == 0) { "./" } else { parent }
+    let dir = if (parent.size == 0) {
+        "./"
+    } else {
+        parent
+    }
     let tmp = File.createTemp(Path(dir))
     let staging = tmp.info.path.toString()
-    var closed = false
     try {
         tmp.write(bytes)
         tmp.close()
-        closed = true
         rename(staging, to: path, overwrite: false)
     } finally {
-        if (!closed) { tmp.close() }
-        removeIfExists(staging, recursive: false)
+        try {
+            // 以文件对象的实际状态判定，不依赖跨异常路径的局部布尔标志。
+            if (!tmp.isClosed()) {
+                tmp.close()
+            }
+        } finally {
+            // 即使关闭抛错，也必须尝试回收未发布的临时路径。
+            removeIfExists(staging, recursive: false)
+        }
     }
 }
 
@@ -1249,18 +1258,25 @@ func publishNewFile(path: String, bytes: Array<Byte>): Unit {
 // finally 兜底清理失败路径上的残留 staging。
 func replaceFileAtomically(path: String, bytes: Array<Byte>): Unit {
     let parent = Path(path).parent.toString()
-    let dir = if (parent.size == 0) { "./" } else { parent }
+    let dir = if (parent.size == 0) {
+        "./"
+    } else {
+        parent
+    }
     let tmp = File.createTemp(Path(dir))
     let staging = tmp.info.path.toString()
-    var closed = false
     try {
         tmp.write(bytes)
         tmp.close()
-        closed = true
         rename(staging, to: path, overwrite: true)
     } finally {
-        if (!closed) { tmp.close() }
-        removeIfExists(staging, recursive: false)
+        try {
+            if (!tmp.isClosed()) {
+                tmp.close()
+            }
+        } finally {
+            removeIfExists(staging, recursive: false)
+        }
     }
 }
 

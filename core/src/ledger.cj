@@ -751,8 +751,8 @@ class LedgerSnapshot {
         }
         var i: Int64 = 0
         while (i < Int64(providerTotals.size)) {
-            if (providerTotals[i][0] == providerId && providerTotals[i][1] == customModelId
-                && providerTotals[i][2] == currency) {
+            if (providerTotals[i][0] == providerId && providerTotals[i][1] == customModelId &&
+                providerTotals[i][2] == currency) {
                 providerTotals[i] = (providerId, customModelId, currency, providerTotals[i][3] + amount)
                 return
             }
@@ -849,14 +849,14 @@ func ledgerRefusalOutcome(data: String, idempotent: Bool): SettleOutcome {
 }
 
 func ledgerReservedData(intent: ReserveIntent): String {
-    return "{\"attemptId\":\"${jsonEscapeText(intent.attemptId)}\","
-        + "\"logicalRequestId\":\"${jsonEscapeText(intent.logicalRequestId)}\","
-        + "\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\","
-        + "\"customModelId\":\"${jsonEscapeText(intent.customModelId)}\","
-        + "\"providerId\":\"${jsonEscapeText(intent.providerId)}\","
-        + "\"modelId\":\"${jsonEscapeText(intent.modelId)}\","
-        + "\"reservedMicros\":${intent.reservedMicros},"
-        + "\"currency\":\"${jsonEscapeText(intent.currency)}\",\"epoch\":${intent.epoch}}"
+    return "{\"attemptId\":\"${jsonEscapeText(intent.attemptId)}\"," +
+        "\"logicalRequestId\":\"${jsonEscapeText(intent.logicalRequestId)}\"," +
+        "\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\"," +
+        "\"customModelId\":\"${jsonEscapeText(intent.customModelId)}\"," +
+        "\"providerId\":\"${jsonEscapeText(intent.providerId)}\"," +
+        "\"modelId\":\"${jsonEscapeText(intent.modelId)}\"," +
+        "\"reservedMicros\":${intent.reservedMicros}," +
+        "\"currency\":\"${jsonEscapeText(intent.currency)}\",\"epoch\":${intent.epoch}}"
 }
 
 // 结算事件名：settled / unsettled / refused 三种落点各一条事件
@@ -873,9 +873,9 @@ func ledgerEventTypeOf(result: String): String {
 // 被拒的结算只记「为什么拒」，不产生金额
 func ledgerEntryData(a: AttemptAccounting, result: String, reason: String, amount: Int64): String {
     if (result == "refused") {
-        return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\",\"code\":\"${jsonEscapeText(reason)}\","
-            + "\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
-            + "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\"}"
+        return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\",\"code\":\"${jsonEscapeText(reason)}\"," +
+            "\"currency\":\"${jsonEscapeText(a.rates.currency)}\"," +
+            "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\"}"
     }
     return ledgerAccountingData(a, result, reason, amount)
 }
@@ -883,31 +883,31 @@ func ledgerEntryData(a: AttemptAccounting, result: String, reason: String, amoun
 // 结算/待核算事件体：费率与 priceVersion 一起落盘，这就是「计价快照」——
 // 历史账单只认这一份，改价不重算。
 func ledgerAccountingData(a: AttemptAccounting, result: String, reason: String, amount: Int64): String {
-    return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\","
-        + "\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestId)}\","
-        + "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\","
-        + "\"customModelId\":\"${jsonEscapeText(a.customModelId)}\","
-        + "\"providerId\":\"${jsonEscapeText(a.providerId)}\","
-        + "\"modelId\":\"${jsonEscapeText(a.modelId)}\","
-        + "\"session\":\"${jsonEscapeText(a.session)}\","
-        + "\"goal\":\"${jsonEscapeText(a.goal)}\","
-        + "\"turn\":\"${jsonEscapeText(a.turn)}\","
-        + "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\","
-        + "\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\","
-        + "\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${jsonEscapeText(reason)}\","
-        + "\"input\":${a.usage.input},\"output\":${a.usage.output},"
-        + "\"cacheRead\":${a.usage.cacheRead},\"cacheWrite\":${a.usage.cacheWrite},"
-        + "\"imageCount\":${a.imageCount},\"audioSeconds\":${a.audioSeconds},"
-        + "\"meterSource\":\"${jsonEscapeText(ledgerSourceOf(a.usage))}\","
-        + "\"rawField\":\"${jsonEscapeText(a.usage.rawField)}\","
-        + "\"amountMicros\":${amount},\"currency\":\"${jsonEscapeText(a.rates.currency)}\","
-        + "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\","
-        + "\"rateInputMicrosPerUnit\":${a.rates.inputMicrosPerUnit},"
-        + "\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit},"
-        + "\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosPerUnit},"
-        + "\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicrosPerUnit},"
-        + "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch},"
-        + "\"durationMillis\":${a.durationMillis}}"
+    return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\"," +
+        "\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestId)}\"," +
+        "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\"," +
+        "\"customModelId\":\"${jsonEscapeText(a.customModelId)}\"," +
+        "\"providerId\":\"${jsonEscapeText(a.providerId)}\"," +
+        "\"modelId\":\"${jsonEscapeText(a.modelId)}\"," +
+        "\"session\":\"${jsonEscapeText(a.session)}\"," +
+        "\"goal\":\"${jsonEscapeText(a.goal)}\"," +
+        "\"turn\":\"${jsonEscapeText(a.turn)}\"," +
+        "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\"," +
+        "\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\"," +
+        "\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${jsonEscapeText(reason)}\"," +
+        "\"input\":${a.usage.input},\"output\":${a.usage.output}," +
+        "\"cacheRead\":${a.usage.cacheRead},\"cacheWrite\":${a.usage.cacheWrite}," +
+        "\"imageCount\":${a.imageCount},\"audioSeconds\":${a.audioSeconds}," +
+        "\"meterSource\":\"${jsonEscapeText(ledgerSourceOf(a.usage))}\"," +
+        "\"rawField\":\"${jsonEscapeText(a.usage.rawField)}\"," +
+        "\"amountMicros\":${amount},\"currency\":\"${jsonEscapeText(a.rates.currency)}\"," +
+        "\"priceVersion\":\"${jsonEscapeText(a.rates.priceVersion)}\"," +
+        "\"rateInputMicrosPerUnit\":${a.rates.inputMicrosPerUnit}," +
+        "\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit}," +
+        "\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosPerUnit}," +
+        "\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicrosPerUnit}," +
+        "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch}," +
+        "\"durationMillis\":${a.durationMillis}}"
 }
 
 // ===== 账本 =====
@@ -1142,8 +1142,8 @@ public class UsageLedger {
                 if (snap.liveReservation(attemptId).isNone()) {
                     return "no-reservation"
                 }
-                log.append("ledger/voided", "{\"attemptId\":\"${jsonEscapeText(attemptId)}\","
-                    + "\"reason\":\"${jsonEscapeText(reason)}\",\"epoch\":${epoch}}")
+                log.append("ledger/voided", "{\"attemptId\":\"${jsonEscapeText(attemptId)}\"," +
+                    "\"reason\":\"${jsonEscapeText(reason)}\",\"epoch\":${epoch}}")
                 if (!log.flush()) {
                     return "ledger-write-failed"
                 }
@@ -1276,16 +1276,16 @@ public class UsageLedger {
             if (totals.size > 0) {
                 totals += ","
             }
-            totals += "{\"currency\":\"${jsonEscapeText(currency)}\","
-                + "\"usedMicros\":${snap.used(currency)},\"inFlightMicros\":${snap.inFlight(currency)}}"
+            totals += "{\"currency\":\"${jsonEscapeText(currency)}\"," +
+                "\"usedMicros\":${snap.used(currency)},\"inFlightMicros\":${snap.inFlight(currency)}}"
         }
         var kinds = ""
         for (kv in snap.usageKindTotals) {
             if (kinds.size > 0) {
                 kinds += ","
             }
-            kinds += "{\"usageKind\":\"${jsonEscapeText(kv[0])}\","
-                + "\"currency\":\"${jsonEscapeText(kv[1])}\",\"usedMicros\":${kv[2]}}"
+            kinds += "{\"usageKind\":\"${jsonEscapeText(kv[0])}\"," +
+                "\"currency\":\"${jsonEscapeText(kv[1])}\",\"usedMicros\":${kv[2]}}"
         }
         var providers = ""
         for (kv in snap.providerTotals) {

@@ -5,18 +5,6 @@ public class PermissionPolicy {
         return name == "write" || name == "edit" || name == "bash" || name == "pwsh" || name == "run_code"
     }
 
-    private static func buildShellAllow(cmd: String): Bool {
-        let prefixes = ["npm run build", "npm run test", "npm test", "npm run lint", "npm run typecheck",
-            "cargo build", "cargo test", "cargo check",
-            "make", "make build", "make test",
-            "go build", "go test",
-            "pnpm build", "pnpm test", "yarn build", "yarn test"]
-        for (p in prefixes) {
-            if (cmd.startsWith(p)) { return true }
-        }
-        return false
-    }
-
     private static func autoToolAllow(name: String): Bool {
         // LSP rename仅返回变更预览，真正写入仍走F08审查。
         let allow = ["read", "grep", "glob", "web_fetch", "web_search", "ls", "cat", "head", "tail", "wc", "file",
@@ -34,7 +22,7 @@ public class PermissionPolicy {
         if (mode == "build") {
             if (!isWriteTool(toolOrCommand)) { return if (autoToolAllow(toolOrCommand)) { "allow" } else { "ask" } }
             if (toolOrCommand == "bash" || toolOrCommand == "pwsh") { return "ask" }
-            // shell 命令带空格，需在调用方区分；这里只判工具名，shell 白名单由调用方传完整命令
+            // 本层只判工具名；shell 仍按上一分支返回 ask，不按命令前缀绕过审批。
             return "allow"
         }
         if (mode == "auto") {

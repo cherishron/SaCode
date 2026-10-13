@@ -207,9 +207,12 @@ public class BatchStore {
         return result
     }
     public func clean(id: String, force: Bool): Unit {
-        let record = readTask(id)
+        // 即使没有使用任务正文，也必须先验证任务存在且 ID 匹配。
+        readTask(id)
         // 上游未公开完整记录 schema，P0 不臆测哪些远端状态可以无确认删除。
-        if (!force) { throw Exception("batch-clean-force-required") }
+        if (!force) {
+            throw Exception("batch-clean-force-required")
+        }
         let directory = taskDir(id)
         let lease = WriteLease(directory)
         if (!lease.acquire()) { throw Exception("batch-task-busy") }

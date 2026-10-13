@@ -151,7 +151,8 @@ public class GoalService {
 
     public func clear(expected: Int64): Unit {
         synchronized(log.mtx) {
-            let current = cas(expected)
+            // 保留 CAS 校验及异常，只是不需要返回的旧快照。
+            cas(expected)
             log.append("goal/change", GoalService.encode("none", "", ""))
         }
     }

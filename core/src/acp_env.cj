@@ -4,7 +4,6 @@ import std.collection.ArrayList
 import std.collection.HashMap
 import std.sync.*
 import std.fs.*
-import std.io.*
 import std.process.*
 import std.env.getVariable
 

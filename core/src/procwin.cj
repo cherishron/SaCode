@@ -1,6 +1,5 @@
 package core
 
-import std.interop.*
 
 // Windows 进程判活与自身 pid。std 里没有这两件事：`std.process` 只有
 // `findProcess(pid)`（要能打开进程才有对象），`std.posix` 又非跨平台，

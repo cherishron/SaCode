@@ -1,7 +1,6 @@
 package cli
 
 import std.collection.ArrayList
-import std.collection.ArrayList
 import std.env.*
 import std.io.InputStream
 import stdx.encoding.json.*
@@ -11,9 +10,9 @@ import stdx.net.http.*
 let remoteBodyLimit: Int64 = 1048576
 
 func remoteUsage(): Int64 {
-    getStdErr().writeln("usage: sacode [--worktree[=<名称>|#<PR编号>|<github pull URL>]] --remote <1..65535> "
-        + "[rpc <method> [<params JSON对象或数组>] | subscribe | worktree <enter|describe|exit|agent-prepare|agent-finish|cleanup> [<值>] [--discard-changes] "
-        + "| session send <提示词>] --session <会话>")
+    getStdErr().writeln("usage: sacode [--worktree[=<名称>|#<PR编号>|<github pull URL>]] --remote <1..65535> " +
+        "[rpc <method> [<params JSON对象或数组>] | subscribe | worktree <enter|describe|exit|agent-prepare|agent-finish|cleanup> [<值>] [--discard-changes] " +
+        "| session send <提示词>] --session <会话>")
     return 64
 }
 

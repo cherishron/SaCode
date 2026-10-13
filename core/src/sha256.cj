@@ -99,8 +99,8 @@ public func sha256Digest(data: Array<Byte>): Array<Byte> {
     while (block < Int64(msg.size)) {
         for (t in 0..16) {
             let base = block + t * 4
-            w[t] = (UInt32(msg[base]) << 24) | (UInt32(msg[base + 1]) << 16)
-                | (UInt32(msg[base + 2]) << 8) | UInt32(msg[base + 3])
+            w[t] = (UInt32(msg[base]) << 24) | (UInt32(msg[base + 1]) << 16) |
+                (UInt32(msg[base + 2]) << 8) | UInt32(msg[base + 3])
         }
         for (t in 16..64) {
             w[t] = smallSigma1(w[t - 2]).wrappingAdd(w[t - 7])

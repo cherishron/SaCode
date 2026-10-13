@@ -4,7 +4,6 @@ import std.collection.ArrayList
 import std.fs.*
 import std.io.*
 import std.sync.*
-import std.env.getStdErr
 
 public class SessionEvent {
     public let seq: Int64
@@ -141,25 +140,23 @@ public class SessionLog {
             if (durableFrozen) {
                 return false
             }
-            var borrowed: ?WriteLease = None
-            var temporary: ?WriteLease = None
             try {
-                borrowed = localWriter("${path}.lease")
-                if (borrowed.isNone()) {
-                    let candidate = WriteLease(path)
-                    if (!candidate.takeoverIfStale()) {
-                        return false
-                    }
-                    temporary = Some(candidate)
-                    borrowed = Some(candidate)
+                if (let Some(borrowed) <- localWriter("${path}.lease")) {
+                    // 既有写者的租约只借用，不由本次 flush 归还。
+                    return publishLocked(borrowed, true)
                 }
-                return publishLocked(borrowed.getOrThrow(), true)
+                let temporary = WriteLease(path)
+                if (!temporary.takeoverIfStale()) {
+                    return false
+                }
+                try {
+                    return publishLocked(temporary, true)
+                } finally {
+                    // 作用域只在取得租约后进入，成功返回或发布抛错都归还。
+                    temporary.release()
+                }
             } catch (_: Exception) {
                 return false
-            } finally {
-                if (let Some(lease) <- temporary) {
-                    lease.release()
-                }
             }
         }
     }
@@ -248,67 +245,6 @@ public class SessionLog {
         }
         flushedCount = Int64(events.size)
         return true
-    }
-
-    // 磁盘上每一条完整事件行都必须原样出现在草稿开头。草稿比磁盘短时，只允许少掉
-    // 「回放本来就授权丢弃」的那一类尾部坏帧（字段不足 3 段），其余一律拒发。
-    // 末字节不是 LF 的半帧不参与对照——它是物理残缺，不是一条待保留的事件。
-    private func mayOverwriteDurable(draft: String): Bool {
-        if (!exists(path)) {
-            return true
-        }
-        var durable = ""
-        try {
-            durable = String.fromUtf8(File.readFrom(path))
-        } catch (e: Exception) {
-            // 读不回磁盘就无法证明草稿不会改短唯一真源，宁可不发
-            getStdErr().writeln("flush refused: durable-unreadable")
-            return false
-        }
-        let kept = wholeLines(durable)
-        let mine = wholeLines(draft)
-        var i: Int64 = 0
-        while (i < kept.size && i < mine.size) {
-            if (kept[i] != mine[i]) {
-                getStdErr().writeln("flush refused: prefix-diverged-at-${i}")
-                return false
-            }
-            i += 1
-        }
-        if (mine.size < kept.size) {
-            var j = i
-            while (j < kept.size) {
-                if (Int64(kept[j].split("\t").size) >= 3) {
-                    getStdErr().writeln("flush refused: draft-shrinks-durable-by-${kept.size - i}")
-                    return false
-                }
-                j += 1
-            }
-        }
-        return true
-    }
-
-    // 按 LF 切出「完整行」序列，口径与 loadLocked 一致：空段丢弃，
-    // 文件末尾没有 LF 时剔除最后一段（那是写了一半的帧）。
-    private func wholeLines(text: String): ArrayList<String> {
-        let out = ArrayList<String>()
-        if (text.size == 0) {
-            return out
-        }
-        let bs = text.toArray()
-        let parts = text.split("\n")
-        var n = Int64(parts.size)
-        if (bs[bs.size - 1] != 10) {
-            n -= 1
-        }
-        var i: Int64 = 0
-        while (i < n) {
-            if (parts[i].size > 0) {
-                out.add(parts[i])
-            }
-            i += 1
-        }
-        return out
     }
 
     public func load(): Bool {

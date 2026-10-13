@@ -112,8 +112,8 @@ func le16(data: Array<Byte>, at: Int64): Int64 {
 }
 
 func be32(data: Array<Byte>, at: Int64): Int64 {
-    return byteAt(data, at) * 16777216 + byteAt(data, at + 1) * 65536
-        + byteAt(data, at + 2) * 256 + byteAt(data, at + 3)
+    return byteAt(data, at) * 16777216 + byteAt(data, at + 1) * 65536 +
+        byteAt(data, at + 2) * 256 + byteAt(data, at + 3)
 }
 
 func isPng(data: Array<Byte>): Bool {
@@ -127,9 +127,9 @@ func isPng(data: Array<Byte>): Bool {
 
 func isGif(data: Array<Byte>): Bool {
     if (Int64(data.size) < 10) { return false }
-    return byteAt(data, 0) == 71 && byteAt(data, 1) == 73 && byteAt(data, 2) == 70
-        && byteAt(data, 3) == 56 && (byteAt(data, 4) == 55 || byteAt(data, 4) == 57)
-        && byteAt(data, 5) == 97
+    return byteAt(data, 0) == 71 && byteAt(data, 1) == 73 && byteAt(data, 2) == 70 &&
+        byteAt(data, 3) == 56 && (byteAt(data, 4) == 55 || byteAt(data, 4) == 57) &&
+        byteAt(data, 5) == 97
 }
 
 // JPEG 必须逐段走：变长段（DQT/DHT/COM…）会顶掉固定的 SOF 位置。

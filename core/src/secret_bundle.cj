@@ -130,9 +130,9 @@ public class SecretBundleHeader {
 
     // 读面摘要：只有算法标识与长度，没有盐/IV/密文/标签，也没有口令与明文。
     public func safeSummary(): String {
-        return "format=${format} kind=${kind} schemaVersion=${schemaVersion} cipher=${cipher}"
-            + " mac=${mac} compose=${compose} kdf=${kdf} iterations=${iterations}"
-            + " saltLen=${saltLen} ivLen=${ivLen} tagLen=${tagLen}"
+        return "format=${format} kind=${kind} schemaVersion=${schemaVersion} cipher=${cipher}" +
+            " mac=${mac} compose=${compose} kdf=${kdf} iterations=${iterations}" +
+            " saltLen=${saltLen} ivLen=${ivLen} tagLen=${tagLen}"
     }
 
     // 算法敏捷性的唯一闸门：认不出就拒，空串表示四个标识与本实现相符。
@@ -185,8 +185,8 @@ public class SecretBundleHeader {
         let saltRaw = sbField(lines, 9, "saltLen") ?? ""
         let ivRaw = sbField(lines, 10, "ivLen") ?? ""
         let tagRaw = sbField(lines, 11, "tagLen") ?? ""
-        if (format.size == 0 || kind.size == 0 || cipher.size == 0 || mac.size == 0
-            || compose.size == 0 || kdf.size == 0) {
+        if (format.size == 0 || kind.size == 0 || cipher.size == 0 || mac.size == 0 ||
+            compose.size == 0 || kdf.size == 0) {
             return None
         }
         let schemaVersion = sbParseInt64(schemaRaw) ?? Int64(-1)
@@ -195,8 +195,8 @@ public class SecretBundleHeader {
         let saltLen = sbParseInt64(saltRaw) ?? Int64(-1)
         let ivLen = sbParseInt64(ivRaw) ?? Int64(-1)
         let tagLen = sbParseInt64(tagRaw) ?? Int64(-1)
-        if (schemaVersion < 1 || generatedAt < 0 || iterations < 1 || saltLen <= 0 || ivLen <= 0
-            || tagLen <= 0) {
+        if (schemaVersion < 1 || generatedAt < 0 || iterations < 1 || saltLen <= 0 || ivLen <= 0 ||
+            tagLen <= 0) {
             return None
         }
         return Some(SecretBundleHeader(format, kind, schemaVersion, generatedAt, cipher, mac,
@@ -232,8 +232,8 @@ public class SecretBundle {
 
     // 读面摘要：不含盐/IV/密文/标签内容，也不含口令与明文。
     public func safeSummary(): String {
-        return "${header.safeSummary()} saltBytes=${salt.size} ivBytes=${iv.size}"
-            + " ctBytes=${ciphertext.size} tagBytes=${tag.size}"
+        return "${header.safeSummary()} saltBytes=${salt.size} ivBytes=${iv.size}" +
+            " ctBytes=${ciphertext.size} tagBytes=${tag.size}"
     }
 
     public func toBytes(): Array<Byte> {
@@ -470,8 +470,8 @@ public func openSecretBundleWithKeys(encKey: Array<Byte>, macKey: Array<Byte>,
     if (par.size > 0) {
         return SecretBundleOpenResult(None, par, sbRejectDetail(par))
     }
-    if (bundle.salt.size != bundle.header.saltLen || bundle.iv.size != bundle.header.ivLen
-        || bundle.tag.size != bundle.header.tagLen) {
+    if (bundle.salt.size != bundle.header.saltLen || bundle.iv.size != bundle.header.ivLen ||
+        bundle.tag.size != bundle.header.tagLen) {
         return SecretBundleOpenResult(None, SECRET_BUNDLE_MALFORMED,
             sbRejectDetail(SECRET_BUNDLE_MALFORMED))
     }

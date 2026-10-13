@@ -1,5 +1,4 @@
 package core
-import std.io.*
 
 // 提供商的网络初始化推迟到执行线程的首次 next；协议线程不能等待 HTTP 响应头。
 public class DeferredProvider <: Provider & Resource {

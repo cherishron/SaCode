@@ -145,12 +145,12 @@ public class RouteHealth {
             }
             notBefore = now + window
         }
-        let data = "{\"key\":\"${jsonEscapeText(scope.key)}\",\"kind\":\"${jsonEscapeText(scope.kind)}\","
-            + "\"category\":\"${jsonEscapeText(category)}\",\"failures\":${failures},"
-            + "\"cooling\":${boolText(cooling)},\"notBefore\":${notBefore},\"level\":${level},"
-            + "\"clamped\":${boolText(clamped)},\"failureKind\":\"${jsonEscapeText(failure.kind)}\","
-            + "\"reachedUpstream\":${boolText(failure.reachedUpstream)},"
-            + "\"summary\":\"${jsonEscapeText(failure.summary)}\",\"epoch\":${now}}"
+        let data = "{\"key\":\"${jsonEscapeText(scope.key)}\",\"kind\":\"${jsonEscapeText(scope.kind)}\"," +
+            "\"category\":\"${jsonEscapeText(category)}\",\"failures\":${failures}," +
+            "\"cooling\":${boolText(cooling)},\"notBefore\":${notBefore},\"level\":${level}," +
+            "\"clamped\":${boolText(clamped)},\"failureKind\":\"${jsonEscapeText(failure.kind)}\"," +
+            "\"reachedUpstream\":${boolText(failure.reachedUpstream)}," +
+            "\"summary\":\"${jsonEscapeText(failure.summary)}\",\"epoch\":${now}}"
         appendEvent("route/failed", data)
     }
 

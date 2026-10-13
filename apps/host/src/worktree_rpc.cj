@@ -2,7 +2,6 @@ package host
 
 import core.*
 import std.env.*
-import std.fs.*
 import stdx.encoding.json.*
 
 // 仅有限协议适配；Git、副作用及所有权一律由共享核心负责。
@@ -182,18 +181,14 @@ class WorktreeRpcRequest {
 // 入口：先校参数（不碰核心），再执行。租约/重载/flush 由调用方（主循环）负责，
 // 这里只做「一次会话日志上的核心调用」。
 public func worktreeRequest(method: String, body: String, log: SessionLog): WorktreeReply {
-    var parsed: Option<WorktreeRpcRequest> = None
-    try {
-        parsed = Some(WorktreeRpcRequest(method, worktreeParamsOf(body), log))
+    let request = try {
+        WorktreeRpcRequest(method, worktreeParamsOf(body), log)
     } catch (e: Exception) {
         return WorktreeReply(false, -32602, worktreeParamMessage(e))
     }
-    if (let Some(request) <- parsed) {
-        try {
-            return WorktreeReply(true, Int64(0), request.execute(log))
-        } catch (e: Exception) {
-            return WorktreeReply(false, -32003, e.message)
-        }
+    try {
+        return WorktreeReply(true, Int64(0), request.execute(log))
+    } catch (e: Exception) {
+        return WorktreeReply(false, -32003, e.message)
     }
-    return WorktreeReply(false, -32602, "bad-worktree-request")
 }
