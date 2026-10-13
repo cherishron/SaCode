@@ -288,3 +288,33 @@ v3 终态：TOTAL178/PASSED178/SKIPPED0/ERROR0/FAILED0，rc0；正向同轮 todo
 新增ProviderRegistry.saveCredential：非负明确修订、有限非空值；注册表写租约内重放并核对修订、按供应商派生引用，凭据写入后释放。禁止调用方指定任意引用，配置变更/缺供应商/租约占用/无修订拒绝且不改密钥；成功不重写注册表。独占TEMP回归新增一条含上述多个断言，首次夹具coreTestRoot误传参数导致编译失败（零Summary），修正后v2实际TOTAL217/PASSED217/SKIPPED0/ERROR0/FAILED0，rc0，源码哈希匹配。CredentialStore现有明文文件提供方及自身写入并发/持久性边界不因此升级。
 
 models-guard修订校验从isInteger改isSafeInteger，拒绝浮点精度丢失后冒充CAS版本；model-revision-precision专项1/1，rc0。该批仅核心方法与IPC守卫，不宣称Host/IPC/页面重试已接通，下一步有限provider credential动词及独立重试UI，不重写配置。
+
+## 第三十一轮：凭据重试接线与页面状态回归
+
+工作区新增model/registry/save-credential有限Host动作（供应商ID/expectedRevision/key严格三字段，turnBusy拒绝，不回显秘密）、独立IPC模块/preload；首次models-save凭据步骤也绑定配置成功回执修订。适配器将部分成功的configurationRevision传给页面，页面显示仅重试密钥，草稿快照变化拒绝旧重试，不重复写配置；新模块列入package files。尚未提交共享入口或产物。
+
+模型首次保存绑定/冲突保留与IPC及适配器专项11/11 rc0。新增provider-credential-retry-state两条执行真实Page.setup/render事件，使用最小Vue接口夹具：不修改草稿时只调用一次saveCredential且沿回执revision=2，后续编辑时零凭据写入，两者均仅一次配置写入；2/2 rc0。这是页面状态层证据，不是Electron渲染或真实Host请求。
+
+Host候选从13d967d提交归档覆盖已终态的旧私有构建目录，仅增本批Host模块、main的5行分派与声明；复用缓存，build-credential.log/exit.txt，句柄54820尚待读终态。另一固定6b82c03构建92562仍在运行，不改其文件、不杀进程、不将任一未终态宣称通过。公共Host和安装包尚未更新。
+第三十一轮补充：模型页面组合首次28项17通过11失败，esbuild无法解析Vue；私有loader给build显式nodePaths后24项21通过3失败，不能记全绿。其中两条模型表单行为断言需继续定位，models-validate导入buildSync仍需私有wrapper导出。未改公共依赖/锁文件，未将进程shell返回码当测试通过。
+
+第三十一轮页面复验收口：私有esbuild wrapper补buildSync与Vue定位后，model-center旧新增夹具须等待onMounted内部异步reload，保存按钮原来仍disabled；增加读取完成断言，等待setImmediate，不放宽生产校验。URL/key测试补必填模型目录。组合实际28/28 rc0。
+
+新增provider-credential-retry-render真实Electron离屏+独立user-data+CSP script-src self，装配实际Vue runtime与供应商页面，点击编辑/保存/重试并派发input；部分保存后一次配置写入，未编辑时凭据调用绑定回执revision=2，编辑后零凭据调用。1/1 rc0；首次run-pItgiX原件及独占retry-electron目录日志保留。测试改用常规require electron后NODE_PATH指向本机已有私有依赖再次1/1 rc0，不把依赖路径固化为测试代码。使用可控适配器，真实Host和打包载荷尚未通过。
+
+第三十一轮提交候选：credential-desktop-candidate从13d967d归档派生main/preload/package仅一条注册/一条API/一条files记录，provider-settings逆掉别组blank模型草稿及model-catalog编辑块，保留其公共工作区原样；独立候选先15/16（未追踪vendor/runtime缺失，Vue undefined），补本机生成Vue runtime并记录vue-runtime-hash.json后实际16/16 rc0，包括真实Electron。不能把依赖补入说成提交态自包含。新增model-credential-retry-host真实协议测试，尚未执行，等54820本批Host终态后指定SACODE_HOST；不得使用旧公开Host冒充新动作通过。
+
+## 第三十二轮：页面工具授权绕行实读
+
+main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲染注册表handler；page-tools.js将WebMCP execute回此IPC，仍没有核心精确审批/一次性消费/任务取消与日志结算。四个内置handler中clickElement直接el.click，inputText直接改value并派发input/change，scroll改变界面；readState读DOM。宿主来源/会话/文档修订/请求身份没有绑定，不能用“固定四工具”证明所有页面动作只读。原page-tools-ipc十条在独占TMP下10/10 rc0，只证明VM注册表/媒介链工作，不证明授权；本轮没有将其升为全链路统一授权。
+
+下一实现须沿用共享精确ApprovalDesk与权威工具契约，把窗口/会话/任务/请求及参数提案绑定到核心票、取消与结算；迟到结果/页面切换不得转送另一会话。不能仅让渲染层自报needsApproval，也不能只关闭按钮后宣称能力完成。公开载荷更新前仍列P0缺口。两个Host构建54820/92562仍可轮询且LLVM CPU增长，未重启或替换公共二进制。
+第三十一轮候选纠错：固定HEAD Host没有工作区拆分后的handleRpc1，首次候选.Replace未检查锚点，实际只更新声明、未增加分派。54820即使编译成功也不证明新动作可调用；已生成基于HEAD原providerSurfaceRequest和实际配置分派条件的修正源码host-main-corrected.cj，两个锚点均显式拒绝缺失。当前活构建不改文件，终态后再应用修正并验真实RPC；不能把等待中的候选当完成。
+
+## 第三十三轮：凭据独立重试真实 Host 与前端候选验收
+
+修正后的 HEAD 派生 Host 入口使用 providerSurfaceRequest 与实际配置分派条件接线，私有 credential-host-debug-candidate 执行 cjpm build -g --jobs 1，build.exit.txt=0。该调试构建不替代正式发布构建；旧的两份 release 构建仍有存活 LLVM 子进程，本轮未停止或重启。
+
+复制既有载荷的 DLL 与 CA 到私有 runtime-bin，未替换公开 Host。独占 TMP 下 model-credential-retry-host.test.mjs 真实请求 1/1、rc0（rpc-test.log）：保存成功、修订不变、读取不回显密钥；陈旧修订、缺失供应商、负修订、额外 ref 与空密钥拒绝，拒绝前后凭据文件一致。
+
+独立桌面候选六文件共17/17、rc0（credential-desktop-candidate/verify-v5.log），含真实 Electron+Vue+CSP 页面、适配器、IPC/preload/清单、草稿变化拒绝旧重试。该页面使用可控适配器，真实 Host 单独验证，尚非安装产物端到端。先前 verify-v3 为 Windows loader URL 调用错误；verify-v4 因 loader 基于 cwd 查找私有 wrapper 而失败，改从产品根执行候选绝对范围后通过，未改生产代码或断言。正式载荷、统一安装包以及其余能力域依旧待验收。

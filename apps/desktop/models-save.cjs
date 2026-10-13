@@ -5,7 +5,7 @@ async function saveModelConfiguration(request, draft, key, expectedRevision) {
   try {
     const saved = (view.providers || []).find(provider => provider.id === draft.id);
     if (!saved || !saved.credentialRef) throw Error('credential-ref-missing');
-    await request('credential/set', { ref: saved.credentialRef, value: key });
+    await request('model/registry/save-credential', { providerId: saved.id, expectedRevision: view.revision, key });
     return view;
   } catch (_) {
     // 不转发底层错误，避免凭据或提供方消息穿过 IPC。

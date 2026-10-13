@@ -35,6 +35,7 @@
       "worktree-ipc.cjs",
       "models-guard.cjs",
       "models-save.cjs",
+      "model-credential-ipc.cjs",
       "customs-guard.cjs",
       "paths.cjs",
       "data-paths.cjs",

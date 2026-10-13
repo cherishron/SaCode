@@ -61,9 +61,12 @@ export function createModelCenterAdapters(api: any) {
         }
         const result = await api.modelsSave(rest, typeof key === 'string' ? key : '', expectedRevision);
         if (result?.saveStatus?.configuration === 'saved' && result.saveStatus.credential === 'failed') {
-          throw new Error('配置已保存，但密钥未保存。请刷新核对配置，取消编辑后重新设置密钥；不要将此状态视为模型已可用。');
+          const failure: any = new Error('配置已保存，但密钥未保存。可单独重试密钥；配置已变化时请刷新重新编辑。');
+          failure.configurationRevision = result.revision;
+          throw failure;
         }
       },
+      saveCredential: (id: string, key: string, expectedRevision: number) => api.modelsSaveCredential(id, key, expectedRevision),
       remove: (id: string, expectedRevision: number) => api.modelsRemove(id, expectedRevision),
       async reorder(keys: string[], expectedRevision: number) {
         // 只写真正变了位的条目：每条 sort 都会 bump 一次修订号，全量重写会让

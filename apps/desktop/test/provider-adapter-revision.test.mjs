@@ -61,3 +61,14 @@ test('有效零金额保留，正常同币种合计和模型用量不受影响',
   assert.equal(view.costs.model.amountMicro,10);
   assert.deepEqual(view.models[0].used,{micro:0,currency:'CNY'});
 });
+
+test('密钥重试沿部分保存回执修订，仅调用绑定凭据接口', async () => {
+  const calls=[];
+  const adapter=createModelCenterAdapters({modelsSave:async()=>({revision:9,saveStatus:{configuration:'saved',credential:'failed'}}),modelsSaveCredential:async(...args)=>calls.push(args)})['provider-settings'];
+  let failure;
+  try { await adapter.save({id:'p',key:'fixture-key',declared:false},8); } catch(e) { failure=e; }
+  assert.equal(failure.configurationRevision,9);
+  assert.equal(failure.message.includes('fixture-key'),false);
+  await adapter.saveCredential('p','fixture-key',failure.configurationRevision);
+  assert.deepEqual(calls,[['p','fixture-key',9]]);
+});

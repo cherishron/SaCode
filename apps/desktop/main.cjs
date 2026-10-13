@@ -553,6 +553,7 @@ ipcMain.handle("sacode:appearanceSetTheme", async (_e, args) => {
 // 密钥只在「写凭据」这一次调用里存在：不透传进注册表文档，不回写，不落日志。
 const modelsGuard = require("./models-guard.cjs");
 
+require('./model-credential-ipc.cjs').registerModelCredentialIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), modelsGuard);
 ipcMain.handle("sacode:modelsDescribe", async () => withHost(() => bridge.request("model/registry/describe")));
 ipcMain.handle("sacode:modelsCatalog", async () => withHost(() => bridge.request("model/registry/catalog")));
 

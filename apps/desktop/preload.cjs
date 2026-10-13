@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld("sacode", {
   // 模型配置面：一个动作一条通道，字段形状由主进程守卫，渲染层拼不出任意宿主方法。
   modelsDescribe: () => ipcRenderer.invoke("sacode:modelsDescribe"),
   modelsCatalog: () => ipcRenderer.invoke("sacode:modelsCatalog"),
+  modelsSaveCredential: (providerId, key, expectedRevision) => ipcRenderer.invoke('sacode:modelsSaveCredential', { providerId, key, expectedRevision }),
   modelsSave: (draft, key, expectedRevision) => ipcRenderer.invoke("sacode:modelsSave", { draft, key, expectedRevision }),
   modelsRemove: (id, expectedRevision) => ipcRenderer.invoke("sacode:modelsRemove", { id, expectedRevision }),
   modelsSetDefault: (providerId, model, expectedRevision) => ipcRenderer.invoke("sacode:modelsSetDefault", { providerId, model, expectedRevision }),

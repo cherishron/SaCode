@@ -12,6 +12,7 @@ export interface Draft extends Provider{key:string}
 export interface Adapter{
   describe():Promise<{providers:Provider[];catalog:Provider[];revision:string;writable:boolean}>;
   save(draft:Draft,expectedRevision:string):Promise<void>;
+  saveCredential?(id:string,key:string,expectedRevision:string):Promise<void>;
   remove(id:string,expectedRevision:string):Promise<void>;
   reorder(keys:string[],expectedRevision:string):Promise<void>;
   pullModels(providerId:string,expectedRevision:string):Promise<void>;
@@ -68,6 +69,7 @@ export const Page=defineComponent({
     const loading=ref(false),saving=ref(false),error=ref(''),message=ref('');
     const editing=ref<string|null>(null),adding=ref(false),draft=ref<Draft>(blank());
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
+    const credentialRetry=ref<{revision:string;snapshot:string}|null>(null);
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const readReady=ref(false);
@@ -79,14 +81,14 @@ export const Page=defineComponent({
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
     const errText=(e:unknown)=>{const t=String((e as any)?.message||e);if(/conflict|conflict/.test(t))return '数据已被其他入口修改。草稿已保留；请刷新查看最新配置，取消后重新编辑再保存';return t||'操作失败';};
-    const closeEdit=()=>{editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
+    const closeEdit=()=>{credentialRetry.value=null;editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
     const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
-    const startEdit=(p:Provider)=>{draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
+    const startEdit=(p:Provider)=>{credentialRetry.value=null;draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
     const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value&&readReady.value;
     const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success='')=>{
       saving.value=true;error.value='';message.value='';
       try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?success:'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
-      catch(e){if(!disposed)error.value=errText(e);}
+      catch(e){if(!disposed){error.value=errText(e);if((e as any)?.configurationRevision!==undefined)credentialRetry.value={revision:(e as any).configurationRevision,snapshot:JSON.stringify(draft.value)};}}
       finally{if(!disposed){saving.value=false;pulling.value=null;}}
     };
     const save=async()=>{
@@ -96,6 +98,13 @@ export const Page=defineComponent({
       if(inv){error.value=inv;return;}
       const expected=draftRevision;
       await mutate(()=>props.adapter!.save(d,expected),closeEdit,'已保存（能力按用户声明记录，未自动验证）');
+    };
+    const retryCredential=async()=>{
+      const pending=credentialRetry.value;
+      if(!canMutate()||!pending||!props.adapter?.saveCredential)return;
+      if(pending.snapshot!==JSON.stringify(draft.value)){credentialRetry.value=null;error.value='草稿已修改，请刷新并重新编辑；旧密钥重试已失效';return;}
+      const id=draft.value.id,key=draft.value.key;
+      await mutate(()=>props.adapter!.saveCredential!(id,key,pending.revision),closeEdit,'密钥已保存');
     };
     const remove=async()=>{
       if(!canMutate()||!deleting.value)return;
@@ -176,10 +185,11 @@ export const Page=defineComponent({
           el('label','field',[el('span','lbl','API 协议'),h('select',{class:'ipt',value:d.protocol,disabled:d.declared,'aria-label':'API 协议',onChange:(e:Event)=>d.protocol=(e.target as HTMLSelectElement).value as Protocol},Object.entries(protoLabels).map(([v,label])=>h('option',{value:v},label)))]),
           el('label','field',[el('span','lbl','传输方式'),h('select',{class:'ipt',value:d.transport,disabled:d.declared,'aria-label':'传输方式',onChange:(e:Event)=>d.transport=(e.target as HTMLSelectElement).value as Transport},[h('option',{value:'direct'},'直连'),h('option',{value:'relay'},'中继')])]),
           el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),disabled:d.declared,'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
-          !editing.value?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
+          d.credentialWritable!==false?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
           !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
           el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
+          credentialRetry.value?btn('仅重试密钥',()=>void retryCredential(),'primary',{disabled:saving.value||loading.value||!writable.value||!props.adapter?.saveCredential}):null,
           el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
         ],{disabled:saving.value,'aria-busy':saving.value}):null,
 
