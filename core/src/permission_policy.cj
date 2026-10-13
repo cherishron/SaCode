@@ -27,22 +27,22 @@ public class PermissionPolicy {
 
     public func decide(mode: String, toolOrCommand: String): String {
         if (mode == "plan") {
-            return if (isWriteTool(toolOrCommand)) { "deny" } else { "allow" }
+            return if (autoToolAllow(toolOrCommand)) { "allow" } else { "deny" }
         }
         if (mode == "build") {
-            if (!isWriteTool(toolOrCommand)) { return "allow" }
+            if (!isWriteTool(toolOrCommand)) { return if (autoToolAllow(toolOrCommand)) { "allow" } else { "ask" } }
             if (toolOrCommand == "bash" || toolOrCommand == "pwsh") { return "ask" }
             // shell 命令带空格，需在调用方区分；这里只判工具名，shell 白名单由调用方传完整命令
             return "allow"
         }
         if (mode == "auto") {
-            if (!isWriteTool(toolOrCommand)) { return "allow" }
+            if (!isWriteTool(toolOrCommand)) { return if (autoToolAllow(toolOrCommand)) { "allow" } else { "ask" } }
             if (autoToolAllow(toolOrCommand)) { return "allow" }
             // 不在白名单的工具走模型分类器兜底（调用方实现）；这里返回 ask 让调用方决定
             return "ask"
         }
         if (mode == "yolo") {
-            return "allow"
+            return if (isWriteTool(toolOrCommand) || autoToolAllow(toolOrCommand)) { "allow" } else { "ask" }
         }
         throw Exception("unknown-approval-mode")
     }

@@ -3,6 +3,17 @@ package core
 import std.unittest.*
 
 @Test
+func permissionPolicyUnknownToolsCannotBypassApproval() {
+    let p = PermissionPolicy()
+    for (tool in ["plugin/delete-database", "deploy", "git_push", "npm test && destructive-command", ""]) {
+        @Expect(p.decide("plan", tool), "deny")
+        @Expect(p.decide("build", tool), "ask")
+        @Expect(p.decide("auto", tool), "ask")
+        @Expect(p.decide("yolo", tool), "ask")
+    }
+}
+
+@Test
 func permissionPolicyTest() {
     let p = PermissionPolicy()
     // Plan
