@@ -54,6 +54,7 @@ class AcpDelegationEntry {
     var cancelToken: TurnToken
     // taskText 摘要用于幂等校验
     var taskDigest: String
+    var promptStarted: Bool = false
     let workspace: String
 
     init(id: String, sessionId: String, taskId: String, requestId: String,
@@ -248,6 +249,63 @@ public class AcpDelegationService {
         let _ = checkpoint()
         return describe(entry.id)
     }
+    // 一次委派仅发送准入时绑定的任务；调用方可在线程中执行并同时处理权限请求。
+    public func runTask(id: String, expectedRevision: Int64, taskText: String, timeoutMs!: Int64 = 30000): AcpDelegationSnapshot {
+        if (taskText.size == 0 || taskText.size > 65536 || timeoutMs < 1 || timeoutMs > 300000) { throw Exception("invalid-input:acp-task") }
+        mtx.lock()
+        let entry: AcpDelegationEntry
+        let process: AcpProcess
+        let request: Int64
+        try {
+            if (!delegations.contains(id)) { throw Exception("not-found:delegation-${id}") }
+            entry = delegations.get(id).getOrThrow()
+            if (entry.revision != expectedRevision) { throw Exception("revision-conflict:acp-task") }
+            if (entry.taskDigest != simpleDigest(taskText)) { throw Exception("revision-conflict:acp-task-binding") }
+            if (entry.promptStarted || entry.phase != "running" || entry.cancelToken.cancelled()) { throw Exception("busy:acp-task-not-startable") }
+            gate.requireCanDelegate("user", entry.peerId)
+            if (entry.proc.isNone()) { throw Exception("provider-unavailable:acp-task-process") }
+            process = entry.proc.getOrThrow()
+            request = process.nextRequestId()
+            entry.promptStarted = true
+            entry.revision += 1
+            if (journal.isNone() || !journal.getOrThrow().taskFact(entry.snapshot(), "acp/task/start", request, "intent-before-send")) {
+                entry.phase = "failed"; entry.result = "persistence-failed:acp-task-start"; entry.revision += 1
+                return entry.snapshot()
+            }
+            let params = "{\"sessionId\":\"${jsonEscapeText(entry.protocolSessionId)}\",\"prompt\":[{\"type\":\"text\",\"text\":\"${jsonEscapeText(taskText)}\"}]}"
+            if (!process.sendRequest(request, "session/prompt", params)) {
+                entry.phase = "outcome-unknown"; entry.result = "prompt-send-unconfirmed"; entry.revision += 1
+                return entry.snapshot()
+            }
+        } finally { mtx.unlock() }
+        let reply = process.awaitReply(request, timeoutMs)
+        var reason = ""
+        if (let Some(raw) <- reply) {
+            try {
+                reason = acpRpcResult(raw).get("stopReason").getOrThrow().asString().getValue()
+                if (reason != "end_turn" && reason != "cancelled" && reason != "max_tokens" && reason != "max_turn_requests" && reason != "refusal") { reason = "" }
+            } catch (_: Exception) { reason = "" }
+        }
+        mtx.lock()
+        try {
+            // close 先结算时迟到的 prompt 回执不改写其终态。
+            if (entry.phase == "completing" || entry.phase == "incomplete" || entry.phase == "failed") { return entry.snapshot() }
+            if (reason.size == 0) {
+                entry.phase = "outcome-unknown"; entry.result = "prompt-result-unconfirmed"
+            } else {
+                entry.phase = if (reason == "cancelled") { "cancelled" }
+                    else if (reason == "end_turn" && !entry.cancelToken.cancelled()) { "completed" } else { "incomplete" }
+                entry.result = "prompt-stop:${reason}"
+                process.markIdle()
+            }
+            entry.revision += 1
+            if (!journal.getOrThrow().taskFact(entry.snapshot(), "acp/task/settled", request, entry.result)) {
+                entry.phase = "outcome-unknown"; entry.result = "persistence-failed:acp-task-settlement"; entry.revision += 1
+            }
+            return entry.snapshot()
+        } finally { mtx.unlock() }
+    }
+
     // 查询委派
     public func describe(id: String): AcpDelegationSnapshot {
         mtx.lock()
@@ -313,21 +371,30 @@ public class AcpDelegationService {
             entry.revision += 1
             // 设置取消令牌
             entry.cancelToken.cancel()
+            // 先在同一锁内发布取消裁决；通知写出后不得覆盖已确认的任务返回。
+            entry.phase = "outcome-unknown"
+            entry.result = "cancel-no-confirmation"
+            entry.revision += 1
+            let cancelRevision = entry.revision
+            let process = entry.proc
+            let protocolSession = entry.protocolSessionId
             mtx.unlock()
 
             // 通知不带回执；只有对应prompt结束事实才能确认取消。
-            entry.phase = "outcome-unknown"
-            entry.result = "cancel-no-confirmation"
-            if (let Some(proc) <- entry.proc) {
+            var notification = "cancel-no-confirmation"
+            if (let Some(proc) <- process) {
                 if (proc.alive()) {
-                    let sent = proc.sessionCancel(entry.protocolSessionId)
-                    entry.result = if (sent) { "cancel-sent-awaiting-turn-end" } else { "cancel-send-failed" }
+                    let sent = proc.sessionCancel(protocolSession)
+                    notification = if (sent) { "cancel-sent-awaiting-turn-end" } else { "cancel-send-failed" }
                 }
                 // 尚未确认停止，不能markIdle并开放restart。
             }
-            entry.revision += 1
+            mtx.lock()
+            if (entry.revision == cancelRevision && entry.phase == "outcome-unknown") { entry.result = notification }
+            let snapshot = entry.snapshot()
+            mtx.unlock()
             let _ = checkpoint()
-            return entry.snapshot()
+            return snapshot
         }
         mtx.unlock()
         throw Exception("not-found:delegation-${id}")
