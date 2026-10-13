@@ -1,6 +1,7 @@
 // Host 协议桥：一行一报文（NDJSON）的 JSON-RPC 2.0 客户端。
 // Electron 主进程与纯 Node 测试共用同一份实现，避免两套通信代码。
 const { spawn } = require("node:child_process");
+const { hostRuntimeEnv } = require('./paths.cjs');
 
 class HostBridge {
   constructor(hostPath, env = process.env) {
@@ -23,7 +24,7 @@ class HostBridge {
     this.failure = null;
     this.buf = "";
     this.notifications.length = 0;
-    const proc = spawn(this.hostPath, [], { cwd, env: this.env, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(this.hostPath, [], { cwd, env: hostRuntimeEnv(this.env, this.hostPath), stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
     const current = () => this.proc === proc;
     proc.stdin.on("error", (e) => { if (current()) this.#fail(new Error(`host-write-error: ${e.code || e.message}`)); });

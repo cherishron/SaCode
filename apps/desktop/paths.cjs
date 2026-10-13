@@ -4,14 +4,24 @@ const { join, resolve, isAbsolute, basename, dirname } = require("node:path");
 // 打包态下 __dirname 落在 app.asar 里；sacode-host.exe 是要被操作系统直接执行的外部二进制，
 // 从 asar 里拿路径 spawn 一定失败。所以随包把它落到 resourcesPath 下（extraResources），
 // 路径也只能由 resourcesPath 解析。
-function hostExePath({ packaged, appRoot, resourcesPath }) {
+function hostExePath({ packaged, appRoot, resourcesPath, platform = process.platform }) {
+  if (!['win32', 'linux', 'darwin'].includes(platform)) throw new Error(`不支持的桌面平台：${platform}`);
+  const name = platform === 'win32' ? 'sacode-host.exe' : 'sacode-host';
   if (packaged) {
-    if (!resourcesPath) {
+    if (!resourcesPath || !isAbsolute(resourcesPath)) {
       throw new Error("打包态缺 resourcesPath，无法定位宿主可执行文件（不回退 asar 内路径）");
     }
-    return join(resourcesPath, "host", "bin", "sacode-host.exe");
+    return join(resourcesPath, "host", "bin", name);
   }
-  return join(appRoot, "dist", "host", "bin", "sacode-host.exe");
+  return join(appRoot, "dist", "host", "bin", name);
+}
+
+// 只给本应用的宿主子进程补加载路径，不改变系统环境或从 cwd 搜库。
+function hostRuntimeEnv(env, hostExe, platform = process.platform) {
+  if (platform === 'win32') return { ...env };
+  const key = platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
+  const directory = dirname(hostExe);
+  return { ...env, [key]: [directory, env[key]].filter(Boolean).join(':') };
 }
 
 // 信任锚随包放在宿主 exe 的同一目录：extraResources 已经把整个 host/bin 搬到 asar 之外，
@@ -27,7 +37,8 @@ function caBundleSidecar(hostExe) {
 
 function hostEnvWithCaBundle(env, { sidecarPath, exists }) {
   // 运维显式配置优先；sidecar 不在就干脆不设，避免让核心以为锚已就绪。
-  if (env.SACODE_CA_BUNDLE || !exists) {
+  const present = typeof exists === 'function' ? exists(sidecarPath) : exists === true;
+  if (env.SACODE_CA_BUNDLE || !present) {
     return { ...env };
   }
   return { ...env, SACODE_CA_BUNDLE: sidecarPath };
@@ -59,4 +70,4 @@ function computerUsePaths({ packaged, appRoot, resourcesPath, nodeExecutable }) 
   };
 }
 
-module.exports = { hostExePath, computerUsePaths, caBundleSidecar, hostEnvWithCaBundle };
+module.exports = { hostExePath, hostRuntimeEnv, computerUsePaths, caBundleSidecar, hostEnvWithCaBundle };

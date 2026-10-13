@@ -9,10 +9,12 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { selectedPlatform } from './platform.mjs';
+const spec = selectedPlatform();
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = "bin/service-manifest.json";
-const EXE_SUFFIX = process.platform === "win32" ? ".exe" : "";
+const EXE_SUFFIX = spec.suffix;
 
 function fail(msg) {
   console.error(`pack-service: ${msg}`);
@@ -29,7 +31,7 @@ function opt(name, dflt) {
 
 const out = opt("out", null);
 if (!out) fail("缺 --out <目录>：服务包必须显式给落点，不允许默认往仓库里写");
-const base = opt("base", join(ROOT, "npm", "sacode-cli-win32-x64"));
+const base = opt("base", join(ROOT, "npm", `sacode-cli-${spec.target}`));
 
 // 三个可执行文件与扩展宿主的来源。cli 与 extjs 取平台包（pack-cli 的产物），
 // host 与 daemon 取各自的 cjpm 构建产物——同一个 workspace 里的同一批源码。
@@ -48,7 +50,7 @@ const binDir = join(out, "bin");
 const extOut = join(out, "extjs");
 const dllSourceDir = join(base, "bin");
 if (!existsSync(dllSourceDir)) fail(`缺运行期库来源目录 ${dllSourceDir}`);
-const dllNames = readdirSync(dllSourceDir).filter(f => f.endsWith(".dll") || f.endsWith(".so"));
+const dllNames = readdirSync(dllSourceDir).filter(f => /\.dll$|\.so(?:\.|$)|\.dylib$/.test(f));
 if (dllNames.length === 0) fail(`${dllSourceDir} 里一颗运行期库都没有，装出来的包剥掉 SDK 就起不来；先跑 node scripts/pack-cli.mjs`);
 
 function copyInto(src, dst) {
@@ -104,7 +106,7 @@ function walk(dir, prefix) {
 }
 function kindOf(rel) {
   if (rel === roles.cli || rel === roles.host || rel === roles.daemon) return "executable";
-  if (rel.endsWith(".dll") || rel.endsWith(".so")) return "runtime-library";
+  if (/\.dll$|\.so(?:\.|$)|\.dylib$/.test(rel)) return "runtime-library";
   if (rel.startsWith("extjs/")) return "extension-source";
   return "other";
 }

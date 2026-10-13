@@ -6,15 +6,21 @@
 //  * 任何 Linux / 安全执行 / 移动真实运行门槛没过，总体就是 FAIL 或 BLOCKED，
 //    绝不按缩范围发布「完整支持」（计划 §11 第 7 条）。
 //  * BLOCKED 必须点名缺的前提和解锁动作；FAIL 必须点名实得读数。
-// 用法：node scripts/verify-remote-product.mjs [--json] [--keep-worktree]
+// 用法：node scripts/verify-remote-product.mjs [--json] [--keep-worktree] [--only-build]
+//   --only-build 只跑仓颉四模块编译读数，不跑任何测试套件（便宜地复验这一道门）
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const asJson = process.argv.includes('--json');
 const keepWorktree = process.argv.includes('--keep-worktree');
+const onlyBuild = process.argv.includes('--only-build');
+// 编译读数默认真跑。SACODE_SKIP_BUILD=1 只跳过、不放行（留一行 BLOCKED）；
+// SACODE_BUILD_TIMEOUT_MS 覆盖单模块超时（host 体量大，默认 15 分钟）。
+const skipBuild = process.env.SACODE_SKIP_BUILD === '1';
+const buildTimeoutMs = Number(process.env.SACODE_BUILD_TIMEOUT_MS || 900000);
 const rows = [];
 
 const textOf = (p) => existsSync(p) ? readFileSync(p, 'utf8') : '';
@@ -31,17 +37,28 @@ function sha256(file) {
 // 跑一条命令，收 stdout/stderr 尾部与 rc；超时视为 FAIL 而不是「没跑」。
 function run(cmd, args, opts = {}) {
   return new Promise(resolve => {
-    const child = spawn(cmd, args, { cwd: opts.cwd || root, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    const child = spawn(cmd, args, { cwd: opts.cwd || root, stdio: ['ignore', 'pipe', 'pipe'], env: process.env, detached: process.platform !== 'win32' });
     let out = '';
     let err = '';
+    let timedOut = false;
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      timedOut = true;
+      if (process.platform === 'win32' && child.pid) {
+        // 只结束本次 spawn 的树，否则 cjc 继承 pipe 会让 close 永远不来。
+        try { execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' }); } catch { child.kill(); }
+      } else if (child.pid) {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+      }
     }, opts.timeoutMs || 180000);
+    child.on('error', error => {
+      clearTimeout(timer);
+      resolve({ rc: null, out, err: error.message, timedOut: false });
+    });
     child.on('close', code => {
       clearTimeout(timer);
-      resolve({ rc: code, out, err, timedOut: code === null });
+      resolve({ rc: code, out, err, timedOut });
     });
   });
 }
@@ -55,6 +72,97 @@ function nodeTestCounts(text) {
     return m ? Number(m[1]) : null;
   };
   return { tests: pick('tests'), pass: pick('pass'), fail: pick('fail'), cancelled: pick('cancelled'), skipped: pick('skipped') };
+}
+
+// 仓颉编译器的计数口径：只认 "N warnings generated" / "N errors generated" 汇总行；
+// 报错另按 `==> 文件:行:列` 抽出位置，好把「编译不过」指到具体文件，而不是只留一句 rc。
+function cangjieCounts(text) {
+  const clean = text.replace(/\x1b\[[0-9;]*m/g, '').replace(/\r/g, '');
+  const sum = (key) => {
+    const m = [...clean.matchAll(new RegExp(`(\\d+) ${key} generated`, 'g'))];
+    return m.length ? m.reduce((n, match) => n + Number(match[1]), 0) : null;
+  };
+  return {
+    warnings: sum('warnings?'),
+    errors: sum('errors?'),
+    files: [...new Set([...clean.matchAll(/==>[^\r\n]*?([A-Za-z0-9_.\-]+\.cj):(\d+):\d+/g)].map(m => `${m[1]}:${m[2]}`))],
+  };
+}
+
+// 每个模块在**固定提交副本**里、用独立 --target-dir 编译：不碰共享的 core/target/release
+// （并发会话共用会互锁，AGENTS.md 记 2026-10-12 两次 cjc 卡死），日志留在主仓 target/ 便于复核。
+async function buildMember(wt, label, dir) {
+  const logDir = path.join(root, 'apps/desktop/.tmp-test', 'sacode-verify-build');
+  mkdirSync(logDir, { recursive: true });
+  const logFile = path.join(logDir, `${label}.log`);
+  // 每个成员独立 target，单成员产物均叫 main，不能相互覆盖。
+  const res = await run('cjpm', ['build', '--target-dir', path.join(wt, 'target', 'verify', label)],
+    { cwd: path.join(wt, dir), timeoutMs: buildTimeoutMs });
+  const text = res.out + '\n' + res.err;
+  writeFileSync(logFile, text);
+  return { ...res, counts: cangjieCounts(text), logFile };
+}
+
+// ── 仓颉四模块生产构建 ────────────────────────────────────────────────
+// 必须放在固定提交副本里编译，不能用工作区读数：工作区可能已被未入库改动「修绿」
+// （apps/daemon 的调度文件就是工作区已删、提交态仍坏，且曾长期无人发现）。
+// 以前这张表只消费已构建产物，模块编译不过会被降级成「缺产物 → BLOCKED」，编译门形同虚设。
+const CANGJIE_MEMBERS = [['core', 'core'], ['cli', 'apps/cli'], ['host', 'apps/host'], ['daemon', 'apps/daemon']];
+
+async function recordCangjieBuilds(gitSha) {
+  if (skipBuild) {
+    record('仓颉四模块生产构建', 'BLOCKED', {
+      tree: 'n/a', command: '固定提交副本内逐模块 cjpm build',
+      missing: '本次以 SACODE_SKIP_BUILD=1 跳过；未编译不等于通过',
+    });
+    return;
+  }
+  const temporary = path.join(root, 'apps/desktop/.tmp-test');
+  mkdirSync(temporary, { recursive: true });
+  const copy = mkdtempSync(path.join(temporary, 'sacode-verify-build-copy-'));
+  const wt = path.join(copy, 'head');
+  try {
+    execFileSync('git', ['worktree', 'add', '--detach', wt, gitSha], { cwd: root });
+    // 依赖不是源码；给提交副本显式 provision 同一份 SDK/stdx/native 库。
+    if (existsSync(path.join(root, '.deps'))) symlinkSync(path.join(root, '.deps'), path.join(wt, '.deps'), process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (e) {
+    rmSync(copy, { recursive: true, force: true });
+    record('仓颉四模块生产构建', 'BLOCKED', {
+      tree: 'n/a', command: `git worktree add --detach <tmp> ${gitSha.slice(0, 8)}`,
+      missing: `建固定提交副本失败：${e.message}`,
+    });
+    return;
+  }
+  try {
+    for (const [label, dir] of CANGJIE_MEMBERS) {
+      const r = await buildMember(wt, label, dir);
+      const failed = r.timedOut || r.rc !== 0 || (r.counts.errors || 0) > 0;
+      const detail = r.timedOut
+        ? `${Math.round(buildTimeoutMs / 1000)} 秒仍未编译完，被杀；未取得编译结论`
+        : `rc=${r.rc}；warnings generated=${r.counts.warnings ?? '无汇总行'}；`
+          + `errors generated=${r.counts.errors ?? '无汇总行'}`
+          + (r.counts.files.length ? `；报错位置 ${r.counts.files.slice(0, 6).join('、')}` : '');
+      record(`仓颉生产构建：${label}`, failed ? 'FAIL' : 'PASS', {
+        tree: `提交态 ${gitSha.slice(0, 8)}`,
+        command: `cd ${dir} && cjpm build --target-dir <副本>/target/verify/${label}`,
+        detail,
+        missing: failed ? `编译日志 ${path.relative(root, r.logFile)}` : '',
+      });
+    }
+  } finally {
+    if (!keepWorktree) {
+      try { execFileSync('git', ['worktree', 'remove', '--force', wt], { cwd: root }); } catch (e) { /* 留痕即可 */ }
+      try {
+        rmSync(copy, { recursive: true, force: true });
+      } catch (e) {
+        // 超时被杀的 cjc 可能仍占着副本文件；此时不能假装清理成功，要点名残留路径。
+        record('固定提交副本清理', 'BLOCKED', {
+          tree: 'n/a', command: `git worktree remove --force ${wt} && 删除 ${copy}`,
+          missing: `副本清理失败：${e.message}；需手工执行 git worktree remove --force ${wt}`,
+        });
+      }
+    }
+  }
 }
 
 async function main() {
@@ -76,8 +184,16 @@ async function main() {
       : '多客户端验收行只能在**工作区态**取，其中含并发会话未落库的改动；提交态读数需等它们落库',
   });
 
+  // ── 1.5 仓颉四模块生产构建（固定提交态，不是工作区） ──────────────────
+  await recordCangjieBuilds(gitSha);
+  if (onlyBuild) {
+    const verdict = decide(rows);
+    emit(gitSha, dirtyCount, verdict);
+    process.exit(verdict === 'PASS' ? 0 : 1);
+  }
+
   // ── 2. 固定提交隔离副本：不含未入库源码，且在副本里跑纯源码套件 ─────────
-  const copy = mkdtempSync(path.join(root, 'target', 'sacode-verify-copy-'));
+  const copy = mkdtempSync(path.join(root, 'apps/desktop/.tmp-test', 'sacode-verify-copy-'));
   const wt = path.join(copy, 'head');
   let copyStatus = 'FAIL';
   let copyDetail = '';

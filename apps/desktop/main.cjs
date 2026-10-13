@@ -45,7 +45,7 @@ const hostEnvironment = WILL_SMOKE
   ? { ...process.env, SACODE_USER_SETTINGS_DIR: join(SESSION_DIR, 'user-settings'), SACODE_COMPUTER_USE: '0' }
   : { ...process.env, ...(dataPaths ? {
     SACODE_USER_SETTINGS_DIR: dataPaths.settings,
-    TEMP: dataPaths.temp, TMP: dataPaths.temp,
+    TEMP: dataPaths.temp, TMP: dataPaths.temp, TMPDIR: dataPaths.temp,
   } : {}) };
 if (!WILL_SMOKE && hostEnvironment.SACODE_COMPUTER_USE === '1') {
   const computerPaths = computerUsePaths({

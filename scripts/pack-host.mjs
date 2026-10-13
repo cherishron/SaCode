@@ -3,8 +3,10 @@
 // OpenSSL 3（libcrypto-3-x64.dll / libssl-3-x64.dll）由 stdx 的 opensslFFI
 // 包装层在运行时按默认搜索序加载；stdx TLS FFI 还导入 libwinpthread-1.dll。
 // 两者均需随包分发，否则无 SDK 路径时可能在 Host 启动前即报 0xC0000135。
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, chmodSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { selectedPlatform } from './platform.mjs';
+const spec = selectedPlatform();
 const CA_FLAG = "--ca-bundle=";
 const rawArgs = process.argv.slice(2);
 const caArg = rawArgs.find((a) => a.startsWith(CA_FLAG));
@@ -19,18 +21,23 @@ if (caBundle && !existsSync(caBundle)) {
   console.error(`缺信任锚：--ca-bundle 指向的文件不存在（${caBundle}）`);
   process.exit(1);
 }
+if (!existsSync(exe) || dllDirs.some(d => !existsSync(d))) throw new Error('缺宿主或目标运行库目录，保留旧输出');
+const output = resolve(outDir);
+if ([exe, ...dllDirs, ...(caBundle ? [caBundle] : [])].some(p => resolve(p) === output || resolve(p).startsWith(output + '/')) ||
+    [exe, ...dllDirs].some(p => resolve(p).startsWith(output + '\\'))) throw new Error('输入位于输出目录内，不能清理后复制自身');
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(join(outDir, "bin"), { recursive: true });
 const dst = join(outDir, "bin");
-cpSync(exe, join(dst, "sacode-host.exe"));
+cpSync(exe, join(dst, `sacode-host${spec.suffix}`));
+if (spec.os !== 'win32') chmodSync(join(dst, 'sacode-host'), 0o755);
 for (const d of dllDirs) {
   for (const f of readdirSync(d)) {
-    if (f.endsWith(".dll")) { cpSync(join(d, f), join(dst, f)); }
+    if (spec.os === 'win32' ? f.endsWith('.dll') : /\.so(?:\.|$)|\.dylib$/.test(f)) { cpSync(join(d, f), join(dst, f), { dereference: true }); }
   }
 }
 const RUNTIME_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll", "libwinpthread-1.dll"];
 const pathDirs = (process.env.PATH || "").split(";");
-for (const dll of RUNTIME_DLLS) {
+for (const dll of spec.os === 'win32' ? RUNTIME_DLLS : []) {
   if (existsSync(join(dst,dll))) continue;
   let found = false;
   for (const dir of pathDirs) {

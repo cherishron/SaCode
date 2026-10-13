@@ -44,7 +44,8 @@
       "frame-smoke.cjs",
       "test-support/**",
       "package.json",
-      "renderer/**"
+      "renderer/**",
+      "plugins-guard.cjs"
     ],
     "extraResources": [
       {
@@ -68,7 +69,24 @@
     "portable": {
       "artifactName": "sacode-portable.exe"
     },
-    "afterPack": "./after-pack.cjs"
+    "afterPack": "./after-pack.cjs",
+    "linux": {
+      "icon": "renderer/assets/sacode-icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "artifactName": "SaCode-${version}-linux-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "SaCode-${version}-mac-${arch}.${ext}"
+    }
   },
   "devDependencies": {
     "@opentiny/tiny-robot": "^0.5.1",

@@ -127,3 +127,9 @@ apps/desktop/.tmp-test/
 
 # 桌面运行数据含用户会话和凭据，不入库。
 apps/desktop/data/
+
+# 多平台生成依赖和载荷，不包含 npm 主包源码。
+.deps/
+npm/sacode-cli-*/bin/
+npm/sacode-cli-*/extjs/
+npm/sacode-cli-*/build-manifest.json

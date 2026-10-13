@@ -17,12 +17,13 @@ function defaultDataRoot(exe) {
   return join(dirname(exe), 'data', 'sacode');
 }
 
-function configureDataPaths({ app, env, isolated = false }) {
+function configureDataPaths({ app, env, isolated = false, platform = process.platform }) {
   // 显式会话／冒烟目录由调用者拥有，不能偷偷读取或创建真实用户的数据根。
   if (isolated) return null;
   const override = env.SACODE_DATA_DIR;
-  const root = override || (app.isPackaged && process.platform === 'win32'
-    ? defaultDataRoot(app.getPath('exe')) : null);
+  // Linux/macOS 安装位置通常只读；使用应用专属可写用户目录，显式覆盖仍优先。
+  const root = override || (platform !== 'win32' ? app.getPath('userData') :
+    app.isPackaged ? defaultDataRoot(app.getPath('exe')) : null);
   if (!root) return null;
   if (!isAbsolute(root)) throw new Error('SaCode 数据目录必须是绝对路径');
   const paths = {
