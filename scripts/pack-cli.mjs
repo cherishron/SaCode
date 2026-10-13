@@ -5,6 +5,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { selectedPlatform } from './platform.mjs';
+import { copyRuntimeLibraries } from './runtime-libraries.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
 const spec = selectedPlatform();
@@ -35,11 +36,10 @@ if (spec.os === 'win32') {
   if (!runtime || !existsSync(runtime) || !stdx || !existsSync(stdx)) throw new Error('目标 runtime/stdx 目录缺失，不能生成残缺包');
   let count = 0;
   for (const directory of [runtime, stdx, process.env.OPENSSL_HOME].filter(Boolean)) {
-    for (const f of readdirSync(directory)) {
-      if (/\.so(?:\.|$)|\.dylib$/.test(f) && !/unittest|testmacro|prop_test|std-ast/.test(f)) {
-        cpSync(join(directory, f), join(bin, f), { dereference: true }); count++;
-      }
-    }
+    count += copyRuntimeLibraries(directory, bin, {
+      platform: spec.os,
+      exclude: name => /unittest|testmacro|prop_test|std-ast/.test(name),
+    });
   }
   if (!count) throw new Error('未收集到目标动态库');
   // Linux OpenSSL 可由系统提供，作为显式安装前提；CI 在剥离 SDK 的 smoke 中检查。

@@ -6,6 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, chmodSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { selectedPlatform } from './platform.mjs';
+import { copyRuntimeLibraries } from './runtime-libraries.mjs';
 const spec = selectedPlatform();
 const CA_FLAG = "--ca-bundle=";
 const rawArgs = process.argv.slice(2);
@@ -31,9 +32,7 @@ const dst = join(outDir, "bin");
 cpSync(exe, join(dst, `sacode-host${spec.suffix}`));
 if (spec.os !== 'win32') chmodSync(join(dst, 'sacode-host'), 0o755);
 for (const d of dllDirs) {
-  for (const f of readdirSync(d)) {
-    if (spec.os === 'win32' ? f.endsWith('.dll') : /\.so(?:\.|$)|\.dylib$/.test(f)) { cpSync(join(d, f), join(dst, f), { dereference: true }); }
-  }
+  copyRuntimeLibraries(d, dst, { platform: spec.os });
 }
 const RUNTIME_DLLS = ["libcrypto-3-x64.dll", "libssl-3-x64.dll", "libwinpthread-1.dll"];
 const pathDirs = (process.env.PATH || "").split(";");

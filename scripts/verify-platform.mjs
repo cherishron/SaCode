@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, mkdtempSync, writeFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { platforms } from './platform.mjs';
+import { copyRuntimeLibraries } from './runtime-libraries.mjs';
 const require = createRequire(import.meta.url);
 const { hostExePath, hostRuntimeEnv, hostEnvWithCaBundle } = require('../apps/desktop/paths.cjs');
 const { configureDataPaths } = require('../apps/desktop/data-paths.cjs');
@@ -13,6 +14,45 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const tmp = join(root, 'apps/desktop/.tmp-test/platform-verifier');
 mkdirSync(tmp, { recursive: true });
 let count = 0;
+const fixture = mkdtempSync(join(tmp, 'runtime-libraries-'));
+let linkChecked = false;
+try {
+  const source = join(fixture, 'source');
+  mkdirSync(join(source, 'libpcre2-8.so'), { recursive: true });
+  writeFileSync(join(source, 'libpcre2-8.so', 'libpcre2-8.so.0'), 'pcre-runtime');
+  writeFileSync(join(source, 'libpcre2-8.so', 'README'), 'not-a-library');
+  writeFileSync(join(source, 'libstdx.unittest.so'), 'excluded');
+  writeFileSync(join(source, 'libcangjie-runtime.so'), 'runtime');
+  writeFileSync(join(source, 'native.dll'), 'windows-runtime');
+  writeFileSync(join(source, 'native.dylib'), 'mac-runtime');
+  mkdirSync(join(source, 'empty.so'));
+  try {
+    symlinkSync(join(source, 'libcangjie-runtime.so'), join(source, 'runtime-alias.so'), 'file');
+    linkChecked = true;
+  } catch (error) {
+    if (!['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) throw error;
+  }
+  for (const platform of ['linux', 'darwin', 'win32']) {
+    const destination = join(fixture, platform); mkdirSync(destination);
+    const copied = copyRuntimeLibraries(source, destination, { platform, exclude: name => /unittest/.test(name) });
+    const expected = platform === 'win32' ? ['native.dll'] :
+      ['libcangjie-runtime.so', 'libpcre2-8.so.0', 'native.dylib', ...(linkChecked ? ['runtime-alias.so'] : [])];
+    assert.deepEqual(readdirSync(destination).sort(), expected.sort()); count++;
+    assert.equal(copied, expected.length); count++;
+    if (platform !== 'win32') {
+      assert.equal(readFileSync(join(destination, 'libpcre2-8.so.0'), 'utf8'), 'pcre-runtime'); count++;
+      if (linkChecked) { assert.equal(readFileSync(join(destination, 'runtime-alias.so'), 'utf8'), 'runtime'); count++; }
+    }
+  }
+  // 模拟 Linux Host 打包，不执行夹具宿主；同名 .so 目录必须被展开为真实库文件。
+  const host = join(fixture, 'host'); writeFileSync(host, 'fixture-host');
+  const output = join(fixture, 'packed');
+  execFileSync(process.execPath, [join(root, 'scripts/pack-host.mjs'), host, output, source],
+    { env: { ...process.env, SACODE_TARGET: 'linux-x64' } });
+  assert.equal(readFileSync(join(output, 'bin/libpcre2-8.so.0'), 'utf8'), 'pcre-runtime'); count++;
+  assert(!readdirSync(join(output, 'bin')).includes('libpcre2-8.so')); count++;
+} finally { rmSync(fixture, { recursive: true, force: true }); }
+console.log(`动态库文件软链接检查：${linkChecked ? '已执行' : '本机权限限制，未执行'}`);
 for (const platform of ['win32', 'linux', 'darwin']) {
   const host = hostExePath({ packaged: true, resourcesPath: tmp, platform });
   assert.equal(host, join(tmp, 'host/bin', platform === 'win32' ? 'sacode-host.exe' : 'sacode-host')); count++;
@@ -39,6 +79,6 @@ assert.equal(hostEnvWithCaBundle({}, { sidecarPath: '/missing.pem', exists: () =
 assert.equal(hostEnvWithCaBundle({}, { sidecarPath: '/ca.pem', exists: () => true }).SACODE_CA_BUNDLE, '/ca.pem'); count++;
 const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8'));
 assert(desktop.build.linux.target.includes('AppImage')); assert(desktop.build.mac.target.includes('dmg')); count += 2;
-const files = ['platform.mjs','build-native.mjs','build-platform.mjs','pack-cli.mjs','pack-cli-windows.mjs','pack-host.mjs','package-platform.mjs','setup-sdk.mjs','setup-stdx.mjs','verify-platform.mjs','run-build.mjs','verify-npm-install.mjs','verify-desktop-payload.mjs'];
+const files = ['platform.mjs','build-native.mjs','build-platform.mjs','pack-cli.mjs','pack-cli-windows.mjs','pack-host.mjs','package-platform.mjs','setup-sdk.mjs','setup-stdx.mjs','verify-platform.mjs','run-build.mjs','verify-npm-install.mjs','verify-desktop-payload.mjs','runtime-libraries.mjs'];
 for (const f of files) { execFileSync(process.execPath, ['--check', join(root, 'scripts', f)]); count++; }
 console.log(`平台静态/路径检查 PASS ${count}；未运行仓颉旧测试或设备任务`);

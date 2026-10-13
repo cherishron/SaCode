@@ -132,3 +132,11 @@ node scripts/package-platform.mjs
 Linux 分支曾在私有副本以 Windows 编译器及文档信号签名替身作语法核查，已修正变量定义顺序和消费线程返回类型；该实验**不是 Linux 编译/链接/信号投递/原生持久验证**。C 薄层、Linux 桌面、macOS 与 OHOS 的真实读数由目标环境按上述步骤补齐。
 
 历史固定 `2c56c76` 的旧四模块门禁曾超时并遗留本会话 cjc；已只结束命令行匹配私有副本的那个进程。新构建入口和验收门禁改为限时清理自有进程树/组，缺项与跳过不得返回假绿。
+
+### Linux 后续实测与运行库收集修正（2026-10-14）
+
+用户反馈 `setup-stdx`、`verify-platform`、`build-native` 均 PASS，`build-platform` 四模块成功；`pack-cli --no-build` 因名字为 `libpcre2-8.so` 的目录被按文件复制，报 `ERR_FS_EISDIR`。本次消息未附具体提交 SHA，不自行补写基线，也不升级为桌面或真实任务验收通过。
+
+CLI 与 Host 现共用 `scripts/runtime-libraries.mjs`：递归检查真实子目录，只复制符合动态库名称的普通文件或指向文件的软链接，展开到包内 `bin/`；文件软链接解引用后保留原别名，不遍历目录软链接，不把 README 或整个 `.so` 同名目录当载荷。CLI 继续排除 unittest 等编译/测试专用库。
+
+本机新增夹具覆盖上述目录结构、版本库名、文件软链接、排除项，以及模拟 Linux Host 打包；`node scripts/verify-platform.mjs` 为 68 项通过。这是 Windows 上的打包逻辑验证，不替代 Linux 动态加载与运行。更新源码后可直接重跑 `pack-cli --no-build`（保留已成功的本轮构建记录），再继续 npm 安装与桌面步骤。
