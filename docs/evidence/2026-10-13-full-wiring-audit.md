@@ -318,3 +318,9 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 复制既有载荷的 DLL 与 CA 到私有 runtime-bin，未替换公开 Host。独占 TMP 下 model-credential-retry-host.test.mjs 真实请求 1/1、rc0（rpc-test.log）：保存成功、修订不变、读取不回显密钥；陈旧修订、缺失供应商、负修订、额外 ref 与空密钥拒绝，拒绝前后凭据文件一致。
 
 独立桌面候选六文件共17/17、rc0（credential-desktop-candidate/verify-v5.log），含真实 Electron+Vue+CSP 页面、适配器、IPC/preload/清单、草稿变化拒绝旧重试。该页面使用可控适配器，真实 Host 单独验证，尚非安装产物端到端。先前 verify-v3 为 Windows loader URL 调用错误；verify-v4 因 loader 基于 cwd 查找私有 wrapper 而失败，改从产品根执行候选绝对范围后通过，未改生产代码或断言。正式载荷、统一安装包以及其余能力域依旧待验收。
+
+## 第三十四轮：模型注册表与 preload→IPC→真实 Host 联验
+
+同一私有调试 Host（SHA256 6754D8457C330A3679D88CFA909A77B1F0D0E43319C52BB93E1F94A40995825D）在独占 TMP 运行 provider-registry.test.mjs：6/6 rc0，registry-test.log。覆盖注册表读写拒绝、凭据旋转及重启持久化、按配置发模型请求、未支持方言拒绝、草稿模型清单查询与环境凭据只读。模型服务为本地HTTP夹具，不宣称远端供应商协议全覆盖。
+
+增加 model-credential-retry-host 第二条：执行实际 preload 源码，以 VM 的 Electron invoke 桥接实际 registerModelCredentialIpc，处理器请求实际 HostBridge。配置后的凭据保存可达核心；陈旧修订在 Host 拒绝、不安全整数在 IPC 拒绝。两条2/2 rc0，ipc-host-test.log。Electron传输在本条是VM媒介，不能扩大成已安装 Electron 全链路；真实窗口页面另有候选17/17证据。release子进程23372/27900本轮仍存活且累计CPU3125/2191秒，未重启。
