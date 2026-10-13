@@ -495,3 +495,9 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 私有acp-inbound.log 254/254；最终acp-inbound-pipe.log TOTAL255/PASSED255/SKIPPED0/ERROR0/FAILED0，rc0。Node v22本地真实子进程管道夹具同时发送与本机请求相同ID的审批、进度通知、未知fs/write_text_file请求，实际读到-32601后回送确认；权限/通知各自可取且unsolicited为零。夹具非真实ACP供应方、不执行文件或模型任务。当前队列尚未消费到审批工单及内容投影，未公开prompt入口，不扩大为委派全链路。
 
 发现旧sessionCancel仍按request等待回复，与当前官方通知契约冲突；sessionResume及close方法亦需与冻结供应方探针分别对齐，不直接改变兼容性假设。入站队列满/畸形有计数，但丢失通知后的任务完整性投影尚待接入；原StringReader.readln的读取前内存上限仍需额外监督。仅新增分类和管道安全接收，不宣称这些剩余缺口已解决。
+
+## 第六十三轮：ACP取消通知与未确认停止
+
+重新核官方 https://agentclientprotocol.com/protocol/v1/prompt-turn ，session/cancel为通知，停止确认来自对应prompt的终止结果。AcpProcess.sessionCancel改Bool发送事实，不带id、不登记ReplyTable、不等待不存在的取消回复；空session和非NDJSON拒绝。委派取消保留outcome-unknown，sent-awaiting-turn-end/send-failed分明；不把管道发送、进程alive=false或缺句柄直接判cancelled，不markIdle开放重启。
+
+私有acp-cancel-notification.log TOTAL256/PASSED256/SKIPPED0/ERROR0/FAILED0，rc0；新增真实Node管道夹具验证取消不含id且准确session，通知后原prompt请求回复正常配对，无额外入站队列或unsolicited。并非真实供应方停止证据。服务终态持久、对应prompt停止结算和初始化期间取消令牌消费仍待接线（当前create未检查cancelled），不宣称启动竞态已闭合；这些缺口继续阻止公开委派入口。

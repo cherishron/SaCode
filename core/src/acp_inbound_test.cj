@@ -59,3 +59,21 @@ func acpInboundRoutesRealPipeAndRejectsUnknownRequest() {
         @Expect(process.unsolicited(), 0)
     } finally { process.kill() }
 }
+
+@Test
+func acpCancelIsNotificationAndDoesNotAwaitOwnReply() {
+    let fixture = "const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',s=>{const f=JSON.parse(s);if(f.method==='session/cancel'){console.log(JSON.stringify({jsonrpc:'2.0',id:1,result:{cancelWasNotification:!Object.hasOwn(f,'id'),session:f.params.sessionId}}));}});"
+    let process = AcpProcess("node", ["-e", fixture], workingDirectory: Path("."))
+    @Expect(process.sessionCancel("fixture"), false)
+    @Expect(process.start(), true)
+    try {
+        @Expect(process.sendRequest(1, "session/prompt", "{}"), true)
+        @Expect(process.sessionCancel(""), false)
+        @Expect(process.sessionCancel("fixture"), true)
+        let turnResult = process.awaitReply(1, 5000).getOrThrow()
+        @Expect(turnResult.contains("\"cancelWasNotification\":true"), true)
+        @Expect(turnResult.contains("\"session\":\"fixture\""), true)
+        @Expect(process.nextInbound().isNone(), true)
+        @Expect(process.unsolicited(), 0)
+    } finally { process.kill() }
+}

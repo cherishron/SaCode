@@ -312,12 +312,23 @@ public class AcpProcess {
         return request(nextId(), "session/list", "{}", timeoutMs: timeoutMs)
     }
 
-    // session/cancel：取消当前轮次
-    public func sessionCancel(sessionId: String, timeoutMs!: Int64 = 4000): Option<String> {
-        let params = "{\"sessionId\":\"${jsonEscapeText(sessionId)}\"}"
-        return request(nextId(), "session/cancel", params, timeoutMs: timeoutMs)
+    // session/cancel 是通知：发送成功仅证明写入管道，不证明任务停止。
+    public func sessionCancel(sessionId: String): Bool {
+        if (!alive() || sessionId.size == 0 || frameMode != "ndjson") { return false }
+        let frame = "{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"${jsonEscapeText(sessionId)}\"}}"
+        if (let Some(p) <- proc) {
+            writeLock.lock()
+            try {
+                p.stdInPipe.write((frame + "\n").toArray())
+                p.stdInPipe.flush()
+                return true
+            } catch (e: Exception) {
+                why = "cancel-write-failed: ${e}"
+                return false
+            } finally { writeLock.unlock() }
+        }
+        return false
     }
-
     // === 生命周期 ===
 
     // 优雅关闭：先发 session/close 再 settle（与 ExtProcess 的 host/shutdown 对应）

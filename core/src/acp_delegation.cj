@@ -263,23 +263,15 @@ public class AcpDelegationService {
             entry.cancelToken.cancel()
             mtx.unlock()
 
-            // 发 session/cancel
+            // 通知不带回执；只有对应prompt结束事实才能确认取消。
+            entry.phase = "outcome-unknown"
+            entry.result = "cancel-no-confirmation"
             if (let Some(proc) <- entry.proc) {
                 if (proc.alive()) {
-                    let cancelResult = proc.sessionCancel(entry.protocolSessionId, timeoutMs: 3000)
-                    if (let Some(_) <- cancelResult) {
-                        entry.phase = "cancelled"
-                    } else {
-                        // 未确认停止 → outcome-unknown
-                        entry.phase = "outcome-unknown"
-                        entry.result = "cancel-no-confirmation"
-                    }
-                } else {
-                    entry.phase = "cancelled"
+                    let sent = proc.sessionCancel(entry.protocolSessionId)
+                    entry.result = if (sent) { "cancel-sent-awaiting-turn-end" } else { "cancel-send-failed" }
                 }
-                proc.markIdle()
-            } else {
-                entry.phase = "cancelled"
+                // 尚未确认停止，不能markIdle并开放restart。
             }
             entry.revision += 1
             let _ = checkpoint()
