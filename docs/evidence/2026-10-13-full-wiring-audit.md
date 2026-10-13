@@ -481,3 +481,9 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 私有approval-binding-candidate最终acp-journal-v5.log：TOTAL250/PASSED250/SKIPPED0/ERROR0/FAILED0，真实rc0。三份本批源码与测试候选SHA256逐字相同。候选沿用此前隔离核心快照，并非最新HEAD全量回归；错误相对路径造成v4仍是249条旧集，不能作为新增用例证据。v5为修正绝对路径后的250条。测试覆盖缺租约、真实磁盘分歧导致发布失败、恢复不重放、跨会话拒绝、未知状态不冒充取消/完成、pending事实忽略、已发布畸形及重复请求拒绝。
 
 仅准入事实持久及保守恢复，不含running/终态持久结算、真实session/prompt发送、权限请求回传和内容消费。Host/CLI/IPC/页面公开委派入口仍缺；LSP真实服务器插件与页面消费仍缺。不升级整域完成状态。
+
+## 第六十一轮：ACP关闭不冒充任务完成
+
+核提交态close无条件completed，create尚未调用sessionPrompt，关闭失败准入条目也可覆盖failed。取消/关闭保留已完成、失败、已取消、拒绝、未完成终态，先核预期修订，再原样返回，不改原因/修订。活动连接关闭仅记incomplete及closed-without-task-completion-evidence，不能凭进程关闭证明任务完成。恢复outcome-unknown的既有身份核对保护保留。
+
+新增acpClosingFailedAdmissionCannotClaimCompletion真实服务回归（缺准入授权不启进程），私有acp-close.log TOTAL251/PASSED251/SKIPPED0/ERROR0/FAILED0、rc0。覆盖失败后close/cancel状态与修订不变；活动进程关闭尚无真实提供方证据。仅本批两文件与审计提交，不包含在途ACP审批桥改动。协议drainStdout目前只入ReplyTable，服务onUpdate/onPermissionRequest/onElicitation未装配，必须接请求/通知消费及审批回传后才能开放prompt，不以当前修复声明委派产品闭环。

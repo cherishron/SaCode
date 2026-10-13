@@ -248,6 +248,11 @@ public class AcpDelegationService {
                 mtx.unlock()
                 throw Exception("revision-conflict:expected-${expectedRevision}-actual-${entry.revision}")
             }
+            if (entry.phase == "completed" || entry.phase == "failed" || entry.phase == "cancelled" || entry.phase == "rejected" || entry.phase == "incomplete") {
+                let snapshot = entry.snapshot()
+                mtx.unlock()
+                return snapshot
+            }
             if (entry.phase == "outcome-unknown" && entry.proc.isNone()) {
                 mtx.unlock()
                 throw Exception("outcome-unknown:recovery-requires-reconciliation")
@@ -292,6 +297,11 @@ public class AcpDelegationService {
                 mtx.unlock()
                 throw Exception("revision-conflict:expected-${expectedRevision}-actual-${entry.revision}")
             }
+            if (entry.phase == "completed" || entry.phase == "failed" || entry.phase == "cancelled" || entry.phase == "rejected" || entry.phase == "incomplete") {
+                let snapshot = entry.snapshot()
+                mtx.unlock()
+                return snapshot
+            }
             if (entry.phase == "outcome-unknown" && entry.proc.isNone()) {
                 mtx.unlock()
                 throw Exception("outcome-unknown:recovery-requires-reconciliation")
@@ -304,7 +314,8 @@ public class AcpDelegationService {
                 proc.close()
                 proc.markIdle()
             }
-            entry.phase = "completed"
+            entry.phase = "incomplete"
+            entry.result = "closed-without-task-completion-evidence"
             entry.revision += 1
             let _ = checkpoint()
             return entry.snapshot()
