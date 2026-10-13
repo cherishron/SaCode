@@ -90,7 +90,7 @@ func acpDelegationCreateSpawnFailsReportsProviderUnavailable() {
     // procFactory 返回一个用不存在命令的 AcpProcess
     let svc = AcpDelegationService("sess-1", gate, { peerId =>
         AcpProcess("nonexistent-command-xyz", [], workingDirectory: Path("."))
-    })
+    }, checkpoint: { => true })
     let snap = svc.create("task-1", "req-1", "opencode", "hello", ".")
     // spawn 失败 → phase=failed，result 包含 provider-unavailable
     @Expect(snap.phase, "failed")
@@ -133,7 +133,7 @@ func acpDelegationIdempotencyDifferentDigestThrowsConflict() {
     // 同 requestId 不同 task → revision-conflict
     var threw = false
     try {
-        let _ = svc.create("task-1", "req-1", "opencode", "different task", ".")
+        let _ = svc.create("task-1", "req-1", "opencode", "different task with a long body that must not overflow the digest", ".")
     } catch (e: Exception) {
         threw = e.message.contains("revision-conflict")
     }

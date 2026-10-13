@@ -459,3 +459,10 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 当前提交641cc78。重新检索Host/CLI所有源码和preload，仍无acp/分派或AcpDelegationService实例；不能用team动作证明ACP。AcpDelegationService仅核心及其测试引用，当前工作区文件另有未提交作者改动。create经过gate后写内存索引、启动procFactory/process并协商，未消费checkpoint；其默认checkpoint返回true，尚不能保证启动前委派事实持久及恢复不重复执行。在途容量计数仅running/awaiting-permission/awaiting-input，initializing未计入，属于需并发探针验证的风险，未以源码推测直接宣称已复现。未代改并发ACP文件。
 
 LspRouter有register接口，产品入口仅sharedRouter路由；未见具体语言插件注册，七IPC页面消费仍缺。更新F07/F21首表，移除已完成的配置阶段旧缺口；F07仍保留费用调度/全部协议/当前统一产物，整表不按已修页面数量宣称产品完成。下一实施优先是页面工具统一授权、ACP启动持久准入与真实插件LSP装配，同时固定产物门禁保留。
+
+
+## 第五十八轮：ACP启动前持久准入
+
+AcpDelegationService默认checkpoint由true改false，创建完成内存提案后、procFactory前强制调用检查；缺失/false/抛异常统一failed+persistence-failed:delegation-create，不构造进程。同请求回原失败条目，不自动重启。新增用例零factory证明及明确true许可后原spawn失败链；既有spawn失败测试显式供测试许可，不假装持久事实。先234/234，加入10条已有委派回归后TOTAL244/PASSED244/SKIPPED0/ERROR0/FAILED0 rc0（acp-admission-v2）。工作区原有sha256任务全文摘要修复与长体冲突测试同时实测通过，吸收这两处已完成差异，不覆盖其他ACP审批文件。
+
+这仍是可信入口注入checkpoint的准入钩子；未实现委派事实写入/恢复投影，不宣称真实持久委派完成。Host/CLI公开ACP入口仍缺，initializing容量与身份绑定等风险仍在，下一步必须实际SessionLog记录不可变提案及恢复不重放。此前Gitee推送失败已终结，本轮重试3e5720f成功，不重启未终态操作。

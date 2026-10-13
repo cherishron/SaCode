@@ -94,7 +94,7 @@ public class AcpDelegationService {
 
     public init(sessionId: String, gate: AcpGate,
         procFactory: (String) -> AcpProcess,
-        checkpoint!: () -> Bool = { => true }) {
+        checkpoint!: () -> Bool = { => false }) {
         this.sessionId = sessionId
         this.gate = gate
         this.procFactory = procFactory
@@ -148,6 +148,14 @@ public class AcpDelegationService {
         // 启动进程
         entry.phase = "initializing"
         entry.revision += 1
+        var admitted = false
+        try { admitted = checkpoint() } catch (_: Exception) { admitted = false }
+        if (!admitted) {
+            entry.phase = "failed"
+            entry.result = "persistence-failed:delegation-create"
+            entry.revision += 1
+            return entry.snapshot()
+        }
         let proc = procFactory(peerId)
         if (!proc.start()) {
             entry.phase = "failed"
@@ -295,16 +303,9 @@ public class AcpDelegationService {
         // 待 Task 4.x 实现
     }
 
-    // 简易摘要：取 taskText 的长度 + 前 64 字节哈希（不引 stdx）
+    // 使用全量内容摘要；滚动 Int64 乘法会溢出并绕过稳定的幂等冲突结果。
     private func simpleDigest(text: String): String {
-        let arr = text.toArray()
-        var sum = Int64(0)
-        var n = Int64(0)
-        for (b in arr) {
-            sum = sum * Int64(31) + Int64(b)
-            n += 1
-        }
-        return "${n}:${sum}"
+        return sha256Hex(text.toArray())
     }
 
     // 从 session/new 响应中提取 sessionId（简化版，正式版需 JSON 解析）
