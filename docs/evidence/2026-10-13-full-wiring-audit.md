@@ -438,3 +438,10 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 新增model-center-main-smoke，复用产品createWindow/preload/main实际IPC/真实Host，不注册夹具处理器。从设置导航点击模型中心→供应商标签→选择stepfun添加实例→编辑密钥保存→默认模型选择→关闭设置，bridge直接核权威实例、keyConfigured与默认身份。8b91110固定桌面重建资源+模式私有Host；首轮漏点默认模型分类下的供应商标签而超时，加入真实标签点击后PASS rc0（model-main-v2）。新增SACODE_UI_SMOKE_SUITE=model-center定向分派后原main --ui-smoke再跑PASS rc0（v3），全新会话/用户/TMP。未替换全部UI套件的通过判据，其他套件依旧待修；不声称全部UI通过。
 
 新的支持脚本纳入既有test-support/**打包范围，原ui-smoke仅提交HEAD派生一行分派，其他会话测试变更保留。运行--no-sandbox属当前测试环境，未完成默认安全启动或安装包验收。未调用供应商远端模型。
+
+
+## 第五十五轮：新增自定义供应商主窗口落库
+
+审计固定HEAD空草稿仍declared=true且无模型ID输入，新增误走内置启停。工作区已有其他会话的两处补全（空草稿declared=false/初始模型、模型ID/名称及增删行），本轮逐差异确认后仅叠加此文件到独立桌面候选重编pack-pages rc0，不重复重写。扩展完整main定向验收：添加主窗口自定义供应商，填写ID/name/baseUrl/key/modelId/modelName并保存，真实Host核declared=false、keyConfigured、modelID及既有默认不变，MODEL_MAIN_SMOKE PASS rc0（custom-main.log）。无远端模型请求。
+
+工作区model-center页面及适配器联合27/27 rc0，含新增草稿与字段提交两测试、已有装配/安全校验。本批吸收上述已验收表单差异及对应测试，之前不吸收它们的在途边界现按实测解除；不吸收其他未完成路径。完整默认安全启动和安装包仍待验收。

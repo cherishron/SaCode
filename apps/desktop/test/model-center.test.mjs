@@ -53,6 +53,40 @@ test('装配卸载后注册失败',async()=>{
   assert.throws(()=>asm.install('ui-test',()=>{}),/disposed/);
 });
 
+test('供应商新增草稿使用自定义写接口，不误走内置启停', async()=>{
+  const {createModelCenterAdapters}=await run(await bundle('model-center-adapter.ts'));
+  let saved;
+  const adapters=createModelCenterAdapters({modelsSave:async(d,key,revision)=>{saved={d,key,revision};},modelsSetEnabled:async()=>{assert.fail('新增不得走启停');}});
+  await adapters['provider-settings'].save({id:'test',declared:false,key:'test-key',models:[{id:'grok-4.3',name:'grok-4.3'}]},0);
+  assert.equal(saved.d.models[0].id,'grok-4.3');
+  assert.equal(saved.key,'test-key');
+});
+
+test('供应商新增表单提交自定义标记及用户填写的模型目录',async()=>{
+  const result=await build({entryPoints:[join(pages,'provider-settings.ts')],bundle:true,write:false,format:'cjs',external:['vue']});
+  const mounted=[];
+  const vue={defineComponent:v=>v,ref:value=>({value}),onMounted:fn=>mounted.push(fn),onBeforeUnmount:()=>{},h:(tag,props,children)=>({tag,props,children})};
+  const ctx={module:{exports:{}},require:()=>vue,URL};
+  vm.runInNewContext(result.outputFiles[0].text,ctx);
+  let saved;
+  const render=ctx.module.exports.Page.setup({adapter:{describe:async()=>({providers:[],catalog:[],revision:0,writable:true}),save:async d=>{saved=JSON.parse(JSON.stringify(d));}}});
+  await mounted[0]();
+  await new Promise(resolve=>setImmediate(resolve));
+  const nodes=tree=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==='object'?[tree,...nodes(tree.children)]:[];
+  const find=label=>nodes(render()).find(n=>n.props?.['aria-label']===label);
+  find('添加供应商').props.onClick();
+  for(const [label,value] of [['Provider ID','test'],['显示名称','测试'],['API 地址','https://example.com/v1'],['API 密钥','test-key'],['模型 ID 1','grok-4.3']]){
+    const node=find(label);assert.ok(node,'表单字段 '+label);node.props.onInput({target:{value}});
+  }
+  const saveButton=nodes(render()).find(n=>n.tag==='button'&&n.children==='保存');
+  assert.equal(saveButton.props.disabled,false,'读取完成后才允许保存');
+  saveButton.props.onClick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(saved,JSON.stringify(nodes(render()).filter(n=>n.props?.class==='error').map(n=>n.children)));
+  assert.equal(saved.declared,false);
+  assert.equal(saved.models[0].id,'grok-4.3');
+});
+
 // --- provider-settings 校验测试 ---
 test('provider-settings validateProvider：ID 格式与重复检查',async()=>{
   const code=await bundle('provider-settings.ts');
@@ -66,7 +100,7 @@ test('provider-settings validateProvider：ID 格式与重复检查',async()=>{
 test('provider-settings validateProvider：URL 校验与密钥格式',async()=>{
   const code=await bundle('provider-settings.ts');
   const {validateProvider}=await run(code);
-  const base={id:'p',name:'P',protocol:'openai-completions',declared:false,sortOrder:0,enabled:true,transport:'direct'};
+  const base={id:'p',name:'P',protocol:'openai-completions',declared:false,sortOrder:0,enabled:true,transport:'direct',models:[{id:'m',name:'',contextWindow:'',maxTokens:'',image:false}]};
   assert.notEqual(validateProvider({...base,baseUrl:'http://api.example.com/v1',key:'x'},[],false),'');
   assert.equal(validateProvider({...base,baseUrl:'https://api.example.com/v1',key:'x'},[],false),'');
   assert.equal(validateProvider({...base,baseUrl:'http://127.0.0.1:8000/v1',key:'x'},[],false),'');

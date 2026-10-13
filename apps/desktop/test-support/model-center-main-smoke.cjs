@@ -25,6 +25,13 @@ module.exports = async function modelCenterMainSmoke({app,bridge,seedIfNeeded,cr
     await wait("document.querySelector('.ps-saved')?.textContent==='默认模型已保存'");
     const selected=await bridge.request('model/registry/describe');
     if(!selected.providers[0].keyConfigured||selected.defaultProviderId!=='stepfun'||selected.defaultModel!==selected.providers[0].models[0].id)throw Error('model-core-save-mismatch');
+    await js("document.querySelector('button[aria-label=\"添加供应商\"]').click()");
+    await wait("!!document.querySelector('input[aria-label=\"模型 ID 1\"]')");
+    await js("(()=>{for(const [label,value] of [['Provider ID','main-custom'],['显示名称','主窗口自定义'],['API 地址','https://example.com/v1'],['API 密钥','fixture-custom-key'],['模型 ID 1','custom-m'],['模型名称 1','自定义模型']]){const input=document.querySelector('input[aria-label=\"'+label+'\"]');if(!input||input.disabled)throw Error('custom-input-unavailable:'+label);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}return Vue.nextTick();})()");
+    await js("[...document.querySelectorAll('.ps-root button')].find(b=>b.textContent==='保存').click()");
+    await wait("document.querySelector('.ps-saved')?.textContent.includes('已保存') && !document.querySelector('input[aria-label=\"Provider ID\"]')");
+    const final=await bridge.request('model/registry/describe'),custom=final.providers.find(p=>p.id==='main-custom');
+    if(!custom||custom.declared||!custom.keyConfigured||custom.models[0].id!=='custom-m'||final.defaultProviderId!=='stepfun')throw Error('custom-provider-core-mismatch');
     await js("document.querySelector('.settings-close').click()");
     await wait("!document.querySelector('.settings-dialog[open]')");
     console.log('MODEL_MAIN_SMOKE PASS');await bridge.stop();app.exit(0);

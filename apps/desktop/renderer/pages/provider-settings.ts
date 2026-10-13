@@ -60,7 +60,7 @@ const btn=(text:string,action:()=>void,cls='btn',more:any={})=>el('button',cls,t
 const inp=(label:string,value:string,update:(v:string)=>void,attrs:any={})=>el('label','field',[el('span','lbl',label),el('input','ipt',null,{value,disabled:false,'aria-label':label,onInput:(e:Event)=>update((e.target as HTMLInputElement).value),...attrs})]);
 
 // --- 空草稿 ---
-const blank=():Draft=>({id:'',name:'',baseUrl:'',protocol:'openai-completions',keyConfigured:false,declared:true,sortOrder:0,enabled:true,transport:'direct',key:''});
+const blank=():Draft=>({id:'',name:'',baseUrl:'',protocol:'openai-completions',keyConfigured:false,declared:false,sortOrder:0,enabled:true,transport:'direct',key:'',models:[{id:'',name:'',contextWindow:'',maxTokens:'',image:false}]});
 
 // --- 主组件 ---
 export const Page=defineComponent({
@@ -209,7 +209,15 @@ export const Page=defineComponent({
           el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),disabled:d.declared,'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
           d.credentialWritable!==false?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
           editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
-          !d.declared?el('section','model-catalog',(d.models||[]).map((m,i)=>renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}))):null,
+          !d.declared?el('section','model-catalog',[
+            ...(d.models||[]).map((m,i)=>el('div','model-entry',[
+              inp('模型 ID '+(i+1),m.id,v=>{m.id=v;}),
+              inp('模型名称 '+(i+1),m.name,v=>{m.name=v;}),
+              renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}),
+              btn('删除模型',()=>{d.models!.splice(i,1);}),
+            ])),
+            btn('添加模型',()=>{(d.models ||= []).push({id:'',name:'',contextWindow:'',maxTokens:'',image:false});}),
+          ]):null,
           el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
           credentialRetry.value?btn('仅重试密钥',()=>void retryCredential(),'primary',{disabled:saving.value||loading.value||!writable.value||!props.adapter?.saveCredential}):null,
           el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
