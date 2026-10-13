@@ -109,6 +109,11 @@ func hookDrain(pipe: InputStream): (String, Bool) {
     return (String.fromUtf8(bytes.toArray()), truncated)
 }
 
+// 平台来自编译目标；环境变量OS可缺失或被Hook调用方更改。
+@When[os == "Windows"]
+func hookRunsOnWindows(): Bool { return true }
+@When[os != "Windows"]
+func hookRunsOnWindows(): Bool { return false }
 public class HookExecutor {
     public static func executeCommand(command: String, shell: Option<String>, env: HashMap<String, String>,
         input: HookInput, timeout: Int64): HookResult {
@@ -121,7 +126,7 @@ public class HookExecutor {
         try {
             file.write(hookInputJson(input).toArray())
             file.seek(SeekPosition.Begin(0))
-            let windows = getVariable("OS") == Some("Windows_NT")
+            let windows = hookRunsOnWindows()
             let executable = shell ?? if (windows) { getVariable("ComSpec") ?? "cmd.exe" } else { "/bin/sh" }
             let args = if (executable.toAsciiLower().endsWith("cmd.exe") || executable.toAsciiLower() == "cmd") {
                 // Windows launch 会转义嵌套引号；交给脚本文件避免把整条命令当 argv 再次引用。

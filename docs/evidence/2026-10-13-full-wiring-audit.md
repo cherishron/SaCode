@@ -605,3 +605,11 @@ schedule-fire-red.log TOTAL307/PASSED15/SKIPPED290/ERROR0/FAILED2、rc1，恰两
 改TeamRunnerMember保存writerKey(log.path)规范会话键，全局认领/归还按该键；owner仍专门验证租约归属与结算。team-identity-green.log TOTAL322/PASSED14/SKIPPED308/ERROR0/FAILED0、rc0，实际14条：不同成员并行与单独取消、相同会话跨实例拒绝、关闭超时保留租约、恢复不启动模型、租约丢失结算失败及真实Git成员隔离/共享写者竞争。提供方为受控真实流Provider，非外部模型/公开页面验收。
 
 两测试仅HEAD派生路径hunk落库，不吞并别组清理/注释改动；生产team_runner.cj本轮独立修复。复用既有writerKey与WriteLease会话身份，Windows实测，Linux大小写/路径规则仍需平台探针。不把14条扩大为团队或ACP全链路已交付，当前HEAD全量回归仍待收口。
+
+## 第七十八轮：Hook平台选择不依赖环境OS
+
+固定回归五条Hook命令红的根因：当前Windows环境OS变量缺失，executeCommand以OS=Windows_NT判断平台，错误选/bin/sh；启动失败被既有异常默认Allow掩盖，exit2拒绝变允许。用SDK编译目标@When[os == Windows]确定平台，显式shell覆盖及ComSpec配置保留，不将可篡改/缺失OS作为平台事实。新增hook_platform_test登记本轮，finally还原OS。
+
+hook-os-red.log定向新增用例TOTAL341/PASSED0/SKIPPED340/ERROR0/FAILED1、rc1，缺失/伪造OS均转默认Allow。hook-os-green.log --filter test* TOTAL341/PASSED20/SKIPPED321/ERROR0/FAILED0、rc0，20运行包含18既有Hook用例、1平台回归、1调度Hook返回用例。真实node/cmd执行检查deny/ask/allow/block与JSON各字段、exit2拒绝/中文stderr、超时与大双流、超时子进程不留标记、HTTP安全规则及拒绝优先级。未改断言凑绿，现有超时/异常默认策略未改，Hook不能冒充独立权限门。
+
+平台回归只在Windows编译启用，非Windows走原/bin/sh默认；Linux/鸿蒙未实测，不宣称支持通过。最新整仓、公共Host/CLI/页面或安装包未验证，核心20条不扩大成Hook产品全链路完成。
