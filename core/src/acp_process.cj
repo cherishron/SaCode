@@ -1,5 +1,9 @@
 package core
+
 import std.collection.ArrayList
+import std.collection.HashMap
+import std.collection.Map
+import std.env.getVariables
 import std.convert.*
 import std.fs.*
 import std.io.*
@@ -11,12 +15,15 @@ import std.sync.*
 // stderr 改为可回收诊断（design §2.4.4），不污染协议面；崩溃/异常证据保留在诊断缓冲。
 // restart 仅在委派未进入运行态时允许，不用于失败后自动换执行者（REQ-FAIL-01 划定）。
 let acpTransportGenerations = AtomicInt64(0)
+
 public class AcpProcess {
     let command: String
     let arguments: Array<String>
     let wd: Path
     // 帧编解码模式："ndjson"（默认，OpenCode 已核）或 "content-length"（待核产品）
     let frameMode: String
+    // 仅可信提供方装配可指定覆盖值；RPC 与模型参数没有启动环境通路。
+    let environment: Array<(String, String)>
 
     // 应答按 id 配对：允许多条请求在途；表满时回压而不是丢帧
     let table = ReplyTable(256)
@@ -49,23 +56,31 @@ public class AcpProcess {
     var forced = false
     var code: Int64 = -1
     var why = ""
-    var providerGate: () -> Bool = { => true }
+    var providerGate: () -> Bool = {=> true}
     var providerGateBound = false
 
     func bindProviderGate(gate: () -> Bool) {
-        if (running || providerGateBound) { throw Exception("not-authorized:acp-provider-gate-binding") }
-        providerGate = gate; providerGateBound = true
+        if (running || providerGateBound) {
+            throw Exception("not-authorized:acp-provider-gate-binding")
+        }
+        providerGate = gate
+        providerGateBound = true
     }
 
-    public init(command: String, arguments: Array<String>, workingDirectory!: Path, frameMode!: String = "ndjson") {
+    public init(command: String, arguments: Array<String>, workingDirectory!: Path, frameMode!: String = "ndjson",
+        environment!: Array<(String, String)> = []) {
         this.command = command
-        this.arguments = arguments
+        this.arguments = Array<String>(arguments.size, {i => arguments[i]})
         this.wd = workingDirectory
         this.frameMode = frameMode
+        this.environment = Array<(String, String)>(environment.size, {i => environment[i]})
     }
 
     public func start(): Bool {
-        if (!providerGate()) { why = "acp-provider-revoked"; return false }
+        if (!providerGate()) {
+            why = "acp-provider-revoked"
+            return false
+        }
         if (running) {
             return true
         }
@@ -81,15 +96,22 @@ public class AcpProcess {
         negotiationLock.unlock()
         try {
             // stderr 改为 Pipe：可回收诊断（design §2.4.4），不污染协议面
-            let p = launch(command, arguments, workingDirectory: Some(wd),
-                           stdIn: ProcessRedirect.Pipe, stdOut: ProcessRedirect.Pipe,
-                           stdErr: ProcessRedirect.Pipe)
+            var childEnvironment: ?Map<String, String> = None
+            if (environment.size > 0) {
+                let inherited = HashMap<String, String>(getVariables())
+                for ((key, value) in environment) {
+                    inherited[key] = value
+                }
+                childEnvironment = Some(inherited)
+            }
+            let p = launch(command, arguments, workingDirectory: Some(wd), environment: childEnvironment,
+                stdIn: ProcessRedirect.Pipe, stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Pipe)
             proc = Some(p)
             running = true
             let outPipe = p.stdOutPipe
-            reader = Some(spawn { => this.drainStdout(outPipe, currentGeneration) })
+            reader = Some(spawn {=> this.drainStdout(outPipe, currentGeneration)})
             let errPipe = p.stdErrPipe
-            errReader = Some(spawn { => this.drainStderr(errPipe) })
+            errReader = Some(spawn {=> this.drainStderr(errPipe)})
             return true
         } catch (e: Exception) {
             why = "spawn-failed: ${e}"
@@ -129,7 +151,9 @@ public class AcpProcess {
     public func exitCode(): Int64 {
         return code
     }
-    public func exitObserved(): Bool { return exitSeen }
+    public func exitObserved(): Bool {
+        return exitSeen
+    }
 
     public func forcedExit(): Bool {
         return forced
@@ -163,7 +187,9 @@ public class AcpProcess {
                 let line = rd.readln()
                 if (let Some(s) <- line) {
                     if (s.size > 0) {
-                        if (generation.load() != expectedGeneration) { return n }
+                        if (generation.load() != expectedGeneration) {
+                            return n
+                        }
                         this.routeInbound(s, expectedGeneration: Some(expectedGeneration))
                         n += 1
                         recv.fetchAdd(1)
@@ -181,12 +207,19 @@ public class AcpProcess {
     // 内部分类入口也供协议回归验证；未知请求绝不进入工具执行器。
     func routeInbound(raw: String, expectedGeneration!: ?Int64 = None): Bool {
         let packetGeneration = expectedGeneration ?? generation.load()
-        if (packetGeneration != generation.load()) { return false }
+        if (packetGeneration != generation.load()) {
+            return false
+        }
         try {
             let frame = acpDecodeInbound(raw, generation: packetGeneration)
-            if (frame.kind == "response") { table.put(Int64.parse(frame.idJson), raw); return true }
+            if (frame.kind == "response") {
+                table.put(Int64.parse(frame.idJson), raw);
+                return true
+            }
             if (frame.kind == "notification") {
-                if (frame.method != "session/update") { return true }
+                if (frame.method != "session/update") {
+                    return true
+                }
             } else if (frame.method != "session/request_permission") {
                 return rejectInbound(frame, -32601, "method-not-found")
             }
@@ -197,11 +230,16 @@ public class AcpProcess {
             if (!inbound.put(frame)) {
                 permissions.discard(frame)
                 invalidFrames.fetchAdd(1)
-                if (frame.kind == "request") { return rejectInbound(frame, -32000, "acp-inbox-full") }
+                if (frame.kind == "request") {
+                    return rejectInbound(frame, -32000, "acp-inbox-full")
+                }
                 return false
             }
             return true
-        } catch (_: Exception) { invalidFrames.fetchAdd(1); return false }
+        } catch (_: Exception) {
+            invalidFrames.fetchAdd(1);
+            return false
+        }
     }
 
     private func rejectInbound(frame: AcpInboundFrame, errorCode: Int64, message: String): Bool {
@@ -209,48 +247,75 @@ public class AcpProcess {
             let response = "{\"jsonrpc\":\"2.0\",\"id\":${frame.idJson},\"error\":{\"code\":${errorCode},\"message\":\"${message}\"}}"
             writeLock.lock()
             try {
-                if (frameMode != "ndjson") { return false }
+                if (frameMode != "ndjson") {
+                    return false
+                }
                 p.stdInPipe.write((response + "\n").toArray())
                 p.stdInPipe.flush()
                 return true
-            } finally { writeLock.unlock() }
+            } finally {
+                writeLock.unlock()
+            }
         }
         return false
     }
 
     // 仅内部装配可调用；缺权威批准回调时拒绝，不开放任意协议写入口。
-    func replyPermission(frame: AcpInboundFrame, decision: String, optionId: String, authorize!: () -> Bool = { => false }): Bool {
-        if (!alive() || frameMode != "ndjson") { return false }
-        if (decision == "allowed-once" && !providerGate()) { return false }
+    func replyPermission(frame: AcpInboundFrame, decision: String, optionId: String, authorize!: () -> Bool = {=> false}): Bool {
+        if (!alive() || frameMode != "ndjson") {
+            return false
+        }
+        if (decision == "allowed-once" && !providerGate()) {
+            return false
+        }
         try {
             let permission = acpReadWirePermission(frame)
             negotiationLock.lock()
             let session = activeSession
             negotiationLock.unlock()
-            if (session.size == 0 || permission.session != session) { return false }
-            let result = acpWirePermissionOutcome(permission, decision, optionId)
-            return permissions.deliverExact(frame, authorize, { =>
-                if (let Some(p) <- proc) {
-                    let response = "{\"jsonrpc\":\"2.0\",\"id\":${permission.frame.idJson},\"result\":${result}}"
-                    writeLock.lock()
-                    try {
-                        p.stdInPipe.write((response + "\n").toArray())
-                        p.stdInPipe.flush()
-                        return true
-                    } finally { writeLock.unlock() }
-                }
+            if (session.size == 0 || permission.session != session) {
                 return false
-            })
-        } catch (_: Exception) { return false }
+            }
+            let result = acpWirePermissionOutcome(permission, decision, optionId)
+            return permissions.deliverExact(
+                frame,
+                authorize,
+                {
+                    =>
+                        if (let Some(p) <- proc) {
+                            let response = "{\"jsonrpc\":\"2.0\",\"id\":${permission.frame.idJson},\"result\":${result}}"
+                            writeLock.lock()
+                            try {
+                                p.stdInPipe.write((response + "\n").toArray())
+                                p.stdInPipe.flush()
+                                return true
+                            } finally {
+                                writeLock.unlock()
+                            }
+                        }
+                        return false
+                }
+            )
+        } catch (_: Exception) {
+            return false
+        }
     }
-    func hasPendingPermission(frame: AcpInboundFrame): Bool { return alive() && permissions.containsExact(frame) }
+    func hasPendingPermission(frame: AcpInboundFrame): Bool {
+        return alive() && permissions.containsExact(frame)
+    }
     // 只拒绝仍登记的原始请求；与授权回复共享一次性消费，不能双发同一请求。
     func rejectPermission(frame: AcpInboundFrame): Bool {
-        if (!alive() || frameMode != "ndjson") { return false }
-        return permissions.deliverExact(frame, { => true }, { => rejectInbound(frame, -32001, "acp-permission-rejected") })
+        if (!alive() || frameMode != "ndjson") {
+            return false
+        }
+        return permissions.deliverExact(frame, {=> true}, {=> rejectInbound(frame, -32001, "acp-permission-rejected")})
     }
-    public func nextInbound(): ?AcpInboundFrame { return inbound.take() }
-    public func invalidInboundCount(): Int64 { return invalidFrames.load() }
+    public func nextInbound(): ?AcpInboundFrame {
+        return inbound.take()
+    }
+    public func invalidInboundCount(): Int64 {
+        return invalidFrames.load()
+    }
     // stderr 读线程体：有界地收集诊断字节，超出上限截断尾部
     private func drainStderr(pipe: InputStream): Int64 {
         let rd: StringReader<InputStream> = StringReader(pipe)
@@ -296,7 +361,9 @@ public class AcpProcess {
     }
 
     public func sendRequest(id: Int64, method: String, params: String): Bool {
-        if (method == "session/prompt" && !providerGate()) { return false }
+        if (method == "session/prompt" && !providerGate()) {
+            return false
+        }
         if (!alive()) {
             return false
         }
@@ -350,12 +417,17 @@ public class AcpProcess {
     // === ACP 具名方法 ===
 
     // initialize：能力协商（protocolVersion + client 信息）
-    public func acpInitialize(protocolVersion: Int64, clientName: String, clientVersion: String, timeoutMs!: Int64 = 8000): Option<String> {
+    public func acpInitialize(protocolVersion: Int64, clientName: String, clientVersion: String,
+        timeoutMs!: Int64 = 8000): Option<String> {
         let params = "{\"protocolVersion\":${protocolVersion},\"clientCapabilities\":{},\"clientInfo\":{\"name\":\"${jsonEscapeText(clientName)}\",\"version\":\"${jsonEscapeText(clientVersion)}\"}}"
         let reply = request(nextId(), "initialize", params, timeoutMs: timeoutMs)
         var supported = false
         if (let Some(raw) <- reply) {
-            try { supported = acpSupportsSessionClose(raw) } catch (_: Exception) { supported = false }
+            try {
+                supported = acpSupportsSessionClose(raw)
+            } catch (_: Exception) {
+                supported = false
+            }
         }
         negotiationLock.lock()
         closeSupported = supported
@@ -367,7 +439,9 @@ public class AcpProcess {
     // session/new：创建委派会话
     public func sessionNew(cwd: String, timeoutMs!: Int64 = 8000): Option<String> {
         var absolute = ""
-        try { absolute = canonicalize(cwd).toString() } catch (e: Exception) {
+        try {
+            absolute = canonicalize(cwd).toString()
+        } catch (e: Exception) {
             why = "session-new-invalid-workspace: ${e}"
             return None
         }
@@ -375,7 +449,11 @@ public class AcpProcess {
         let reply = request(nextId(), "session/new", params, timeoutMs: timeoutMs)
         var session = ""
         if (let Some(raw) <- reply) {
-            try { session = acpReadCreatedSession(raw) } catch (_: Exception) { session = "" }
+            try {
+                session = acpReadCreatedSession(raw)
+            } catch (_: Exception) {
+                session = ""
+            }
         }
         negotiationLock.lock()
         activeSession = session
@@ -402,7 +480,9 @@ public class AcpProcess {
 
     // session/cancel 是通知：发送成功仅证明写入管道，不证明任务停止。
     public func sessionCancel(sessionId: String): Bool {
-        if (!alive() || sessionId.size == 0 || frameMode != "ndjson") { return false }
+        if (!alive() || sessionId.size == 0 || frameMode != "ndjson") {
+            return false
+        }
         let frame = "{\"jsonrpc\":\"2.0\",\"method\":\"session/cancel\",\"params\":{\"sessionId\":\"${jsonEscapeText(sessionId)}\"}}"
         if (let Some(p) <- proc) {
             writeLock.lock()
@@ -413,7 +493,9 @@ public class AcpProcess {
             } catch (e: Exception) {
                 why = "cancel-write-failed: ${e}"
                 return false
-            } finally { writeLock.unlock() }
+            } finally {
+                writeLock.unlock()
+            }
         }
         return false
     }
