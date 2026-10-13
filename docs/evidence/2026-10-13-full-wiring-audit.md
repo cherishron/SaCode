@@ -324,3 +324,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 同一私有调试 Host（SHA256 6754D8457C330A3679D88CFA909A77B1F0D0E43319C52BB93E1F94A40995825D）在独占 TMP 运行 provider-registry.test.mjs：6/6 rc0，registry-test.log。覆盖注册表读写拒绝、凭据旋转及重启持久化、按配置发模型请求、未支持方言拒绝、草稿模型清单查询与环境凭据只读。模型服务为本地HTTP夹具，不宣称远端供应商协议全覆盖。
 
 增加 model-credential-retry-host 第二条：执行实际 preload 源码，以 VM 的 Electron invoke 桥接实际 registerModelCredentialIpc，处理器请求实际 HostBridge。配置后的凭据保存可达核心；陈旧修订在 Host 拒绝、不安全整数在 IPC 拒绝。两条2/2 rc0，ipc-host-test.log。Electron传输在本条是VM媒介，不能扩大成已安装 Electron 全链路；真实窗口页面另有候选17/17证据。release子进程23372/27900本轮仍存活且累计CPU3125/2191秒，未重启。
+
+
+## 第三十五轮：真实 Electron IPC 与真实 Host
+
+新增 model-credential-electron-host.test.mjs，实际 Electron BrowserWindow（offscreen、contextIsolation、nodeIntegration=false、CSP script-src self）加载产品 preload；renderer 调用 sacode.modelsSaveCredential，经 ipcMain 的产品处理器与 HostBridge 请求同一私有调试 Host。保存后配置修订仍为1、keyConfigured=true，陈旧修订明确拒绝。1/1 rc0；补显式 bridge.stop 后再跑仍1/1 rc0，未检测到遗留 sacode-host 进程。窗口使用最小检查页面而非完整模型中心；no-sandbox 为本机离屏测试参数，不代表默认安全启动验收。此证据补上实际 Electron 传输，但发布载荷与完整供应商页面实际操作仍待验收。
