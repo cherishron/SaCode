@@ -431,3 +431,10 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 新CLI私有runtime沿既有DLL/CA，approval-mode-cli-host真实命令1/1 rc0：读取Host所存Plan；Host持租约时CLI写rc5且日志逐字不变；非法命令rc64不落事件；Host退出后CLI Build提交/noop，Host重启读回Build。独占TMP及双二进制不替换公开载荷。仅当前目录session.log模式动作；--resume及远端模式路由仍待扩展，未宣称所有CLI会话入口模式完整。
 
 共享main/worktree只提交已编译HEAD派生候选，不吞并工作区重构。
+
+
+## 第五十四轮：完整产品主窗口模型中心定向验收
+
+新增model-center-main-smoke，复用产品createWindow/preload/main实际IPC/真实Host，不注册夹具处理器。从设置导航点击模型中心→供应商标签→选择stepfun添加实例→编辑密钥保存→默认模型选择→关闭设置，bridge直接核权威实例、keyConfigured与默认身份。8b91110固定桌面重建资源+模式私有Host；首轮漏点默认模型分类下的供应商标签而超时，加入真实标签点击后PASS rc0（model-main-v2）。新增SACODE_UI_SMOKE_SUITE=model-center定向分派后原main --ui-smoke再跑PASS rc0（v3），全新会话/用户/TMP。未替换全部UI套件的通过判据，其他套件依旧待修；不声称全部UI通过。
+
+新的支持脚本纳入既有test-support/**打包范围，原ui-smoke仅提交HEAD派生一行分派，其他会话测试变更保留。运行--no-sandbox属当前测试环境，未完成默认安全启动或安装包验收。未调用供应商远端模型。

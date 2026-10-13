@@ -8,6 +8,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 // 桌面黄金路径的运行时验收：真窗口里的 Vue 渲染层 → preload → IPC → 仓颉宿主 → 会话日志 → 再投影。
 // 只看 DOM 里有 JSON 不算数——必须证明点击真的被核心落盘，且投影、流式、审批、取消各自有终态。
 async function uiSmoke(context) {
+  if (process.env.SACODE_UI_SMOKE_SUITE === 'model-center') return require('./model-center-main-smoke.cjs')(context);
   const { app, nativeTheme, HOST, SESSION_DIR, SESSION_LOG, bridge, seedIfNeeded, createWindow } = context;
   let win;
   let bad = 0;
