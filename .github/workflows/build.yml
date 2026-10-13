@@ -1,0 +1,112 @@
+name: 多平台构建候选
+on:
+  push:
+    branches: [main, master, refactor/dsh-learning]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: linux-x64
+            sdk_url: CANGJIE_LINUX_X64_URL
+            sdk_sha: CANGJIE_LINUX_X64_SHA256
+          - runner: windows-2022
+            target: win32-x64
+            sdk_url: CANGJIE_WINDOWS_X64_URL
+            sdk_sha: CANGJIE_WINDOWS_X64_SHA256
+          - runner: macos-15
+            target: darwin-arm64
+            sdk_url: CANGJIE_MAC_ARM64_URL
+            sdk_sha: CANGJIE_MAC_ARM64_SHA256
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      SACODE_TARGET: ${{ matrix.target }}
+      SACODE_SDK_URL: ${{ vars[matrix.sdk_url] }}
+      SACODE_SDK_SHA256: ${{ vars[matrix.sdk_sha] }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Linux 安装构建和桌面前提
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y unzip bubblewrap libssl-dev libgtk-3-0 libnss3 libasound2 xvfb
+      - name: Windows OpenSSL 和 MinGW 运行库
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          install: mingw-w64-x86_64-openssl mingw-w64-x86_64-gcc
+      - name: macOS OpenSSL 运行库
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_HOME=$(brew --prefix openssl@3)/lib" >> "$GITHUB_ENV"
+      - name: Windows 运行库位置
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          "OPENSSL_HOME=C:\msys64\mingw64\bin" >> $env:GITHUB_ENV
+          "C:\msys64\mingw64\bin" >> $env:GITHUB_PATH
+      - run: node scripts/setup-sdk.mjs
+      - run: node scripts/setup-stdx.mjs
+      - run: node scripts/verify-platform.mjs
+      - name: 原生后端真实验证
+        if: runner.os != 'Windows'
+        run: node scripts/build-native.mjs --verify
+      - name: 构建所有生产成员
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          source "$CANGJIE_HOME/envsetup.sh"
+          node scripts/build-platform.mjs
+      - name: 平台包与桌面候选
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          source "$CANGJIE_HOME/envsetup.sh"
+          node scripts/package-platform.mjs
+      - name: Windows 编译与打包
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:CANGJIE_HOME/envsetup.ps1"
+          node scripts/build-platform.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/package-platform.mjs
+          exit $LASTEXITCODE
+      - name: npm 安装后入口验证
+        run: node scripts/verify-npm-install.mjs
+      - name: Linux 默认桌面启动冒烟
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          source "$CANGJIE_HOME/envsetup.sh"
+          cd apps/desktop
+          xvfb-run -a npm run smoke
+      - name: 上传成功构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: sacode-${{ matrix.target }}-${{ github.sha }}
+          path: apps/desktop/dist/releases/${{ matrix.target }}/
+          if-no-files-found: error
+      - name: 保留构建记录
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.target }}-${{ github.sha }}
+          path: |
+            apps/desktop/.tmp-test/platform-build/${{ matrix.target }}/build.json
+            apps/desktop/.tmp-test/platform-build/${{ matrix.target }}/binaries.json
+          if-no-files-found: warn
+          include-hidden-files: true
