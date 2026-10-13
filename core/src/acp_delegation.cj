@@ -87,6 +87,7 @@ public class AcpDelegationService {
     let procFactory: (String) -> AcpProcess
     let checkpoint: () -> Bool
     let journal: ?AcpDelegationJournal
+    let settingsScope: String
     // 委派存储：id → 条目
     let delegations = HashMap<String, AcpDelegationEntry>()
     // requestId → 委派 id（幂等索引）
@@ -99,7 +100,9 @@ public class AcpDelegationService {
 
     public init(sessionId: String, gate: AcpGate,
         procFactory: (String) -> AcpProcess,
-        checkpoint!: () -> Bool = { => false }, journal!: ?AcpDelegationJournal = None) {
+        checkpoint!: () -> Bool = { => false }, journal!: ?AcpDelegationJournal = None, settingsScope!: String = "user") {
+        if (settingsScope != "user" && settingsScope != "project") { throw Exception("invalid-input:acp-settings-scope") }
+        this.settingsScope = settingsScope
         this.sessionId = sessionId
         this.gate = gate
         this.procFactory = procFactory
@@ -123,7 +126,7 @@ public class AcpDelegationService {
     public func create(taskId: String, requestId: String, peerId: String,
         taskText: String, workspace: String): AcpDelegationSnapshot {
         // 门控：L1 + L2 必须通过
-        gate.requireCanDelegate("user", peerId)
+        gate.requireCanDelegate(settingsScope, peerId)
 
         let taskDigest = simpleDigest(taskText)
 
@@ -263,7 +266,7 @@ public class AcpDelegationService {
             if (entry.revision != expectedRevision) { throw Exception("revision-conflict:acp-task") }
             if (entry.taskDigest != simpleDigest(taskText)) { throw Exception("revision-conflict:acp-task-binding") }
             if (entry.promptStarted || entry.phase != "running" || entry.cancelToken.cancelled()) { throw Exception("busy:acp-task-not-startable") }
-            gate.requireCanDelegate("user", entry.peerId)
+            gate.requireCanDelegate(settingsScope, entry.peerId)
             if (let Some(storage) <- journal) {
                 if (!acpPermissionPolicyAllows(storage.log)) { throw Exception("not-authorized:acp-task-mode") }
             }

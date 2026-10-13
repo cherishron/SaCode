@@ -49,6 +49,13 @@ public class AcpProcess {
     var forced = false
     var code: Int64 = -1
     var why = ""
+    var providerGate: () -> Bool = { => true }
+    var providerGateBound = false
+
+    func bindProviderGate(gate: () -> Bool) {
+        if (running || providerGateBound) { throw Exception("not-authorized:acp-provider-gate-binding") }
+        providerGate = gate; providerGateBound = true
+    }
 
     public init(command: String, arguments: Array<String>, workingDirectory!: Path, frameMode!: String = "ndjson") {
         this.command = command
@@ -58,6 +65,7 @@ public class AcpProcess {
     }
 
     public func start(): Bool {
+        if (!providerGate()) { why = "acp-provider-revoked"; return false }
         if (running) {
             return true
         }
@@ -213,6 +221,7 @@ public class AcpProcess {
     // 仅内部装配可调用；缺权威批准回调时拒绝，不开放任意协议写入口。
     func replyPermission(frame: AcpInboundFrame, decision: String, optionId: String, authorize!: () -> Bool = { => false }): Bool {
         if (!alive() || frameMode != "ndjson") { return false }
+        if (decision == "allowed-once" && !providerGate()) { return false }
         try {
             let permission = acpReadWirePermission(frame)
             negotiationLock.lock()
@@ -287,6 +296,7 @@ public class AcpProcess {
     }
 
     public func sendRequest(id: Int64, method: String, params: String): Bool {
+        if (method == "session/prompt" && !providerGate()) { return false }
         if (!alive()) {
             return false
         }
