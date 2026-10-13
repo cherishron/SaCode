@@ -127,7 +127,7 @@ class WorktreeRef {
     public let byReference: Bool
     public let value: String
 
-    public init(byReference!: Bool, value: String) {
+    public init(byReference!: Bool, value!: String) {
         this.byReference = byReference
         this.value = value
     }

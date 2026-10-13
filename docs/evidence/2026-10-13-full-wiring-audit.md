@@ -422,3 +422,12 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 ## 第五十二轮：权限菜单真实Electron与Host回读
 
 新增approval-mode-electron-host，实际PermissionMenu/Vue/CSP/preload，真实BrowserWindow隔离上下文，无nodeIntegration；点击Plan/Auto/Yolo/Build/Plan，菜单等待实际Host读回才关闭，最终Host停止完成后重启读取Plan。独占TMP运行1/1 rc0。IPC在专用测试窗口装配具名模式转发及合法枚举守卫，不是完整main启动；已有主进程守卫由此前4条VM证明。使用--no-sandbox离屏测试参数，不扩大为默认安全启动；未请求模型工具，不证明四模式全部执行语义。新测试沿实际Host模式持久接口，无假模式回执。
+
+
+## 第五十三轮：CLI模式命令与Host共享事实
+
+新增sacode mode get/set四枚举，明确消费当前工作目录session.log；写获取同一WriteLease、重载日志、ModeController.setDurable，读不写文件。模式命令不使用旧自测mode-cli.log。固定5af2980派生CLI冷编首先报WorktreeRef具名参数后位置参数不合法，改value!:使已有value:调用合法（工作区作者已有同修复，仅吸收该行）；其次旧main流自测ModeController(log)引用未定义log，按自测局部SessionLog修正，并补新命令std.env.getStdErr导入（已search_docs确认包）。v3 cjpm build -g --jobs1 rc0。
+
+新CLI私有runtime沿既有DLL/CA，approval-mode-cli-host真实命令1/1 rc0：读取Host所存Plan；Host持租约时CLI写rc5且日志逐字不变；非法命令rc64不落事件；Host退出后CLI Build提交/noop，Host重启读回Build。独占TMP及双二进制不替换公开载荷。仅当前目录session.log模式动作；--resume及远端模式路由仍待扩展，未宣称所有CLI会话入口模式完整。
+
+共享main/worktree只提交已编译HEAD派生候选，不吞并工作区重构。

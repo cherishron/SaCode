@@ -310,6 +310,7 @@ main(args: Array<String>) {
     if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
     if (hasFlag(args, "--remote")) { return runRemote(args) }
+    if (args.size > 0 && args[0] == "mode") { return runApprovalModeCommand(args) }
     // 会话级 worktree 的两条入口都在 remote 之后路由：remote 只做透传，绝不落到本地。
     if (args.size > 0 && args[0] == "worktree") { return runWorktreeCommand(args) }
     if (cliSessionRequested(args)) { return runCliSession(args) }
@@ -368,7 +369,7 @@ main(args: Array<String>) {
     }
 
     if (mode == "all" || mode == "stream") {
-        let modeCtrl = ModeController(log)
+        let modeCtrl = ModeController(SessionLog("mode-cli.log"))
         if (approvalMode != "build") { modeCtrl.set(approvalMode) }
         let asm = Assembly()
         for (ch in FakeProvider().script()) { asm.push(ch) }
