@@ -664,7 +664,7 @@ public class ProviderRegistry {
     public func setDefault(providerId: String, model: String, expectedRevision: Int64): Unit {
         reload()
         let rec = find(providerId)
-        if (rec.id.size == 0 || !rec.hasModel(model)) {
+        if (rec.id.size == 0 || !rec.enabled || !rec.hasModel(model)) {
             throw Exception("settings-rejected")
         }
         guardRevision(expectedRevision)
