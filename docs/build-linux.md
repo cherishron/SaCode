@@ -1,5 +1,7 @@
 # Linux 构建与 stdx 路径
 
+> Linux CLI、daemon 与 Electron 桌面都是正式支持目标，不是只支持 Windows。本文是依赖与已知构建读数；产品矩阵及后续 macOS/OHOS 路线见 [平台支持与分发要求](product/platform-and-distribution.md)。
+
 本项目使用仓颉 SDK **1.1.3** 和匹配的扩展标准库 **stdx 1.1.3.1**。stdx 是平台相关的二进制依赖，不能把 Windows 的 DLL/cjo 目录用在 Linux。
 
 ## 配置
@@ -48,7 +50,20 @@ export LD_LIBRARY_PATH="$SACODE_STDX_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH
 | --- | --- | --- | --- | --- |
 | `f0e7cb6` | 静态库通过（31 warnings） | 链接失败，缺 Windows API | `scheduler.cj:51` 语法失败 | 两次编译超时，未进入链接 |
 | `7b42013` | 通过 | 通过，产出 14MB 二进制，`main --help` 正常 | 同上，仍失败 | 未编译，桌面端仍 Windows-only |
+| `2c56c76` | 通过 | 通过，产出约 14MB 二进制 | 通过，旧 scheduler 文件已删除 | 未编译；Linux 桌面仍待适配与验证 |
 
 平台声明隔离修正（`e2e8bf7`）解除了 CLI 的链接失败。daemon 的失败经快照编译取证为**腐化的死代码**（零调用方、引用不存在的 `HostBridge`、使用 1.1.3 已移除的枚举 `ordinal`），处置为移除该实现与其空骨架测试，而不是凭空补全一个没有调用方的功能。
 
-**当前不能把项目描述为 Linux 上可完成真实任务**：CLI 虽能启动，但协作式取消在非 Windows 明确返回失败，崩溃残留的会话租约不会自动接管，持久追加与原子替换后端均不可用。三条平台契约与限制见 [Linux 后端构建交接](evidence/2026-10-13-linux-executable-build-followup.md)。不能以静默降级绕过这些约束。
+**在上述实测基线上不能把项目描述为 Linux 可完成真实任务**：当时非 Windows 信号、残留租约判活、持久追加与原子替换后端未实现。2026-10-14 本批新增 POSIX 薄层、信号消费、Linux 隔离及桌面/npm 构建入口，但尚待你的 Linux 复验，不能用源码落地覆盖旧限制记录或宣称运行通过。最新步骤见 [多平台构建与复验](build-platforms.md)，旧取证见 [Linux 后端交接](evidence/2026-10-13-linux-executable-build-followup.md)。
+
+以上为用户提供的 Linux 实测，不是本机 Windows 交叉验证。Linux 架构、命令全量日志及 daemon 服务运行结果未随本次消息提供，不自行补推。
+
+## Linux 桌面下一步与验收出口
+
+1. 固定源码的 Host 在 Linux 编译、启动并走真实协议；不能因尚无 Linux 桌面包长期排除 Host。
+2. 实现目标平台的持久文件、进程判活/监督、系统中断、核心授权与隔离后端；不可用时仍明确拒绝，不为“可用”静默降低安全要求。
+3. 适配可执行文件名、运行库加载、TLS、可写数据根、宿主及扩展子进程；Linux 不加载 Windows exe/DLL。
+4. 再构建 Electron Linux 包，从默认启动验证真实任务、审批/取消/结算、重启恢复和安装数据保留。明确显示系统依赖和前提，不使用旧 Windows 产物凑通过。
+5. 从同一固定提交输出 Linux CLI/服务/桌面候选和校验和；npm 平台包与 GitHub 构建分别实现并验收。
+
+macOS 复用共享契约但按自身 ABI/加载器/权限适配，运行暂待设备。OHOS 是独立交叉目标：需要配套的 native SDK、仓颉 OHOS 编译器/运行库与 ohos stdx。**本文 Linux GNU 命令不能作为鸿蒙 CLI 构建命令**；已核官方有 Linux 主机 OHOS SDK 1.1.3，待验证入口及显式前提见 [构建指南 §4](build-platforms.md)。

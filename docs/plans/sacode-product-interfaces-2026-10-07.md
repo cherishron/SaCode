@@ -1,5 +1,7 @@
 # SaCode 自主产品接口与状态设计
 
+> **设计登记，非当前运行状态（2026-10-13 补正）**：正文接口与状态保留为历史设计依据，实施前核当前协议与源码，不按旧行号重复接线。需求以 [PRD](../product/PRD.md) 为准，平台与分发以 [专项要求](../product/platform-and-distribution.md) 为准；PRD 的 2026-10-09 进度表不是实时真源。支持目标不等于固定提交、真实任务或安装态已通过。
+
 基线 `35a69ca9e0f8b7b6ac51271ec76eff3515eaa820`。以下是增量设计，不是接口已实现声明；现有 Host 使用 NDJSON JSON-RPC，保持 `initialize` 能力协商，新增动作只有经协商支持才能显示可执行。需求 ID 对齐 [追踪表](sacode-product-traceability-2026-10-07.md)。
 
 ## 1. 层次与权威数据

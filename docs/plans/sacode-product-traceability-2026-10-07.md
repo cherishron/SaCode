@@ -1,5 +1,7 @@
 # 自主产品需求追踪与第一批责任表
 
+> **历史追踪表（2026-10-13 补正）**：下表 F01–F20、责任与结果是注明基线的阶段快照，正文保留，不能据此删掉现行 F21 或断言当前源码不存在。需求以 [PRD](../product/PRD.md) 的 F01–F21 为准，平台/分发以 [专项要求](../product/platform-and-distribution.md) 为准。旧“三平台”不得代替 Windows/Linux/macOS 桌面与 CLI、鸿蒙 CLI/后续 ArkTS 前端的新矩阵。真实状态绑定固定提交与实际入口验收，不把 PRD 的旧进度表当实时真源。
+
 基线：2026-10-07，固定提交 `35a69ca9e0f8b7b6ac51271ec76eff3515eaa820`。本文为源码静态核查，不包含本轮业务测试通过声明。F01–F20 是能力域，不能换算完成率。
 
 主责是工作包责任，尚未指派具体个人；由后续实施者认领，不冒认并发会话身份。本批文档与独立 prototype 由当前任务负责；公共入口不改。
@@ -16,7 +18,7 @@
 | F08 | 编辑与 Git | fs_tools.cj resource.cj | workspace/files；Git 用户接口未核 | renderer/app.js 工作区文件；完整编辑/Git 消费待核；workspace.test.mjs | 扩展现有切片，沿用前先复验：编辑缓冲、并发版本、真实差异/暂存/提交/推送 | 文件/Git + 工作台；依赖共享身份、权限、取消与持久化 | PRD F08 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
 | F09 | 终端验证 | term.cj jobs.cj shl.cj procwin.cj；execution_output.cj execution_supervisor.cj | execution/output、describe、stop / CLI job 对应动作；PTY 待实施 | terminal-output.ts + execution-task；输出有界回放与跨页 UTF-8 控制器专项已取证；execution-desktop-admission-2026-10-08.md | 扩展；下一步真实执行输出与进程事实、构建测试报告；普通回放不升级 PTY，空页不等于 EOF，exit 0 不等于测试通过 | E/W40 执行监督、A/W90 接线、G/W60 终端与构建测试；依赖隔离探针与审批 | 实施中；两流/限额/退出与报告独立验收，正式页面/断连/关闭/会话切换仍待验；PTY 单独探针 |
 | F10 | ACP 委派 | ccf3bff 已提交 acp_contract/process/delegation/approval_bridge/gate/settings/weight/env；8 实现+8 测试，69 条测试声明 | Host/CLI/preload 未见直接 ACP 接线，其他适配待核 | subagent-settings.ts 设置候选，委派消费待核；三产品 initialize 帧报告，acp-handoff-recheck-2026-10-08.md | 扩展；先 2.4/2.5 持久事实与投影，再闭合委派归属审批/elicitation、内容路由和入口；编译与超时为交接读数，测试声明不记通过 | ACP 实施线、A/W90 双入口；依赖共享身份、权限、取消与持久化 | 实施中；真实委派正向、拒绝、取消、恢复和双入口/产物未收口；initialize 不替代端到端 |
-| F11 | 知识记忆 | inv.cj xref.cj | 知识检索/管理产品入口未核 | 知识/记忆消费未核；未核 | 新增或待核，不能以检索未命中断言不存在：知识/个人库/记忆权威源、索引、速记与批注 | 知识与记忆；依赖共享身份、权限、取消与持久化 | PRD F11 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
+| F11 | 知识记忆 | inv.cj 为不变量登记、xref.cj 为会话引用，不能当作知识库；管理核心待实现，见 2026-10-12-knowledge-management-contract.md | 知识检索/管理产品入口未核 | 知识/记忆消费未核；未核 | 新增或待核，不能以检索未命中断言不存在：知识/个人库/记忆权威源、索引、速记与批注 | 知识与记忆；依赖共享身份、权限、取消与持久化 | PRD F11 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
 | F12 | 扩展 | plugin_manifest.cj plugin_store.cj plugin_lifecycle.cj plugin_surface.cj | plugin/describe plugin/set-enabled plugin/uninstall extension/host/load | renderer/pages/plugin-manager.ts、plugin-manager-adapter.ts；plugin-inventory-lifecycle.test.mjs plugin-manager-wiring.test.mjs | 扩展现有切片，沿用前先复验：本地安装更新、贡献装配、真实激活回滚、资源清理 | 插件核心 + 扩展管理；依赖共享身份、权限、取消与持久化 | PRD F12 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
 | F13 | 自动化 Hooks | schedule.cj webhook.cj workflow.cj | 产品自动化入口待核 | 自动化/Hooks 消费未核；核心 schedule/workflow 测试候选 | 扩展现有切片，沿用前先复验：真实触发、去重、错过策略、Hooks 声明与运行分列 | 编排与自动化；依赖共享身份、权限、取消与持久化 | PRD F13 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
 | F14 | 浏览器电脑 | bu_exec.cj cu_exec.cj web_exec.cj | 产品 provider 装配未核 | 浏览器/电脑消费未核；核心 bu_exec/cu_exec/web_exec 测试候选 | 扩展现有切片，沿用前先复验：真实驱动可用性、目标授权、桌面租约与紧急停止 | 外部驱动 + 权限；依赖共享身份、权限、取消与持久化 | PRD F14 三类验收 + 对应双入口/产物；待验收，未核部分保持待核 |
