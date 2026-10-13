@@ -507,3 +507,9 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 新增两独占探针：checkpoint重入cancel后factory必须为零；procFactory重入cancel后不能继续start覆盖取消结果。未修代码acp-cancel-race-red.log TOTAL258/PASSED256/SKIPPED0/ERROR0/FAILED2，rc1，失败恰两用例。修复initializing发布在条目锁内；准入后先检查取消，再允许构造；工厂保持锁外、返回后锁内检查取消/start/发布句柄；initialize和session/new返回时锁内检查取消，取消则收束本次自有进程且保持unknown，不写running。最后checkpoint返回读取锁保护投影，不回陈旧快照。
 
 acp-cancel-race-green.log TOTAL258/PASSED258/SKIPPED0/ERROR0/FAILED0，rc0。私有候选源与本批一致；两用例为同步回调重入，并非多线程真实Agent端到端。初始化RPC在途取消仍受其timeout约束，停止事实/终态持久/审批回传尚未闭合。procFactory注入必须只构造、不执行外部进程；该工厂契约仍需公共装配守卫。
+
+## 第六十五轮：ACP协商结果与顶层回复身份
+
+原create把任意initialize回复当成功，并文本扫描sessionId（空白、转义、嵌套字段可误取），错误session/new也能running。新增acpRpcResult/Initialization/CreatedSession校验：仅合法JSON-RPC response/result对象、远端error拒绝并保留数字错误码、协议version1、顶层非空sessionId。移除文本扫描；阶段失败关闭本次自有进程，取消判断仍先于失败状态覆盖。AcpProcess按已解析顶层ID入ReplyTable，避免旧字节扫描对空白或嵌套id误配。
+
+私有acp-rpc-results.log TOTAL261/PASSED261，最终acp-rpc-results-v2.log TOTAL262/PASSED262/SKIPPED0/ERROR0/FAILED0、rc0。四种真实Node子进程错误/版本/空会话场景均failed，协议ID实际管道响应含嵌套id=999及顶层空白id=1仍正确配对。纯结果解析覆盖转义会话ID、嵌套伪身份、空身份及初始化错误。夹具非真实供应方，不证明能力协商完整、客户端capabilities装配、prompt/审批/内容/终态及产品入口。候选沿用之前隔离核心，不是当前提交全量验收。

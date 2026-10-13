@@ -199,15 +199,19 @@ public class AcpDelegationService {
         } finally { mtx.unlock() }
 
         let initResult = proc.acpInitialize(1, "sacode", "0.1.0")
+        var initFailure = "provider-unavailable:initialize-timeout"
+        if (let Some(raw) <- initResult) {
+            try { acpValidateInitialization(raw); initFailure = "" } catch (e: Exception) { initFailure = "provider-unavailable:invalid-initialize:${e.message}" }
+        }
         mtx.lock()
         if (entry.cancelToken.cancelled()) {
             mtx.unlock()
             proc.kill()
             return describe(entry.id)
         }
-        if (initResult.isNone()) {
+        if (initFailure.size > 0) {
             entry.phase = "failed"
-            entry.result = "provider-unavailable:initialize-timeout"
+            entry.result = initFailure
             entry.revision += 1
             mtx.unlock()
             proc.kill()
@@ -216,17 +220,22 @@ public class AcpDelegationService {
         mtx.unlock()
 
         let sessionResult = proc.sessionNew(workspace)
+        var createdSession = ""
+        var sessionFailure = "provider-unavailable:session-new-failed"
+        if (let Some(raw) <- sessionResult) {
+            try { createdSession = acpReadCreatedSession(raw) } catch (e: Exception) { sessionFailure = "provider-unavailable:invalid-session-new:${e.message}" }
+        }
         mtx.lock()
         if (entry.cancelToken.cancelled()) {
             mtx.unlock()
             proc.kill()
             return describe(entry.id)
         }
-        if (let Some(resp) <- sessionResult) {
-            entry.protocolSessionId = extractSessionId(resp)
+        if (createdSession.size > 0) {
+            entry.protocolSessionId = createdSession
         } else {
             entry.phase = "failed"
-            entry.result = "provider-unavailable:session-new-failed"
+            entry.result = sessionFailure
             entry.revision += 1
             mtx.unlock()
             proc.kill()
@@ -359,34 +368,5 @@ public class AcpDelegationService {
         return sha256Hex(text.toArray())
     }
 
-    // 从 session/new 响应中提取 sessionId（简化版，正式版需 JSON 解析）
-    private func extractSessionId(response: String): String {
-        // 在响应 JSON 中找 "sessionId":"..."
-        let hay = response.toArray()
-        let pat = "\"sessionId\":\"".toArray()
-        let hlen = Int64(hay.size)
-        let plen = Int64(pat.size)
-        if (plen > hlen) { return "" }
-        var i: Int64 = 0
-        while (i <= hlen - plen) {
-            var same = true
-            var k: Int64 = 0
-            while (k < plen) {
-                if (hay[i + k] != pat[k]) { same = false; break }
-                k += 1
-            }
-            if (same) {
-                // 提取引号内的值
-                var j = i + plen
-                let out = ArrayList<Byte>()
-                while (j < hlen && hay[j] != 34) { // '"'
-                    out.add(hay[j])
-                    j += 1
-                }
-                return String.fromUtf8(out.toArray())
-            }
-            i += 1
-        }
-        return ""
-    }
+
 }

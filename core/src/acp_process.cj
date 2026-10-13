@@ -1,5 +1,6 @@
 package core
 import std.collection.ArrayList
+import std.convert.*
 import std.fs.*
 import std.io.*
 import std.process.*
@@ -155,7 +156,7 @@ public class AcpProcess {
     func routeInbound(raw: String): Bool {
         try {
             let frame = acpDecodeInbound(raw)
-            if (frame.kind == "response") { table.put(frameIdOf(raw), raw); return true }
+            if (frame.kind == "response") { table.put(Int64.parse(frame.idJson), raw); return true }
             if (frame.kind == "notification") {
                 if (frame.method != "session/update") { return true }
             } else if (frame.method != "session/request_permission" && frame.method != "elicitation/create") {
