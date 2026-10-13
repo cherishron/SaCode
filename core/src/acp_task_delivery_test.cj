@@ -11,7 +11,7 @@ class AcpTaskFixture {
     let service: AcpDelegationService
     let snapshot: AcpDelegationSnapshot
     let process: AcpProcess
-    init(reason: String) {
+    init(reason: String, program!: String = "") {
         root = canonicalize(Directory.createTemp(Path(getVariable("TMP").getOrThrow()))).toString()
         log = SessionLog(Path(root).join("session.log").toString())
         lease = WriteLease(log.path)
@@ -20,7 +20,8 @@ class AcpTaskFixture {
         let gate = AcpGate(settings)
         gate.updateEnv(AcpEnvInput("opencode", "installed-usable", true))
         gate.updateProbe(AcpProbeInput("opencode", "measured"))
-        let script = "const fs=require('node:fs'),p=require('node:path');let pending;const send=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(q.method==='initialize')send(q.id,{protocolVersion:1,agentCapabilities:{}});else if(q.method==='session/new')send(q.id,{sessionId:'fixture'});else if(q.method==='session/prompt'){pending=q.id;fs.appendFileSync(p.join(process.cwd(),'prompt-count'),'1');if('${reason}'!=='timeout'&&'${reason}'!=='wait-cancel')send(q.id,{stopReason:'${reason}'});}else if(q.method==='session/cancel'&&pending)send(pending,{stopReason:'cancelled'});});"
+        let defaultProgram = "const fs=require('node:fs'),p=require('node:path');let pending;const send=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));require('node:readline').createInterface({input:process.stdin}).on('line',line=>{const q=JSON.parse(line);if(q.method==='initialize')send(q.id,{protocolVersion:1,agentCapabilities:{}});else if(q.method==='session/new')send(q.id,{sessionId:'fixture'});else if(q.method==='session/prompt'){pending=q.id;fs.appendFileSync(p.join(process.cwd(),'prompt-count'),'1');if('${reason}'!=='timeout'&&'${reason}'!=='wait-cancel')send(q.id,{stopReason:'${reason}'});}else if(q.method==='session/cancel'&&pending)send(pending,{stopReason:'cancelled'});});"
+        let script = if (program.size > 0) { program } else { defaultProgram }
         let workingRoot = root
         service = AcpDelegationService("s1", gate, { _ => AcpProcess("node", ["-e", script], workingDirectory: Path(workingRoot)) },
             journal: Some(AcpDelegationJournal(log, lease, "s1")))

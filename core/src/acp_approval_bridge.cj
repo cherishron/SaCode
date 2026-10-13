@@ -86,6 +86,7 @@ public class AcpApprovalBridge {
         if (decision == "allowed-once") {
             let args = permissionArguments(delegationId, proposal)
             let accepted = delegations.withCurrentPermission(identity, { =>
+                if (!acpPermissionPolicyAllows(desk.log)) { return false }
                 if (!desk.answer(approvalId, "allowed-once")) { return false }
                 return desk.consumeExactForCall(approvalId, proposal.tool, args) == "allowed-once"
             })

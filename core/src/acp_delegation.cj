@@ -263,6 +263,9 @@ public class AcpDelegationService {
             if (entry.taskDigest != simpleDigest(taskText)) { throw Exception("revision-conflict:acp-task-binding") }
             if (entry.promptStarted || entry.phase != "running" || entry.cancelToken.cancelled()) { throw Exception("busy:acp-task-not-startable") }
             gate.requireCanDelegate("user", entry.peerId)
+            if (let Some(storage) <- journal) {
+                if (!acpPermissionPolicyAllows(storage.log)) { throw Exception("not-authorized:acp-task-mode") }
+            }
             if (entry.proc.isNone()) { throw Exception("provider-unavailable:acp-task-process") }
             process = entry.proc.getOrThrow()
             request = process.nextRequestId()

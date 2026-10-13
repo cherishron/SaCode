@@ -232,6 +232,11 @@ public class AcpProcess {
         } catch (_: Exception) { return false }
     }
     func hasPendingPermission(frame: AcpInboundFrame): Bool { return alive() && permissions.containsExact(frame) }
+    // 只拒绝仍登记的原始请求；与授权回复共享一次性消费，不能双发同一请求。
+    func rejectPermission(frame: AcpInboundFrame): Bool {
+        if (!alive() || frameMode != "ndjson") { return false }
+        return permissions.deliverExact(frame, { => true }, { => rejectInbound(frame, -32001, "acp-permission-rejected") })
+    }
     public func nextInbound(): ?AcpInboundFrame { return inbound.take() }
     public func invalidInboundCount(): Int64 { return invalidFrames.load() }
     // stderr 读线程体：有界地收集诊断字节，超出上限截断尾部

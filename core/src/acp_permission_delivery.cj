@@ -86,10 +86,12 @@ public class AcpPermissionDelivery {
             if (decision != "allowed-once" && decision != "denied") { return AcpPermissionDeliveryResult("not-sent", "invalid-decision") }
             try { acpWirePermissionOutcome(binding.permission, decision, option) } catch (_: Exception) { return AcpPermissionDeliveryResult("not-sent", "invalid-option") }
             if (!lease.protects(log.path) || log.isDurableFrozen()) { return AcpPermissionDeliveryResult("not-sent", "persistence-unavailable") }
+            if (decision == "allowed-once" && !acpPermissionPolicyAllows(log)) { return AcpPermissionDeliveryResult("not-sent", "permission-policy-denied") }
             binding.state = "deciding"
             let attempt = AcpDeliveryAttempt()
             let sent = bridge.delegations.withCurrentPermission(binding.identity, { =>
                 return process.replyPermission(binding.frame, decision, option, authorize: { =>
+                    if (decision == "allowed-once" && !acpPermissionPolicyAllows(log)) { return false }
                     if (!bridge.desk.answer(approvalId, decision)) { return false }
                     attempt.publicationAttempted = true
                     attempt.published = publish("acp/permission/decided", binding, approvalId, decision, option)

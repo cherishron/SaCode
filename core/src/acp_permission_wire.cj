@@ -3,6 +3,12 @@ import std.collection.*
 import std.sync.*
 import stdx.encoding.json.*
 
+// 外部权限提案按未知工具处理：Plan 拒绝，其余模式仍须精确的一次性工单。
+func acpPermissionPolicyAllows(log: SessionLog): Bool {
+    try { return PermissionPolicy().decide(ModeController(log).current(), "acp/permission") != "deny" }
+    catch (_: Exception) { return false }
+}
+
 public class AcpPermissionOption {
     public let id: String
     public let kind: String
