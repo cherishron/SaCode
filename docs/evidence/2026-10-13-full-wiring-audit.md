@@ -417,3 +417,8 @@ ModeController新增setDurable，先核写租约与未冻结状态，再设置�
 固定018dad7派生Host增加approval/get-mode及set-mode分派/声明；读取未持租约时重载当前会话，切换取得写租约、loadForWrite、调用严格单字段mode模块及核心setDurable；在途只允许get不放行set。私有cjpm build -g --jobs1 rc0，新runtime沿既有DLL/CA不替换公开Host。approval-mode-host真实请求1/1 rc0：四枚举持久切换、noop、错型/额外字段/未知模式拒绝且事件不增、pending0、重启plan回读。没有真实模型工具请求，不扩成全执行四模式验收。
 
 前端权限菜单14/14、实际IPC处理器模式4/4为本地组件/VM范围。发现Plan安全名单遗漏LSP，补七个readonly语义工具含rename预览（真正写文件仍需F08），新核心最终TOTAL229/PASSED229/SKIPPED0/ERROR0/FAILED0、rc0；该补丁晚于本Host快照，产物还不含此LSP名单。Host main只提交已编译HEAD候选，工作区分派重构与旧mode_rpc保留，不吞并。CLI、跨会话迟到操作身份绑定、Auto分类器与Yolo授权边界仍待实现/验收。
+
+
+## 第五十二轮：权限菜单真实Electron与Host回读
+
+新增approval-mode-electron-host，实际PermissionMenu/Vue/CSP/preload，真实BrowserWindow隔离上下文，无nodeIntegration；点击Plan/Auto/Yolo/Build/Plan，菜单等待实际Host读回才关闭，最终Host停止完成后重启读取Plan。独占TMP运行1/1 rc0。IPC在专用测试窗口装配具名模式转发及合法枚举守卫，不是完整main启动；已有主进程守卫由此前4条VM证明。使用--no-sandbox离屏测试参数，不扩大为默认安全启动；未请求模型工具，不证明四模式全部执行语义。新测试沿实际Host模式持久接口，无假模式回执。
