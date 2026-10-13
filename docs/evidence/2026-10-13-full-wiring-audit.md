@@ -356,3 +356,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第四十轮：默认模型产品页面入口
 
 供应商适配器保留defaultProviderId/defaultModel读面并增加modelsSetDefault透传，页面逐供应商显示模型选择，沿当前目录修订提交且成功后回读；禁用供应商/空模型/编辑中/读面未就绪均不可选。真实Electron两种供应商页面保存密钥后选择模型，核心revision升3且defaultProviderId/defaultModel一致，2/2 rc0；适配器默认读写及既有回归12/12 rc0。仍为专用测试窗口与调试Host；测试默认动作注册为夹具直转既有Host，非完整产品main初始化证明。共享provider-settings暂存仅接口/默认状态/回读/选择处理及DOM五hunk，保留其他作者新建草稿/模型编辑两个hunk。未将默认选择等同于当前会话自动切换或真实模型成功。
+
+
+## 第四十一轮：默认模型拒绝与重启读面
+
+新增model-default-host真实私有调试Host测试1/1 rc0：已有模型默认选择、修订递增，陈旧修订/未知模型/未知供应商拒绝且原默认不变，等待stop终态再重启后默认身份及修订一致。独占default-recovery目录原件。核setDefault当前核心只校验身份和在册模型，未校验enabled；页面禁用供应商不可选不等于核心统一拒绝，记录待修共享规则。当前默认选择是注册表配置事实，不证明模型实际可调用。release进程23372/27900仍存活CPU4379/3442秒，观察未终结不重启。
