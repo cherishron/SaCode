@@ -43,6 +43,7 @@ func cuElapsed(started: MonoTime): Int64 {
 }
 
 // 只读可用性探针；符号解析不证明鼠标或键盘动作已执行。
+@When[os == "Windows"]
 foreign func GetSystemMetrics(nIndex: Int32): Int32
 
 public class ComputerExecutor {

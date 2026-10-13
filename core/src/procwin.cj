@@ -1,48 +1,73 @@
 package core
 
+@When[os != "Windows"]
+import std.env.getProcessId
 
-// Windows 进程判活与自身 pid。std 里没有这两件事：`std.process` 只有
-// `findProcess(pid)`（要能打开进程才有对象），`std.posix` 又非跨平台，
-// 所以这里直接 CFFI 绑 kernel32——实测默认链接面就能解析，不需要额外链接参数。
+// Windows 判活使用 kernel32；非 Windows 的 PID 使用 std.env.getProcessId。
+// findProcess 的异常不能区分不存在与查询失败，未核实平台判死后端前不能据此接管租约。
 //
 // 类型口径按 CFFI 文档的映射表来：C 的 `BOOL` 是 4 字节，映射成 Int32 而不是 Bool
 // （仓颉 `Bool` 对应 C 的 1 字节 `bool`）；`HANDLE` 用 `CPointer<Unit>`；
 // `LPDWORD` 出参在**调用处**用 `inout` 取地址，声明里只写 `CPointer<UInt32>`。
+@When[os == "Windows"]
 foreign func GetCurrentProcessId(): UInt32
+
+@When[os == "Windows"]
 foreign func OpenProcess(access: UInt32, inherit: Int32, pid: UInt32): CPointer<Unit>
+
+@When[os == "Windows"]
 foreign func GetExitCodeProcess(handle: CPointer<Unit>, code: CPointer<UInt32>): Int32
+
+@When[os == "Windows"]
 foreign func CloseHandle(handle: CPointer<Unit>): Int32
+
+@When[os == "Windows"]
 foreign func GetLastError(): UInt32
 
 // PROCESS_QUERY_LIMITED_INFORMATION：只要「能不能问它的退出码」，不需要更多权限
+@When[os == "Windows"]
 let QUERY_LIMITED: UInt32 = 4096
 // STILL_ACTIVE：还在跑时 GetExitCodeProcess 给出的哨兵值
+@When[os == "Windows"]
 let STILL_ACTIVE: UInt32 = 259
 
+@When[os == "Windows"]
 public func ownProcessId(): Int64 {
     return Int64(unsafe { GetCurrentProcessId() })
 }
 
 // 租约接管必须区分「确认已死」与「查询被拒绝／无法确认」。
 // 旧 Bool 接口保留供既有调用方使用，写租约只消费这个三态结果。
+@When[os == "Windows"]
 public func processLiveness(pid: Int64): String {
-    if (pid <= 0 || pid >= Int64(4294967296)) { return "unknown" }
+    if (pid <= 0 || pid >= Int64(4294967296)) {
+        return "unknown"
+    }
     let handle = unsafe { OpenProcess(QUERY_LIMITED, 0, UInt32(pid)) }
     if (handle.isNull()) {
         let error = unsafe { GetLastError() }
         // 非零、范围内的 pid 不存在时返回 ERROR_INVALID_PARAMETER；访问拒绝不等于死亡。
-        return if (error == 87) { "dead" } else { "unknown" }
+        return if (error == 87) {
+            "dead"
+        } else {
+            "unknown"
+        }
     }
     var code: UInt32 = 0
     let ok = unsafe { GetExitCodeProcess(handle, inout code) }
     unsafe { CloseHandle(handle) }
-    if (ok == 0) { return "unknown" }
-    return if (code == STILL_ACTIVE) { "alive" } else { "dead" }
+    if (ok == 0) {
+        return "unknown"
+    }
+    return if (code == STILL_ACTIVE) {
+        "alive"
+    } else {
+        "dead"
+    }
 }
 
-// 判活只回答「这个 pid 现在是不是活的」。打不开句柄（不存在、或没权限打开）
-// 一律回 false；问不到退出码也回 false——调用方（写租约接管）据此选择「不动它」，
-// 宁可留着残留租约让人手工清，也不悄悄抢走别人的写权。
+// Bool 仅用于兼容旧调用；租约接管必须使用上面的三态结果。
+@When[os == "Windows"]
 public func isProcessAlive(pid: Int64): Bool {
     if (pid <= 0) {
         return false
@@ -61,4 +86,23 @@ public func isProcessAlive(pid: Int64): Bool {
         return false
     }
     return code == STILL_ACTIVE
+}
+
+@When[os != "Windows"]
+public func ownProcessId(): Int64 {
+    return getProcessId()
+}
+
+@When[os != "Windows"]
+public func processLiveness(pid: Int64): String {
+    // 只确认当前进程；对其他 PID 保留 unknown，不把不可用后端误当作已死。
+    if (pid > 0 && pid == getProcessId()) {
+        return "alive"
+    }
+    return "unknown"
+}
+
+@When[os != "Windows"]
+public func isProcessAlive(pid: Int64): Bool {
+    return processLiveness(pid) == "alive"
 }

@@ -5,8 +5,8 @@ import std.sync.*
 
 // Ctrl+C / 控制台关闭事件的中断接线。
 //
-// std 没有信号 API（std.process 只有进程管理，std.posix 非跨平台），所以「谁按了
-// Ctrl+C」这一事实只能经 kernel32 的 SetConsoleCtrlHandler 拿到。
+// Windows 中断接线使用 kernel32。非 Windows 的信号后端尚未核验，install 明确失败，
+// 不能把可调用的令牌登记表当成系统信号已接入。
 //
 // 两条约束决定了这张表的形状：
 // 1) 回调由系统在新线程上调用，且 CFunc 不得捕获环境——被取消的对象不能"闭包带走"，
@@ -14,6 +14,7 @@ import std.sync.*
 // 2) 处理器返回 true 表示「本进程已自行处理」，进程不会按默认方式被就地终止——
 //    这正是协作式取消要的：turn 在检查点收束、未 flush 的写入结算、写租约归还，
 //    都发生在同一个进程里，而不是把半写状态留在盘上。
+@When[os == "Windows"]
 foreign func SetConsoleCtrlHandler(handler: CFunc<(UInt32) -> Int32>, add: Int32): Int32
 
 // 事件类型（wincon.h）：0=Ctrl+C，1=Ctrl+Break，2=关窗口，5=注销，6=关机
@@ -45,6 +46,7 @@ public class ConsoleSignals {
 
     // 只注册一次：重复挂载会让一次 Ctrl+C 把同一批令牌取消多次，
     // 也就说不清「这一轮是被第几次中断取消的」。
+    @When[os == "Windows"]
     public static func install(): Bool {
         mtx.lock()
         var ok = bound
@@ -58,6 +60,12 @@ public class ConsoleSignals {
         }
         mtx.unlock()
         return ok
+    }
+
+    @When[os != "Windows"]
+    public static func install(): Bool {
+        // 未实现系统信号注册，调用方沿用 cancel-handler-unavailable 的明确拒绝。
+        return false
     }
 
     public static func installed(): Bool {
@@ -133,6 +141,7 @@ public class ConsoleSignals {
 
 // 系统回调进来的那一端：必须是顶层 @C 函数，且做的事尽量薄——
 // 只转给 fire()，不在回调线程里做日志或分配以外的逻辑。
+@When[os == "Windows"]
 @C
 func ctrlHandler(evKind: UInt32): Int32 {
     ConsoleSignals.fire(evKind)

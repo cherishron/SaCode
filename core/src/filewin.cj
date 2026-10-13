@@ -4,23 +4,31 @@ import std.collection.ArrayList
 
 // 文件提供方仅接收路径和字节，不借 shell 执行用户输入。BOOL/DWORD/HANDLE
 // 与 procwin 使用同一 ABI；所有数组指针都在同步调用结束后配对释放。
+@When[os == "Windows"]
 foreign func CreateFileW(name: CPointer<UInt16>, access: UInt32, share: UInt32, security: CPointer<Unit>,
     creation: UInt32, flags: UInt32, template: CPointer<Unit>): CPointer<Unit>
 
+@When[os == "Windows"]
 foreign func GetFileSizeEx(handle: CPointer<Unit>, size: CPointer<Int64>): Int32
 
+@When[os == "Windows"]
 foreign func ReadFile(handle: CPointer<Unit>, buffer: CPointer<Byte>, count: UInt32, read: CPointer<UInt32>,
     overlapped: CPointer<Unit>): Int32
 
+@When[os == "Windows"]
 foreign func WriteFile(handle: CPointer<Unit>, buffer: CPointer<Byte>, count: UInt32, written: CPointer<UInt32>,
     overlapped: CPointer<Unit>): Int32
 
+@When[os == "Windows"]
 foreign func SetFilePointerEx(handle: CPointer<Unit>, distance: Int64, position: CPointer<Int64>, method: UInt32): Int32
 
+@When[os == "Windows"]
 foreign func SetEndOfFile(handle: CPointer<Unit>): Int32
 
+@When[os == "Windows"]
 foreign func FlushFileBuffers(handle: CPointer<Unit>): Int32
 
+@When[os == "Windows"]
 foreign func MoveFileExW(source: CPointer<UInt16>, target: CPointer<UInt16>, flags: UInt32): Int32
 
 func fileWidePath(path: String): Array<UInt16> {

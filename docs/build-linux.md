@@ -39,3 +39,9 @@ export LD_LIBRARY_PATH="$SACODE_STDX_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH
 2026-10-13：官方 CJPM 文档确认 `target.*.bin-dependencies.path-option` 支持环境变量插值，本机 Windows 仓颉 **1.1.3** 的独立生产编译已确认该变量被解析、可找到 `stdx.crypto.common` 并完成链接。
 
 本轮环境是 Windows；添加 Linux 目标配置不等于 Linux 四模块已编译通过。Linux 构建仍需对应 SDK、stdx、系统链接依赖，并可能暴露仓库其他平台代码问题。Windows 原有路径保持不变，没有要求当前 Windows 构建新增环境变量。
+
+## 已收到的 Linux 构建结果（f0e7cb6）
+
+用户已在 Linux 设置上述变量验证：core 静态库通过（31 warnings），CLI 因 Windows API 链接失败，host 两次编译超时（未进入链接），daemon 因 `scheduler.cj:51` 的 `TaskDefinition?` 语法失败。
+
+这说明 stdx 路径只是第一层；**目前不能把项目描述为 Linux 可执行程序已可构建或可用**。平台声明隔离修正和具体限制见 [Linux 后端构建交接](evidence/2026-10-13-linux-executable-build-followup.md)。非 Windows 信号、租约判死和持久文件后端仍需明确实现，不能以静默降级绕过这些约束。
