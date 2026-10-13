@@ -575,7 +575,7 @@ createApp({
     const { refreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace } = workspaceAssembly;
     const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
     // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
-    for (const verb of ["save", "remove", "reorder", "pullModels"]) {
+    for (const verb of ["save", "saveCredential", "createInstance", "setDefault", "remove", "reorder", "pullModels"]) {
       const inner = modelCenterAdapters["provider-settings"][verb].bind(modelCenterAdapters["provider-settings"]);
       modelCenterAdapters["provider-settings"][verb] = async (...args) => {
         try { return await inner(...args); } finally { void modelDirectory.load(); }

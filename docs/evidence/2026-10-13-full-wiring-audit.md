@@ -376,3 +376,8 @@ ProviderRegistry.setDefault加入enabled拒绝，避免页面守卫被直接Host
 ## 第四十四轮：目录添加真实Host与Electron验收
 
 固定HEAD派生Host main三处create-instance接线，叠加本批核心及RPC文件，cjpm build -g --jobs1 rc0。私有runtime-bin沿既有DLL/CA，新Host SHA256 E5952DB2258078F5F1D4519DA5B4F7A219EAA0705AD1BDED013463173CECA14B，不替换公共产物。独占TMP联合model-catalog-instance-host、model-credential-electron-host两场景、model-default-host共4/4 rc0：新实例身份及凭据引用独立、陈旧/未知/额外引用拒绝、跨重启；实际Vue供应商页从空目录选stepfun添加实例，继续密钥与默认选择，状态落核心。另适配器及IPC16/16 rc0。该验收不调用远端供应商且专用窗口部分IPC由夹具装配，发布/完整主窗口未完成。新目录动作是create-instance，旧add-catalog仍兼容但未暴露给本批页面。共享Host/preload/provider页面暂存固定候选或精选hunk，不吸收并发入口重构与新增表单。
+
+
+## 第四十五轮：完整装配供应商写动作目录刷新
+
+app.js现有modelCenterAdapters装配仅包裹save/remove/reorder/pullModels，新增saveCredential/createInstance/setDefault未刷新输入区modelDirectory。新增执行实际装配段的VM行为用例，初次1条红4≠7；补三动作后与适配器联合14/14 rc0。成功回执和冲突异常均保持且七动作各触发一次目录load，避免部分配置成功或新实例后输入区目录陈旧。此为产品装配段验证，不是完整主窗口加载。app共享文件只暂存HEAD派生单行列表更新，其他会话差异保留。
