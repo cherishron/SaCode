@@ -487,3 +487,11 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 核提交态close无条件completed，create尚未调用sessionPrompt，关闭失败准入条目也可覆盖failed。取消/关闭保留已完成、失败、已取消、拒绝、未完成终态，先核预期修订，再原样返回，不改原因/修订。活动连接关闭仅记incomplete及closed-without-task-completion-evidence，不能凭进程关闭证明任务完成。恢复outcome-unknown的既有身份核对保护保留。
 
 新增acpClosingFailedAdmissionCannotClaimCompletion真实服务回归（缺准入授权不启进程），私有acp-close.log TOTAL251/PASSED251/SKIPPED0/ERROR0/FAILED0、rc0。覆盖失败后close/cancel状态与修订不变；活动进程关闭尚无真实提供方证据。仅本批两文件与审计提交，不包含在途ACP审批桥改动。协议drainStdout目前只入ReplyTable，服务onUpdate/onPermissionRequest/onElicitation未装配，必须接请求/通知消费及审批回传后才能开放prompt，不以当前修复声明委派产品闭环。
+
+## 第六十二轮：ACP双向协议帧分类与真实管道探针
+
+参考2026-10-13读取的官方v1协议 https://agentclientprotocol.com/protocol/v1/overview ：请求/回复与无回复通知分开，session/update为通知，session/request_permission为服务端请求。新增AcpInboundFrame/Inbox，JSON-RPC版本、请求与结果互斥、合法ID及参数对象校验，64KiB帧与128项队列上限。服务端请求不进入本机ReplyTable，支持整数/字符串服务端ID；未知请求返回-32601，队列满请求返回具名错误，通知不发送回复。普通本机回复仍按原Int64请求ID配对。
+
+私有acp-inbound.log 254/254；最终acp-inbound-pipe.log TOTAL255/PASSED255/SKIPPED0/ERROR0/FAILED0，rc0。Node v22本地真实子进程管道夹具同时发送与本机请求相同ID的审批、进度通知、未知fs/write_text_file请求，实际读到-32601后回送确认；权限/通知各自可取且unsolicited为零。夹具非真实ACP供应方、不执行文件或模型任务。当前队列尚未消费到审批工单及内容投影，未公开prompt入口，不扩大为委派全链路。
+
+发现旧sessionCancel仍按request等待回复，与当前官方通知契约冲突；sessionResume及close方法亦需与冻结供应方探针分别对齐，不直接改变兼容性假设。入站队列满/畸形有计数，但丢失通知后的任务完整性投影尚待接入；原StringReader.readln的读取前内存上限仍需额外监督。仅新增分类和管道安全接收，不宣称这些剩余缺口已解决。

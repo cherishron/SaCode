@@ -22,6 +22,8 @@ public class AcpProcess {
     let writeLock = Mutex()
     let idGen = AtomicInt64(0)
     let recv = AtomicInt64(0)
+    let inbound = AcpInboundInbox()
+    let invalidFrames = AtomicInt64(0)
 
     // stderr 诊断缓冲：有界，不污染协议面（design §2.4.4）
     let diagBuf = ArrayList<Byte>()
@@ -135,7 +137,7 @@ public class AcpProcess {
                 let line = rd.readln()
                 if (let Some(s) <- line) {
                     if (s.size > 0) {
-                        table.put(frameIdOf(s), s)
+                        this.routeInbound(s)
                         n += 1
                         recv.fetchAdd(1)
                     }
@@ -149,6 +151,41 @@ public class AcpProcess {
         return n
     }
 
+    // 内部分类入口也供协议回归验证；未知请求绝不进入工具执行器。
+    func routeInbound(raw: String): Bool {
+        try {
+            let frame = acpDecodeInbound(raw)
+            if (frame.kind == "response") { table.put(frameIdOf(raw), raw); return true }
+            if (frame.kind == "notification") {
+                if (frame.method != "session/update") { return true }
+            } else if (frame.method != "session/request_permission" && frame.method != "elicitation/create") {
+                return rejectInbound(frame, -32601, "method-not-found")
+            }
+            if (!inbound.put(frame)) {
+                invalidFrames.fetchAdd(1)
+                if (frame.kind == "request") { return rejectInbound(frame, -32000, "acp-inbox-full") }
+                return false
+            }
+            return true
+        } catch (_: Exception) { invalidFrames.fetchAdd(1); return false }
+    }
+
+    private func rejectInbound(frame: AcpInboundFrame, errorCode: Int64, message: String): Bool {
+        if (let Some(p) <- proc) {
+            let response = "{\"jsonrpc\":\"2.0\",\"id\":${frame.idJson},\"error\":{\"code\":${errorCode},\"message\":\"${message}\"}}"
+            writeLock.lock()
+            try {
+                if (frameMode != "ndjson") { return false }
+                p.stdInPipe.write((response + "\n").toArray())
+                p.stdInPipe.flush()
+                return true
+            } finally { writeLock.unlock() }
+        }
+        return false
+    }
+
+    public func nextInbound(): ?AcpInboundFrame { return inbound.take() }
+    public func invalidInboundCount(): Int64 { return invalidFrames.load() }
     // stderr 读线程体：有界地收集诊断字节，超出上限截断尾部
     private func drainStderr(pipe: InputStream): Int64 {
         let rd: StringReader<InputStream> = StringReader(pipe)
