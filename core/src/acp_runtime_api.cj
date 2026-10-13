@@ -27,6 +27,9 @@ public class AcpRuntimeApi {
         return method == "acp/delegation/create" || method == "acp/delegation/poll" || method == "acp/delegation/answer" ||
             method == "acp/delegation/cancel" || method == "acp/delegation/close"
     }
+    public func belongsTo(sessionId: String, logPath: String, workingDirectory: String): Bool {
+        return service.sessionId == sessionId && desk.log.path == logPath && workspace == workingDirectory
+    }
     // 会话切换必须同时等到工作线程结束与所拥有进程退出；终态文字不替代退出事实。
     public func quiescent(): Bool {
         mtx.lock()

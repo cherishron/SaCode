@@ -48,6 +48,10 @@ func acpRuntimeApiRejectsForeignSessionAndExecutableArguments() {
     let f = AcpTaskFixture("end_turn", program: acpLiveProgram())
     try {
         let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root)
+        @Expect(api.belongsTo("s1", f.log.path, f.root), true)
+        @Expect(api.belongsTo("other", f.log.path, f.root), false)
+        @Expect(api.belongsTo("s1", "other.log", f.root), false)
+        @Expect(api.belongsTo("s1", f.log.path, "other-workspace"), false)
         @ExpectThrows[Exception](api.dispatch("acp/delegation/poll", "{\"sessionId\":\"other\",\"delegationId\":\"delegation-1\"}"))
         @ExpectThrows[Exception](api.dispatch("acp/delegation/create", "{\"sessionId\":\"s1\",\"taskId\":\"task\",\"requestId\":\"request\",\"peerId\":\"opencode\",\"taskText\":\"fixture task\",\"executable\":\"cmd\"}"))
         @ExpectThrows[Exception](api.dispatch("acp/delegation/poll", acpRuntimePollArgs()))
