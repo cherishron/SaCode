@@ -589,3 +589,11 @@ b40f881权限持久链已推送，首TLS失败后同一次重试终态成功。�
 落库前核工作区schedule.cj SHA256仍2DA220F7B05D1457ECE97DBA139203C2C0633B6C8EE3114471F480A3D538760B及schedule_test.cj仍EF806A69BADE4DFAAD3B19C70E722CE2CA6F9974505C21C6EAD964619EEBC73C，未被并发修改；只吸收已验证作者实现/私有TMP夹具与本轮前缀修复，不带其它路径。registerTask内仍append，由入口/调用方负责持久屏障，本轮持久回放使用实际显式屏障；不能把方法名PersistsDefinition当自带持久承诺。
 
 保留未完成项：::分隔字段遇任意prompt/modelConfig分隔符需版本化契约；fireRecords完整恢复、跨进程去重、CAS/并发、防止listTasks可变引用绕日志、真实调度执行与Host/CLI/页面接线均未收口。仅定义CRUD/回放修复，不升级F13通过、不替代当前HEAD完整回归。
+
+## 第七十六轮：火次恢复与未知结果重复执行屏障
+
+ScheduleStore原构造完全跳过schedule/fire，重启后pending火次丢失；hasPendingFire只认pending，outcome-unknown也放开重复触发。新增fire/result日志回放，保留ID/task/time/status/detail；result只切两个分隔符，detail含::原样保留。只有done/failed/cancelled为当前已知终态，其余状态继续阻塞due；畸形、孤立结果、负时间与重复火次ID抛明确错误，不静默清空历史后执行。
+
+schedule-fire-red.log TOTAL307/PASSED15/SKIPPED290/ERROR0/FAILED2、rc1，恰两新增恢复探针先红。补畸形/重复反证后schedule-fire-green.log TOTAL308/PASSED18/SKIPPED290/ERROR0/FAILED0、rc0，仅18条运行。真实WriteLease、发布、reload验证pending阻止重触发、unknown结果阻塞、done结算及带::详情恢复；没有执行模型或命令。
+
+本轮不证明真实定时调度、跨进程去重、同一cron分钟重复触发控制、oneShot自动执行规则或真实终态证据。更新FireResult的可信结算入口仍待设计接线，Store字段/列表可变引用与整体并发契约仍待完善。整体全量尚未重跑当前HEAD，保留31b4a79的失败基线，不据局部18通过扩大。

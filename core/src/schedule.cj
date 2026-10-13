@@ -27,6 +27,7 @@ public class ScheduleStore {
         this.log = log
         this.hookRegistry = hookRegistry
         for (event in log.snapshotEvents()) {
+            if (event.eventType == "schedule/fire") { applyFireEvent(event.data); continue }
             if (event.eventType != "schedule/task") {
                 continue
             }
@@ -58,6 +59,33 @@ public class ScheduleStore {
         }
     }
 
+    // 未结算火次是恢复屏障；未知事实不得静默丢弃后重新触发。
+    private func applyFireEvent(body: String): Unit {
+        if (body.startsWith("fire::")) {
+            let first = splitOnce(body["fire::".size..body.size], "::")
+            let second = splitOnce(first.v1Name, "::")
+            if (first.v0Name.size == 0 || second.v0Name.size == 0 || fireIndexOf(first.v0Name) >= 0) { throw Exception("schedule-invalid-fire-fact") }
+            let at = Int64.parse(second.v1Name)
+            if (at < 0) { throw Exception("schedule-invalid-fire-time") }
+            fireRecords.add(FireRecord(first.v0Name, second.v0Name, at, "pending", ""))
+        } else if (body.startsWith("result::")) {
+            let first = splitOnce(body["result::".size..body.size], "::")
+            let second = splitOnce(first.v1Name, "::")
+            let i = fireIndexOf(first.v0Name)
+            if (i < 0 || second.v0Name.size == 0) { throw Exception("schedule-invalid-fire-result") }
+            fireRecords[i].status = second.v0Name
+            fireRecords[i].detail = second.v1Name
+        } else { throw Exception("schedule-unknown-fire-fact") }
+    }
+
+    private func fireIndexOf(id: String): Int64 {
+        var i: Int64 = 0
+        while (i < fireRecords.size) {
+            if (fireRecords[i].fireId == id) { return i }
+            i += 1
+        }
+        return -1
+    }
     // 回放 taskdef::<id>::<cron>::<prompt>::<oneShot>::<maxAgeSec>::<cwd>::<logPath>::<modelConfig>
     // 旧实现完全不认识 taskdef::，于是重启后任务定义整个丢失 —— 事件写对了也读不回来。
     // 字段不足时按缺省补齐并跳过：宁可少一条定义，也不要拿半截数据造出错的定义。
@@ -269,7 +297,7 @@ public class ScheduleStore {
 
     public func hasPendingFire(taskId: String): Bool {
         for (r in fireRecords) {
-            if (r.taskId == taskId && r.status == "pending") { return true }
+            if (r.taskId == taskId && r.status != "done" && r.status != "failed" && r.status != "cancelled") { return true }
         }
         return false
     }
