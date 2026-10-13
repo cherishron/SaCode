@@ -9,6 +9,7 @@ public class ModelToolRuntime {
     let approval: (ModelToolCall) -> Int64
     let guard: (String, String) -> Bool
     let lspToken: TurnToken
+    let modeLog: SessionLog
     public init(log: SessionLog, allowParallel: Bool,
         files!: Bool = false, browser!: Bool = false, workingDirectory!: String = "", team!: ?TeamTools = None,
         worktree!: ?WorktreeTools = None,
@@ -18,6 +19,7 @@ public class ModelToolRuntime {
         lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(),
         webSettings!: ?WebSettings = None) {
         this.registry = ToolRegistry()
+        this.modeLog = log
         registry.register(TodoTool(log, allowParallel).spec())
         registry.register(goalUpdateToolSpec())
         if (files) {
@@ -89,9 +91,16 @@ public class ModelToolRuntime {
     public func execute(call: ModelToolCall): ApprovalOutcome {
         if (!registry.has(call.name)) { return ApprovalOutcome(false, "unregistered-tool:${call.name}") }
         if (lspToken.cancelled()) { return ApprovalOutcome(false, "cancelled") }
-        let id = if (registry.requiresApproval(call.name)) { approval(call) } else { Int64(0) }
+        var explicitMode = false
+        for (event in modeLog.snapshotEvents()) {
+            if (event.eventType == "mode/mode") { explicitMode = true }
+        }
+        let decision = if (explicitMode) { PermissionPolicy().decide(ModeController(modeLog).current(), call.name) } else { "allow" }
+        if (decision == "deny") { return ApprovalOutcome(false, "approval-mode-denied") }
+        let policyApproval = decision == "ask"
+        let id = if (registry.requiresApproval(call.name) || policyApproval) { approval(call) } else { Int64(0) }
         // 审批可能等待用户；返回后先查取消，不能再消费工单并派发副作用。
         if (lspToken.cancelled()) { return ApprovalOutcome(false, "cancelled") }
-        return runtime.executeWithApproval(call.name, call.args, id, guard(call.name, call.args), desk)
+        return runtime.executeWithApproval(call.name, call.args, id, guard(call.name, call.args), desk, policyApproval: policyApproval)
     }
 }

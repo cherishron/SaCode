@@ -338,7 +338,7 @@ public class ToolRuntime {
     // 走审批工单的固定序：注册表 → 消费一次性凭据 → guard → execute → tool/result 落盘。
     // 与 execute() 的区别只在审批来源：这里的答案必须是 desk 发过号的工单，
     // 调用方自己声明「批过了」不作数；工单过期、被拒、已用过，全都拒。
-    public func executeWithApproval(name: String, args: String, approvalId: Int64, allowedByGuard: Bool, desk: ApprovalDesk): ApprovalOutcome {
+    public func executeWithApproval(name: String, args: String, approvalId: Int64, allowedByGuard: Bool, desk: ApprovalDesk, policyApproval!: Bool = false): ApprovalOutcome {
         lastDetail = ToolDetail()
         recordCall( "${name} ${args}")
         if (!registry.has(name)) {
@@ -347,13 +347,13 @@ public class ToolRuntime {
             recordResult( "unregistered:${name}")
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
-        if (registry.requiresApproval(name)) {
+        if (registry.requiresApproval(name) || policyApproval) {
             // 桌面控制动的是真人的鼠标键盘，工单必须绑死这一次的arguments：旧式只批工具名的票
             // 能被他挪去放行任意一次点击，这里不吃。其余工具保持原宽松语义。
             // computer.* 与退出会话 worktree 都要「绑着原始参数」的工单：只登记工具名
             // （desk.ask 那条旧路）的票不能放行删目录与挪地基——沿用 consumeExactForCall
             // 这条既有语义，不另发明审批。
-            let exactApproval = name.startsWith("computer.") || name == worktreeExitToolName
+            let exactApproval = policyApproval || name.startsWith("computer.") || name == worktreeExitToolName
             let grant = if (exactApproval) {
                 desk.consumeExactForCall(approvalId, name, args)
             } else {

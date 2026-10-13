@@ -398,3 +398,10 @@ app.js现有modelCenterAdapters装配仅包裹save/remove/reorder/pullModels，�
 ## 第四十八轮：权限模式实际消费缺口与未知工具策略
 
 核现有ModeController只追加mode/mode不持久发布；工作区mode_rpc只返回配置状态，固定Host缺入口。ModelToolRuntime/ToolRuntime未消费ModeController/PermissionPolicy，CLI仅runStreamTests创建独立mode-cli.log，不是真实用户动作。不能把四选项显示等同执行策略。PermissionPolicy原先非固定write工具全部allow，未知插件/部署/Git/完整命令字符串可被误判只读；改为显式已知读工具允许，Plan未知拒绝，Build/Auto/Yolo未知ask，合法已知write原语义保留。新增未知工具/复合命令/空名回归，私有TOTAL221/PASSED221/SKIPPED0/ERROR0/FAILED0、rc0。两源码测试同私有候选，未开Host模式写接口。接线下一步须ToolRuntime支持模式额外审批并走desk精确消费，不能只调用回调绕过requiresApproval=false工具的工单结算；已有静态必须审批工具也不因模式而跳过。
+
+
+## 第四十九轮：模式接入模型工具与精确工单
+
+ToolRuntime.executeWithApproval新增policyApproval具名参数：策略额外要求审批时，即使ToolSpec免审批，也必须desk.consumeExactForCall；旧工具名票、换参数、无票拒绝，正确票一次性used。ModelToolRuntime读取同会话显式mode/mode，Plan deny先拒绝，ask调用审批并传额外消费标志；静态requiresApproval始终保留。无显式模式旧日志维持原审批规则，尚非四模式全量迁移；Auto分类器、Yolo自主授权与关键动作分级未在此完成。
+
+私有阶段222/222，首次联编额外sandboxRuntime参数属于未提交并发线，与私有Agent构造不匹配；候选仅排除该线。新测试捕获局部var编译拒绝，按CangjieSkills search_docs捕获规则改用let对象可变成员后224/224。补取消及已有写审批保护最终TOTAL226/PASSED226/SKIPPED0/ERROR0/FAILED0、rc0（mode-integration-v4）。Agent HEAD派生候选与已测源码除换行一致，model_tool_runtime提交私有已测不带沙箱版本；未改公共并发内容。Host模式持久入口与CLI真实用户动作尚待接线，新产物亦未重建。
