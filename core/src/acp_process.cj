@@ -166,7 +166,7 @@ public class AcpProcess {
             if (frame.kind == "response") { table.put(Int64.parse(frame.idJson), raw); return true }
             if (frame.kind == "notification") {
                 if (frame.method != "session/update") { return true }
-            } else if (frame.method != "session/request_permission" && frame.method != "elicitation/create") {
+            } else if (frame.method != "session/request_permission") {
                 return rejectInbound(frame, -32601, "method-not-found")
             }
             if (!inbound.put(frame)) {

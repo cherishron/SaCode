@@ -171,10 +171,10 @@ func acpApprovalBridgeElicitationDecisionValidation() {
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
     acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
-    // 合法决定
-    @Expect(bridge.answerElicitation("req-1", "submitted", "answer text"), true)
-    @Expect(bridge.answerElicitation("req-1", "abandoned", ""), true)
-    @Expect(bridge.answerElicitation("req-1", "expired", ""), true)
+    // 合法决定但无待决请求及回传通道，必须拒绝而非模拟发送
+    @Expect(bridge.answerElicitation("req-1", "submitted", "answer text"), false)
+    @Expect(bridge.answerElicitation("req-1", "abandoned", ""), false)
+    @Expect(bridge.answerElicitation("req-1", "expired", ""), false)
     // 非法决定
     @Expect(bridge.answerElicitation("req-1", "approved", ""), false)
     @Expect(bridge.answerElicitation("req-1", "", ""), false)

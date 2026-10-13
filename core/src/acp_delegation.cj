@@ -372,7 +372,7 @@ public class AcpDelegationService {
 
     // elicitation 入口：Task 4.x 实现
     public func onElicitation(id: String, requestId: String, fields: String): Unit {
-        // 待 Task 4.x 实现
+        throw Exception("unsupported:acp-elicitation-not-connected")
     }
 
     // 使用全量内容摘要；滚动 Int64 乘法会溢出并绕过稳定的幂等冲突结果。

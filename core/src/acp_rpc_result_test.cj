@@ -81,3 +81,17 @@ func acpCloseIsGatedAndCarriesNegotiatedSessionWithRealPipe() {
         }
     } finally { removeIfExists(root, recursive: true) }
 }
+
+@Test
+func acpUnadvertisedElicitationIsRejectedOverRealPipe() {
+    let fixture = "const rl=require('node:readline').createInterface({input:process.stdin});rl.on('line',s=>{const f=JSON.parse(s);if(f.method==='initialize'){console.log(JSON.stringify({jsonrpc:'2.0',id:'form',method:'elicitation/create',params:{mode:'form'}}));}else if(f.id==='form'&&f.error){console.log(JSON.stringify({jsonrpc:'2.0',id:1,result:{rejected:f.error.code===-32601}}));}});"
+    let process = AcpProcess("node", ["-e", fixture], workingDirectory: Path("."))
+    @Expect(process.start(), true)
+    try {
+        let result = process.request(1, "initialize", "{}", timeoutMs: 5000).getOrThrow()
+        @Expect(result.contains("\"rejected\":true"), true)
+        @Expect(process.nextInbound().isNone(), true)
+    } finally { process.kill() }
+    let service = acpApprovalScopeFixture()
+    @ExpectThrows[Exception](service.onElicitation("delegation-1", "form", "submitted:body"))
+}

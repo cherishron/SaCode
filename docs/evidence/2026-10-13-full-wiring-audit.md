@@ -549,3 +549,9 @@ AcpApprovalBridge构造核会话相同，ask仅接受已有运行/等待审批�
 从HEAD worktree_setup_test生成仅该不可变变量hunk候选，复制到专项集后编译及--filter wsTEntriesRejectExternalPathsAndDotDotSegments；worktree-compile-probe.log TOTAL286/PASSED1/SKIPPED285/ERROR0/FAILED0、rc0。仅1条拒绝越界/超长条目用例运行，不能登记286通过。使用HEAD派生blob暂存，该文件TMP改动保留工作区。当前固定全量未通过，需新提交重新验收。
 
 本轮开头识别的elicitation合法决定伪成功仍待实施，未把计划当已修。全产品ACP/LSP与统一桌面载荷缺口保持，不能因专项测试升级完成状态。
+
+## 第七十一轮：未接线elicitation不冒充成功
+
+原answerElicitation对submitted/abandoned/expired调用空onElicitation并true，无法证明记录或回传。现在未建立请求绑定/回传通道时false；服务直接调用抛unsupported:acp-elicitation-not-connected。初始化声明clientCapabilities={}，入站elicitation/create据未支持能力返回-32601，不进入待决队列。保留完整信息表单实施需求，这只是先消除伪成功，不把禁用当能力完成。
+
+acp-elicitation-fail-closed.log --filter acp*：TOTAL287/PASSED47/SKIPPED240/ERROR0/FAILED0，rc0，仅47条运行。真实Node管道收到未声明的elicitation/create后获得错误；无待决表单/回传的合法决定均false，服务unsupported明确。非真实供应方/页面/Host验收，不登记287通过。固定31b4a79完整核心仍在编，session94520、cjc21996，未有Summary；不重启、不同基线结果不混用。

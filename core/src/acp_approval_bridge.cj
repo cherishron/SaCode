@@ -107,9 +107,8 @@ public class AcpApprovalBridge {
         if (!valid) {
             return false
         }
-        // 由 AcpDelegationService 记录 elicitation 结果
-        delegations.onElicitation("", requestId, "${decision}:${values}")
-        return true
+        // 尚无请求绑定和回传通道；合法决定也不能冒充已发送。
+        return false
     }
 
     // 查询某委派待决工单数
