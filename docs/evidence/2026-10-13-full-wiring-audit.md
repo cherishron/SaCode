@@ -533,3 +533,11 @@ acp-close-gate.log 265/265；补重启状态清空后acp-close-gate-v2.log TOTAL
 跟进工作区ACP审批两份遗留：bridge批准此前未desk.answer，直接consume pending导致合法批准失败；补answer后精确一次性consume。测试用对象假钟代替逃逸lambda捕获var，补used与二次批准拒绝。逐hunk核对并吸收已完成修复，不吞并其他共享路径。此前私有265集未包含acp_approval_test且其bridge仍HEAD原版，本轮曾口头误说包含、已立即哈希核对撤回；265不能证明审批桥，旧专项范围不扩大。
 
 将这两份实源复制专项候选，acp-approval-included.log TOTAL275/PASSED275/SKIPPED0/ERROR0/FAILED0、rc0，增加恰10条审批桥。工作区bridge SHA256 0EFCFFEF544948392A5A8D8078DB3816E1725C561D26C9BFF02837AEF4F59DF1，test 8AB1504E305023ABD14EAF21112DB31B2FE10C122D82ECF14D883AD8D5072475。仅审批桥进程内行为，未证明委派身份/会话/修订绑定、持久审批及真实协议回传；pendingFor仍返回全局pending，elicitation为未接线入口。当前全量基线结果必须后续单独结算。
+
+## 第六十九轮：ACP审批委派身份与修订约束
+
+AcpApprovalBridge构造核会话相同，ask仅接受已有运行/等待审批委派与非空协议会话；工单保存发号快照。allowed-once在AcpDelegationService共用状态锁内核会话/任务/请求/供应方/协议身份/修订与取消令牌，再desk.answer及精确消费，失配不放行并拒绝旧pending票。pendingFor仅数本桥对应委派且实际pending，不把别的委派或会话工单算入。
+
+旧10条单测补显式核心运行态夹具，不宣称真实进程；新增4条覆盖不存在/非活动/跨会话发号拒绝、委派独立待决数、修订/协议身份变化拒绝、取消令牌使旧票失效。acp-approval-scope.log TOTAL279/PASSED279/SKIPPED0/ERROR0/FAILED0、rc0。取消竞争批准由共享锁约束，尚未有多线程实际协议发回竞争探针；批准后外部回传必须继续绑定原请求身份，不能以该核心验收冒充产品入口。审批事实持久屏障、elicitation伪成功、请求options与一次性回复绑定仍待补。
+
+固定f6f8b49全量核心仍无Summary，tool session64903保持运行；记录时cjc21032 CPU已从157.83到471.45秒，不能因为日志未增长重启或登记通过。此全量源码不含后续审批修复，终态后必须明确其基线。

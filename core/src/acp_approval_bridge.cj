@@ -26,9 +26,11 @@ public class AcpApprovalBridge {
     let sessionId: String
     // approvalId → (delegationId, proposal) 内部映射，用于回传时重建不可变提案字节
     let approvalProposals = HashMap<Int64, (String, AcpPermissionProposal)>()
+    let identities = HashMap<Int64, AcpDelegationSnapshot>()
     let mtx = Mutex()
 
     public init(desk: ApprovalDesk, delegations: AcpDelegationService, sessionId: String) {
+        if (delegations.sessionId != sessionId) { throw Exception("not-authorized:acp-session-mismatch") }
         this.desk = desk
         this.delegations = delegations
         this.sessionId = sessionId
@@ -41,11 +43,14 @@ public class AcpApprovalBridge {
 
     // 发号：绑定 delegationId + 不可变提案；返回 approvalId
     public func askPermission(delegationId: String, proposal: AcpPermissionProposal): Int64 {
+        let identity = delegations.describe(delegationId)
+        if (identity.sessionId != sessionId || identity.protocolSessionId.size == 0 || (identity.phase != "running" && identity.phase != "awaiting-permission")) { throw Exception("not-authorized:acp-delegation-not-running") }
         let args = permissionArguments(delegationId, proposal)
         let id = desk.askForCall(proposal.tool, args, ttl: 120)
         mtx.lock()
         try {
             approvalProposals[id] = (delegationId, proposal)
+            identities[id] = identity
         } finally {
             mtx.unlock()
         }
@@ -62,24 +67,30 @@ public class AcpApprovalBridge {
         // 取回发号时绑定的提案
         var proposalOpt: Option<AcpPermissionProposal> = None
         var delegationId = ""
+        var identityOpt: ?AcpDelegationSnapshot = None
         mtx.lock()
         try {
             if (let Some(pair) <- approvalProposals.get(approvalId)) {
                 delegationId = pair[0]
                 proposalOpt = Some(pair[1])
+                identityOpt = identities.get(approvalId)
             }
         } finally {
             mtx.unlock()
         }
-        if (proposalOpt.isNone()) {
+        if (proposalOpt.isNone() || identityOpt.isNone()) {
             return false
         }
         let proposal = proposalOpt.getOrThrow()
+        let identity = identityOpt.getOrThrow()
         if (decision == "allowed-once") {
             let args = permissionArguments(delegationId, proposal)
-            if (!desk.answer(approvalId, "allowed-once")) { return false }
-            let grant = desk.consumeExactForCall(approvalId, proposal.tool, args)
-            return grant == "allowed-once"
+            let accepted = delegations.withCurrentPermission(identity, { =>
+                if (!desk.answer(approvalId, "allowed-once")) { return false }
+                return desk.consumeExactForCall(approvalId, proposal.tool, args) == "allowed-once"
+            })
+            if (!accepted) { desk.answer(approvalId, "denied") }
+            return accepted
         }
         // denied：直接记录到 desk
         return desk.answer(approvalId, "denied")
@@ -103,7 +114,13 @@ public class AcpApprovalBridge {
 
     // 查询某委派待决工单数
     public func pendingFor(delegationId: String): Int64 {
-        // 简化：返回 desk 全局 pending 数（生产需按 delegation 过滤）
-        return desk.pendingCount()
+        mtx.lock()
+        try {
+            var count: Int64 = 0
+            for ((id, pair) in approvalProposals) {
+                if (pair[0] == delegationId && desk.stateOf(id) == "pending") { count += 1 }
+            }
+            return count
+        } finally { mtx.unlock() }
     }
 }

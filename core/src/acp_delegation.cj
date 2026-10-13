@@ -260,6 +260,18 @@ public class AcpDelegationService {
         throw Exception("not-found:delegation-${id}")
     }
 
+    // 与取消/状态变更共用锁；批准与精确消费不得跨修订竞争放行。
+    func withCurrentPermission(expected: AcpDelegationSnapshot, decide: () -> Bool): Bool {
+        mtx.lock()
+        try {
+            if (let Some(entry) <- delegations.get(expected.id)) {
+                if (entry.sessionId != expected.sessionId || entry.taskId != expected.taskId || entry.requestId != expected.requestId || entry.peerId != expected.peerId || entry.protocolSessionId != expected.protocolSessionId || entry.revision != expected.revision || entry.cancelToken.cancelled()) { return false }
+                if (entry.phase != "running" && entry.phase != "awaiting-permission") { return false }
+                return decide()
+            }
+            return false
+        } finally { mtx.unlock() }
+    }
     // 列出所有委派
     public func list(): ArrayList<AcpDelegationSnapshot> {
         let out = ArrayList<AcpDelegationSnapshot>()

@@ -11,6 +11,14 @@ class AcpApprovalClock {
     var now: Int64 = 0
 }
 
+// 仅桥接层单测的显式运行态夹具，不代表真实进程或权限协议验收。
+func acpSeedApprovalDelegations(service: AcpDelegationService) {
+    for (id in ["delegation-1", "delegation-A", "delegation-B"]) {
+        let entry = AcpDelegationEntry(id, "sess-1", "task", "request-${id}", "opencode", "digest", ".")
+        entry.phase = "running"; entry.revision = 1; entry.protocolSessionId = "protocol-${id}"
+        service.delegations[id] = entry
+    }
+}
 @Test
 func acpApprovalBridgeAskAndAnswerAllowedOnce() {
     let path = "acp-approval-ask-allow.log"; removeIfExists(path)
@@ -19,6 +27,7 @@ func acpApprovalBridgeAskAndAnswerAllowedOnce() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写入 src/foo.ts", "write_file:src/foo.ts:content...")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -38,6 +47,7 @@ func acpApprovalBridgeDeniedDoesNotExecute() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("run_command", "执行 npm test", "run_command:npm test")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -56,6 +66,7 @@ func acpApprovalBridgeInvalidDecisionRejected() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -75,6 +86,7 @@ func acpApprovalBridgeProposalImmutable() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写 src/foo.ts", "write_file:src/foo.ts:content1")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -94,6 +106,7 @@ func acpApprovalBridgeCrossDelegationRejected() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo:content")
     let id = bridge.askPermission("delegation-A", proposal)
@@ -117,6 +130,7 @@ func acpApprovalBridgeExpiredRejected() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -136,6 +150,7 @@ func acpApprovalBridgePermissionArgumentsFormat() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("run_command", "执行测试", "run_command:npm test")
     let args = bridge.permissionArguments("delegation-1", proposal)
@@ -154,6 +169,7 @@ func acpApprovalBridgeElicitationDecisionValidation() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     // 合法决定
     @Expect(bridge.answerElicitation("req-1", "submitted", "answer text"), true)
@@ -173,6 +189,7 @@ func acpApprovalBridgeDoubleAnswerRejected() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo")
     let id = bridge.askPermission("delegation-1", proposal)
@@ -190,9 +207,73 @@ func acpApprovalBridgePendingCount() {
     let settings = AcpSettingsService()
     let gate = AcpGate(settings)
     let svc = AcpDelegationService("sess-1", gate, { peerId => AcpProcess("echo", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(svc)
     let bridge = AcpApprovalBridge(desk, svc, "sess-1")
     @Expect(bridge.pendingFor("delegation-1"), Int64(0))
     let proposal = AcpPermissionProposal("write_file", "写文件", "write_file:foo")
     let _ = bridge.askPermission("delegation-1", proposal)
     @Expect(bridge.pendingFor("delegation-1"), Int64(1))
+}
+
+func acpApprovalScopeFixture(): AcpDelegationService {
+    let service = AcpDelegationService("sess-1", AcpGate(AcpSettingsService()), { _ => AcpProcess("nonexistent-approval-scope", [], workingDirectory: Path(".")) })
+    acpSeedApprovalDelegations(service)
+    return service
+}
+
+@Test
+func acpApprovalRejectsMissingInactiveAndCrossSessionDelegations() {
+    let desk = ApprovalDesk(SessionLog("approval-scope-missing.log"))
+    let service = acpApprovalScopeFixture()
+    @ExpectThrows[Exception](AcpApprovalBridge(desk, service, "other-session"))
+    let bridge = AcpApprovalBridge(desk, service, "sess-1")
+    let proposal = AcpPermissionProposal("write_file", "写文件", "body")
+    @ExpectThrows[Exception](bridge.askPermission("missing", proposal))
+    service.delegations.get("delegation-1").getOrThrow().phase = "failed"
+    @ExpectThrows[Exception](bridge.askPermission("delegation-1", proposal))
+    @Expect(desk.pendingCount(), 0)
+}
+
+@Test
+func acpApprovalPendingCountIsDelegationScoped() {
+    let desk = ApprovalDesk(SessionLog("approval-scope-count.log"))
+    let bridge = AcpApprovalBridge(desk, acpApprovalScopeFixture(), "sess-1")
+    let proposal = AcpPermissionProposal("write_file", "写文件", "body")
+    let first = bridge.askPermission("delegation-A", proposal)
+    bridge.askPermission("delegation-B", proposal)
+    desk.ask("unrelated")
+    @Expect(bridge.pendingFor("delegation-A"), 1)
+    @Expect(bridge.pendingFor("delegation-B"), 1)
+    @Expect(bridge.pendingFor("missing"), 0)
+    @Expect(bridge.answerPermission(first, "denied"), true)
+    @Expect(bridge.pendingFor("delegation-A"), 0)
+    @Expect(bridge.pendingFor("delegation-B"), 1)
+}
+
+@Test
+func acpApprovalRevisionAndProtocolIdentityChangesRejectGrant() {
+    let desk = ApprovalDesk(SessionLog("approval-scope-revision.log"))
+    let service = acpApprovalScopeFixture()
+    let bridge = AcpApprovalBridge(desk, service, "sess-1")
+    let proposal = AcpPermissionProposal("write_file", "写文件", "body")
+    let entry = service.delegations.get("delegation-1").getOrThrow()
+    let first = bridge.askPermission("delegation-1", proposal)
+    entry.revision += 1
+    @Expect(bridge.answerPermission(first, "allowed-once"), false)
+    @Expect(desk.stateOf(first), "denied")
+    let second = bridge.askPermission("delegation-1", proposal)
+    entry.protocolSessionId = "other-protocol-session"
+    @Expect(bridge.answerPermission(second, "allowed-once"), false)
+    @Expect(desk.stateOf(second), "denied")
+}
+
+@Test
+func acpApprovalCancelledTurnCannotConsumePendingGrant() {
+    let desk = ApprovalDesk(SessionLog("approval-scope-cancel.log"))
+    let service = acpApprovalScopeFixture()
+    let bridge = AcpApprovalBridge(desk, service, "sess-1")
+    let id = bridge.askPermission("delegation-1", AcpPermissionProposal("write_file", "写文件", "body"))
+    service.delegations.get("delegation-1").getOrThrow().cancelToken.cancel()
+    @Expect(bridge.answerPermission(id, "allowed-once"), false)
+    @Expect(desk.stateOf(id), "denied")
 }
