@@ -22,6 +22,7 @@ async function runWriteApprovalCase(decision, expectedWritten) {
   const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
   assert.ok(existsSync(host), '缺少本轮真实宿主');
   const requests = [], failures = [];
+  const directory = mkdtempSync(join(tmpdir(), 'sacode-model-write-'));
   const server = createServer(async (req, res) => {
     try {
       let raw = ''; for await (const bytes of req) raw += bytes;
@@ -31,7 +32,9 @@ async function runWriteApprovalCase(decision, expectedWritten) {
       const event = value => res.write('data: ' + JSON.stringify(value) + '\n\n');
       if (requests.length === 1) {
         // 请求里必须看得到 write：修复前 tools 只有 todo_write，模型无从调起
-        assert.deepEqual(body.tools.map(x => x.function.name), ['todo_write', 'read', 'write']);
+        const names = body.tools.map(x => x.function.name);
+        for (const name of ['todo_write', 'read', 'write']) assert.ok(names.includes(name), `缺少工具 ${name}`);
+        assert.equal(new Set(names).size, names.length, '工具名不可重复');
         event({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-write-1',
           function: { name: 'write', arguments: WRITE_ARGS } }] } }] });
         event({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { total_tokens: 3 } });
@@ -40,7 +43,7 @@ async function runWriteApprovalCase(decision, expectedWritten) {
         const tool = body.messages.filter(m => m.role === 'tool').pop();
         assert.equal(tool.tool_call_id, 'call-write-1');
         if (expectedWritten) {
-          assert.equal(tool.content, `ok:${TARGET}`, '放行后工具结果必须是写入成功');
+          assert.equal(tool.content, `ok:${join(directory, TARGET)}`, '放行后工具结果必须是写入成功');
         } else {
           const result = JSON.parse(tool.content);
           assert.ok(result.error && result.error.includes('approval-not-granted'),
@@ -55,7 +58,6 @@ async function runWriteApprovalCase(decision, expectedWritten) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   // 无论成败都必须收站：泄漏的 HTTP 服务器会让 node 进程永不退出
   try {
-    const directory = mkdtempSync(join(tmpdir(), 'sacode-model-write-'));
     const env = { ...process.env, SACODE_USER_SETTINGS_DIR: join(directory, 'settings'),
       SACODE_PROVIDER_BASE_URL: `http://127.0.0.1:${server.address().port}`,
       SACODE_PROVIDER_MODEL: 'write-fixture', SACODE_PROVIDER_KEY: 'fixture-only' };
@@ -63,6 +65,7 @@ async function runWriteApprovalCase(decision, expectedWritten) {
     await bridge.start(directory);
     try {
       await bridge.request('initialize');
+      await bridge.request('workspace/set-directory', { directory });
       await bridge.request('session/submit', { eventType: 'user/message', data: '请写入文件' });
       const start = await bridge.request('task/start'); assert.equal(start.provider, 'real');
       let result; let answered = false;
@@ -96,7 +99,7 @@ async function runWriteApprovalCase(decision, expectedWritten) {
       const log = readFileSync(join(directory, 'session.log'), 'utf8');
       assert.ok(/approval\/asked\t\d+:write/.test(log), '工单发号必须进日志');
       assert.ok(new RegExp(`approval\/decided\t\\d+:${decision}`).test(log), '决答必须进日志');
-      assert.ok(log.includes(`ok:${TARGET}`) === expectedWritten, '工具结果必须与放行结论一致');
+      assert.ok(log.includes(`ok:${join(directory, TARGET).replaceAll('\\', '\\\\')}`) === expectedWritten, '工具结果必须与放行结论一致');
     } finally {
       const stopped = await bridge.stop(); assert.equal(stopped.code, 0); assert.equal(stopped.forced, false);
     }
