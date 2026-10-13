@@ -44,7 +44,7 @@ function panel(api){
   const m={exports:{}},hooks=[];
   const vue={defineComponent:v=>v,ref:value=>({value}),watch:(_get,callback,options)=>{hooks.push(callback);if(options?.immediate)callback();},onBeforeUnmount:()=>{},h:(type,props,children)=>({type,props:props||{},children})};
   let seq=0;vm.runInNewContext(panelOutput.outputFiles[0].text,{module:m,exports:m.exports,require:()=>vue,crypto:{randomUUID:()=>String(++seq)}});
-  const props={api,sessionId:'s1',active:true};const render=m.exports.AcpHistoryPanel.setup(props);
+  const props={api:{acpSettingsDescribe:async()=>({enabled:true,revision:1,source:'project',scope:'project-session'}),acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-usable',localCredentialPrecondition:true,verdict:'measured',protocolVersion:1,evidence:'controlled-fixture:no-real-provider',modelTaskTested:false}),...api},sessionId:'s1',active:true};const render=m.exports.AcpHistoryPanel.setup(props);
   const nodes=()=>{const all=[];const walk=v=>{if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object'){all.push(v);walk(v.children);}};walk(render());return all;};
   return{props,hooks,nodes,find:(type,label)=>nodes().find(n=>n.type===type&&(label===undefined||n.children===label)),flush:async()=>{for(let i=0;i<24;i++)await Promise.resolve();}};
 }
@@ -56,6 +56,7 @@ test('真实面板创建、审批和取消控件消费运行接口，历史读�
     acpDelegationAnswer:async(...args)=>{calls.push(['answer',...args]);return{state:'sent',reason:'confirmed'};},
     acpDelegationPoll:async()=>current});
   await f.flush();assert.equal(calls.length,0);
+  f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
   f.find('textarea').props.onInput({target:{value:'检查项目'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
   assert.deepEqual(calls[0],['create','s1','2','1','opencode','检查项目']);
   f.find('button','仅允许这一次').props.onClick();await f.flush();assert.deepEqual(calls[1],['answer','s1','d1',7,'allowed-once','once']);
@@ -63,7 +64,14 @@ test('真实面板创建、审批和取消控件消费运行接口，历史读�
 });
 test('提交失败保留同一请求身份重试，不把错误当成功',async()=>{
   const calls=[];const f=panel({acpDelegationList:async()=>({version:1,sessionId:'s1',delegations:[]}),acpDelegationCreate:async(...args)=>{calls.push(args);throw Error('provider-not-ready');}});
-  await f.flush();f.find('textarea').props.onInput({target:{value:'检查项目'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
+  await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();f.find('textarea').props.onInput({target:{value:'检查项目'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
   assert.ok(f.nodes().some(n=>n.props.role==='alert'&&n.children==='provider-not-ready'));
   assert.equal(f.find('textarea').props.value,'检查项目');f.find('form').props.onSubmit({preventDefault(){}});await f.flush();assert.deepEqual(calls[0],calls[1]);
+});
+
+test('面板默认关闭，不以提交任务隐式开启，提供方检查不发任务',async()=>{
+  let starts=0,enables=0;const f=panel({acpSettingsDescribe:async()=>({enabled:false,revision:0,source:'default',scope:'project-session'}),acpSettingsSetEnabled:async(...args)=>{assert.deepEqual(args,['s1',true,0]);enables++;return{enabled:true,revision:1,source:'project',scope:'project-session'};},acpDelegationCreate:async()=>{starts++;throw Error('not invoked in readiness check');}});
+  await f.flush();f.find('textarea').props.onInput({target:{value:'检查项目'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();assert.equal(starts,0);assert.equal(enables,0);
+  f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();assert.equal(starts,0);
+  f.find('button','开启 ACP').props.onClick();await f.flush();assert.equal(enables,1);assert.equal(starts,0);
 });

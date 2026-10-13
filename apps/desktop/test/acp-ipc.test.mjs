@@ -5,13 +5,23 @@ const {registerAcpIpc}=createRequire(import.meta.url)('../acp-ipc.cjs');
 test('ACP读取只有两个固定动作且逐字段校验身份',async()=>{
   const handlers=new Map(),calls=[];
   registerAcpIpc({handle:(id,fn)=>handlers.set(id,fn)},async(...args)=>{calls.push(args);return {version:1};});
-  assert.equal(handlers.size,7);
+  assert.equal(handlers.size,10);
   await handlers.get('sacode:acpDelegationList')({}, {sessionId:'current'});
   await handlers.get('sacode:acpDelegationDescribe')({}, {sessionId:'current',delegationId:'delegation-1'});
   assert.deepEqual(calls,[['acp/delegation/list',{sessionId:'current'}],['acp/delegation/describe',{sessionId:'current',delegationId:'delegation-1'}]]);
   for(const args of [null,{}, {sessionId:3},{sessionId:' '},{sessionId:'current',start:true},{sessionId:'x\n'},{sessionId:'x'.repeat(257)}])await assert.rejects(handlers.get('sacode:acpDelegationList')({},args),/bad-acp-arguments/);
   await assert.rejects(handlers.get('sacode:acpDelegationDescribe')({}, {sessionId:'current',delegationId:''}),/bad-acp-arguments/);
   assert.equal(calls.length,2);
+});
+
+test('ACP开关按修订更新，就绪探针不接受认证自报或启动参数',async()=>{
+  const handlers=new Map(),calls=[];
+  registerAcpIpc({handle:(id,fn)=>handlers.set(id,fn)},async(...args)=>{calls.push(args);return {};});
+  await handlers.get('sacode:acpSettingsSetEnabled')({}, {sessionId:'s1',enabled:true,revision:0});
+  await handlers.get('sacode:acpProviderProbe')({}, {sessionId:'s1'});
+  assert.deepEqual(calls,[['acp/settings/set-enabled',{sessionId:'s1',enabled:true,revision:0}],['acp/provider/probe',{sessionId:'s1'}]]);
+  for(const patch of [{revision:-1},{revision:0.5},{enabled:'true'},{authenticated:true},{executable:'cmd'}])await assert.rejects(handlers.get('sacode:acpSettingsSetEnabled')({}, {sessionId:'s1',enabled:true,revision:0,...patch}),/bad-acp-arguments/);
+  await assert.rejects(handlers.get('sacode:acpProviderProbe')({}, {sessionId:'s1',authenticated:true}),/bad-acp-arguments/);
 });
 
 test('ACP运行操作逐字段校验，审批保留五字段且禁止启动向量',async()=>{

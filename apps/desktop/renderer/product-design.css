@@ -409,3 +409,13 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
 .management-unavailable:has(+.management-editor)>svg { display: none; }
 .management-unavailable:has(+.management-editor) h3 { font-size: 12px; margin-bottom: 3px; }
 .management-unavailable:has(+.management-editor) small { display: none; }
+
+/* ACP 面板独立分组，避免通用工具条的横排挤压提案与历史字段。 */
+.acp-history .tool-card{display:block;min-width:0}
+.acp-history .tool-card>*+*{margin-top:10px}
+.acp-history .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.acp-history .row.spread{justify-content:space-between}
+.acp-history .row.spread>span{flex:1 1 160px}
+.acp-history .stack{display:flex;flex-direction:column;align-items:stretch;gap:10px}
+.acp-history pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+.acp-history .tool-card details{display:block}

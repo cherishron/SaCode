@@ -1264,5 +1264,12 @@ test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
     ['sacode:acpDelegationCancel',{sessionId:'current',delegationId:'d1',revision:2}],
     ['sacode:acpDelegationClose',{sessionId:'current',delegationId:'d1',revision:2}],
   ]);
+  calls.length=0;
+  exposed.acpSettingsDescribe('current');exposed.acpSettingsSetEnabled('current',true,0);exposed.acpProviderProbe('current');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['sacode:acpSettingsDescribe',{sessionId:'current'}],
+    ['sacode:acpSettingsSetEnabled',{sessionId:'current',enabled:true,revision:0}],
+    ['sacode:acpProviderProbe',{sessionId:'current'}],
+  ]);
 });
 

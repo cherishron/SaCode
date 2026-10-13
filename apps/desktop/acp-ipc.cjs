@@ -8,6 +8,8 @@ function registerAcpIpc(ipcMain, request) {
   for (const [name, method, fields] of [
     ['acpDelegationList', 'acp/delegation/list', ['sessionId']],
     ['acpDelegationDescribe', 'acp/delegation/describe', ['sessionId', 'delegationId']],
+    ['acpSettingsDescribe', 'acp/settings/describe', ['sessionId']],
+    ['acpProviderProbe', 'acp/provider/probe', ['sessionId']],
   ]) {
     ipcMain.handle('sacode:' + name, async (_event, args) => {
       if (!args || Object.keys(args).length !== fields.length || fields.some(key =>
@@ -16,6 +18,12 @@ function registerAcpIpc(ipcMain, request) {
       return request(method, args);
     });
   }
+  ipcMain.handle('sacode:acpSettingsSetEnabled', async (_event,args)=>{
+    if(!args||Array.isArray(args)||Object.keys(args).length!==3||!Object.hasOwn(args,'sessionId')||!identity(args.sessionId)||!Object.hasOwn(args,'enabled')||
+      typeof args.enabled!=='boolean'||!Object.hasOwn(args,'revision')||!Number.isSafeInteger(args.revision)||args.revision<0)
+      throw Error('bad-acp-arguments');
+    return request('acp/settings/set-enabled',{sessionId:args.sessionId,enabled:args.enabled,revision:args.revision});
+  });
   for (const [name, method, schema] of [
     ['acpDelegationCreate', 'create', {sessionId:identity, taskId:identity, requestId:identity, peerId:identity, taskText}],
     ['acpDelegationPoll', 'poll', {sessionId:identity, delegationId:identity}],
