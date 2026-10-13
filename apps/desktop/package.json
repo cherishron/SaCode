@@ -30,6 +30,7 @@
       "window-visibility.cjs",
       "preload.cjs",
       "host-bridge.cjs",
+      "acp-ipc.cjs",
       "team-ipc.cjs",
       "team-adapter.cjs",
       "worktree-ipc.cjs",

@@ -1242,3 +1242,13 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }
 });
+
+test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
+  let exposed;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.acpDelegationList('current');exposed.acpDelegationDescribe('current','delegation-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:acpDelegationList',{sessionId:'current'}],['sacode:acpDelegationDescribe',{sessionId:'current',delegationId:'delegation-1'}]]);
+  assert.equal(exposed.acpRequest,undefined);
+});

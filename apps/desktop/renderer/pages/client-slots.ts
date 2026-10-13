@@ -12,6 +12,7 @@ export {FileEditor,createFileEditor} from './file-editor';
 export {GitWorkbench} from './git-workbench';
 export {TerminalOutput} from './terminal-output';
 export {TeamPanel} from './team-panel';
+export {AcpHistoryPanel} from './acp-history';
 import * as providerSettings from './provider-settings';
 import * as customModels from './custom-models';
 import * as budgetStats from './budget-stats';

@@ -9,6 +9,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 // 只看 DOM 里有 JSON 不算数——必须证明点击真的被核心落盘，且投影、流式、审批、取消各自有终态。
 async function uiSmoke(context) {
   if (process.env.SACODE_UI_SMOKE_SUITE === 'model-center') return require('./model-center-main-smoke.cjs')(context);
+  if (process.env.SACODE_UI_SMOKE_SUITE === 'acp-history') return require('./acp-history-main-smoke.cjs')(context);
   const { app, nativeTheme, HOST, SESSION_DIR, SESSION_LOG, bridge, seedIfNeeded, createWindow } = context;
   let win;
   let bad = 0;

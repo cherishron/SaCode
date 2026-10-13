@@ -307,7 +307,8 @@ func runJob(args: Array<String>): Int64 {
 
 main(args: Array<String>) {
     if (args.size > 0 && (args[0] == "--help" || args[0] == "-h")) {
-        println("usage: sacode <goal|team|job|mode|worktree|tools|call> [arguments]")
+        println("usage: sacode <goal|team|job|mode|acp|worktree|tools|call> [arguments]")
+        println("       sacode acp list | acp describe <委派身份>（持久记录，只读）")
         return 0
     }
     if (args.size > 0 && args[0] == "team") { return runTeamCommand(args) }
@@ -315,6 +316,7 @@ main(args: Array<String>) {
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
     if (hasFlag(args, "--remote")) { return runRemote(args) }
     if (args.size > 0 && args[0] == "mode") { return runApprovalModeCommand(args) }
+    if (args.size > 0 && args[0] == "acp") { return runAcpCommand(args) }
     // 会话级 worktree 的两条入口都在 remote 之后路由：remote 只做透传，绝不落到本地。
     if (args.size > 0 && args[0] == "worktree") { return runWorktreeCommand(args) }
     if (cliSessionRequested(args)) { return runCliSession(args) }

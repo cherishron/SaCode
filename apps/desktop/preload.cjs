@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 // 没有通用的 request(everything) 通道——那等于把宿主协议面整个交给网页。
 contextBridge.exposeInMainWorld("sacode", {
   projection: () => ipcRenderer.invoke("sacode:projection"),
+  acpDelegationList: (sessionId) => ipcRenderer.invoke('sacode:acpDelegationList', { sessionId }),
+  acpDelegationDescribe: (sessionId, delegationId) => ipcRenderer.invoke('sacode:acpDelegationDescribe', { sessionId, delegationId }),
   teamApprovalAnswer: (teamSessionId, memberId, approvalId, decision) => ipcRenderer.invoke('sacode:teamApprovalAnswer', {teamSessionId, memberId, approvalId, decision}),
   teamDescribe: (teamSessionId) => ipcRenderer.invoke('sacode:teamDescribe', {teamSessionId}),
   teamMemberCreate: (teamSessionId, name, role) => ipcRenderer.invoke('sacode:teamMemberCreate', {teamSessionId, name, role}),
