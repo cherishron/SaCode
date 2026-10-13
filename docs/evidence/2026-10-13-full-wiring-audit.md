@@ -541,3 +541,11 @@ AcpApprovalBridge构造核会话相同，ask仅接受已有运行/等待审批�
 旧10条单测补显式核心运行态夹具，不宣称真实进程；新增4条覆盖不存在/非活动/跨会话发号拒绝、委派独立待决数、修订/协议身份变化拒绝、取消令牌使旧票失效。acp-approval-scope.log TOTAL279/PASSED279/SKIPPED0/ERROR0/FAILED0、rc0。取消竞争批准由共享锁约束，尚未有多线程实际协议发回竞争探针；批准后外部回传必须继续绑定原请求身份，不能以该核心验收冒充产品入口。审批事实持久屏障、elicitation伪成功、请求options与一次性回复绑定仍待补。
 
 固定f6f8b49全量核心仍无Summary，tool session64903保持运行；记录时cjc21032 CPU已从157.83到471.45秒，不能因为日志未增长重启或登记通过。此全量源码不含后续审批修复，终态后必须明确其基线。
+
+## 第七十轮：固定核心回归的编译阻塞与单行修复
+
+固定f6f8b4973d2dd7ad62f5c3154322627d7db38f50完整冷编已终态，full-core.exit.txt=1，无Summary。full-core.log两编译错误恰为acp_approval_test.cj:109 fakeNow逃逸lambda与worktree_setup_test.cj:153 longName逃逸lambda。前者后续2a7e974已修；后者工作区已有frozenLongName修复，另有私有TMP改动不属于本批，不整文件提交。
+
+从HEAD worktree_setup_test生成仅该不可变变量hunk候选，复制到专项集后编译及--filter wsTEntriesRejectExternalPathsAndDotDotSegments；worktree-compile-probe.log TOTAL286/PASSED1/SKIPPED285/ERROR0/FAILED0、rc0。仅1条拒绝越界/超长条目用例运行，不能登记286通过。使用HEAD派生blob暂存，该文件TMP改动保留工作区。当前固定全量未通过，需新提交重新验收。
+
+本轮开头识别的elicitation合法决定伪成功仍待实施，未把计划当已修。全产品ACP/LSP与统一桌面载荷缺口保持，不能因专项测试升级完成状态。

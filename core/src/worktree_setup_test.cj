@@ -150,7 +150,8 @@ func wsTEntriesRejectExternalPathsAndDotDotSegments() {
     // 超长条目拒（也挡住 argv 侧的失控输入）。
     var longName = ""
     for (_ in 0..600) { longName += "a" }
-    @Expect(wsTError({ => wsNormaliseEntry(longName) }), "worktree-bad-symlink-entry")
+    let frozenLongName = longName
+    @Expect(wsTError({ => wsNormaliseEntry(frozenLongName) }), "worktree-bad-symlink-entry")
 }
 
 // ---------- S3 / S4 逃逸与跳过 ----------
