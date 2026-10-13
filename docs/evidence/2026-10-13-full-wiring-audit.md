@@ -581,3 +581,11 @@ acp-permission-delivery-v6.log --filter acp*：TOTAL297/PASSED57/SKIPPED240/ERRO
 失败集合已生成，下一步按实测逐条分诊。已查实团队工作区夹具硬编码缺失的旧公共tmp路径；调度用例先期待due.size=1却实际0，随后越界成为ERROR，不能归为外部环境；Hook/租约/团队持久失败待根因核对。两条glob既有期望争议仍需按文件契约裁决，不改生产语义凑绿。SSE夹具补齐后已能运行，self-signed TLS拒绝用例仍红，不把其归为缺脚本。
 
 b40f881权限持久链已推送，首TLS失败后同一次重试终态成功。其57运行/240跳过专项不覆盖上述完整核心失败，更不覆盖公共Host/CLI、真实供应方或桌面产物。整体目标保持实施中。
+
+## 第七十五轮：调度定义字段与持久回放
+
+固定回归的调度三条红源于registerTask丢弃cron/prompt等字段及delete仅停用；不是环境。工作区已有字段构造/更新、真正删除、激活与定义回放修复，本轮逐差异核对后放入私有候选。新增schedule_replay_regression_test（归本轮），真实WriteLease/durableCheckpoint/reload验证八字段、暂停、更新修订和删除。作者原回放taskdef::按10截，实际前缀9字节，丢id首字母；两新增用例先红：schedule-replay-red.log TOTAL305/PASSED13/SKIPPED290/ERROR0/FAILED2、rc1。改按字面量前缀size截取后schedule-replay-green.log TOTAL305/PASSED15/SKIPPED290/ERROR0/FAILED0、rc0，实际15条运行，不写305通过。
+
+落库前核工作区schedule.cj SHA256仍2DA220F7B05D1457ECE97DBA139203C2C0633B6C8EE3114471F480A3D538760B及schedule_test.cj仍EF806A69BADE4DFAAD3B19C70E722CE2CA6F9974505C21C6EAD964619EEBC73C，未被并发修改；只吸收已验证作者实现/私有TMP夹具与本轮前缀修复，不带其它路径。registerTask内仍append，由入口/调用方负责持久屏障，本轮持久回放使用实际显式屏障；不能把方法名PersistsDefinition当自带持久承诺。
+
+保留未完成项：::分隔字段遇任意prompt/modelConfig分隔符需版本化契约；fireRecords完整恢复、跨进程去重、CAS/并发、防止listTasks可变引用绕日志、真实调度执行与Host/CLI/页面接线均未收口。仅定义CRUD/回放修复，不升级F13通过、不替代当前HEAD完整回归。

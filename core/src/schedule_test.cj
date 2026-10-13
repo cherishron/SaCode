@@ -5,9 +5,7 @@ import std.unittest.*
 
 @Test
 func scheduleTaskRegisterPersistsDefinition() {
-    let root = "core-sched-task-reg"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-task-reg")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "run nightly backup", false, 86400 * 7, "", "", "")
@@ -22,9 +20,7 @@ func scheduleTaskRegisterPersistsDefinition() {
 
 @Test
 func scheduleTaskPauseAndResume() {
-    let root = "core-sched-task-pause"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-task-pause")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
@@ -39,9 +35,7 @@ func scheduleTaskPauseAndResume() {
 
 @Test
 func scheduleTaskDeleteRemovesFromList() {
-    let root = "core-sched-task-del"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-task-del")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
@@ -52,9 +46,7 @@ func scheduleTaskDeleteRemovesFromList() {
 
 @Test
 func scheduleFireRecordsExecution() {
-    let root = "core-sched-fire-rec"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-fire-rec")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
@@ -70,9 +62,7 @@ func scheduleFireRecordsExecution() {
 
 @Test
 func scheduleDueTasksReturnsOnlyActiveWithoutPending() {
-    let root = "core-sched-due"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-due")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
@@ -87,9 +77,7 @@ func scheduleDueTasksReturnsOnlyActiveWithoutPending() {
 
 @Test
 func testScheduleFireReturnsHookResult() {
-    let root = "core-sched-fire-hook"
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
+    let root = coreTestDirCreated("core-sched-fire-hook")
     let log = SessionLog("${root}/session.log")
     let sc = ScheduleStore(log)
     sc.registerTask("nightly", "0 0 * * *", "backup", false, 0, "", "", "")
