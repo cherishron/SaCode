@@ -10,3 +10,10 @@
 [target.x86_64-w64-mingw32]
   [target.x86_64-w64-mingw32.bin-dependencies]
     path-option = ["C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"]
+
+# Linux 构建前设置 SACODE_STDX_LIB_DIR 为对应架构和 SDK 版本的 dynamic/stdx 目录。
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
