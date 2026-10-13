@@ -6,6 +6,7 @@ public class ModeController {
     public init(log: SessionLog) { this.log = log }
 
     public func current(): String {
+        if (log.isDurableFrozen()) { throw Exception("mode-persistence-unsettled") }
         var value = ""
         for (event in log.snapshotEvents()) {
             if (event.eventType == "mode/mode") {
@@ -26,5 +27,16 @@ public class ModeController {
         if (current() == mode) { return "noop" }
         log.append("mode/mode", mode)
         return "committed"
+    }
+
+    public func setDurable(mode: String, lease: WriteLease): String {
+        if (log.isDurableFrozen()) { throw Exception("mode-persistence-unsettled") }
+        if (!lease.protects(log.path)) { throw Exception("mode-write-lease-required") }
+        let result = set(mode)
+        if (!log.durableCheckpoint(lease)) {
+            log.freezeAfterDurableFailure()
+            throw Exception("mode-persistence-failed")
+        }
+        return result
     }
 }

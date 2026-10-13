@@ -89,6 +89,7 @@ public class ModelToolRuntime {
         return result.toArray()
     }
     public func execute(call: ModelToolCall): ApprovalOutcome {
+        if (modeLog.isDurableFrozen()) { return ApprovalOutcome(false, "session-persistence-unsettled") }
         if (!registry.has(call.name)) { return ApprovalOutcome(false, "unregistered-tool:${call.name}") }
         if (lspToken.cancelled()) { return ApprovalOutcome(false, "cancelled") }
         var explicitMode = false

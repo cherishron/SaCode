@@ -405,3 +405,8 @@ app.js现有modelCenterAdapters装配仅包裹save/remove/reorder/pullModels，�
 ToolRuntime.executeWithApproval新增policyApproval具名参数：策略额外要求审批时，即使ToolSpec免审批，也必须desk.consumeExactForCall；旧工具名票、换参数、无票拒绝，正确票一次性used。ModelToolRuntime读取同会话显式mode/mode，Plan deny先拒绝，ask调用审批并传额外消费标志；静态requiresApproval始终保留。无显式模式旧日志维持原审批规则，尚非四模式全量迁移；Auto分类器、Yolo自主授权与关键动作分级未在此完成。
 
 私有阶段222/222，首次联编额外sandboxRuntime参数属于未提交并发线，与私有Agent构造不匹配；候选仅排除该线。新测试捕获局部var编译拒绝，按CangjieSkills search_docs捕获规则改用let对象可变成员后224/224。补取消及已有写审批保护最终TOTAL226/PASSED226/SKIPPED0/ERROR0/FAILED0、rc0（mode-integration-v4）。Agent HEAD派生候选与已测源码除换行一致，model_tool_runtime提交私有已测不带沙箱版本；未改公共并发内容。Host模式持久入口与CLI真实用户动作尚待接线，新产物亦未重建。
+
+
+## 第五十轮：模式切换持久屏障与失败冻结
+
+ModeController新增setDurable，先核写租约与未冻结状态，再设置及durableCheckpoint；只有发布成功返回committed/noop。无租约不追加，非法值拒绝，重复设置及重启回放通过。current读取冻结状态拒绝，ModelToolRuntime冻结会话先拒绝，阻止失败发布后内存中的更宽模式继续执行。新增真实File.writeTo制造磁盘前缀分叉，切换yolo持久失败、日志冻结、模式读取拒绝、工具结果session-persistence-unsettled。私有首轮227/227，新增故障后TOTAL228/PASSED228/SKIPPED0/ERROR0/FAILED0、rc0（mode-persistence-v2）。Host新approval_mode_rpc模块已起草严格模式参数与持久调用，尚未编译/接入口，不纳此提交；旧工作区mode_rpc不替代新持久链。
