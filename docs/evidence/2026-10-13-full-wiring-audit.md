@@ -334,3 +334,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第三十六轮：实际供应商页面保存到真实核心
 
 扩展真实Electron测试，esbuild装配实际 provider-settings.ts 与 model-center-adapter.ts，实际Vue runtime挂载页面，点击编辑、输入密钥、点击保存；通过产品 preload、实际凭据处理模块、models-guard及models-save到同一私有调试Host。保存成功文案出现、编辑表单关闭，Host修订由1升2且keyConfigured=true，私有凭据文件包含页面新值且无被拒绝的陈旧值。独占TMP运行1/1 rc0。测试窗口的describe/catalog/save IPC注册由夹具装配等价转发与生产守卫/保存函数，不加载整个产品main，不扩大为完整主窗口启动或安装验收；独立retry IPC使用生产注册模块。命令使用本机私有model-render-loader解析esbuild，生成Vue runtime为既有构建文件。
+
+
+## 第三十七轮：修复内置供应商密钥被静默忽略
+
+实际页面对 credentialWritable 内置供应商显示密钥输入，但适配器 declared 分支原先只调用 set-enabled，直接丢弃填写的 key。增加成功与部分失败两条独占测试，先11条/9通过/2失败复现；改为启停成功后凭据单独沿回执revision保存，不发送内置目录草稿。凭据失败只给安全文案及configurationRevision供现有重试，启停失败不会继续凭据动作。适配器与重试状态13/13 rc0；实际Electron页面/Host保存与部分保存渲染回归2/2 rc0（独占builtin-key目录）。内置凭据分支本轮验证为适配器受控API，仍需完整内置供应商真实Host页面场景，不扩大到所有内置提供方已可用。

@@ -24,11 +24,23 @@ test('中途冲突停止排序并传回原因', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('内置供应商仅调用启停接口，不发送目录草稿或密钥', async () => {
+test('内置供应商仅调用启停接口，不发送目录草稿', async () => {
   const calls=[];
   const adapter=createModelCenterAdapters({modelsSetEnabled:async(...args)=>calls.push(args),modelsSave:async()=>assert.fail('内置供应商不能整条更新')})['provider-settings'];
-  await adapter.save({id:'builtin',declared:true,enabled:false,name:'目录名称',baseUrl:'https://example.com',key:'不应发送'},7);
+  await adapter.save({id:'builtin',declared:true,enabled:false,name:'目录名称',baseUrl:'https://example.com',key:''},7);
   assert.deepEqual(calls,[['builtin',false,7]]);
+});
+
+test('内置供应商密钥沿启停回执修订独立保存',async()=>{
+  const calls=[];
+  const adapter=createModelCenterAdapters({modelsSetEnabled:async(...args)=>{calls.push(['enabled',...args]);return {revision:8};},modelsSaveCredential:async(...args)=>{calls.push(['credential',...args]);return {saved:true};},modelsSave:async()=>assert.fail('不能改目录')})['provider-settings'];
+  await adapter.save({id:'builtin',declared:true,enabled:true,key:'fixture-key'},7);
+  assert.deepEqual(calls,[['enabled','builtin',true,7],['credential','builtin','fixture-key',8]]);
+});
+
+test('内置供应商密钥失败保留成功修订供重试且不泄露底层消息',async()=>{
+  const adapter=createModelCenterAdapters({modelsSetEnabled:async()=>({revision:8}),modelsSaveCredential:async()=>{throw Error('fixture-secret');}})['provider-settings'];
+  await assert.rejects(adapter.save({id:'builtin',declared:true,enabled:true,key:'fixture-key'},7),e=>e.configurationRevision===8&&/配置已保存，但密钥未保存/.test(e.message)&&!e.message.includes('fixture-secret'));
 });
 
 test('配置部分保存必须传回明确失败提示，不报告密钥成功', async () => {

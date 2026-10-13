@@ -54,9 +54,18 @@ export function createModelCenterAdapters(api: any) {
       },
       async save(draft: any, expectedRevision: number) {
         const { key, ...rest } = plain(draft);
-        // 内置（declared）供应商拒绝整条 update；它唯一可写的列是启停。
+        // 内置目录只写启停；凭据通过供应商身份和成功修订单独保存。
         if (draft.declared) {
-          await api.modelsSetEnabled(draft.id, draft.enabled !== false, expectedRevision);
+          const view = await api.modelsSetEnabled(draft.id, draft.enabled !== false, expectedRevision);
+          if (typeof key === 'string' && key.length) {
+            try {
+              await api.modelsSaveCredential(draft.id, key, view.revision);
+            } catch {
+              const failure: any = new Error('配置已保存，但密钥未保存。可单独重试密钥；配置已变化时请刷新重新编辑。');
+              failure.configurationRevision = view.revision;
+              throw failure;
+            }
+          }
           return;
         }
         const result = await api.modelsSave(rest, typeof key === 'string' ? key : '', expectedRevision);
