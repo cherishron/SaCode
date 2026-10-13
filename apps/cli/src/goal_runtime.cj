@@ -74,9 +74,13 @@ func runGoalCommand(args: Array<String>): Int64 {
                 if (!checkpoint.checkpoint()) { token.cancel(); return Int64(-1) }
                 return id
             }, guard: { name, args =>
-                // 监督及沙箱准入尚未收口，不能从模型的旧 Shell 工具绕过门禁。
+                // 执行类动作要求目标平台的真实隔离探测通过，不能凭模式名裸跑。
                 if (!policyGuard(name, args)) { return false }
-                return !token.cancelled() && name != "bash" && name != "pwsh" && name != "run_code"
+                if (token.cancelled()) { return false }
+                if (name == "bash" || name == "pwsh" || name == "run_code") {
+                    return platformExecutionReady(getWorkingDirectory().toString())
+                }
+                return true
             }, lspSession: "current", lspToken: token)
         let budgetMeter = TokenMeter(log)
         budgetMeter.rebuild()

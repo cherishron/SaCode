@@ -20,7 +20,9 @@ public class ExecutionApi {
         result.put("taskId", JsonString(state.taskId)); result.put("requestId", JsonString(state.requestId))
         result.put("proposal", JsonString(state.proposal)); result.put("proposalDigest", JsonString(state.digest))
         result.put("revision", JsonInt(state.revision)); result.put("phase", JsonString(state.phase))
-        result.put("result", JsonString(state.result)); result.put("providerAvailable", JsonBool(false))
+        result.put("result", JsonString(state.result))
+        let proposal = JsonValue.fromStr(state.proposal).asObject()
+        result.put("providerAvailable", JsonBool(platformExecutionReady(proposal.get("cwd").getOrThrow().asString().getValue())))
         if (state.phase == "awaiting-approval") { result.put("approvalArguments", JsonString(service.approvalArguments(state.id))) }
         return result.toString()
     }
@@ -74,8 +76,11 @@ public class ExecutionApi {
             return stateJson(service.authorize(id, revision, approvalId, desk))
         }
         if (method == "execution/stop") { return stateJson(service.stop(id, revision)) }
-        // 当前产品提供方没有通过隔离门禁，不能借 RPC 将探针放行值注入。
-        let supervisor = ExecutionSupervisor(service)
+        // 就绪来自本平台固定命令探测，不接受 RPC 自报的 providerAvailable。
+        let state = service.describe(id)
+        let directory = JsonValue.fromStr(state.proposal).asObject().get("cwd").getOrThrow().asString().getValue()
+        let supervisor = ExecutionSupervisor(service, providerReady: { => platformExecutionReady(directory) },
+            executor: ShellExecutor(workingDirectory: directory, sandboxRuntime: platformSandbox(directory)))
         if (asynchronous) {
             let run = supervisor.start(id, revision)
             onStarted(run)

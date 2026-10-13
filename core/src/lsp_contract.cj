@@ -406,7 +406,10 @@ public func lspNormalizePath(raw: String, root: String): String {
     return if (rooted) { "/${acc}" } else { acc }
 }
 
+@When[os == "Windows"]
 func lspSameOrLower(value: String): String { return value.toAsciiLower() }
+@When[os != "Windows"]
+func lspSameOrLower(value: String): String { return value }
 
 // 工作区边界：规范化后必须等于根，或落在「根 + /」之下。根为空直接判不在内
 // （没有会话工作区就没有边界，越界判定不能默认放行）。
@@ -418,14 +421,14 @@ public func lspPathInsideWorkspace(candidate: String, root: String): Bool {
     if (n != r && !n.startsWith("${r}/")) { return false }
     // 复核已存在祖先，拒绝工作区内链接指向外部目录。
     try {
-        let base = lspToSlashes(canonicalize(root).toString()).toAsciiLower()
+        let base = lspSameOrLower(lspToSlashes(canonicalize(root).toString()))
         var ancestor = Path(lspNormalizePath(candidate, root))
         while (!exists(ancestor)) {
             let parent = ancestor.parent
             if (parent.toString().size == 0 || parent.toString() == ancestor.toString()) { return false }
             ancestor = parent
         }
-        let actual = lspToSlashes(canonicalize(ancestor).toString()).toAsciiLower()
+        let actual = lspSameOrLower(lspToSlashes(canonicalize(ancestor).toString()))
         return actual == base || actual.startsWith("${base}/")
     } catch (_: Exception) { return false }
 }

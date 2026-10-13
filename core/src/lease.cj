@@ -201,7 +201,7 @@ public class WriteLease {
             tmp.write(mark.toArray())
             tmp.close()
             publishing = true
-            rename(tmpPath, to: leasePath, overwrite: false)
+            nativePublishNewFile(tmpPath, leasePath)
             // 只有落位成功才算拿到，凭据以盘上那份为准
             token = mark
             synchronized(localWriterMtx) {

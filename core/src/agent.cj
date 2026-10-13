@@ -131,6 +131,7 @@ public class ToolRuntime {
     var browserExecutor: Option<BrowserToolExecutor> = None
 
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
+        sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
         lspRouter!: LspRouter = LspRouters.sharedRouter(), lspSession!: String = "", lspToken!: TurnToken = TurnToken(), team!: ?TeamTools = None, webTools!: ?WebTools = None,
         worktree!: ?WorktreeTools = None, computer!: ?ComputerToolExecutor = None) {
         this.log = log
@@ -142,8 +143,8 @@ public class ToolRuntime {
         this.lspRouter = lspRouter
         this.lspSession = lspSession
         this.lspToken = lspToken
-        this.shellExecutor = ShellExecutor(workingDirectory: workingDirectory)
-        this.ptcExecutor = PtcExecutor(workingDirectory: workingDirectory)
+        this.shellExecutor = ShellExecutor(workingDirectory: workingDirectory, sandboxRuntime: sandboxRuntime)
+        this.ptcExecutor = PtcExecutor(workingDirectory: workingDirectory, sandboxRuntime: sandboxRuntime)
         this.terminalBuffer = TerminalBuffer(log)
         this.jobStore = JobStore()
         registerBuiltinExecutors()
@@ -294,6 +295,8 @@ public class ToolRuntime {
     }
     private func workingPath(path: String): String {
         let base = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
+        // glob/grep/shell 以空路径请求有效目录；Path("").isAbsolute() 会抛而非返回 false。
+        if (path.size == 0) { return base }
         if (base.size == 0 || Path(path).isAbsolute()) { return path }
         return Path(base).join(path).toString()
     }
@@ -812,15 +815,15 @@ public class ToolRuntime {
         let shellCmd: String
         let shellArgs: Array<String>
         if (toolName == "pwsh") {
-            shellCmd = "powershell"
+            shellCmd = if (shellWindows) { "powershell" } else { "pwsh" }
             shellArgs = ["-Command"]
         } else {
-            shellCmd = "cmd"
-            shellArgs = ["/c"]
+            shellCmd = if (shellWindows) { "cmd" } else { "/bin/sh" }
+            shellArgs = if (shellWindows) { ["/c"] } else { ["-c"] }
         }
         // 执行
         let result = shellExecutor.runShellCommand(shellCmd, shellArgs, parsed.command,
-            cwd: workingPath(""), timeoutMs: 30000, sandboxMode: parsed.sandboxMode)
+            cwd: workingPath(""), timeoutMs: 30000, sandboxMode: parsed.sandboxMode, cancelled: { => lspToken.cancelled() })
         if (result.isSome()) {
             if (let Some(r) <- result) {
                 // 有退出事实不代表捕获完整；不能把编码/管道失败当成成功空输出。
@@ -879,27 +882,31 @@ public class ToolRuntime {
         // workspace/directory），不是构造期那份常量——进入/退出 worktree 之后 node 子进程
         // 必须跟着换地方，这一点和 read/write/glob/grep/bash 走的是同一个口径。
         let result = ptcExecutor.runCode(code, timeoutMs: 30000, sandboxMode: "workspace-write",
-            cwd: workingPath(""))
+            cwd: workingPath(""), cancelled: { => lspToken.cancelled() })
         if (result.isSome()) {
             if (let Some(r) <- result) {
                 lastDetail.stage = "ran"
-                lastDetail.verified = true
-                let output = "${r.stdout}\n${r.stderr}"
+                lastDetail.verified = ptcSucceeded(r)
+                var output = "${r.stdout}\n${r.stderr}"
+                if (!lastDetail.verified) {
+                    output += "\n[ptc-exit-code:${r.exitCode};timed-out:${r.timedOut};cancelled:${r.cancelled};error:${r.error}]"
+                }
                 // PTY 桥接：写入 TerminalBuffer
                 if (output.size > 0) {
                     terminalBuffer.append(jobId, output)
                 }
                 // Jobs 桥接：更新状态
-                if (r.timedOut) {
+                if (r.timedOut || r.cancelled) {
                     try { jobStore.mark(jobId, "stopping") } catch (_: Exception) {}
                     try { jobStore.mark(jobId, "killed") } catch (_: Exception) {}
-                } else if (r.exitCode == 0) {
+                } else if (lastDetail.verified) {
                     try { jobStore.mark(jobId, "completed") } catch (_: Exception) {}
                 } else {
                     try { jobStore.mark(jobId, "failed") } catch (_: Exception) {}
                 }
-                recordResult("ok-run_code:${r.exitCode}:${output.size}")
-                return ApprovalOutcome(true, output)
+                let prefix = if (lastDetail.verified) { "ok-run_code" } else { "failed-run_code" }
+                recordResult("${prefix}:${r.exitCode}:${output.size}")
+                return ApprovalOutcome(lastDetail.verified, output)
             }
         }
         // 执行失败：标记 Job 为 failed
@@ -1197,14 +1204,14 @@ public class ToolRuntime {
     }
 }
 
-// 当前 Windows 构建的观察键：解析绝对路径和软链接，统一 ASCII 大小写。
+// 观察键解析绝对路径和软链接，只在 Windows 折叠 ASCII 大小写。
 // 逐字节保存观察值，不能用会碰撞的自制短哈希代替内容一致性。
 func fileObservationKey(path: String): String {
-    if (exists(path)) { return canonicalize(path).toString().toAsciiLower() }
+    if (exists(path)) { return normalizeWriterPath(canonicalize(path)) }
     let parent = Path(path).parent.toString()
     let dir = if (parent.size == 0) { "./" } else { parent }
     let full = canonicalize(dir).join(Path(path).fileName)
-    return full.toString().toAsciiLower()
+    return normalizeWriterPath(full)
 }
 
 class FileObservation {
@@ -1236,7 +1243,7 @@ func publishNewFile(path: String, bytes: Array<Byte>): Unit {
     try {
         tmp.write(bytes)
         tmp.close()
-        rename(staging, to: path, overwrite: false)
+        nativePublishNewFile(staging, path)
     } finally {
         try {
             // 以文件对象的实际状态判定，不依赖跨异常路径的局部布尔标志。

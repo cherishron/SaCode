@@ -12,6 +12,7 @@ public class ModelToolRuntime {
     let modeLog: SessionLog
     public init(log: SessionLog, allowParallel: Bool,
         files!: Bool = false, browser!: Bool = false, workingDirectory!: String = "", team!: ?TeamTools = None,
+        sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
         worktree!: ?WorktreeTools = None,
         computer!: ?ComputerToolExecutor = None,
         desk!: ApprovalDesk = ApprovalDesk(log), approval!: (ModelToolCall) -> Int64 = { _ => Int64(0) },
@@ -72,7 +73,7 @@ public class ModelToolRuntime {
         }
         let credentials = CredentialStore.forUser()
         let webBound: ?WebTools = if (let Some(settings) <- webSettings) { Some(WebTools(settings, credentials)) } else { None }
-        this.runtime = ToolRuntime(log, registry, workingDirectory: workingDirectory,
+        this.runtime = ToolRuntime(log, registry, workingDirectory: workingDirectory, sandboxRuntime: sandboxRuntime,
             agentOwned: true, todoAllowParallel: allowParallel, modelProtocol: true,
             lspRouter: lspRouter, lspSession: lspSession, lspToken: lspToken, team: team, webTools: webBound,
             worktree: worktree, computer: computer)

@@ -68,7 +68,7 @@ public class TeamBoard {
         this.lease = lease
         // 即使日志尚不存在，也规范化父目录；Windows 文件路径不区分大小写。
         let path = Path(log.path)
-        this.registryKey = (canonicalize(path.parent).toString() + "/" + path.fileName).toAsciiLower()
+        this.registryKey = normalizeWriterPath(canonicalize(path.parent).join(path.fileName))
         synchronized(teamBoardRegistryMutex) {
             if (!lease.protects(log.path) || teamBoardRegistry.contains(registryKey)) {
                 throw Exception("team-board-writer-conflict")

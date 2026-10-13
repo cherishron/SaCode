@@ -306,6 +306,10 @@ func runJob(args: Array<String>): Int64 {
 }
 
 main(args: Array<String>) {
+    if (args.size > 0 && (args[0] == "--help" || args[0] == "-h")) {
+        println("usage: sacode <goal|team|job|mode|worktree|tools|call> [arguments]")
+        return 0
+    }
     if (args.size > 0 && args[0] == "team") { return runTeamCommand(args) }
     if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }

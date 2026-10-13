@@ -3,8 +3,11 @@ package core
 @When[os != "Windows"]
 import std.env.getProcessId
 
+@When[os != "Windows"]
+foreign func sacode_process_liveness(pid: Int64): Int32
+
 // Windows 判活使用 kernel32；非 Windows 的 PID 使用 std.env.getProcessId。
-// findProcess 的异常不能区分不存在与查询失败，未核实平台判死后端前不能据此接管租约。
+// POSIX 判活薄层在一次 C 调用内检查 kill(pid,0) 与 errno；只有 ESRCH 证明不存在。
 //
 // 类型口径按 CFFI 文档的映射表来：C 的 `BOOL` 是 4 字节，映射成 Int32 而不是 Bool
 // （仓颉 `Bool` 对应 C 的 1 字节 `bool`）；`HANDLE` 用 `CPointer<Unit>`；
@@ -95,11 +98,8 @@ public func ownProcessId(): Int64 {
 
 @When[os != "Windows"]
 public func processLiveness(pid: Int64): String {
-    // 只确认当前进程；对其他 PID 保留 unknown，不把不可用后端误当作已死。
-    if (pid > 0 && pid == getProcessId()) {
-        return "alive"
-    }
-    return "unknown"
+    let result = unsafe { sacode_process_liveness(pid) }
+    return if (result == 0) { "alive" } else if (result == 1) { "dead" } else { "unknown" }
 }
 
 @When[os != "Windows"]

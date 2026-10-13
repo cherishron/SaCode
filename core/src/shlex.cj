@@ -129,7 +129,7 @@ public class ShellExecutor {
     let workingDirectory: String
     let sandboxRuntime: SandboxRuntime
 
-    public init(workingDirectory!: String = "", sandboxRuntime!: SandboxRuntime = SandboxRuntime()) {
+    public init(workingDirectory!: String = "", sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory)) {
         this.workingDirectory = workingDirectory
         this.sandboxRuntime = sandboxRuntime
     }

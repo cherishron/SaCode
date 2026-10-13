@@ -1,6 +1,13 @@
 package core
 
 import std.collection.ArrayList
+@When[os == "Windows"]
+import std.fs.rename
+
+@When[os == "Windows"]
+func nativePublishNewFile(staging: String, path: String): Unit {
+    rename(staging, to: path, overwrite: false)
+}
 
 // 文件提供方仅接收路径和字节，不借 shell 执行用户输入。BOOL/DWORD/HANDLE
 // 与 procwin 使用同一 ABI；所有数组指针都在同步调用结束后配对释放。
@@ -142,16 +149,6 @@ func nativeReplaceFile(staging: String, path: String): Unit {
     }
 }
 
-@When[os != "Windows"]
-func nativeAppendDurableStatus(path: String, prefix: Array<Byte>, pending: Array<Byte>, retained: Int64): String {
-    return "unavailable"
-}
-
 func nativeAppendDurable(path: String, prefix: Array<Byte>, pending: Array<Byte>, retained: Int64): Bool {
     return nativeAppendDurableStatus(path, prefix, pending, retained) == "ok"
-}
-
-@When[os != "Windows"]
-func nativeReplaceFile(staging: String, path: String): Unit {
-    throw Exception("file-replace-unavailable")
 }
