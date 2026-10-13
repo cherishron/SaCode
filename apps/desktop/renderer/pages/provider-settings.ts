@@ -10,9 +10,10 @@ export type Transport='direct'|'relay';
 export interface Provider{id:string;name:string;baseUrl:string;protocol:Protocol;keyConfigured:boolean;declared:boolean;sortOrder:number;enabled:boolean;transport:Transport;credentialWritable?:boolean;models?:({id:string;name:string;contextWindow:string;maxTokens:string;image:boolean}&ModelCapabilities)[]}
 export interface Draft extends Provider{key:string}
 export interface Adapter{
-  describe():Promise<{providers:Provider[];catalog:Provider[];revision:string;writable:boolean}>;
+  describe():Promise<{providers:Provider[];catalog:Provider[];revision:string;writable:boolean;defaultProviderId?:string;defaultModel?:string}>;
   save(draft:Draft,expectedRevision:string):Promise<void>;
   saveCredential?(id:string,key:string,expectedRevision:string):Promise<void>;
+  setDefault?(id:string,model:string,expectedRevision:string):Promise<void>;
   remove(id:string,expectedRevision:string):Promise<void>;
   reorder(keys:string[],expectedRevision:string):Promise<void>;
   pullModels(providerId:string,expectedRevision:string):Promise<void>;
@@ -70,13 +71,14 @@ export const Page=defineComponent({
     const editing=ref<string|null>(null),adding=ref(false),draft=ref<Draft>(blank());
     const deleting=ref<Provider|null>(null),pulling=ref<string|null>(null);
     const credentialRetry=ref<{revision:string;snapshot:string}|null>(null);
+    const defaultProviderId=ref(''),defaultModel=ref('');
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const readReady=ref(false);
     const reload=async()=>{
       if(!props.adapter||disposed)return;
       const gen=++generation;readReady.value=false;loading.value=true;error.value='';message.value='';
-      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;readReady.value=true;return true;}
+      try{const r=await props.adapter.describe();if(gen!==generation||disposed)return;providers.value=r.providers;catalog.value=r.catalog;revision.value=r.revision;writable.value=r.writable;defaultProviderId.value=r.defaultProviderId||'';defaultModel.value=r.defaultModel||'';readReady.value=true;return true;}
       catch(e){if(gen===generation&&!disposed){error.value=errText(e);}}
       finally{if(gen===generation&&!disposed)loading.value=false;}
     };
@@ -129,6 +131,11 @@ export const Page=defineComponent({
       const id=p.id,expected=revision.value;pulling.value=id;
       await mutate(()=>props.adapter!.pullModels(id,expected),()=>{},'已拉取模型目录');
     };
+    const chooseDefault=async(p:Provider,model:string)=>{
+      if(!canMutate()||!props.adapter?.setDefault||!p.enabled||!model||!(p.models||[]).some(m=>m.id===model))return;
+      const expected=revision.value;
+      await mutate(()=>props.adapter!.setDefault!(p.id,model,expected),()=>{},'默认模型已保存');
+    };
 
     onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void reload();});void reload();});
     onBeforeUnmount(()=>{disposed=true;generation++;off?.();});
@@ -165,6 +172,10 @@ export const Page=defineComponent({
             el('span','tag '+(p.keyConfigured?'on':'off'),p.keyConfigured?'密钥已配置':'密钥缺失'),
           ]),
           el('div','actions',[
+            el('label','field',[el('span','lbl','默认模型'),el('select','ipt',[
+              el('option',null,'选择默认模型',{value:''}),
+              ...(p.models||[]).map(m=>el('option',null,m.name||m.id,{value:m.id})),
+            ],{'aria-label':'默认模型 '+(p.name||p.id),value:defaultProviderId.value===p.id?defaultModel.value:'',disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing||!p.enabled||!props.adapter?.setDefault||!(p.models||[]).length,onChange:(e:Event)=>void chooseDefault(p,(e.target as HTMLSelectElement).value)})]),
             btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
             btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
             btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!readReady.value||!writable.value||loading.value||saving.value}),

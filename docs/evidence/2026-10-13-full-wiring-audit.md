@@ -351,3 +351,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 新增model-pull-host测试，真实私有Host与本地HTTP提供方：Bearer凭据现取、模型ID去重追加且保留原模型、修订递增、旧修订拒绝、401失败不改目录、停止完成后重启读取相同目录，1/1 rc0。初次误按替换目录断言失败，核applyPulledModels→mergePulledIds既有契约后改为追加；第二次未await异步stop造成host-already-running，修正等待真实终态后通过，未修改生产实现。原件独占model-pull目录。
 
 确认provider-settings读取catalog但不消费选择/添加，preload未提供modelsAddCatalog；Host有model/registry/add-catalog但当前核心addFromCatalog不接expectedRevision。下一步需核心受租约保护且带预期修订的目录实例创建→有限Host→IPC→目录选择页面，不能只补无修订按钮。默认模型Host/IPC存在但当前供应商适配器没有选择动作，仍登记产品入口缺口。
+
+
+## 第四十轮：默认模型产品页面入口
+
+供应商适配器保留defaultProviderId/defaultModel读面并增加modelsSetDefault透传，页面逐供应商显示模型选择，沿当前目录修订提交且成功后回读；禁用供应商/空模型/编辑中/读面未就绪均不可选。真实Electron两种供应商页面保存密钥后选择模型，核心revision升3且defaultProviderId/defaultModel一致，2/2 rc0；适配器默认读写及既有回归12/12 rc0。仍为专用测试窗口与调试Host；测试默认动作注册为夹具直转既有Host，非完整产品main初始化证明。共享provider-settings暂存仅接口/默认状态/回读/选择处理及DOM五hunk，保留其他作者新建草稿/模型编辑两个hunk。未将默认选择等同于当前会话自动切换或真实模型成功。

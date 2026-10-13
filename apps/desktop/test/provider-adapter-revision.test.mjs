@@ -5,6 +5,13 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 const source = readFileSync(new URL('../renderer/pages/model-center-adapter.ts', import.meta.url), 'utf8');
 const { createModelCenterAdapters } = await import('data:text/javascript;base64,' + Buffer.from(stripTypeScriptTypes(source)).toString('base64'));
+
+test('默认模型读面与写入保留宿主身份及提案修订',async()=>{
+  const calls=[];
+  const adapter=createModelCenterAdapters({modelsDescribe:async()=>({providers:[],revision:4,writable:true,defaultProviderId:'p',defaultModel:'m'}),modelsCatalog:async()=>[],modelsSetDefault:async(...args)=>{calls.push(args);}})['provider-settings'];
+  const view=await adapter.describe();assert.equal(view.defaultProviderId,'p');assert.equal(view.defaultModel,'m');
+  await adapter.setDefault('p','m',4);assert.deepEqual(calls,[['p','m',4]]);
+});
 test('旧排序提案即使无需写入也拒绝冲突', async () => {
   let writes = 0;
   const adapter = createModelCenterAdapters({ modelsDescribe: async () => ({ revision: 2, providers: [{ id: 'a', sortOrder: 1 }] }), modelsSort: async () => { writes++; } })['provider-settings'];
