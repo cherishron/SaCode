@@ -38,6 +38,7 @@ export const AcpHistoryPanel=defineComponent({
       h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void probe()},'检查 OpenCode 提供方'),
       provider.value?h('section',{class:'tool-card'},[
         h('strong',{},providerReady()?'本地凭据前提及 ACP 协议探针通过':provider.value.environment==='installed-auth-missing'?'本地凭据列表为空':'提供方尚未就绪'),
+        provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 子进程打开本地日志文件被拒绝，尚不能确认认证状态。'):null,
         h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
       ]):h('p',{class:'note'},'提交前请检查提供方；检查不会发送模型任务。'),
       h('form',{class:'stack',onSubmit:(event:Event)=>{event.preventDefault();void start();}},[

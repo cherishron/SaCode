@@ -29,17 +29,19 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
     await click('关闭 ACP');await wait("document.querySelector('.acp-history').textContent.includes('本项目会话 ACP 已关闭')");
     const saved=await js("window.sacode.acpSettingsDescribe('current')");
     if(saved.enabled!==false||saved.revision!==2)throw Error('acp-settings-roundtrip-mismatch');
-    if(process.env.SACODE_ACP_OPENCODE_EXECUTABLE){
+    if(process.env.SACODE_ACP_OPENCODE_EXECUTABLE||process.env.SACODE_ACP_DISCOVERY_SMOKE==='1'){
       await bridge.request('workspace/set-directory',{sessionId:'current',directory:SESSION_DIR});
       await click('检查 OpenCode 提供方');
       await wait("(()=>{const t=document.querySelector('.acp-history').textContent;return t.includes('提供方尚未就绪')||t.includes('本地凭据列表为空')||t.includes('本地凭据前提及 ACP 协议探针通过');})()");
       if(!await js("document.querySelector('.acp-history').textContent.includes('真实模型任务尚未验证')"))throw Error('acp-provider-task-boundary-missing');
+      const detail=await js("[...document.querySelectorAll('.acp-history pre')].map(p=>p.textContent).join('\\n')");
+      if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件被拒绝')"))throw Error('acp-log-permission-reason-hidden');
     }
     const after=readFileSync(SESSION_LOG,'utf8');
     if((after.match(/\tacp\/task\/start\t/g)||[]).length!==1)throw Error('acp-settings-started-task');
     await js("document.querySelector('.acp-history').scrollIntoView({block:'start'})");
     writeFileSync(join(SESSION_DIR,'acp-readiness.png'),(await win.webContents.capturePage()).toPNG());
-    writeFileSync(join(SESSION_DIR,'acp-history-smoke.json'),JSON.stringify({passed:true,fixture:'recorded-protocol-facts',realHost:true,realIpc:true,realMainWindow:true,configurationRoundTrip:true,startsTask:false,paidModel:false}));
+    writeFileSync(join(SESSION_DIR,'acp-history-smoke.json'),JSON.stringify({passed:true,fixture:'recorded-protocol-facts',realHost:true,realIpc:true,realMainWindow:true,configurationRoundTrip:true,automaticDiscovery:process.env.SACODE_ACP_DISCOVERY_SMOKE==='1',startsTask:false,paidModel:false}));
     await bridge.stop();console.log('ACP_HISTORY_MAIN_SMOKE PASS');app.exit(0);
   }catch(error){console.error('ACP_HISTORY_MAIN_SMOKE FAIL',error);await bridge.stop();app.exit(1);}
 };

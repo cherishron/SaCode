@@ -1,8 +1,6 @@
 package host
 
 import core.*
-import std.env.getVariable
-import std.fs.*
 import stdx.encoding.json.*
 
 // 活运行时只能由可信插件装配代码注入；协议没有可执行文件、认证布尔值或任意启动参数入口。
@@ -42,15 +40,7 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
                 throw Exception("workspace-not-selected")
             }
             let report = OpenCodeAcpProvider(hostOpenCodeExecutable()).probe(workspace)
-            let result = JsonObject()
-            result.put("peerId", JsonString("opencode"));
-            result.put("environment", JsonString(report.environment))
-            result.put("localCredentialPrecondition", JsonBool(report.authenticated));
-            result.put("verdict", JsonString(report.verdict))
-            result.put("protocolVersion", JsonInt(report.protocolVersion));
-            result.put("evidence", JsonString(report.evidence))
-            result.put("modelTaskTested", JsonBool(false))
-            emit(okFrame(idText, result.toString()));
+            emit(okFrame(idText, openCodeReadinessJson(report)));
             return true
         }
         if (method == "acp/settings/set-enabled" || method == "acp/delegation/create") {
@@ -139,18 +129,7 @@ func isAcpProductMethod(method: String): Bool {
 
 // 只从宿主环境或受控产品发现结果取路径，不从请求参数构造命令。
 func hostOpenCodeExecutable(): String {
-    let configured = getVariable("SACODE_ACP_OPENCODE_EXECUTABLE") ?? ""
-    if (configured.size > 0) {
-        return canonicalize(configured).toString()
-    }
-    let report = AcpEnvProbe().probeOne("opencode", refresh: true)
-    for (line in report.path.split("\n", removeEmpty: true)) {
-        let candidate = line.trimAscii()
-        if (candidate.endsWith(".exe")) {
-            return canonicalize(candidate).toString()
-        }
-    }
-    throw Exception("provider-unavailable:opencode-executable-not-configured")
+    return configuredOpenCodeExecutable()
 }
 
 func acpChangesOwner(method: String): Bool {

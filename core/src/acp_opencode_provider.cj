@@ -2,10 +2,74 @@ package core
 
 import std.collection.*
 import std.env.getVariables
+import std.env.getVariable
 import std.fs.*
 import std.io.*
 import std.process.*
 import stdx.encoding.json.*
+
+// Host 与 CLI 共用可信启动位置解析；模型或页面参数没有此入口。
+func openCodeFromWindowsSearchPath(searchPath: String): String {
+    for (entry in searchPath.split(";", removeEmpty: true)) {
+        try {
+            let directory = Path(entry.trimAscii())
+            if (!directory.isAbsolute()) {
+                continue
+            }
+            let native = directory.join("opencode.exe")
+            if (exists(native) && !FileInfo(native).isDirectory()) {
+                return canonicalize(native).toString()
+            }
+            let shim = directory.join("opencode.cmd")
+            if (!exists(shim)) {
+                continue
+            }
+            let packageRoot = directory.join("node_modules").join("@opencode").join("cli")
+            let manifestPath = packageRoot.join("package.json")
+            if (FileInfo(shim).size > 65536 || FileInfo(manifestPath).size > 65536) {
+                continue
+            }
+            let manifest = JsonValue.fromStr(String.fromUtf8(File.readFrom(manifestPath))).asObject()
+            if (manifest.get("name").getOrThrow().asString().getValue() != "@opencode/cli" ||
+                manifest.get("bin").getOrThrow().asObject().get("opencode").getOrThrow().asString().getValue() !=
+                "./bin/opencode.exe") {
+                continue
+            }
+            let script = String.fromUtf8(File.readFrom(shim))
+            if (!script.contains("\\node_modules\\@opencode\\cli\\bin\\opencode.exe")) {
+                continue
+            }
+            let executable = packageRoot.join("bin").join("opencode.exe")
+            if (exists(executable) && !FileInfo(executable).isDirectory()) {
+                return canonicalize(executable).toString()
+            }
+        } catch (_: Exception) {
+            continue
+        }
+    }
+    throw Exception("provider-unavailable:opencode-executable-not-configured")
+}
+
+public func configuredOpenCodeExecutable(): String {
+    let configured = getVariable("SACODE_ACP_OPENCODE_EXECUTABLE") ?? ""
+    if (configured.size > 0) {
+        return canonicalize(configured).toString()
+    }
+    // Windows 只看显式 PATH 绝对目录；不搜索当前目录，不经 shell 执行 --version。
+    return openCodeFromWindowsSearchPath(getVariable("PATH") ?? getVariable("Path") ?? "")
+}
+
+public func openCodeReadinessJson(report: AcpProviderReadiness): String {
+    let result = JsonObject()
+    result.put("peerId", JsonString("opencode"));
+    result.put("environment", JsonString(report.environment))
+    result.put("localCredentialPrecondition", JsonBool(report.authenticated));
+    result.put("verdict", JsonString(report.verdict))
+    result.put("protocolVersion", JsonInt(report.protocolVersion));
+    result.put("evidence", JsonString(report.evidence))
+    result.put("modelTaskTested", JsonBool(false))
+    return result.toString()
+}
 
 // auth list 只作本地配置前提检查；不把存在记录宣称为远端凭据有效或模型任务已通过。
 func openCodeLocalCredentialRecords(raw: String): Bool {
@@ -89,7 +153,13 @@ public class OpenCodeAcpProvider <: AcpProvider {
             stage = "exit-${exit}"
             if (diagnostic.contains("EPERM") || diagnostic.contains("Permission denied") || diagnostic.contains(
                 "Access is denied")) {
-                stage += "-permission-denied"
+                let logFile = diagnostic.contains(".log") && (diagnostic.contains("\\log\\") || diagnostic.contains(
+                    "/log/"))
+                stage += if (logFile) {
+                    "-log-file-permission-denied"
+                } else {
+                    "-permission-denied"
+                }
             }
             if (exit != 0) {
                 throw Exception("opencode-auth-list-failed")

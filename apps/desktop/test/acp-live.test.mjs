@@ -75,3 +75,11 @@ test('面板默认关闭，不以提交任务隐式开启，提供方检查不�
   f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();assert.equal(starts,0);
   f.find('button','开启 ACP').props.onClick();await f.flush();assert.equal(enables,1);assert.equal(starts,0);
 });
+
+test('日志权限拒绝显示真实阻塞，不伪装成未配置凭据或允许提交',async()=>{
+  let starts=0;const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'probe-failed-unknown',localCredentialPrecondition:false,verdict:'pending-verification',protocolVersion:0,evidence:'opencode-local-auth-exit-1-log-file-permission-denied-unconfirmed:no-task',modelTaskTested:false}),acpDelegationCreate:async()=>{starts++;}});
+  await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
+  f.find('textarea').props.onInput({target:{value:'不得执行'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
+  const text=JSON.stringify(f.nodes());assert.ok(text.includes('日志文件被拒绝'));assert.equal(text.includes('本地凭据列表为空'),false);
+  assert.equal(f.find('button','提交给 OpenCode').props.disabled,true);assert.equal(starts,0);
+});
