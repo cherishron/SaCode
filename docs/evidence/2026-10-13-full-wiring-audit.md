@@ -266,3 +266,12 @@ persistence_repair_test九条实际覆盖并发120次刷新、真实Windows读�
 本批吸收execution_api/service/output/supervisor及测试、shlex与sandbox对应实现/测试，包含请求去重、精确授权、启动/停止/自然退出、损坏输出、恢复不重执行、取消/超时和双流限额事实。公开ExecutionApi仍providerAvailable=false且默认门禁关闭，不以测试passthrough证明产品隔离或真实公开执行已完成。
 
 重要载荷边界：正在编译的Host v6副本早于本次Sandbox/监督器注入修复，即便随后成功也只代表该旧候选快照，不能升级为最新安全载荷；需下一固定提交重新构建。保持原句柄85803，不把持续活动重启为新构建。
+
+## 第二十八轮：目标声明真实工具循环与旧候选构建终态
+
+读取上一轮原件：goal-claim-regression.log 最终 TOTAL177/PASSED176/SKIPPED0/ERROR0/FAILED1，rc1。唯一失败是新增测试误把 GoalService 的实际完成状态 complete 断言为 completed；stopReason=completed 与同轮自动完成其余断言成立。按 goal.cj 既有状态契约纠正测试，不修改生产状态来凑绿。新增 claim-only 不得完成的反向用例，隔离副本、独占TMP运行 goal-claim-v2.log，尚待读取终态，不预报通过。
+
+Host build-v6.log 已实际 cjpm build success，build-v6.exit.txt=0。同一构建已终态，不再等待或重启该句柄。它是 b312025 基底加多层工作区依赖的旧候选，且早于默认沙箱拒绝修复，不能作为最新安全产物，不替换公共载荷。下一步须从收口后的固定源码重建，并进行真实 Host/CLI 和打包态验收。
+
+第二十八轮后续：v2 最终 TOTAL178/PASSED177/SKIPPED0/ERROR0/FAILED1，rc1。新增独占受害用例 goalRunnerClaimWithoutMechanicalEvidenceDoesNotComplete 复现声明单独自动完成。根因位于 ModelAgentLoop：任意 allowed 工具都增加 successfulToolCalls，包含 update_goal，声明本身因而被 GoalRunner 用作机械证据。修复排除 update_goal 的进展计数，工具结果仍正常结算；公共工作区保留并发 LSP 排除及结构化结果修改。私有候选从 HEAD model_agent.cj 仅应用本批排除，未吞 LSP 共享修改，启动 v3 178条回归等待终态。
+v3 终态：TOTAL178/PASSED178/SKIPPED0/ERROR0/FAILED0，rc0；正向同轮 todo 证据+日志 claim 完成，反向仅 claim 不完成。五个目标源码/测试逐字哈希与候选一致。model_agent 使用 HEAD 派生候选只提交 update_goal 排除，不带并发 LSP 结果与计数改动；局部回归不替代最新 Host/CLI 产品验收。

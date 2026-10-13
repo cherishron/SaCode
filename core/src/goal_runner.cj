@@ -1,5 +1,6 @@
 package core
 import stdx.encoding.json.*
+import std.convert.*
 
 // 把 GoalDriver 接进真实模型工具循环：一轮 = 一次 ModelAgentLoop.run（整个 turn 的工具
 // 循环跑到终态），驱动决定「目标没完成且允许就再跑下一轮」。这正是基线点名的缺口——
@@ -15,7 +16,48 @@ import stdx.encoding.json.*
 //   - 取消则不同：取消的那一轮结算完时长就不再开新轮（cancelled 是停止理由，不是限额）；
 //   - budgetExceeded：外部用量 / 停止信号，命中即经 applyStop 落 goal-budget 阻塞。
 // 即时补充的送达发生在 ModelAgentLoop 内部的步边界（claimStep），本层不重复实现。
+class GoalTurnTotals {
+    var usage: Int64 = 0
+    var delivered: Int64 = 0
+    var text = ""
+    var settled: Int64 = 0
+    var succeeded: Int64 = 0
+    var interrupted = false
+}
+
 public class GoalRunner {
+    // 网络初始化与模型循环都在线程内执行；取消仍通过同一个 TurnToken。
+    public func start(makeFirst: () -> Provider, nextProvider: (String) -> Provider,
+        model: String, token: TurnToken, log: SessionLog, sink: FrameSink,
+        scheduler: GoalScheduler, svc: GoalService, maxRounds: Int64, maxElapsed: Int64,
+        noProgressLimit: Int64, checkpoint: () -> Bool, budgetExceeded: () -> Bool,
+        maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
+        toolRuntime!: ?ModelToolRuntime = None, settleRound!: (TurnResult) -> String = { _ => "absent" }): TurnHandle {
+        let future = spawn { =>
+            let totals = GoalTurnTotals()
+            var reason = ""
+            try {
+                let result = run(makeFirst, nextProvider, model, token, log, sink, false,
+                    scheduler, svc, maxRounds, maxElapsed, noProgressLimit, budgetExceeded, { => false },
+                    maxSteps: maxSteps, attach: attach, supportsImages: supportsImages, toolRuntime: toolRuntime,
+                    armed: { => !token.cancelled() }, maxGoalRounds: maxRounds, checkpoint: checkpoint,
+                    settleRound: { round =>
+                        totals.delivered += round.delivered
+                        totals.text += round.text
+                        totals.settled += round.settledToolCalls
+                        totals.succeeded += round.successfulToolCalls
+                        totals.interrupted = totals.interrupted || round.interrupted
+                        if (round.usage.size > 0) { totals.usage += Int64.parse(round.usage) }
+                        settleRound(round)
+                    })
+                reason = result.stopReason
+            } catch (e: Exception) { reason = "error:${e.message}"; totals.interrupted = true }
+            TurnResult(token.cancelled(), totals.delivered, totals.text, reason, "${totals.usage}",
+                totals.interrupted, totals.settled, 0, successfulToolCalls: totals.succeeded)
+        }
+        return TurnHandle(token, future)
+    }
+
     public func run(makeFirst: () -> Provider, nextProvider: (String) -> Provider,
         model: String, token: TurnToken, log: SessionLog, sink: FrameSink,
         allowParallel: Bool, scheduler: GoalScheduler, svc: GoalService,
@@ -23,7 +65,8 @@ public class GoalRunner {
         budgetExceeded: () -> Bool, claim: () -> Bool,
         maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
         toolRuntime!: ?ModelToolRuntime = None, armed!: () -> Bool = { => true },
-        maxGoalRounds!: Int64 = 0): DriveResult {
+        maxGoalRounds!: Int64 = 0, checkpoint!: () -> Bool = { => true },
+        settleRound!: (TurnResult) -> String = { _ => "absent" }): DriveResult {
         let driver = GoalDriver(scheduler, svc)
         let evidence = GoalEvidence(log)
         return driver.run(maxRounds, maxElapsed, noProgressLimit, budgetExceeded, { =>
@@ -42,6 +85,8 @@ public class GoalRunner {
             // 「本轮该追求什么 + 现在第几轮」。落成 log-only 事件而不是直接写 user/message，
             // 是为了不进桌面转录；请求装配时折成 developer 角色（model_request.cj）。
             admitGoalRound(log, scheduler, maxGoalRounds)
+            if (token.cancelled()) { return RoundOutcome(false, false, cancelled: true) }
+            if (!checkpoint()) { throw Exception("goal-admission-checkpoint-failed") }
             let result = ModelAgentLoop().run(makeFirst(), nextProvider, model, token, log, sink, allowParallel, maxSteps: maxSteps, attach: attach, supportsImages: supportsImages, toolRuntime: toolRuntime)
             let progressed = result.successfulToolCalls > Int64(0) && !result.interrupted && !result.cancelled
             let revision = scheduler.openRoundRevision()
@@ -51,8 +96,10 @@ public class GoalRunner {
                 // evidence 随之为假。轮次号也在匹配条件里：上一轮的副作用替不了这一轮。
                 evidence.record(revision, round)
             }
-            RoundOutcome(progressed, evidence.satisfiedFor(revision, round) && claim(), cancelled: result.cancelled)
-        }, armed: armed)
+            settleRound(result)
+            RoundOutcome(progressed, evidence.satisfiedFor(revision, round) &&
+                (GoalClaim(log).claimedFor(revision, round) || claim()), cancelled: result.cancelled)
+        }, armed: armed, checkpoint: checkpoint)
     }
 }
 

@@ -253,7 +253,7 @@ public class GoalDriver {
 
     public func run(maxRounds: Int64, maxElapsed: Int64, noProgressLimit: Int64,
         budgetExceeded: () -> Bool, runRound: () -> RoundOutcome,
-        armed!: () -> Bool = { => true }): DriveResult {
+        armed!: () -> Bool = { => true }, checkpoint!: () -> Bool = { => true }): DriveResult {
         var rounds = Int64(0)
         var stopReason = ""
         var done = false
@@ -279,6 +279,7 @@ public class GoalDriver {
                     // 取消的那一轮照常结算时长与进展（时间确实花了），但**不再开下一轮**：
                     // 取消绝不自动续跑，否则 stop 之后进程还在原地空转到撞上限。
                     scheduler.endRound(outcome.progressed)
+                    if (!checkpoint()) { throw Exception("goal-round-checkpoint-failed") }
                     rounds += Int64(1)
                     if (outcome.cancelled) {
                         stopReason = "cancelled"
@@ -296,6 +297,7 @@ public class GoalDriver {
                 }
             }
         }
+        if (!checkpoint()) { throw Exception("goal-settlement-checkpoint-failed") }
         return DriveResult(rounds, stopReason)
     }
 }
