@@ -573,3 +573,11 @@ acp-permission-delivery-v6.log --filter acp*：TOTAL297/PASSED57/SKIPPED240/ERRO
 固定31b4a79旧全量诊断副本仅归档core/extjs，结果TOTAL1323/PASSED1245/SKIPPED2/ERROR52/FAILED24、rc1；缺scripts是本轮准备遗漏，其中SSE错误实际MODULE_NOT_FOUND，不能记为源码SSE缺陷。团队工作区另有硬编码D:/Project/.../core/target/team-workspace-20261008/tmp不存在，不能将全部52归准备原因。保留原件/failure-cases.txt但不作有效完整仓库验收。已完整git archive同SHA至full-repo-31b4a79d79e2，源码ZIP SHA256 7B98CAC6425AC7B42520B243383A4D9153901FD8B8215D619A4385F33F513931；复跑session52026/cjc16944仍在编，无Summary，不重启。
 
 本批已接核心实际工单、持久事实与协议管道，不是假许可回调；提供方仍为本地协议夹具，没有真实外部模型请求、公共Host/CLI/页面或安装载荷验证。公开接线、内容投影、取消时待决请求回复、任务终态事实及跨进程身份监督仍未完成，不升级F10全域通过。
+
+## 第七十四轮：完整归档固定提交回归终态
+
+完整仓库31b4a79d79e2复跑full-core-complete.log已终态：TOTAL1323/PASSED1254/SKIPPED2/ERROR42/FAILED25，full-core-complete.exit.txt=1；1254+2+42+25=1323。原件及failure-identities.txt/failure-cases.txt在full-repo-31b4a79d79e2。没有再沿用漏scripts副本的52 ERROR；完整源码复跑仍非通过。它是固定31b4a79，不含后来permission wire/delivery实现，不充当当前HEAD全量绿。
+
+失败集合已生成，下一步按实测逐条分诊。已查实团队工作区夹具硬编码缺失的旧公共tmp路径；调度用例先期待due.size=1却实际0，随后越界成为ERROR，不能归为外部环境；Hook/租约/团队持久失败待根因核对。两条glob既有期望争议仍需按文件契约裁决，不改生产语义凑绿。SSE夹具补齐后已能运行，self-signed TLS拒绝用例仍红，不把其归为缺脚本。
+
+b40f881权限持久链已推送，首TLS失败后同一次重试终态成功。其57运行/240跳过专项不覆盖上述完整核心失败，更不覆盖公共Host/CLI、真实供应方或桌面产物。整体目标保持实施中。
