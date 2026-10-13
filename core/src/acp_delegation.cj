@@ -55,6 +55,7 @@ class AcpDelegationEntry {
     // taskText 摘要用于幂等校验
     var taskDigest: String
     var promptStarted: Bool = false
+    var closeInFlight: Bool = false
     let workspace: String
 
     init(id: String, sessionId: String, taskId: String, requestId: String,
@@ -411,7 +412,22 @@ public class AcpDelegationService {
                 mtx.unlock()
                 throw Exception("revision-conflict:expected-${expectedRevision}-actual-${entry.revision}")
             }
+            if (entry.closeInFlight) { mtx.unlock(); throw Exception("busy:acp-close-in-flight") }
             if (entry.phase == "completed" || entry.phase == "failed" || entry.phase == "cancelled" || entry.phase == "rejected" || entry.phase == "incomplete") {
+                let closing = entry.proc
+                if (closing.isSome()) {
+                    entry.closeInFlight = true
+                    mtx.unlock()
+                    let process = closing.getOrThrow()
+                    process.close()
+                    mtx.lock()
+                    entry.closeInFlight = false
+                    if (process.exitObserved()) { entry.proc = None }
+                    let snapshot = entry.snapshot()
+                    mtx.unlock()
+                    if (!process.exitObserved()) { throw Exception("outcome-unknown:acp-close-unconfirmed") }
+                    return snapshot
+                }
                 let snapshot = entry.snapshot()
                 mtx.unlock()
                 return snapshot
@@ -421,18 +437,27 @@ public class AcpDelegationService {
                 throw Exception("outcome-unknown:recovery-requires-reconciliation")
             }
             entry.phase = "completing"
+            entry.closeInFlight = true
+            entry.cancelToken.cancel()
             entry.revision += 1
             mtx.unlock()
 
+            var exitConfirmed = true
             if (let Some(proc) <- entry.proc) {
                 proc.close()
-                proc.markIdle()
+                exitConfirmed = proc.exitObserved()
+                if (exitConfirmed) { proc.markIdle() }
             }
-            entry.phase = "incomplete"
-            entry.result = "closed-without-task-completion-evidence"
+            mtx.lock()
+            entry.closeInFlight = false
+            if (exitConfirmed) { entry.proc = None }
+            entry.phase = if (exitConfirmed) { "incomplete" } else { "outcome-unknown" }
+            entry.result = if (exitConfirmed) { "closed-without-task-completion-evidence" } else { "acp-close-unconfirmed" }
             entry.revision += 1
+            let snapshot = entry.snapshot()
+            mtx.unlock()
             let _ = checkpoint()
-            return entry.snapshot()
+            return snapshot
         }
         mtx.unlock()
         throw Exception("not-found:delegation-${id}")

@@ -45,6 +45,7 @@ public class AcpProcess {
     var errReader: Option<Future<Int64>> = None
     var running = false
     var settled = false
+    var exitSeen = false
     var forced = false
     var code: Int64 = -1
     var why = ""
@@ -61,6 +62,7 @@ public class AcpProcess {
             return true
         }
         why = ""
+        exitSeen = false
         let currentGeneration = acpTransportGenerations.fetchAdd(1) + 1
         generation.store(currentGeneration)
         permissions.reset(currentGeneration)
@@ -119,6 +121,7 @@ public class AcpProcess {
     public func exitCode(): Int64 {
         return code
     }
+    public func exitObserved(): Bool { return exitSeen }
 
     public func forcedExit(): Bool {
         return forced
@@ -467,8 +470,8 @@ public class AcpProcess {
     // 结算：先有界地等子进程退出，超时才强杀并标记 forced；
     // 然后 join 读线程（stdout + stderr）——绝不留阻塞在管道读上的线程
     private func settle(timeoutMs: Int64): Int64 {
+        var exited = false
         if (let Some(p) <- proc) {
-            var exited = false
             try {
                 code = p.wait(timeout: timeoutMs * Duration.millisecond)
                 exited = true
@@ -483,11 +486,19 @@ public class AcpProcess {
                     why = "terminate-failed: ${e}"
                 }
                 try {
-                    code = p.wait()
+                    code = p.wait(timeout: 2000 * Duration.millisecond)
+                    exited = true
                 } catch (e: Exception) {
                     why = "wait-failed: ${e}"
                 }
             }
+        }
+        exitSeen = exited
+        if (!exited) {
+            code = -1
+            table.stop()
+            why = "process-exit-unconfirmed"
+            return code
         }
         running = false
         table.stop()

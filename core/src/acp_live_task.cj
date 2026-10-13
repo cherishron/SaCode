@@ -118,6 +118,7 @@ public class AcpLiveTask {
             obj.put("version", JsonInt(1)); obj.put("source", JsonString("owned-live-process"))
             obj.put("delegation", snapshot); obj.put("permissions", tickets); obj.put("updates", content)
             obj.put("workerFinished", JsonBool(progress.finished.load())); obj.put("workerError", JsonString(failure))
+            obj.put("serverAlive", JsonBool(process.alive())); obj.put("serverExitObserved", JsonBool(process.exitObserved()))
             obj.put("invalidInbound", JsonInt(rejected + process.invalidInboundCount())); obj.put("omittedUpdates", JsonInt(omitted))
             return obj.toString()
         } finally { mtx.unlock() }
