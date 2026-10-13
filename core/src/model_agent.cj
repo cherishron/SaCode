@@ -66,9 +66,10 @@ public class ModelAgentLoop {
                     else {
                         try {
                             let outcome = executor.execute(call)
-                            // 完成声明不提供独立机械证据。
-                            if (outcome.allowed && call.name != "update_goal") { succeeded += 1 }
-                            result = if (outcome.allowed) { outcome.why } else { "{\"error\":\"${jsonEscapeText(outcome.why)}\"}" }
+                            // LSP 只读与重命名预览不能成为目标已推进的证据。
+                            if (outcome.allowed && call.name != "update_goal" && !call.name.startsWith("lsp_")) { succeeded += 1 }
+                            result = if (outcome.allowed || outcome.structured) { outcome.why }
+                                else { "{\"error\":\"${jsonEscapeText(outcome.why)}\"}" }
                             if (call.name == "todo_write" && outcome.allowed) { sink.offer("projection:todos") }
                         } catch (e: Exception) { result = "{\"error\":\"${jsonEscapeText(e.message)}\"}" }
                     }

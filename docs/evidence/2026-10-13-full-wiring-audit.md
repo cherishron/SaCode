@@ -275,3 +275,10 @@ Host build-v6.log 已实际 cjpm build success，build-v6.exit.txt=0。同一构
 
 第二十八轮后续：v2 最终 TOTAL178/PASSED177/SKIPPED0/ERROR0/FAILED1，rc1。新增独占受害用例 goalRunnerClaimWithoutMechanicalEvidenceDoesNotComplete 复现声明单独自动完成。根因位于 ModelAgentLoop：任意 allowed 工具都增加 successfulToolCalls，包含 update_goal，声明本身因而被 GoalRunner 用作机械证据。修复排除 update_goal 的进展计数，工具结果仍正常结算；公共工作区保留并发 LSP 排除及结构化结果修改。私有候选从 HEAD model_agent.cj 仅应用本批排除，未吞 LSP 共享修改，启动 v3 178条回归等待终态。
 v3 终态：TOTAL178/PASSED178/SKIPPED0/ERROR0/FAILED0，rc0；正向同轮 todo 证据+日志 claim 完成，反向仅 claim 不完成。五个目标源码/测试逐字哈希与候选一致。model_agent 使用 HEAD 派生候选只提交 update_goal 排除，不带并发 LSP 结果与计数改动；局部回归不替代最新 Host/CLI 产品验收。
+
+## 第二十九轮：固定提交重建与LSP完成证据复验
+
+6b82c03 已推送 refactor/dsh-learning。git archive 导出 core/apps/host 到 fixed-host-6b82c03 前缀私有目录，source-sha.txt 记录完整提交，独占TEMP/TMP直接 cjpm build，未叠加公共未提交实现或改配置；执行句柄92562，尚无终态。不能以核心 warnings 输出替代 Host 构建成功。
+
+复核 model_agent 未提交差异仍包含 LSP 只读/rename预览不计进展及 structured 失败结果直传。将该文件与现有 lsp_contract_test 加入178条隔离候选复跑；为避免额外纳入整个 model_agent_test，私有测试仅将三个流夹具 AgentChunks 构造改用已存在的等价 RunnerChunks（相同 Provider/Resource 接口与序列），生产源码未改夹具。lsp-goal-regression.log / exit.txt 记录终态；执行句柄40499，未预报通过。真实语言服务器和页面消费仍缺，此批只验L1契约。
+第二十九轮终态：LSP38条加入目标与相关回归178条后，TOTAL216/PASSED216/SKIPPED0/ERROR0/FAILED0，rc0。覆盖无服务器非语义回退、扩展路由、注销迟到结果、参数与位置校验、rename预览不落盘、诊断进入模型但不提供GoalEvidence、结构化失败内容。model_agent生产文件与隔离候选SHA一致；本批吸收已验证LSP计数排除与structured结果直传，不宣称真实语言服务器可用。
