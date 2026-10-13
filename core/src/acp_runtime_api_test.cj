@@ -73,3 +73,32 @@ func acpRuntimeApiCancellationUsesExpectedRevision() {
         @Expect(exists(Path(f.root).join("artifact.txt")), false)
     } finally { f.close() }
 }
+
+@Test
+func acpRuntimeShutdownWaitsForWorkerAndProcessWithoutGrantingPendingPermission() {
+    let f = AcpTaskFixture("end_turn", program: acpLiveProgram())
+    try {
+        let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root)
+        @Expect(api.quiescent(), true)
+        api.dispatch("acp/delegation/create", acpRuntimeCreateArgs())
+        acpRuntimePending(api)
+        @Expect(api.quiescent(), false)
+        @Expect(api.shutdown(), true)
+        @Expect(api.quiescent(), true)
+        @Expect(f.process.exitObserved(), true)
+        @Expect(exists(Path(f.root).join("artifact.txt")), false)
+        @ExpectThrows[Exception](api.dispatch("acp/delegation/create", acpRuntimeCreateArgs()))
+        @Expect(api.shutdown(), true)
+    } finally { f.close() }
+}
+
+@Test
+func acpRuntimeShutdownClosesEmptyAdmissionWithoutCreatingASecondPrompt() {
+    let f = AcpTaskFixture("end_turn")
+    try {
+        let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root)
+        @Expect(api.shutdown(), true)
+        @ExpectThrows[Exception](api.dispatch("acp/delegation/create", acpRuntimeCreateArgs()))
+        @Expect(exists(Path(f.root).join("prompt-count")), false)
+    } finally { f.close() }
+}
