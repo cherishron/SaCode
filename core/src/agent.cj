@@ -1250,12 +1250,8 @@ func publishNewFile(path: String, bytes: Array<Byte>): Unit {
     }
 }
 
-// 已有文件的受保护原子替换：独占临时文件先写完整，再 rename(overwrite: true) 落位。
-// 与 publishNewFile 的区别只在落位语义——发布新文件绝不覆盖，替换必须覆盖；
-// 两者共享同一道「先写完整、再原子改名」的保护。直接 File.writeTo 在写途中
-// 崩溃会留下撕裂的目标（半份新内容），这里崩在任意一步，盘上要么是完整旧版、
-// 要么是完整新版，不会出现中间态。落位后临时文件已随 rename 消失，
-// finally 兜底清理失败路径上的残留 staging。
+// 已有文件先写完整临时文件，再由原生提供方替换；不能使用仓颉
+// rename(overwrite:true)，其契约是先删除目标，会暴露缺失窗口。
 func replaceFileAtomically(path: String, bytes: Array<Byte>): Unit {
     let parent = Path(path).parent.toString()
     let dir = if (parent.size == 0) {
@@ -1268,7 +1264,7 @@ func replaceFileAtomically(path: String, bytes: Array<Byte>): Unit {
     try {
         tmp.write(bytes)
         tmp.close()
-        rename(staging, to: path, overwrite: true)
+        nativeReplaceFile(staging, path)
     } finally {
         try {
             if (!tmp.isClosed()) {
