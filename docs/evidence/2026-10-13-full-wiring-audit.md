@@ -501,3 +501,9 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 重新核官方 https://agentclientprotocol.com/protocol/v1/prompt-turn ，session/cancel为通知，停止确认来自对应prompt的终止结果。AcpProcess.sessionCancel改Bool发送事实，不带id、不登记ReplyTable、不等待不存在的取消回复；空session和非NDJSON拒绝。委派取消保留outcome-unknown，sent-awaiting-turn-end/send-failed分明；不把管道发送、进程alive=false或缺句柄直接判cancelled，不markIdle开放重启。
 
 私有acp-cancel-notification.log TOTAL256/PASSED256/SKIPPED0/ERROR0/FAILED0，rc0；新增真实Node管道夹具验证取消不含id且准确session，通知后原prompt请求回复正常配对，无额外入站队列或unsolicited。并非真实供应方停止证据。服务终态持久、对应prompt停止结算和初始化期间取消令牌消费仍待接线（当前create未检查cancelled），不宣称启动竞态已闭合；这些缺口继续阻止公开委派入口。
+
+## 第六十四轮：ACP初始化取消准入与工厂重入
+
+新增两独占探针：checkpoint重入cancel后factory必须为零；procFactory重入cancel后不能继续start覆盖取消结果。未修代码acp-cancel-race-red.log TOTAL258/PASSED256/SKIPPED0/ERROR0/FAILED2，rc1，失败恰两用例。修复initializing发布在条目锁内；准入后先检查取消，再允许构造；工厂保持锁外、返回后锁内检查取消/start/发布句柄；initialize和session/new返回时锁内检查取消，取消则收束本次自有进程且保持unknown，不写running。最后checkpoint返回读取锁保护投影，不回陈旧快照。
+
+acp-cancel-race-green.log TOTAL258/PASSED258/SKIPPED0/ERROR0/FAILED0，rc0。私有候选源与本批一致；两用例为同步回调重入，并非多线程真实Agent端到端。初始化RPC在途取消仍受其timeout约束，停止事实/终态持久/审批回传尚未闭合。procFactory注入必须只构造、不执行外部进程；该工厂契约仍需公共装配守卫。

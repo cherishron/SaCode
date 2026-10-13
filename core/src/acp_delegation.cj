@@ -159,64 +159,86 @@ public class AcpDelegationService {
         let entry = AcpDelegationEntry(delegationId, sessionId, taskId, requestId, peerId, taskDigest, workspace)
         delegations[delegationId] = entry
         requestIdIndex[requestId] = delegationId
+        entry.phase = "initializing"
+        entry.revision += 1
         mtx.unlock()
 
         // 启动进程
-        entry.phase = "initializing"
-        entry.revision += 1
         var admitted = false
         try {
             admitted = if (let Some(storage) <- journal) { storage.admit(entry.snapshot(), workspace, taskDigest) } else { checkpoint() }
         } catch (_: Exception) { admitted = false }
+        mtx.lock()
+        if (entry.cancelToken.cancelled()) {
+            let snapshot = entry.snapshot()
+            mtx.unlock()
+            return snapshot
+        }
         if (!admitted) {
             entry.phase = "failed"
             entry.result = "persistence-failed:delegation-create"
             entry.revision += 1
-            return entry.snapshot()
+            let snapshot = entry.snapshot()
+            mtx.unlock()
+            return snapshot
         }
-        let proc = procFactory(peerId)
-        if (!proc.start()) {
-            entry.phase = "failed"
-            entry.result = "provider-unavailable:spawn-failed:${proc.startFailure()}"
-            entry.revision += 1
-            return entry.snapshot()
-        }
-        entry.proc = Some(proc)
+        mtx.unlock()
 
-        // 能力协商：initialize
+        // 工厂可能重入；启动与句柄发布才在锁内，取消不会漏过句柄。
+        let proc = procFactory(peerId)
+        mtx.lock()
+        try {
+            if (entry.cancelToken.cancelled()) { return entry.snapshot() }
+            if (!proc.start()) {
+                entry.phase = "failed"
+                entry.result = "provider-unavailable:spawn-failed:${proc.startFailure()}"
+                entry.revision += 1
+                return entry.snapshot()
+            }
+            entry.proc = Some(proc)
+        } finally { mtx.unlock() }
+
         let initResult = proc.acpInitialize(1, "sacode", "0.1.0")
-        if (let None <- initResult) {
+        mtx.lock()
+        if (entry.cancelToken.cancelled()) {
+            mtx.unlock()
+            proc.kill()
+            return describe(entry.id)
+        }
+        if (initResult.isNone()) {
             entry.phase = "failed"
             entry.result = "provider-unavailable:initialize-timeout"
             entry.revision += 1
+            mtx.unlock()
             proc.kill()
-            return entry.snapshot()
+            return describe(entry.id)
         }
+        mtx.unlock()
 
-        // 会话创建：session/new
         let sessionResult = proc.sessionNew(workspace)
+        mtx.lock()
+        if (entry.cancelToken.cancelled()) {
+            mtx.unlock()
+            proc.kill()
+            return describe(entry.id)
+        }
         if (let Some(resp) <- sessionResult) {
-            // 解析 protocolSessionId（简化：用响应中的 sessionId 字段）
             entry.protocolSessionId = extractSessionId(resp)
         } else {
             entry.phase = "failed"
             entry.result = "provider-unavailable:session-new-failed"
             entry.revision += 1
+            mtx.unlock()
             proc.kill()
-            return entry.snapshot()
+            return describe(entry.id)
         }
-
-        // 进入运行态
         entry.phase = "running"
         entry.revision += 1
         proc.markBusy()
-
-        // 持久化（Task 2.4 整合 SessionLog）
+        mtx.unlock()
         let _ = checkpoint()
-
-        return entry.snapshot()
+        return describe(entry.id)
     }
-
     // 查询委派
     public func describe(id: String): AcpDelegationSnapshot {
         mtx.lock()
