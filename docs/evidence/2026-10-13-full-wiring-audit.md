@@ -555,3 +555,11 @@ AcpApprovalBridge构造核会话相同，ask仅接受已有运行/等待审批�
 原answerElicitation对submitted/abandoned/expired调用空onElicitation并true，无法证明记录或回传。现在未建立请求绑定/回传通道时false；服务直接调用抛unsupported:acp-elicitation-not-connected。初始化声明clientCapabilities={}，入站elicitation/create据未支持能力返回-32601，不进入待决队列。保留完整信息表单实施需求，这只是先消除伪成功，不把禁用当能力完成。
 
 acp-elicitation-fail-closed.log --filter acp*：TOTAL287/PASSED47/SKIPPED240/ERROR0/FAILED0，rc0，仅47条运行。真实Node管道收到未声明的elicitation/create后获得错误；无待决表单/回传的合法决定均false，服务unsupported明确。非真实供应方/页面/Host验收，不登记287通过。固定31b4a79完整核心仍在编，session94520、cjc21996，未有Summary；不重启、不同基线结果不混用。
+
+## 第七十二轮：ACP权限选项与一次性原请求回传
+
+按官方tool-calls权限结构，新增AcpWirePermission解析会话/toolCallId/options，拒空/重复/未知选项、最多32项；allowed-once必须显式匹配allow_once，denied匹配reject_once，取消使用cancelled outcome，不选首项、不把allow_always降级伪装一次。新增AcpPermissionReplies绑定进程代际、请求ID和原始提案，128项上限；缺批准回调不消费、不发送，写失败先消费禁止自动重发。AcpProcess内部replyPermission再核当前协议会话，只有已登记原请求可以回复，不开放任意写RPC。启动清理待决与队列，旧reader携带原代际，旧授权不能跨新进程复用。
+
+acp-permission-wire-v2.log --filter acp*：TOTAL291/PASSED51/SKIPPED240/ERROR0/FAILED0，rc0。真实Node管道完成initialize/session-new→两权限请求→一次批准/一次拒绝→原prompt确认，默认无权威回调拒绝、永久选项拒绝、改提案拒绝、重复回传拒绝。纯探针覆盖写失败消费、拒绝后再批准、跨代际旧回复拒绝与旧reader拒入。批准回调在测试中显式为夹具许可，尚未对到实际ApprovalDesk/持久屏障/Host用户工单，不称真实授权产品闭环。新增核心契约文件登记本轮；未接真模型或供应方。
+
+本批仅权限回传代际边界；整进程restart普通ReplyTable复用及全部RPC竞争仍需独立复核，不能扩成全部恢复可靠。固定31b4a79全量核心session94520仍在编、cjc21996；无Summary，不升级通过。下一步将精确工单与持久批准事实接入该回调，并逐请求结算送达/unknown。

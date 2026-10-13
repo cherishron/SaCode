@@ -10,6 +10,7 @@ import std.sync.*
 // 帧编解码默认 NDJSON（OpenCode 已核 2026-10-08），保留 Content-Length 占位（待核产品）。
 // stderr 改为可回收诊断（design §2.4.4），不污染协议面；崩溃/异常证据保留在诊断缓冲。
 // restart 仅在委派未进入运行态时允许，不用于失败后自动换执行者（REQ-FAIL-01 划定）。
+let acpTransportGenerations = AtomicInt64(0)
 public class AcpProcess {
     let command: String
     let arguments: Array<String>
@@ -24,6 +25,8 @@ public class AcpProcess {
     let idGen = AtomicInt64(0)
     let recv = AtomicInt64(0)
     let inbound = AcpInboundInbox()
+    let permissions = AcpPermissionReplies()
+    let generation = AtomicInt64(0)
     let invalidFrames = AtomicInt64(0)
 
     // stderr 诊断缓冲：有界，不污染协议面（design §2.4.4）
@@ -58,6 +61,10 @@ public class AcpProcess {
             return true
         }
         why = ""
+        let currentGeneration = acpTransportGenerations.fetchAdd(1) + 1
+        generation.store(currentGeneration)
+        permissions.reset(currentGeneration)
+        inbound.clear()
         negotiationLock.lock()
         closeSupported = false
         activeSession = ""
@@ -70,7 +77,7 @@ public class AcpProcess {
             proc = Some(p)
             running = true
             let outPipe = p.stdOutPipe
-            reader = Some(spawn { => this.drainStdout(outPipe) })
+            reader = Some(spawn { => this.drainStdout(outPipe, currentGeneration) })
             let errPipe = p.stdErrPipe
             errReader = Some(spawn { => this.drainStderr(errPipe) })
             return true
@@ -136,7 +143,7 @@ public class AcpProcess {
 
     // 读线程体：把每一帧按 id 交给登记表（NDJSON 模式，与 ExtProcess 一致）。
     // Content-Length 模式待核产品实测后实现（当前走 NDJSON 分支）。
-    private func drainStdout(pipe: InputStream): Int64 {
+    private func drainStdout(pipe: InputStream, expectedGeneration: Int64): Int64 {
         let rd: StringReader<InputStream> = StringReader(pipe)
         var n: Int64 = 0
         var done = false
@@ -145,7 +152,8 @@ public class AcpProcess {
                 let line = rd.readln()
                 if (let Some(s) <- line) {
                     if (s.size > 0) {
-                        this.routeInbound(s)
+                        if (generation.load() != expectedGeneration) { return n }
+                        this.routeInbound(s, expectedGeneration: Some(expectedGeneration))
                         n += 1
                         recv.fetchAdd(1)
                     }
@@ -160,16 +168,23 @@ public class AcpProcess {
     }
 
     // 内部分类入口也供协议回归验证；未知请求绝不进入工具执行器。
-    func routeInbound(raw: String): Bool {
+    func routeInbound(raw: String, expectedGeneration!: ?Int64 = None): Bool {
+        let packetGeneration = expectedGeneration ?? generation.load()
+        if (packetGeneration != generation.load()) { return false }
         try {
-            let frame = acpDecodeInbound(raw)
+            let frame = acpDecodeInbound(raw, generation: packetGeneration)
             if (frame.kind == "response") { table.put(Int64.parse(frame.idJson), raw); return true }
             if (frame.kind == "notification") {
                 if (frame.method != "session/update") { return true }
             } else if (frame.method != "session/request_permission") {
                 return rejectInbound(frame, -32601, "method-not-found")
             }
+            if (frame.kind == "request" && !permissions.register(frame)) {
+                invalidFrames.fetchAdd(1)
+                return rejectInbound(frame, -32600, "acp-permission-identity-unavailable")
+            }
             if (!inbound.put(frame)) {
+                permissions.discard(frame)
                 invalidFrames.fetchAdd(1)
                 if (frame.kind == "request") { return rejectInbound(frame, -32000, "acp-inbox-full") }
                 return false
@@ -192,6 +207,30 @@ public class AcpProcess {
         return false
     }
 
+    // 仅内部装配可调用；缺权威批准回调时拒绝，不开放任意协议写入口。
+    func replyPermission(frame: AcpInboundFrame, decision: String, optionId: String, authorize!: () -> Bool = { => false }): Bool {
+        if (!alive() || frameMode != "ndjson") { return false }
+        try {
+            let permission = acpReadWirePermission(frame)
+            negotiationLock.lock()
+            let session = activeSession
+            negotiationLock.unlock()
+            if (session.size == 0 || permission.session != session) { return false }
+            let result = acpWirePermissionOutcome(permission, decision, optionId)
+            return permissions.deliverExact(frame, authorize, { =>
+                if (let Some(p) <- proc) {
+                    let response = "{\"jsonrpc\":\"2.0\",\"id\":${permission.frame.idJson},\"result\":${result}}"
+                    writeLock.lock()
+                    try {
+                        p.stdInPipe.write((response + "\n").toArray())
+                        p.stdInPipe.flush()
+                        return true
+                    } finally { writeLock.unlock() }
+                }
+                return false
+            })
+        } catch (_: Exception) { return false }
+    }
     public func nextInbound(): ?AcpInboundFrame { return inbound.take() }
     public func invalidInboundCount(): Int64 { return invalidFrames.load() }
     // stderr 读线程体：有界地收集诊断字节，超出上限截断尾部
