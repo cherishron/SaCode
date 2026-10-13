@@ -344,3 +344,10 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第三十八轮：内置供应商实际页面凭据闭环与来源标识
 
 真实Electron场景参数化为自定义和内置stepfun实例。内置实例由真实Host add-catalog生成，页面编辑密钥经真实适配器set-enabled回执、独立credential IPC落盘；两类均验证保存后revision=2、keyConfigured与实际凭据新值、陈旧写入未落盘，2/2 rc0。没有调用供应商远端API。随后发现declared来源标签反向，修复为内置/自定义并更新内置编辑可保存密钥提示，增加实际DOM来源标签断言，两场景再次2/2 rc0。共享provider-settings仅吸收HEAD派生两处文案差异，其他工作区模型表单变更保留。正式release进程23372/27900本轮仍存活CPU3695/2761秒，未重启。
+
+
+## 第三十九轮：真实模型拉取契约与目录添加缺口
+
+新增model-pull-host测试，真实私有Host与本地HTTP提供方：Bearer凭据现取、模型ID去重追加且保留原模型、修订递增、旧修订拒绝、401失败不改目录、停止完成后重启读取相同目录，1/1 rc0。初次误按替换目录断言失败，核applyPulledModels→mergePulledIds既有契约后改为追加；第二次未await异步stop造成host-already-running，修正等待真实终态后通过，未修改生产实现。原件独占model-pull目录。
+
+确认provider-settings读取catalog但不消费选择/添加，preload未提供modelsAddCatalog；Host有model/registry/add-catalog但当前核心addFromCatalog不接expectedRevision。下一步需核心受租约保护且带预期修订的目录实例创建→有限Host→IPC→目录选择页面，不能只补无修订按钮。默认模型Host/IPC存在但当前供应商适配器没有选择动作，仍登记产品入口缺口。
