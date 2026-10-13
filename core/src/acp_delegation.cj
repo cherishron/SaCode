@@ -84,6 +84,7 @@ public class AcpDelegationService {
     let gate: AcpGate
     let procFactory: (String) -> AcpProcess
     let checkpoint: () -> Bool
+    let journal: ?AcpDelegationJournal
     // 委派存储：id → 条目
     let delegations = HashMap<String, AcpDelegationEntry>()
     // requestId → 委派 id（幂等索引）
@@ -96,11 +97,24 @@ public class AcpDelegationService {
 
     public init(sessionId: String, gate: AcpGate,
         procFactory: (String) -> AcpProcess,
-        checkpoint!: () -> Bool = { => false }) {
+        checkpoint!: () -> Bool = { => false }, journal!: ?AcpDelegationJournal = None) {
         this.sessionId = sessionId
         this.gate = gate
         this.procFactory = procFactory
         this.checkpoint = checkpoint
+        this.journal = journal
+        if (let Some(storage) <- journal) {
+            if (!storage.belongsTo(sessionId)) { throw Exception("invalid-input:journal-session-mismatch") }
+            var highest: Int64 = 0
+            for (record in storage.recover()) {
+                let snap = record.snapshot
+                let entry = AcpDelegationEntry(snap.id, snap.sessionId, snap.taskId, snap.requestId, snap.peerId, record.taskDigest, record.workspace)
+                entry.phase = snap.phase; entry.revision = snap.revision; entry.result = snap.result
+                delegations[snap.id] = entry; requestIdIndex[snap.requestId] = snap.id
+                if (record.sequence > highest) { highest = record.sequence }
+            }
+            idGen.store(highest)
+        }
     }
 
     // 创建委派：门控检查 → 幂等检查 → 进程启动 → 能力协商 → 会话创建
@@ -151,7 +165,9 @@ public class AcpDelegationService {
         entry.phase = "initializing"
         entry.revision += 1
         var admitted = false
-        try { admitted = checkpoint() } catch (_: Exception) { admitted = false }
+        try {
+            admitted = if (let Some(storage) <- journal) { storage.admit(entry.snapshot(), workspace, taskDigest) } else { checkpoint() }
+        } catch (_: Exception) { admitted = false }
         if (!admitted) {
             entry.phase = "failed"
             entry.result = "persistence-failed:delegation-create"
@@ -232,6 +248,10 @@ public class AcpDelegationService {
                 mtx.unlock()
                 throw Exception("revision-conflict:expected-${expectedRevision}-actual-${entry.revision}")
             }
+            if (entry.phase == "outcome-unknown" && entry.proc.isNone()) {
+                mtx.unlock()
+                throw Exception("outcome-unknown:recovery-requires-reconciliation")
+            }
             entry.phase = "cancelling"
             entry.revision += 1
             // 设置取消令牌
@@ -271,6 +291,10 @@ public class AcpDelegationService {
             if (entry.revision != expectedRevision) {
                 mtx.unlock()
                 throw Exception("revision-conflict:expected-${expectedRevision}-actual-${entry.revision}")
+            }
+            if (entry.phase == "outcome-unknown" && entry.proc.isNone()) {
+                mtx.unlock()
+                throw Exception("outcome-unknown:recovery-requires-reconciliation")
             }
             entry.phase = "completing"
             entry.revision += 1

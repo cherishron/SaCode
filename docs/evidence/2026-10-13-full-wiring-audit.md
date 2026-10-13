@@ -471,3 +471,13 @@ AcpDelegationService默认checkpoint由true改false，创建完成内存提案�
 ## 第五十九轮：ACP请求身份与初始化容量
 
 委派内部保存不可变workspace，requestId复用同时核taskDigest/taskId/peerId/workspace；同正文但身份变化明确revision-conflict，不返回别的委派。新identity测试245/245 rc0。容量计入pending/initializing等全部非终态，避免仅running/awaiting计数放过启动中的委派。新增可信checkpoint重入探针：四个初始化预约重叠，第五个busy并未留条目，零factory；最终TOTAL246/PASSED246/SKIPPED0/ERROR0/FAILED0 rc0（acp-capacity-regression）。本轮并发证据为重入初始化重叠，不扩大为多线程实际进程隔离或跨进程协调。仍需真实持久提案与恢复投影、终态记录和完整外部委派入口。
+
+## 第六十轮：ACP持久准入事实与恢复投影
+
+基线跟进至 f0e7cb6a，本地/远端差集0/0。1abe340d为生产警告与资源释放修复，其提交说明保留Host编译超时及daemon原有阻塞；f0e7cb6a为Linux环境变量依赖配置，无Linux产物验收。两提交不改变ACP/LSP产品接线缺口。
+
+新增AcpDelegationJournal，同一SessionLog/WriteLease发布不可变acp/admission：会话、任务、请求、供应方、工作区、任务全文摘要及修订绑定。持久检查成功之前不构造外部进程；发布失败冻结日志且factory为零。恢复只读已发布事实，拒绝畸形和重复请求，重建幂等索引和ID序列，不恢复授权、不启动进程。恢复为outcome-unknown，无进程身份时cancel/close拒绝伪造终态。
+
+私有approval-binding-candidate最终acp-journal-v5.log：TOTAL250/PASSED250/SKIPPED0/ERROR0/FAILED0，真实rc0。三份本批源码与测试候选SHA256逐字相同。候选沿用此前隔离核心快照，并非最新HEAD全量回归；错误相对路径造成v4仍是249条旧集，不能作为新增用例证据。v5为修正绝对路径后的250条。测试覆盖缺租约、真实磁盘分歧导致发布失败、恢复不重放、跨会话拒绝、未知状态不冒充取消/完成、pending事实忽略、已发布畸形及重复请求拒绝。
+
+仅准入事实持久及保守恢复，不含running/终态持久结算、真实session/prompt发送、权限请求回传和内容消费。Host/CLI/IPC/页面公开委派入口仍缺；LSP真实服务器插件与页面消费仍缺。不升级整域完成状态。
