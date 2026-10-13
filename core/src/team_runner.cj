@@ -22,6 +22,7 @@ class TeamRunnerMember {
     let log: SessionLog
     let lease: WriteLease
     let owner: String
+    let sessionKey: String
     let sink = ThreadSafeDeliveryQueue(1024)
     var handle: ?TurnHandle = None
     var released = false
@@ -31,6 +32,7 @@ class TeamRunnerMember {
         this.log = log
         this.lease = lease
         this.owner = lease.ownerToken()
+        this.sessionKey = writerKey(log.path)
     }
 
     func freeze(): Unit {
@@ -59,8 +61,8 @@ public class TeamMemberRunner {
             if (log.isDurableFrozen() || !lease.protects(log.path)) { throw Exception("team-runner-unowned-or-frozen-log") }
             let member = TeamRunnerMember(log, lease)
             synchronized(teamRunnerClaimsMutex) {
-                if (teamRunnerClaims.contains(member.owner)) { throw Exception("team-runner-session-owned") }
-                teamRunnerClaims.add(member.owner)
+                if (teamRunnerClaims.contains(member.sessionKey)) { throw Exception("team-runner-session-owned") }
+                teamRunnerClaims.add(member.sessionKey)
             }
             try {
                 let actual = ModelAgentRunner().start(first, nextProvider, model, token, log,
@@ -82,7 +84,7 @@ public class TeamMemberRunner {
                 member.handle = Some(TurnHandle(token, settled))
                 members[id] = member
             } catch (e: Exception) {
-                synchronized(teamRunnerClaimsMutex) { teamRunnerClaims.remove(member.owner) }
+                synchronized(teamRunnerClaimsMutex) { teamRunnerClaims.remove(member.sessionKey) }
                 throw e
             }
         }
@@ -132,7 +134,7 @@ public class TeamMemberRunner {
                     if (member.lease.ownerToken() == member.owner && member.lease.protects(member.log.path)) {
                         if (!member.lease.release()) { allReleased = false; continue }
                     }
-                    synchronized(teamRunnerClaimsMutex) { teamRunnerClaims.remove(member.owner) }
+                    synchronized(teamRunnerClaimsMutex) { teamRunnerClaims.remove(member.sessionKey) }
                     member.released = true
                 }
                 if (allReleased) { return true }

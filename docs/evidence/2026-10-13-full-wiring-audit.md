@@ -597,3 +597,11 @@ ScheduleStore原构造完全跳过schedule/fire，重启后pending火次丢失�
 schedule-fire-red.log TOTAL307/PASSED15/SKIPPED290/ERROR0/FAILED2、rc1，恰两新增恢复探针先红。补畸形/重复反证后schedule-fire-green.log TOTAL308/PASSED18/SKIPPED290/ERROR0/FAILED0、rc0，仅18条运行。真实WriteLease、发布、reload验证pending阻止重触发、unknown结果阻塞、done结算及带::详情恢复；没有执行模型或命令。
 
 本轮不证明真实定时调度、跨进程去重、同一cron分钟重复触发控制、oneShot自动执行规则或真实终态证据。更新FireResult的可信结算入口仍待设计接线，Store字段/列表可变引用与整体并发契约仍待完善。整体全量尚未重跑当前HEAD，保留31b4a79的失败基线，不据局部18通过扩大。
+
+## 第七十七轮：团队夹具与跨实例认领身份
+
+从HEAD派生team_workspace_test/team_runner_test，仅将硬编码公共目录替换coreTestRoot，保留HEAD断言和清理（未吸收working的catch清理）。team-path-baseline.log TOTAL322/PASSED13/SKIPPED308/ERROR1/FAILED0、rc1：第二成员被team-runner-session-owned拒绝，不是路径错误。TeamRunner全局claims仅按lease.ownerToken去重，而token的临时文件名只保证目录内唯一，不同日志会撞；写权本来就由token+日志路径共同验证。
+
+改TeamRunnerMember保存writerKey(log.path)规范会话键，全局认领/归还按该键；owner仍专门验证租约归属与结算。team-identity-green.log TOTAL322/PASSED14/SKIPPED308/ERROR0/FAILED0、rc0，实际14条：不同成员并行与单独取消、相同会话跨实例拒绝、关闭超时保留租约、恢复不启动模型、租约丢失结算失败及真实Git成员隔离/共享写者竞争。提供方为受控真实流Provider，非外部模型/公开页面验收。
+
+两测试仅HEAD派生路径hunk落库，不吞并别组清理/注释改动；生产team_runner.cj本轮独立修复。复用既有writerKey与WriteLease会话身份，Windows实测，Linux大小写/路径规则仍需平台探针。不把14条扩大为团队或ACP全链路已交付，当前HEAD全量回归仍待收口。

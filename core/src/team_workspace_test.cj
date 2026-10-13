@@ -7,7 +7,7 @@ import std.unittest.*
 // 官方 std.fs 的 createTemp 原子创建唯一目录；保留在 gitignored target 内。
 // 不递归清理 Git 只读对象，也不认领或删除其他会话创建的夹具。
 func teamWorkspaceFixture(): String {
-    return Directory.createTemp("D:/Project/sa/saai/sa-code/core/target/team-workspace-20261008/tmp").toString()
+    return Directory.createTemp(Path(coreTestRoot())).toString()
 }
 
 @Test

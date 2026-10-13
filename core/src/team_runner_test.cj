@@ -33,7 +33,7 @@ class TeamRunnerFixture {
     let log: SessionLog
     let lease: WriteLease
     init() {
-        dir = Directory.createTemp(Path("D:/Project/sa/saai/sa-code/target")).toString()
+        dir = Directory.createTemp(Path(coreTestRoot())).toString()
         log = SessionLog("${dir}/member.log"); lease = WriteLease(log.path)
         if (!lease.acquire()) { throw Exception("fixture-lease") }
         log.append("user/message", "start"); if (!log.durableCheckpointBatched(lease)) { throw Exception("fixture-durable") }
