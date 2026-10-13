@@ -40,8 +40,15 @@ export LD_LIBRARY_PATH="$SACODE_STDX_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH
 
 本轮环境是 Windows；添加 Linux 目标配置不等于 Linux 四模块已编译通过。Linux 构建仍需对应 SDK、stdx、系统链接依赖，并可能暴露仓库其他平台代码问题。Windows 原有路径保持不变，没有要求当前 Windows 构建新增环境变量。
 
-## 已收到的 Linux 构建结果（f0e7cb6）
+## 已收到的 Linux 构建结果
 
-用户已在 Linux 设置上述变量验证：core 静态库通过（31 warnings），CLI 因 Windows API 链接失败，host 两次编译超时（未进入链接），daemon 因 `scheduler.cj:51` 的 `TaskDefinition?` 语法失败。
+用户在 Linux 设置上述变量验证，两次结果对照：
 
-这说明 stdx 路径只是第一层；**目前不能把项目描述为 Linux 可执行程序已可构建或可用**。平台声明隔离修正和具体限制见 [Linux 后端构建交接](evidence/2026-10-13-linux-executable-build-followup.md)。非 Windows 信号、租约判死和持久文件后端仍需明确实现，不能以静默降级绕过这些约束。
+| 提交 | core | cli | daemon | host |
+| --- | --- | --- | --- | --- |
+| `f0e7cb6` | 静态库通过（31 warnings） | 链接失败，缺 Windows API | `scheduler.cj:51` 语法失败 | 两次编译超时，未进入链接 |
+| `7b42013` | 通过 | 通过，产出 14MB 二进制，`main --help` 正常 | 同上，仍失败 | 未编译，桌面端仍 Windows-only |
+
+平台声明隔离修正（`e2e8bf7`）解除了 CLI 的链接失败。daemon 的失败经快照编译取证为**腐化的死代码**（零调用方、引用不存在的 `HostBridge`、使用 1.1.3 已移除的枚举 `ordinal`），处置为移除该实现与其空骨架测试，而不是凭空补全一个没有调用方的功能。
+
+**当前不能把项目描述为 Linux 上可完成真实任务**：CLI 虽能启动，但协作式取消在非 Windows 明确返回失败，崩溃残留的会话租约不会自动接管，持久追加与原子替换后端均不可用。三条平台契约与限制见 [Linux 后端构建交接](evidence/2026-10-13-linux-executable-build-followup.md)。不能以静默降级绕过这些约束。
