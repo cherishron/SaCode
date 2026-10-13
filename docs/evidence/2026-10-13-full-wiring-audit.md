@@ -329,3 +329,8 @@ main.cjs pageToolCall仅校验name/args外形，然后executeJavaScript直调渲
 ## 第三十五轮：真实 Electron IPC 与真实 Host
 
 新增 model-credential-electron-host.test.mjs，实际 Electron BrowserWindow（offscreen、contextIsolation、nodeIntegration=false、CSP script-src self）加载产品 preload；renderer 调用 sacode.modelsSaveCredential，经 ipcMain 的产品处理器与 HostBridge 请求同一私有调试 Host。保存后配置修订仍为1、keyConfigured=true，陈旧修订明确拒绝。1/1 rc0；补显式 bridge.stop 后再跑仍1/1 rc0，未检测到遗留 sacode-host 进程。窗口使用最小检查页面而非完整模型中心；no-sandbox 为本机离屏测试参数，不代表默认安全启动验收。此证据补上实际 Electron 传输，但发布载荷与完整供应商页面实际操作仍待验收。
+
+
+## 第三十六轮：实际供应商页面保存到真实核心
+
+扩展真实Electron测试，esbuild装配实际 provider-settings.ts 与 model-center-adapter.ts，实际Vue runtime挂载页面，点击编辑、输入密钥、点击保存；通过产品 preload、实际凭据处理模块、models-guard及models-save到同一私有调试Host。保存成功文案出现、编辑表单关闭，Host修订由1升2且keyConfigured=true，私有凭据文件包含页面新值且无被拒绝的陈旧值。独占TMP运行1/1 rc0。测试窗口的describe/catalog/save IPC注册由夹具装配等价转发与生产守卫/保存函数，不加载整个产品main，不扩大为完整主窗口启动或安装验收；独立retry IPC使用生产注册模块。命令使用本机私有model-render-loader解析esbuild，生成Vue runtime为既有构建文件。
