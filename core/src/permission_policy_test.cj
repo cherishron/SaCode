@@ -3,6 +3,14 @@ package core
 import std.unittest.*
 
 @Test
+func permissionModesAllowLspReadOnlyQueriesAndRenamePreview() {
+    let policy = PermissionPolicy()
+    for (tool in ["lsp_define", "lsp_lookup", "lsp_references", "lsp_implementation", "lsp_call_hierarchy", "lsp_diagnostics", "lsp_rename"]) {
+        for (mode in ["plan", "build", "auto", "yolo"]) { @Expect(policy.decide(mode, tool), "allow") }
+    }
+}
+
+@Test
 func permissionPolicyUnknownToolsCannotBypassApproval() {
     let p = PermissionPolicy()
     for (tool in ["plugin/delete-database", "deploy", "git_push", "npm test && destructive-command", ""]) {

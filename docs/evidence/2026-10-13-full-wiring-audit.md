@@ -410,3 +410,10 @@ ToolRuntime.executeWithApproval新增policyApproval具名参数：策略额外�
 ## 第五十轮：模式切换持久屏障与失败冻结
 
 ModeController新增setDurable，先核写租约与未冻结状态，再设置及durableCheckpoint；只有发布成功返回committed/noop。无租约不追加，非法值拒绝，重复设置及重启回放通过。current读取冻结状态拒绝，ModelToolRuntime冻结会话先拒绝，阻止失败发布后内存中的更宽模式继续执行。新增真实File.writeTo制造磁盘前缀分叉，切换yolo持久失败、日志冻结、模式读取拒绝、工具结果session-persistence-unsettled。私有首轮227/227，新增故障后TOTAL228/PASSED228/SKIPPED0/ERROR0/FAILED0、rc0（mode-persistence-v2）。Host新approval_mode_rpc模块已起草严格模式参数与持久调用，尚未编译/接入口，不纳此提交；旧工作区mode_rpc不替代新持久链。
+
+
+## 第五十一轮：Host模式有限持久入口与LSP只读判据
+
+固定018dad7派生Host增加approval/get-mode及set-mode分派/声明；读取未持租约时重载当前会话，切换取得写租约、loadForWrite、调用严格单字段mode模块及核心setDurable；在途只允许get不放行set。私有cjpm build -g --jobs1 rc0，新runtime沿既有DLL/CA不替换公开Host。approval-mode-host真实请求1/1 rc0：四枚举持久切换、noop、错型/额外字段/未知模式拒绝且事件不增、pending0、重启plan回读。没有真实模型工具请求，不扩成全执行四模式验收。
+
+前端权限菜单14/14、实际IPC处理器模式4/4为本地组件/VM范围。发现Plan安全名单遗漏LSP，补七个readonly语义工具含rename预览（真正写文件仍需F08），新核心最终TOTAL229/PASSED229/SKIPPED0/ERROR0/FAILED0、rc0；该补丁晚于本Host快照，产物还不含此LSP名单。Host main只提交已编译HEAD候选，工作区分派重构与旧mode_rpc保留，不吞并。CLI、跨会话迟到操作身份绑定、Auto分类器与Yolo授权边界仍待实现/验收。
