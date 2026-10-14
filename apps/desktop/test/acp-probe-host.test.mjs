@@ -39,6 +39,7 @@ test('Host EOF取消挂起诊断并等待子进程退出，不以父进程退出
  const {bridge,pending,pid}=await fixture(t);
  const stopped=await bridge.stop(10000);assert.equal(stopped.forced,false);
  const report=await pending;assert.match(report.evidence,/probe-cancelled/);assert.equal(alive(pid),false);
+ assert.equal(report.diagnosticSaved,false);
 });
 
 test('切工作区取消旧诊断，迟到回包不改变新工作区',{timeout:30000},async t=>{
@@ -46,6 +47,7 @@ test('切工作区取消旧诊断，迟到回包不改变新工作区',{timeout:
  const next=mkdtempSync(join(tmpdir(),'sacode-acp-next-'));
  await bridge.request('workspace/set-directory',{sessionId:'current',directory:next},2000);
  const report=await pending;assert.match(report.evidence,/probe-cancelled/);assert.equal(alive(pid),false);
+ assert.equal(report.diagnosticSaved,false);
  const workspace=await bridge.request('workspace/get',{sessionId:'current'},2000);
  assert.equal(workspace.directory,next);assert.equal(readFileSync(join(root,'probe-methods'),'utf8'),'initialize\n');
 });
@@ -59,5 +61,17 @@ test('取消后重新开启可再次诊断，不复用旧取消令牌或发送�
  const report=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
  assert.equal(report.protocolReady,true);assert.equal(report.modelTaskTested,false);assert.equal(report.verdict,'measured');
  assert.equal(report.diagnostics.agentVersion,'2.fixture');assert.equal(report.diagnostics.sessionModel,'fixture-free-name');assert.equal(report.diagnostics.price,'unknown');assert.equal(report.diagnostics.workspace,root);assert.ok(['low','medium','high','system','untrusted'].includes(report.diagnostics.processIntegrity));
+ const history=await bridge.request('acp/diagnostics/describe',{sessionId:'current'});
+ assert.equal(history.source,'durable-history');assert.equal(history.scopeCurrent,true);assert.equal(history.record.diagnosticId,report.diagnostics.diagnosticId);
+ const params={sessionId:'current',diagnosticId:history.record.diagnosticId,revision:history.record.revision};
+ const kept=await bridge.request('acp/diagnostics/keep',params);assert.equal(kept.record.decision,'kept');
+ assert.deepEqual(await bridge.request('acp/diagnostics/keep',params),kept);
+ await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:false,revision:3});
+ assert.equal((await bridge.request('acp/diagnostics/describe',{sessionId:'current'})).scopeCurrent,false);
+ await assert.rejects(bridge.request('acp/diagnostics/keep',params),/revision-conflict/);
  assert.equal((await bridge.stop(10000)).forced,false);
+ const restored=new HostBridge(process.env.SACODE_HOST,{...process.env,SACODE_USER_SETTINGS_DIR:join(root,'settings')});
+ await restored.start(root);t.after(()=>restored.stop());
+ assert.equal((await restored.request('acp/diagnostics/describe',{sessionId:'current'})).record.decision,'kept');
+ assert.equal((await restored.stop(10000)).forced,false);
 });

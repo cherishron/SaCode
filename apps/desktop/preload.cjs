@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("sacode", {
   acpSettingsDescribe: (sessionId) => ipcRenderer.invoke('sacode:acpSettingsDescribe', {sessionId}),
   acpSettingsSetEnabled: (sessionId, enabled, revision) => ipcRenderer.invoke('sacode:acpSettingsSetEnabled', {sessionId, enabled, revision}),
   acpProviderProbe: (sessionId) => ipcRenderer.invoke('sacode:acpProviderProbe', {sessionId}),
+  acpDiagnosticsDescribe: (sessionId) => ipcRenderer.invoke('sacode:acpDiagnosticsDescribe', {sessionId}),
+  acpDiagnosticsKeep: (sessionId, diagnosticId, revision) => ipcRenderer.invoke('sacode:acpDiagnosticsKeep', {sessionId, diagnosticId, revision}),
   teamApprovalAnswer: (teamSessionId, memberId, approvalId, decision) => ipcRenderer.invoke('sacode:teamApprovalAnswer', {teamSessionId, memberId, approvalId, decision}),
   teamDescribe: (teamSessionId) => ipcRenderer.invoke('sacode:teamDescribe', {teamSessionId}),
   teamMemberCreate: (teamSessionId, name, role) => ipcRenderer.invoke('sacode:teamMemberCreate', {teamSessionId, name, role}),

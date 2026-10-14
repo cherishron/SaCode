@@ -113,3 +113,15 @@ test('未核价与插件覆盖未知仅作诊断提示，不拦截已接通协�
  f.find('textarea').props.onInput({target:{value:'显式任务'}});assert.equal(f.find('button','提交给 OpenCode').props.disabled,false);
  f.find('form').props.onSubmit({preventDefault(){}});await f.flush();assert.equal(starts,1);
 });
+
+test('恢复历史诊断只供回看，保留决定不启动任务且切会话后不串回执',async()=>{
+ let starts=0,keeps=0,reply;
+ const diagnostics={version:1,diagnosticId:'acp-'+'b'.repeat(32),workspace:'workspace',executable:'trusted',agentName:null,agentVersion:null,sessionModel:null,sessionMode:null,source:'acp-observation',configSources:'unknown',processIdentity:'unknown',primaryAgent:'unknown',price:'unknown',pluginModels:'unknown',network:'not-tested',modelTask:'not-tested'};
+ const history={version:1,sessionId:'s1',source:'durable-history',scopeCurrent:true,record:{version:1,sessionId:'s1',revision:1,scopeRevision:0,decision:'pending',diagnosticId:diagnostics.diagnosticId,report:{peerId:'opencode',protocolReady:true,modelTaskTested:false,diagnostics}}};
+ const f=panel({acpDiagnosticsDescribe:async()=>history,acpDiagnosticsKeep:(...args)=>{keeps++;assert.deepEqual(args,['s1',diagnostics.diagnosticId,1]);return new Promise(done=>reply=done);},acpDelegationCreate:async()=>{starts++;}});
+ await f.flush();assert.ok(f.find('strong','诊断结果已记录'));
+ f.find('textarea').props.onInput({target:{value:'read'}});assert.equal(f.find('button','提交给 OpenCode').props.disabled,true);
+ f.find('button','暂不修复／保留现状').props.onClick();await f.flush();assert.equal(keeps,1);assert.equal(starts,0);
+ f.props.sessionId='s2';f.hooks[0]();await f.flush();reply({...history,record:{...history.record,decision:'kept',revision:2}});await f.flush();
+ assert.equal(f.find('strong','已保留现状'),undefined);assert.equal(starts,0);
+});

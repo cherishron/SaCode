@@ -1212,7 +1212,7 @@ test('预加载 IPC 面恰好 109 条按动作命名的通道，且没有发任�
     'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
   ]);
-  assert.equal(Object.keys(exposed).length, 109, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 111, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1265,11 +1265,13 @@ test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
     ['sacode:acpDelegationClose',{sessionId:'current',delegationId:'d1',revision:2}],
   ]);
   calls.length=0;
-  exposed.acpSettingsDescribe('current');exposed.acpSettingsSetEnabled('current',true,0);exposed.acpProviderProbe('current');
+  exposed.acpSettingsDescribe('current');exposed.acpSettingsSetEnabled('current',true,0);exposed.acpProviderProbe('current');exposed.acpDiagnosticsDescribe('current');exposed.acpDiagnosticsKeep('current','acp-'+'a'.repeat(32),1);
   assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
     ['sacode:acpSettingsDescribe',{sessionId:'current'}],
     ['sacode:acpSettingsSetEnabled',{sessionId:'current',enabled:true,revision:0}],
     ['sacode:acpProviderProbe',{sessionId:'current'}],
+    ['sacode:acpDiagnosticsDescribe',{sessionId:'current'}],
+    ['sacode:acpDiagnosticsKeep',{sessionId:'current',diagnosticId:'acp-'+'a'.repeat(32),revision:1}],
   ]);
 });
 

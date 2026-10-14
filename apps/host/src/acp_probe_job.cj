@@ -12,7 +12,8 @@ class HostAcpProbe {
     var token: ?TurnToken = None
     var worker: ?Future<Unit> = None
 
-    func start(provider: OpenCodeAcpProvider, workspace: String, rpcId: String) {
+    func start(provider: OpenCodeAcpProvider, workspace: String, rpcId: String,
+        record!: (AcpProviderReadiness, TurnToken) -> Bool = { _, _ => false }) {
         mtx.lock()
         try {
             if (!accepting) {
@@ -35,7 +36,8 @@ class HostAcpProbe {
                     state.mtx.lock()
                     state.settled = !result.evidence.contains("probe-process-exit-unconfirmed")
                     state.mtx.unlock()
-                    emit(okFrame(rpcId, openCodeReadinessJson(result)))
+                    let saved = record(result, cancellation)
+                    emit(okFrame(rpcId, openCodeReadinessJson(result, diagnosticSaved: Some(saved))))
                 } catch (_: Exception) {
                     try {
                         emit(errFrame(rpcId, -32027, "acp-probe-result-unconfirmed"))

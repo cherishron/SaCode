@@ -55,7 +55,7 @@ public func configuredOpenCodeExecutable(): String {
     return openCodeFromWindowsSearchPath(getVariable("PATH") ?? getVariable("Path") ?? "")
 }
 
-public func openCodeReadinessJson(report: AcpProviderReadiness): String {
+public func openCodeReadinessJson(report: AcpProviderReadiness, diagnosticSaved!: ?Bool = None): String {
     let result = JsonObject()
     result.put("peerId", JsonString("opencode"));
     result.put("environment", JsonString(report.environment))
@@ -65,6 +65,7 @@ public func openCodeReadinessJson(report: AcpProviderReadiness): String {
     result.put("protocolVersion", JsonInt(report.protocolVersion));
     result.put("evidence", JsonString(report.evidence))
     result.put("modelTaskTested", JsonBool(false))
+    if (let Some(saved) <- diagnosticSaved) { result.put("diagnosticSaved", JsonBool(saved)) }
     result.put("diagnostics", JsonValue.fromStr(report.observation.toJson()))
     return result.toString()
 }

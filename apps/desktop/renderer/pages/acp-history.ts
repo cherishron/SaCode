@@ -1,6 +1,7 @@
 import {defineComponent,h,ref,watch,onBeforeUnmount} from 'vue';
 import {AcpSessionController,type AcpLiveView} from './acp-live';
 import {renderAcpDiagnostics,readAcpDiagnostics} from './acp-diagnostics';
+import {checkedAcpDiagnosticHistory} from './acp-diagnostic-history';
 interface Delegation {delegationId:string;sessionId:string;taskId:string;requestId:string;peerId:string;protocolSessionId:string;phase:string;revision:number;result:string;source:string}
 const labels:Record<string,string>={completed:'已结束',cancelled:'已确认取消',incomplete:'未完整结束','outcome-unknown':'运行结果未知'};
 export const AcpHistoryPanel=defineComponent({
@@ -8,12 +9,20 @@ export const AcpHistoryPanel=defineComponent({
     const rows=ref<Delegation[]>([]),busy=ref(false),error=ref(''),loaded=ref(false);let serial=0,disposed=false;
     const live=ref<AcpLiveView[]>([]),draft=ref(''),acting=ref(false),actionError=ref('');let epoch=0,requestId='',taskId='';
     const settings=ref<{enabled:boolean;revision:number;source:string}|null>(null),provider=ref<any>(null);
+    const diagnosticHistory=ref<any>(null),diagnosticError=ref('');let diagnosticRead=0;
+    async function readDiagnostics(){const api=props.api as any;if(!api?.acpDiagnosticsDescribe)return;const ticket=epoch,read=++diagnosticRead,id=props.sessionId||'';
+      try{const value=checkedAcpDiagnosticHistory(await api.acpDiagnosticsDescribe(id),id);if(!disposed&&ticket===epoch&&read===diagnosticRead){diagnosticHistory.value=value;diagnosticError.value='';}}
+      catch(e){if(!disposed&&ticket===epoch&&read===diagnosticRead)diagnosticError.value=String((e as Error).message||e);}}
+    async function keepDiagnostic(){const value=diagnosticHistory.value,r=value?.record;if(!r||!value.scopeCurrent||r.decision==='kept')return;const ticket=epoch,id=props.sessionId||'';
+      await perform(async()=>{const reply=checkedAcpDiagnosticHistory(await (props.api as any).acpDiagnosticsKeep(id,r.diagnosticId,r.revision),id);
+        if(reply.record?.diagnosticId!==r.diagnosticId||reply.record?.decision!=='kept'||reply.record.revision<r.revision)throw Error('ACP 保留决定回执未确认');
+        if(!disposed&&ticket===epoch){++diagnosticRead;diagnosticHistory.value=reply;diagnosticError.value='';}});}
     const lowContext=()=>{try{return readAcpDiagnostics(provider.value?.diagnostics)?.processIntegrity==='low';}catch{return false;}};
     const providerReady=()=>provider.value?.peerId==='opencode'&&provider.value.environment==='installed-usable'&&provider.value.protocolReady===true&&provider.value.verdict==='measured'&&provider.value.protocolVersion===1;
     function checkedSettings(value:any){if(typeof value?.enabled!=='boolean'||!Number.isSafeInteger(value.revision)||value.revision<0||!['default','project'].includes(value.source)||value.scope!=='project-session')throw Error('ACP 配置回执无效');return value;}
     async function readSettings(){const ticket=epoch,id=props.sessionId||'';try{const api=props.api as any;if(!api?.acpSettingsDescribe)throw Error('ACP 配置入口未接通');const value=checkedSettings(await api.acpSettingsDescribe(id));if(!disposed&&ticket===epoch)settings.value=value;}catch(e){if(!disposed&&ticket===epoch)actionError.value=String((e as Error).message||e);}}
-    async function toggle(){const before=settings.value;if(!before)return;const ticket=epoch,id=props.sessionId||'';await perform(async()=>{const value=checkedSettings(await (props.api as any).acpSettingsSetEnabled(id,!before.enabled,before.revision));if(!disposed&&ticket===epoch)settings.value=value;});}
-    async function probe(){if(!settings.value?.enabled){actionError.value='请先启用 OpenCode ACP';return;}const ticket=epoch,id=props.sessionId||'';await perform(async()=>{provider.value=null;const api=props.api as any;if(!api?.acpProviderProbe)throw Error('ACP 提供方探针入口未接通');const value=await api.acpProviderProbe(id);if(!value||value.peerId!=='opencode'||typeof value.environment!=='string'||typeof value.protocolReady!=='boolean'||typeof value.verdict!=='string'||!Number.isSafeInteger(value.protocolVersion)||typeof value.evidence!=='string'||value.modelTaskTested!==false)throw Error('ACP 提供方回执无效');if(!disposed&&ticket===epoch)provider.value=value;});}
+    async function toggle(){const before=settings.value;if(!before)return;const ticket=epoch,id=props.sessionId||'';await perform(async()=>{const value=checkedSettings(await (props.api as any).acpSettingsSetEnabled(id,!before.enabled,before.revision));if(!disposed&&ticket===epoch){settings.value=value;provider.value=null;await readDiagnostics();}});}
+    async function probe(){if(!settings.value?.enabled){actionError.value='请先启用 OpenCode ACP';return;}const ticket=epoch,id=props.sessionId||'';await perform(async()=>{provider.value=null;const api=props.api as any;if(!api?.acpProviderProbe)throw Error('ACP 提供方探针入口未接通');const value=await api.acpProviderProbe(id);if(!value||value.peerId!=='opencode'||typeof value.environment!=='string'||typeof value.protocolReady!=='boolean'||typeof value.verdict!=='string'||!Number.isSafeInteger(value.protocolVersion)||typeof value.evidence!=='string'||value.modelTaskTested!==false)throw Error('ACP 提供方回执无效');if(!disposed&&ticket===epoch){provider.value=value;await readDiagnostics();}});}
     const controller=new AcpSessionController(props.api,view=>{live.value=[...live.value.filter(v=>v.delegation.delegationId!==view.delegation.delegationId),view];});
     async function perform(action:()=>Promise<void>){if(acting.value)return;const ticket=epoch;acting.value=true;actionError.value='';try{await action();}catch(e){if(!disposed&&ticket===epoch)actionError.value=String((e as Error).message||e);}finally{if(!disposed&&ticket===epoch)acting.value=false;}}
     async function start(){if(!draft.value.trim()||!settings.value?.enabled||!providerReady())return;const ticket=epoch,text=draft.value;if(!requestId){requestId=crypto.randomUUID();taskId=crypto.randomUUID();}
@@ -27,7 +36,7 @@ export const AcpHistoryPanel=defineComponent({
       }catch(e){if(!disposed&&ticket===serial){rows.value=[];loaded.value=false;error.value=String((e as Error).message||e);}}
       finally{if(!disposed&&ticket===serial)busy.value=false;}
     }
-    watch(()=>[props.active,props.sessionId],()=>{++serial;++epoch;controller.bind(props.sessionId||'',!!props.active);live.value=[];settings.value=null;provider.value=null;draft.value='';requestId='';taskId='';acting.value=false;actionError.value='';rows.value=[];busy.value=false;error.value='';loaded.value=false;if(props.active){void load();void readSettings();}},{immediate:true});
+    watch(()=>[props.active,props.sessionId],()=>{++serial;++epoch;++diagnosticRead;diagnosticHistory.value=null;diagnosticError.value='';controller.bind(props.sessionId||'',!!props.active);live.value=[];settings.value=null;provider.value=null;draft.value='';requestId='';taskId='';acting.value=false;actionError.value='';rows.value=[];busy.value=false;error.value='';loaded.value=false;if(props.active){void load();void readSettings();void readDiagnostics();}},{immediate:true});
     onBeforeUnmount(()=>{disposed=true;++serial;++epoch;controller.bind('',false);});
     return()=>h('section',{class:'side-section acp-history','aria-label':'ACP 委派记录'},[
       h('header',{class:'row spread'},[h('h2',{},'ACP 委派'),h('button',{class:'btn',type:'button',disabled:busy.value,onClick:()=>void load()},'刷新记录')]),
@@ -38,6 +47,14 @@ export const AcpHistoryPanel=defineComponent({
         h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void perform(readSettings)},'刷新配置'),
       ]),
       h('button',{class:'btn',type:'button',disabled:acting.value||!settings.value?.enabled,onClick:()=>void probe()},'检查 OpenCode 提供方'),
+      diagnosticError.value?h('p',{class:'resource-error',role:'status'},'历史诊断读取失败：'+diagnosticError.value):null,
+      diagnosticHistory.value?.record?h('section',{class:'tool-card','aria-label':'历史诊断与用户决定'},[
+        h('strong',{},diagnosticHistory.value.record.decision==='kept'?'已保留现状':'诊断结果已记录'),
+        h('p',{class:'note'},'这是历史诊断，不恢复连接或执行许可。'+(diagnosticHistory.value.scopeCurrent?'':'工作目录或 ACP 设置已变化，需重新检查。')),
+        h('p',{class:'note'},'保留现状不修改配置，不影响 SaCode 自有 Agent；OpenCode 后续任务仍可能失败。'),
+        h('button',{class:'btn',type:'button',disabled:acting.value||!diagnosticHistory.value.scopeCurrent||diagnosticHistory.value.record.decision==='kept'||!(props.api as any)?.acpDiagnosticsKeep,onClick:()=>void keepDiagnostic()},'暂不修复／保留现状'),
+        h('details',{},[h('summary',{},'查看上次诊断'),renderAcpDiagnostics(diagnosticHistory.value.record.report.diagnostics)]),
+      ]):null,
       settings.value?.enabled===false&&live.value.some(v=>!v.workerFinished)?h('section',{class:'tool-card',role:'status'},[
         h('strong',{},'已停止接收新委派；在途任务仍在运行'),
         h('p',{class:'note'},'可以等待收尾，或明确取消。关闭开关不会杀死进程。'),
@@ -46,6 +63,7 @@ export const AcpHistoryPanel=defineComponent({
       ]):null,
       provider.value?h('section',{class:'tool-card'},[
         h('strong',{},providerReady()?'ACP 协议已连接':'提供方尚未就绪'),
+        provider.value.diagnosticSaved===false?h('p',{class:'note'},'本次诊断未保存：检查已取消或作用域发生变化；历史记录未更新。'):null,
         provider.value.evidence.includes('acp-auth-required:no-task')?h('p',{class:'note',role:'status'},'OpenCode 实际返回认证要求。请在 OpenCode 中处理对应提供方；SaCode 不自动登录。'):null,
         lowContext()&&provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'SaCode 当前以低完整性运行，普通用户日志可能无法写入。请从正常安装位置复验；无需因此重新登录。'):null,
         provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 报告日志文件访问被拒绝，具体原因尚未确认；这不代表需要登录。'):null,

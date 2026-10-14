@@ -39,6 +39,11 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
       if(!await js("(()=>{const t=document.querySelector('.acp-diagnostics')?.textContent||'';return t.includes('诊断编号 acp-')&&t.includes('模型价格')&&t.includes('未知，未核价')&&t.includes('请求工作目录');})()"))throw Error('acp-structured-diagnostics-missing');
       const detail=await js("[...document.querySelectorAll('.acp-history pre')].map(p=>p.textContent).join('\\n')");
       if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件访问被拒绝')"))throw Error('acp-log-permission-reason-hidden');
+      await wait("[...document.querySelectorAll('.acp-history button')].some(b=>b.textContent.trim()==='暂不修复／保留现状'&&!b.disabled)");
+      await click('暂不修复／保留现状');
+      await wait("document.querySelector('.acp-history').textContent.includes('已保留现状')");
+      const decision=await js("window.sacode.acpDiagnosticsDescribe('current')");
+      if(decision.source!=='durable-history'||decision.record?.decision!=='kept'||decision.record?.report?.modelTaskTested!==false)throw Error('acp-diagnostic-decision-not-durable');
     }
     const after=readFileSync(SESSION_LOG,'utf8');
     if((after.match(/\tacp\/task\/start\t/g)||[]).length!==1)throw Error('acp-settings-started-task');

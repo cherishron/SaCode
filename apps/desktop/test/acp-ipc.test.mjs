@@ -5,13 +5,25 @@ const {registerAcpIpc}=createRequire(import.meta.url)('../acp-ipc.cjs');
 test('ACP读取只有两个固定动作且逐字段校验身份',async()=>{
   const handlers=new Map(),calls=[];
   registerAcpIpc({handle:(id,fn)=>handlers.set(id,fn)},async(...args)=>{calls.push(args);return {version:1};});
-  assert.equal(handlers.size,10);
+  assert.equal(handlers.size,12);
   await handlers.get('sacode:acpDelegationList')({}, {sessionId:'current'});
   await handlers.get('sacode:acpDelegationDescribe')({}, {sessionId:'current',delegationId:'delegation-1'});
   assert.deepEqual(calls,[['acp/delegation/list',{sessionId:'current'}],['acp/delegation/describe',{sessionId:'current',delegationId:'delegation-1'}]]);
   for(const args of [null,{}, {sessionId:3},{sessionId:' '},{sessionId:'current',start:true},{sessionId:'x\n'},{sessionId:'x'.repeat(257)}])await assert.rejects(handlers.get('sacode:acpDelegationList')({},args),/bad-acp-arguments/);
   await assert.rejects(handlers.get('sacode:acpDelegationDescribe')({}, {sessionId:'current',delegationId:''}),/bad-acp-arguments/);
   assert.equal(calls.length,2);
+});
+
+test('历史诊断读取不启动提供方，保留决定只接受诊断编号和修订',async()=>{
+ const handlers=new Map(),calls=[];
+ registerAcpIpc({handle:(id,fn)=>handlers.set(id,fn)},async(...args)=>calls.push(args));
+ await handlers.get('sacode:acpDiagnosticsDescribe')({}, {sessionId:'current'});
+ const args={sessionId:'current',diagnosticId:'acp-'+'a'.repeat(32),revision:1};
+ await handlers.get('sacode:acpDiagnosticsKeep')({},args);
+ assert.deepEqual(calls,[['acp/diagnostics/describe',{sessionId:'current'}],['acp/diagnostics/keep',args]]);
+ for(const patch of [{revision:0},{revision:1.5},{diagnosticId:'other'},{executable:'cmd'},{decision:'repair'}])
+ await assert.rejects(handlers.get('sacode:acpDiagnosticsKeep')({}, {...args,...patch}),/bad-acp-arguments/);
+ await assert.rejects(handlers.get('sacode:acpDiagnosticsKeep')({},Object.assign(Object.create(args),{x:1,y:2,z:3})),/bad-acp-arguments/);
 });
 
 test('ACP开关按修订更新，就绪探针不接受认证自报或启动参数',async()=>{

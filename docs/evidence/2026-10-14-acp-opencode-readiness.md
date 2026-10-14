@@ -1,5 +1,17 @@
 # ACP：OpenCode 装配与就绪检查
 
+## 历史诊断与“保留现状”真实接线
+
+基线 `e9e6298` 加本批明确路径。新增共享核心 AcpDiagnosticJournal，将诊断白名单报告、会话、诊断编号、工作区/ACP 设置事件修订和 pending/kept 决定写入原 SessionLog。Host 增加 describe/keep 两个有限 RPC，CLI 增加 diagnostics/keep，IPC 与页面接同一核心。历史诊断单独回看，不能恢复 providerReady 或执行许可。重复同一决定不重复落库；旧编号、跨会话、陈旧修订或失效作用域拒绝。
+
+真实 Host 首轮 11 条中 7 pass / 1 fail / 3 skip：切工作区释放租约后，取消回调错误尝试保存，被通用错误覆盖。修复为取消/作用域变化后不争写权、不落库，原回执以 diagnosticSaved=false 明示；正常持久失败仍报错，不假报已保存。修复后真实 Host/CLI/OpenCode 13/13，rc=0；最新取消/恢复专项 5/5，rc=0。真实 OpenCode 仍为 Low 环境日志拒绝，不是模型任务成功。
+
+最终核心专项 `acp-journal-verified.log`：TOTAL399/PASSED102/SKIPPED297/ERROR0/FAILED0，rc=0，仅102条运行。定向测试含真实日志恢复、重复决定、无写者、跨会话、旧诊断、设置变化和取消不写。一次测试调度发生私有 target 重叠，已核父子 PID，仅停止自己的重复轮；重叠读数不作最终验收，最后串行复跑使用上述 verified 原件。Host/CLI 1.1.3 release 构建成功。页面/IPC 17/17，有限 preload 契约专项6/6。真实 Electron 主窗口完成保留决定并由真实 IPC 回读确认，`--no-sandbox` 仅用于该测试，不代表默认沙箱或安装态验收。
+
+原件位于 `apps/desktop/.tmp-test/page-tree-a6e22601/`：acp-journal-host-v2.log、acp-journal-cli-v2.log、acp-journal-real-entry-v2.log、acp-journal-race-final.log、acp-journal-ui-final.log、acp-journal-frontend.log；截图 acp-journal-electron-60b09b75-84b6-4fed-9c53-a769c77bb838/acp-readiness.png。核心 verified 日志在邻级 approval-binding-candidate。
+
+边界：诊断事件修订不是配置文件修订；尚不能批准配置修复。有效配置/插件模型解析、文件修订 CAS、后台任务修复、复验通知及真实模型任务仍未完成。用户已选择普通用户环境复验“稍后验证”，本批不重复催验、不以此阻塞其余工作。
+
 ## 最新修正：验收目录的完整性标签（2026-10-14）
 
 当前 HEAD `1148e2c` 加本批完整性观测代码。原生启动失败的环境原因已定位：`.tmp-test` 及其中生成的 exe 继承 Low Mandatory Label；独立仓颉 SDK 最小程序（不导入 std.process/std.fs）读取自身 RID=4096，父子探针均为 4096。OpenCode 日志文件没有显式完整性标签，按 Windows 规则为 Medium。普通 Node 可执行文件启动的同一 OpenCode 完成 initialize/session-new，原生 Low 上下文则返回日志 EPERM。不能再归因于仓颉启动 API 主动降权，也不能解释为缺少认证。

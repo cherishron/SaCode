@@ -10,6 +10,7 @@ function registerAcpIpc(ipcMain, request) {
     ['acpDelegationDescribe', 'acp/delegation/describe', ['sessionId', 'delegationId']],
     ['acpSettingsDescribe', 'acp/settings/describe', ['sessionId']],
     ['acpProviderProbe', 'acp/provider/probe', ['sessionId']],
+    ['acpDiagnosticsDescribe', 'acp/diagnostics/describe', ['sessionId']],
   ]) {
     ipcMain.handle('sacode:' + name, async (_event, args) => {
       if (!args || Object.keys(args).length !== fields.length || fields.some(key =>
@@ -23,6 +24,11 @@ function registerAcpIpc(ipcMain, request) {
       typeof args.enabled!=='boolean'||!Object.hasOwn(args,'revision')||!Number.isSafeInteger(args.revision)||args.revision<0)
       throw Error('bad-acp-arguments');
     return request('acp/settings/set-enabled',{sessionId:args.sessionId,enabled:args.enabled,revision:args.revision});
+  });
+  ipcMain.handle('sacode:acpDiagnosticsKeep', async (_event,args)=>{
+    if(!args||Array.isArray(args)||Object.keys(args).length!==3||!['sessionId','diagnosticId','revision'].every(key=>Object.hasOwn(args,key))||!identity(args.sessionId)||
+      typeof args.diagnosticId!=='string'||!/^acp-[0-9a-f]{32}$/.test(args.diagnosticId)||!positive(args.revision))throw Error('bad-acp-arguments');
+    return request('acp/diagnostics/keep',{sessionId:args.sessionId,diagnosticId:args.diagnosticId,revision:args.revision});
   });
   for (const [name, method, schema] of [
     ['acpDelegationCreate', 'create', {sessionId:identity, taskId:identity, requestId:identity, peerId:identity, taskText}],

@@ -16,6 +16,19 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
         if (params.get("sessionId").getOrThrow().asString().getValue() != host.activeId) {
             throw Exception("not-authorized:acp-session-changed")
         }
+        if (method == "acp/diagnostics/describe" || method == "acp/diagnostics/keep") {
+            let reading = method == "acp/diagnostics/describe"
+            if (params.size() != (if (reading) { 1 } else { 3 })) { throw Exception("invalid-input:acp-diagnostic") }
+            if (!reading) { ensureAcpJournalWriter(host) }
+            let source = if (reading) { SessionLog(host.p) } else { host.shared }
+            if (reading && !source.load()) { throw Exception("replay-rejected") }
+            let journal = AcpDiagnosticJournal(source, host.lease, host.activeId, sessionWorkingDirectory(source))
+            emit(okFrame(idText, if (reading) { journal.describe() } else {
+                journal.keep(params.get("diagnosticId").getOrThrow().asString().getValue(),
+                    params.get("revision").getOrThrow().asInt().getValue())
+            }))
+            return true
+        }
         if (method == "acp/settings/describe") {
             if (params.size() != 1) {
                 throw Exception("invalid-input:acp-settings")
@@ -42,7 +55,16 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
             if (workspace.size == 0) {
                 throw Exception("workspace-not-selected")
             }
-            host.acpProbe.start(OpenCodeAcpProvider(hostOpenCodeExecutable()), workspace, idText)
+            // 持久诊断只由当前写者发布；禁止用新日志覆盖共享写者的在途事件。
+            ensureAcpJournalWriter(host)
+            if (sessionWorkingDirectory(host.shared) != workspace ||
+                !AcpSessionSettings(host.shared, host.lease).effective.describe("project").enabled) {
+                throw Exception("revision-conflict:acp-probe-scope")
+            }
+            let journal = AcpDiagnosticJournal(host.shared, host.lease, host.activeId, workspace)
+            let scope = journal.scopeRevision()
+            host.acpProbe.start(OpenCodeAcpProvider(hostOpenCodeExecutable()), workspace, idText,
+                record: { result, token => journal.recordIfCurrent(result, scope, token) })
             return true
         }
         if (method == "acp/settings/set-enabled" || method == "acp/delegation/create") {
@@ -115,8 +137,23 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
     return true
 }
 
+func ensureAcpJournalWriter(host: HostRuntime): Unit {
+    if (host.leaseHeld) { return }
+    if (!host.lease.takeoverIfStale()) { throw Exception("already-owned") }
+    if (!loadForWrite(host.shared, host.meter)) {
+        host.lease.release(); throw Exception("replay-rejected")
+    }
+    host.leaseHeld = true
+    if (let Some(previous) <- host.acpRuntime) {
+        if (!previous.quiescent() || !previous.shutdown()) { throw Exception("acp-shutdown-unconfirmed") }
+        host.acpRuntime = None
+    }
+    host.acpSettings = None
+}
+
 func acpControlDuringTurn(method: String): Bool {
-    return (AcpRuntimeApi.handles(method) && method != "acp/delegation/create") || method == "acp/settings/describe"
+    return (AcpRuntimeApi.handles(method) && method != "acp/delegation/create") || method == "acp/settings/describe" ||
+        method == "acp/diagnostics/describe" || method == "acp/diagnostics/keep"
 }
 
 func acpSafeWhileOwned(method: String): Bool {
@@ -128,7 +165,7 @@ func acpSafeWhileOwned(method: String): Bool {
 
 func isAcpProductMethod(method: String): Bool {
     return AcpRuntimeApi.handles(method) || method == "acp/settings/describe" || method == "acp/settings/set-enabled" ||
-        method == "acp/provider/probe"
+        method == "acp/provider/probe" || method == "acp/diagnostics/describe" || method == "acp/diagnostics/keep"
 }
 
 // 只从宿主环境或受控产品发现结果取路径，不从请求参数构造命令。
