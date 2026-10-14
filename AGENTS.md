@@ -23,6 +23,17 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用�
 - `npm/sacode-cli` — npm 主包（`@stand-alone/sacode`），`bin/cli.js`、`bin/daemon.js` 是入库源码；现有 `npm/sacode-cli-win32-x64` 平台包的二进制与 DLL 为生成产物，**不入库**。其他平台包及发布状态分别验证，不默认已实现。
 - `scripts/pack-*.mjs` — 打包脚本（CLI / 宿主 / Vue vendor）。
 
+## 密钥与敏感信息
+- 真实API Key、Token、密码、私钥、Cookie、认证头、数据库连接凭据及包含它们的配置/.env一律不可提交；测试、夹具、文档、截图和提交说明同样适用。
+- 仅提交明确无效的占位值与无秘密的配置模板；测试所需凭据从环境或专用本地存储注入，禁止写入日志和失败断言输出。
+- 提交前检查实际暂存差异，不能仅依赖.gitignore。发现真实凭据立即停止提交、不回显其值，提示用户撤销/轮换；不擅自改写历史。未经明确授权不提交或推送。
+
+## 测试目录与资产
+- 规则以 `docs/testing.md` 为准：测试源码按所属模块的 `test/<功能>/` 分类；Host/CLI协议测试不因使用桌面客户端而堆在desktop。
+- 测试源码、可复用驱动、假提供方和合成脱敏夹具可以入库，分别放模块 `test/`、`test/support/`、`test/fixtures/<功能>/`，不得整体塞进忽略目录。
+- 仓颉 `*_test.cj` 当前保留所属源码包；迁到独立测试目录前先验证cjpm发现与包级可见性，不机械搬迁造成漏跑。
+- 一次性运行输出、私有副本、日志、二进制与参考仓库留统一临时根 `apps/desktop/.tmp-test/<用途>/`；与可维护测试源码严格区分。迁移需同步修导入、脚本、CI和打包引用，核用例数及跳过原因。
+
 ## 环境
 - **仓颉技能使用要求**：编写、修改或排查 `.cj` 代码前，优先使用 [Cangjie-SIG/CangjieSkills](https://gitcode.com/Cangjie-SIG/CangjieSkills) 中与任务相关的技能。先读取实际取得的仓库 README，再按技能目录读取对应 `SKILL.md` 及其引用资料；不要仅凭技能名称猜测语法或 API。
 - 使用本地已安装副本时核对来源与版本；尚未取得技能或网络不可用时，明确记录限制，并以本机仓颉 1.1.3 SDK 文档、源码和编译探针核实，不宣称已使用未读取的技能。技能建议须与本项目的共享核心、授权、持久化及平台约束一致；示例通过不替代本项目测试。
@@ -64,4 +75,4 @@ JS 扩展宿主：`cd extjs && node --test`
 - `apps/desktop/test/bridge.test.mjs` 在仓库根使用 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
 - 注释、文档、commit 一律中文；commit 形如 `feat(core,host): 描述`，scope 用 `core/host/cli/desktop/extjs/scripts/docs`。
 - 不要提交构建产物：`target/`、`apps/desktop/dist/`、平台 npm 包生成的 `bin/` 与日志按 `.gitignore` 忽略。主包 `npm/sacode-cli/bin/cli.js`、`bin/daemon.js` 是源码，必须入库，不能将整个 `npm/*/bin/` 一概视为产物。
-- **仓库根目录只允许已入库的源码、文档与配置**：任何临时/验证/测试产物（夹具、私有源码副本、日志、快照、探针输出）**严禁**散落在仓库根或任意源码目录，**一律**放进 `apps/desktop/.tmp-test/`（已在 `.gitignore` 忽略）或做完即删。提交前 `git status` 只要出现**未跟踪、未忽略**的顶层目录或文件，即视为违规，必须先清理干净。**禁止 `git add -A` / `git add .`**——只按文件路径精确 `git add`，杜绝把游离产物误带进提交。
+- **仓库根目录只允许已入库的源码、文档与配置**：任何临时运行产物（动态夹具、私有源码副本、日志、快照、探针输出）**严禁**散落在仓库根或任意源码目录，**一律**放进 `apps/desktop/.tmp-test/`（已在 `.gitignore` 忽略）或做完即删。此限制不适用于按 `docs/testing.md` 组织、可提交的测试源码与静态合成夹具，不能以“测试产物”为由将它们全部忽略或删除。提交前 `git status` 只要出现**未跟踪、未忽略**的顶层目录或文件，即视为违规，必须先清理干净。**禁止 `git add -A` / `git add .`**——只按文件路径精确 `git add`，杜绝把游离产物误带进提交。

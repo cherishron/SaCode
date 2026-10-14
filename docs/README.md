@@ -29,6 +29,7 @@
 | [`product/platform-and-distribution.md`](product/platform-and-distribution.md) | 平台支持、npm 分发、GitHub 构建与证据边界 | 2026-10-13 用户决策；支持目标与已验证状态分开 |
 | [`build-linux.md`](build-linux.md) | Linux 依赖与构建读数 | 补 `2c56c76` 三成员构建通过，桌面与真实任务待验 |
 | [`build-platforms.md`](build-platforms.md) | 本批平台代码、npm/桌面/CI 与 OHOS 交叉入口 | 2026-10-14；本机 Windows 回归与目标环境复验分开 |
+| [`testing.md`](testing.md) | 测试源码、功能分类、夹具与临时产物的现行规则 | 测试资产可入库；迁移进度见 [`整理台账`](plans/test-layout-2026-10-15.md)，不等于全部迁移完成 |
 | [`product/desktop-design-standard.md`](product/desktop-design-standard.md) | 桌面布局与品牌规范 | 设计标准，引用旧基线（2026-10-03），需结合 PRD 复核 |
 
 ## 2. 设计 / 契约 / 实施计划（可能过期，以 PRD 复核）
