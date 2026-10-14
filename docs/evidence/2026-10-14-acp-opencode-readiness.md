@@ -1,5 +1,21 @@
 # ACP：OpenCode 装配与就绪检查
 
+## 同实例模型与 Agent 诊断专项
+
+源码基线 b1d7327 加本批明确文件；未提交并发变更不进入私有候选。新模块是可选提供方插件，不自动安装、不改变用户配置、不调用模型。真实 OpenCode 2.0.28 在隔离 XDG 配置中加载本地目录夹具和只读诊断适配器；模型端点为带请求计数的本地 HTTP 夹具。它证明实际提供方插件契约和实例绑定，不证明用户当前配置、端点或免费模型可调用。
+
+- 仓颉 1.1.3 核心 ACP 筛选：TOTAL407 / PASSED110 / SKIPPED297 / ERROR0 / FAILED0，rc=0；新增五条覆盖白名单、nonce/会话/目录/版本/时间绑定、不完整目录、继承清除及临时文件回收。不是全量 core 通过。
+- 最新 Host/CLI release 构建分别 rc=0；真实提供方双入口 2/2，rc=0：默认模型已列入目录，general 子 Agent 引用 missing-fixture-model 未列入，两者分别持久记录；保留现状不关闭开关，重读不再执行。模型请求计数为0，未新增 ACP task/start。
+- 既有真实 Host/CLI 入口回归10/10，rc=0；覆盖开关、修订、关闭拒绝、诊断保存和程序缺失。使用现有用户配置的协议检查仍报告 Low 日志权限拒绝；没有将隔离正向扩大为用户环境已通过。
+- 页面/适配器专项12/12，rc=0：字段白名单、模型风险分列、目录不完整保留未知、无请求零读取、过期与取消/卸载后迟到结果不发布。适配器没有 npm 依赖。
+- Electron 真实 main/preload/Host/OpenCode 检查通过，rc=0，模型端点请求0：当前实例主模型与 Agent 风险在可见区域分别显示，警告不禁用委派按钮；仅填写草稿，没有提交任务。随后保存保留现状决定。使用 --no-sandbox 测试参数，不代表默认沙箱或安装态验收。
+
+截图检查曾误选折叠历史中的同名节点；补充 viewport 断言使该轮转红，改为当前报告的精确节点后通过，未删除断言。最终截图已人工查看，确实显示默认模型及缺失 Agent 模型警告。
+
+原件均位于忽略目录 apps/desktop/.tmp-test/：approval-binding-candidate/acp-metadata-core.log；page-tree-a6e22601/acp-metadata-final-{host,cli}.log、acp-metadata-native-test.log、acp-metadata-regression.log、acp-metadata-electron.log 与 acp-metadata-electron-result.json。最终截图在 metadata-electron-bb5f9bc6127340d49aad67c9505f60f8/sacode-opencode-instance-XXrUze/workspace/acp-instance-metadata.png；同目录 geometry 记录实际可见位置。
+
+仍缺：用户授权安装后的普通配置复验、配置文件来源与修订绑定、修复提案和既有后台任务执行/CAS/通知。价格、动态插件路由及真实模型任务未验证。无插件仍可用 ACP 协议；不存在将只读适配器变成强制准入的要求。
+
 ## 程序发现失败也进入诊断与用户决定链
 
 基线 8f0530b 加本批明确文件。Host 原先在创建检查 worker 前解析程序，解析失败只抛通用 RPC 错误。现将可信程序解析放入原检查 worker，核心统一返回有诊断编号的 executable-not-found/discovery-unconfirmed 报告；不回显异常正文，不推断认证错误，不改变用户开关。CLI 使用同一核心入口；取消发生在解析前时完全不解析，解析期间取消则保留取消结果、不启动程序。失败报告可持久回看及保留现状。

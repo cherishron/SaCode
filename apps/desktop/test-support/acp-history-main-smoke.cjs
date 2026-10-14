@@ -39,6 +39,22 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
       if(!await js("(()=>{const t=document.querySelector('.acp-diagnostics')?.textContent||'';return t.includes('诊断编号 acp-')&&t.includes('模型价格')&&t.includes('未知，未核价')&&t.includes('请求工作目录');})()"))throw Error('acp-structured-diagnostics-missing');
       const detail=await js("[...document.querySelectorAll('.acp-history pre')].map(p=>p.textContent).join('\\n')");
       if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件访问被拒绝')"))throw Error('acp-log-permission-reason-hidden');
+      if(process.env.SACODE_ACP_METADATA_SMOKE==='1'){
+        await js("(()=>{const summary=[...document.querySelectorAll('.acp-history summary')].find(e=>e.textContent==='查看上次诊断');if(summary&&!summary.parentElement.open)summary.click();})()");
+        await wait("!!document.querySelector('.acp-history > section.tool-card > .acp-diagnostics > .acp-instance-metadata')?.getClientRects().length&&document.querySelector('.acp-history > section.tool-card > .acp-diagnostics > .acp-instance-metadata').textContent.includes('missing-fixture-model')");
+        const metadata=await js("document.querySelector('.acp-history > section.tool-card > .acp-diagnostics > .acp-instance-metadata').textContent");
+        if(!metadata.includes('sacode-fixture/fixture')||!metadata.includes('当前启用目录未列出，调用可能失败')||!metadata.includes('模型价格未知'))throw Error('acp-instance-risks-not-separated');
+        await js("(()=>{const e=document.querySelector('textarea[aria-label=\"OpenCode 委派任务\"]');e.value='只检查按钮状态，不发送';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+        await wait("!!document.querySelector('.acp-history button[type=\"submit\"]')&&!document.querySelector('.acp-history button[type=\"submit\"]').disabled");
+        if(!await js("document.querySelector('.acp-history').textContent.includes('ACP 协议已连接')"))throw Error('acp-agent-warning-blocked-protocol');
+        await js("document.querySelector('.acp-history > section.tool-card > .acp-diagnostics > .acp-instance-metadata').scrollIntoView({block:'start'})");
+        win.showInactive();
+        await new Promise(resolve=>setTimeout(resolve,300));
+        const geometry=await js("(()=>{const e=document.querySelector('.acp-history > section.tool-card > .acp-diagnostics > .acp-instance-metadata'),r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight,ancestors:[...function*(v){while(v){yield v;v=v.parentElement}}(e)].map(v=>({tag:v.tagName,cls:v.className,scroll:v.scrollTop,height:v.clientHeight,full:v.scrollHeight,overflow:getComputedStyle(v).overflowY}))};})()");
+        writeFileSync(join(SESSION_DIR,'acp-instance-geometry.json'),JSON.stringify(geometry));
+        if(geometry.top<0||geometry.top>=geometry.height)throw Error('acp-instance-metadata-not-in-viewport');
+        writeFileSync(join(SESSION_DIR,'acp-instance-metadata.png'),(await win.webContents.capturePage()).toPNG());
+      }
       await wait("[...document.querySelectorAll('.acp-history button')].some(b=>b.textContent.trim()==='暂不修复／保留现状'&&!b.disabled)");
       await click('暂不修复／保留现状');
       await wait("document.querySelector('.acp-history').textContent.includes('已保留现状')");

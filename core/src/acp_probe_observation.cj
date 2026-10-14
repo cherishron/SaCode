@@ -12,9 +12,10 @@ public class AcpProbeObservation {
     public let sessionModel: String
     public let sessionMode: String
     public let processIntegrity: String
+    public let instanceMetadata: String
     public init(diagnosticId!: String = "", workspace!: String = "", executable!: String = "", agentName!: String = "",
         agentVersion!: String = "", sessionModel!: String = "", sessionMode!: String = "",
-        processIntegrity!: String = "unknown") {
+        processIntegrity!: String = "unknown", instanceMetadata!: String = "") {
         this.diagnosticId = diagnosticId
         this.workspace = workspace
         this.executable = executable
@@ -23,16 +24,22 @@ public class AcpProbeObservation {
         this.sessionModel = sessionModel
         this.sessionMode = sessionMode
         this.processIntegrity = processIntegrity
+        this.instanceMetadata = instanceMetadata
     }
     public func withExecutable(value: String): AcpProbeObservation {
         return AcpProbeObservation(diagnosticId: diagnosticId, workspace: workspace, executable: value,
             agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode,
-            processIntegrity: processIntegrity)
+            processIntegrity: processIntegrity, instanceMetadata: instanceMetadata)
     }
     public func withProcessIntegrity(value: String): AcpProbeObservation {
         return AcpProbeObservation(diagnosticId: diagnosticId, workspace: workspace, executable: executable,
             agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode,
-            processIntegrity: value)
+            processIntegrity: value, instanceMetadata: instanceMetadata)
+    }
+    public func withInstanceMetadata(value: String): AcpProbeObservation {
+        return AcpProbeObservation(diagnosticId: diagnosticId, workspace: workspace, executable: executable,
+            agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode,
+            processIntegrity: processIntegrity, instanceMetadata: value)
     }
     func report(environment: String, authenticated: Bool, verdict: String, version: Int64, evidence: String): AcpProviderReadiness {
         return AcpProviderReadiness(environment, authenticated, verdict, version, evidence, observation: this)
@@ -53,6 +60,9 @@ public class AcpProbeObservation {
         }
         value.put("source", JsonString("acp-observation"))
         value.put("processIntegrity", JsonString(processIntegrity))
+        if (instanceMetadata.size > 0) {
+            value.put("instanceMetadata", JsonValue.fromStr(instanceMetadata))
+        }
         value.put("configSources", JsonString("unknown"));
         value.put("processIdentity", JsonString("unknown"))
         value.put("primaryAgent", JsonString("unknown"));
@@ -91,7 +101,8 @@ func acpProbeObservedInitialization(previous: AcpProbeObservation, raw: String):
     } catch (_: Exception) {}
     return AcpProbeObservation(diagnosticId: previous.diagnosticId, workspace: previous.workspace,
         executable: previous.executable, agentName: name, agentVersion: version, sessionModel: previous.sessionModel,
-        sessionMode: previous.sessionMode, processIntegrity: previous.processIntegrity)
+        sessionMode: previous.sessionMode, processIntegrity: previous.processIntegrity,
+        instanceMetadata: previous.instanceMetadata)
 }
 
 func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpProbeObservation {
@@ -135,7 +146,8 @@ func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpPro
     }
     return AcpProbeObservation(diagnosticId: previous.diagnosticId, workspace: previous.workspace,
         executable: previous.executable, agentName: previous.agentName, agentVersion: previous.agentVersion,
-        sessionModel: model, sessionMode: mode, processIntegrity: previous.processIntegrity)
+        sessionModel: model, sessionMode: mode, processIntegrity: previous.processIntegrity,
+        instanceMetadata: previous.instanceMetadata)
 }
 
 // 仅返回封闭原因码，不把 stderr 中的路径、配置、令牌或原始异常送到页面。

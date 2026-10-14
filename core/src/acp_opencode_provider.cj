@@ -121,17 +121,28 @@ public class OpenCodeAcpProvider <: AcpProvider {
     }
     public func open(workspace: String): AcpProcess {
         return AcpProcess(command, ["acp", "--log-level", "none"], workingDirectory: canonicalize(workspace),
-            environment: environment)
+            environment: openCodeMetadataEnvironment(environment, ""))
     }
     public func probe(workspace: String): AcpProviderReadiness {
         return probeWithToken(workspace, TurnToken())
     }
     public func probeWithToken(workspace: String, token: TurnToken): AcpProviderReadiness {
-        let protocol = AcpProtocolProvider("opencode", command, ["acp", "--log-level", "none"],
-            authentication: {=> true}, environment: environment)
-        let report = protocol.probeWithToken(workspace, token)
-        return AcpProviderReadiness(report.environment, report.authenticated, report.verdict, report.protocolVersion,
-            report.evidence + ";configuration-owner=opencode;model-selection=provider-default;remote-model-not-tested",
-            observation: report.observation.withExecutable(command))
+        if (token.cancelled()) {
+            return AcpProtocolProvider("opencode", command, ["acp", "--log-level", "none"], authentication: {=> true},
+                environment: environment).probeWithToken(workspace, token)
+        }
+        let metadata = OpenCodeProbeMetadata(workspace)
+        try {
+            let protocol = AcpProtocolProvider("opencode", command, ["acp", "--log-level", "none"],
+                authentication: {=> true}, environment: metadata.environment(environment))
+            let report = protocol.probeWithToken(workspace, token, diagnosticId: metadata.diagnosticId,
+                observeSession: {value, session, cancellation => metadata.observe(value, session, cancellation)})
+            return AcpProviderReadiness(report.environment, report.authenticated, report.verdict, report.protocolVersion,
+                report.evidence +
+                    ";configuration-owner=opencode;model-selection=provider-default;remote-model-not-tested",
+                observation: report.observation.withExecutable(command))
+        } finally {
+            metadata.close()
+        }
     }
 }

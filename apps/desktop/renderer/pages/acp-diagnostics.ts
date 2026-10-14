@@ -1,8 +1,10 @@
 import {h} from 'vue';
+import {renderAcpInstanceMetadata} from './acp-instance-metadata';
 export interface AcpDiagnostics {
  version:1;diagnosticId:string;workspace:string;executable:string;source:'acp-observation';
  agentName:string|null;agentVersion:string|null;sessionModel:string|null;sessionMode:string|null;
  processIntegrity?:'unknown'|'untrusted'|'low'|'medium'|'high'|'system'|'not-windows';
+ instanceMetadata?:unknown;
  configSources:'unknown';processIdentity:'unknown';primaryAgent:'unknown';price:'unknown';pluginModels:'unknown';network:'not-tested';modelTask:'not-tested';
 }
 const text=(value:unknown,max:number)=>typeof value==='string'&&value.length<=max&&!/[\u0000-\u001f\u007f]/.test(value);
@@ -23,6 +25,6 @@ export function renderAcpDiagnostics(raw:unknown){
  const integrity={unknown:'未确认',untrusted:'不受信任',low:'低（Low）',medium:'普通用户（Medium）',high:'高（High）',system:'系统（System）','not-windows':'不适用'}[value.processIntegrity||'unknown'];
  const rows=[['SaCode 进程完整性',integrity],['请求工作目录',value.workspace],['启动程序',value.executable],['Agent 回执',value.agentName],['实际版本回执',value.agentVersion],
  ['会话模型回执',value.sessionModel],['会话模式回执',value.sessionMode],['主 Agent','未确认，不能以模式名代替'],['模型价格','未知，未核价'],
- ['配置来源与身份','未确认全局/项目合并来源与系统身份'],['插件模型覆盖','未确认动态插件覆盖'],['端点与模型任务','未发送模型任务，端点可达性未验证']];
- return h('details',{class:'acp-diagnostics',open:true},[h('summary',{},'诊断详情'),h('dl',{},rows.flatMap(([label,content])=>[h('dt',{},label),h('dd',{},content||'未返回（未确认）')])),h('p',{class:'note'},'诊断编号 '+value.diagnosticId)]);
+ ['配置来源','未确认全局/项目合并来源'],['插件模型覆盖','未确认动态插件覆盖'],['端点与模型任务','未发送模型任务，端点可达性未验证']];
+ return h('details',{class:'acp-diagnostics',open:true},[h('summary',{},'诊断详情'),h('dl',{},rows.flatMap(([label,content])=>[h('dt',{},label),h('dd',{},content||'未返回（未确认）')])),renderAcpInstanceMetadata(value.instanceMetadata,value.workspace),h('p',{class:'note'},'诊断编号 '+value.diagnosticId)]);
 }

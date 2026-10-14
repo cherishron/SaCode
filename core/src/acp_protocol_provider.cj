@@ -31,8 +31,13 @@ public class AcpProtocolProvider <: AcpProvider {
         return probeWithToken(workspace, TurnToken())
     }
     // 取消只传令牌，由探测线程独占启动、等待及回收，不跨线程操作进程生命周期。
-    public func probeWithToken(workspace: String, token: TurnToken): AcpProviderReadiness {
-        var observation = AcpProbeObservation(diagnosticId: "acp-" + randomHex(16), workspace: workspace)
+    public func probeWithToken(workspace: String, token: TurnToken, diagnosticId!: String = "",
+        observeSession!: (AcpProbeObservation, String, TurnToken) -> AcpProbeObservation = {value, _, _ => value}): AcpProviderReadiness {
+        var observation = AcpProbeObservation(diagnosticId: if (diagnosticId.size > 0) {
+            diagnosticId
+        } else {
+            "acp-" + randomHex(16)
+        }, workspace: workspace)
         if (token.cancelled()) {
             return observation.report("pending-verification", false, "pending-verification", 0,
                 "probe-cancelled-before-start:no-task")
@@ -69,6 +74,9 @@ public class AcpProtocolProvider <: AcpProvider {
             if (session.size == 0) {
                 throw Exception("invalid-acp-probe-session")
             }
+            try {
+                observation = observeSession(observation, session, token)
+            } catch (_: Exception) {}
             process.kill()
             if (!process.exitObserved()) {
                 return observation.report("probe-failed-unknown", false, "blocked", 1, "probe-process-exit-unconfirmed")
