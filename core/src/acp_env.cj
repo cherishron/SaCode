@@ -24,8 +24,8 @@ public class AcpEnvReport {
     public let evidence: String
     public let probedAt: Int64
 
-    public init(product: String, state: String, path: String, version: String,
-        launch: String, authPrecondition: String, evidence: String, probedAt: Int64) {
+    public init(product: String, state: String, path: String, version: String, launch: String, authPrecondition: String,
+        evidence: String, probedAt: Int64) {
         this.product = product
         this.state = state
         this.path = path
@@ -57,7 +57,7 @@ public class AcpEnvProbe {
 
     public init() {
         productTable["opencode"] = AcpProductMeta("opencode", "opencode", "", "opencode acp")
-        productTable["codebuddy"] = AcpProductMeta("codebuddy", "codebuddy", "CODEBUDDY_API_KEY", "codebuddy --acp")
+        productTable["codebuddy"] = AcpProductMeta("codebuddy", "codebuddy", "", "codebuddy --acp")
         productTable["qoder"] = AcpProductMeta("qoder", "qoder", "QODER_PERSONAL_ACCESS_TOKEN", "qoder --acp")
     }
 
@@ -90,23 +90,23 @@ public class AcpEnvProbe {
         let now = monotonicSeconds()()
         let metaOpt = productTable.get(product)
         if (metaOpt.isNone()) {
-            return AcpEnvReport(product, "pending-verification", "", "", "",
-                "未知产品:无元信息", "product-not-in-table", now)
+            return AcpEnvReport(product, "pending-verification", "", "", "", "未知产品:无元信息", "product-not-in-table",
+                now)
         }
         let meta = metaOpt.getOrThrow()
 
         let pathResult = runCommand("cmd", ["/c", "where", meta.command])
         if (pathResult[0] != Int64(0)) {
-            return AcpEnvReport(product, "not-installed", "", "", meta.launchSpec,
-                "未安装", "where-exit-${pathResult[0]}", now)
+            return AcpEnvReport(product, "not-installed", "", "", meta.launchSpec, "未安装",
+                "where-exit-${pathResult[0]}", now)
         }
         let pathStr = trimStr(pathResult[1])
 
         let versionResult = runCommand("cmd", ["/c", meta.command, "--version"])
         let versionStr = trimStr(versionResult[1])
         if (versionResult[0] != Int64(0) && versionStr.size == 0) {
-            return AcpEnvReport(product, "probe-failed-unknown", pathStr, "", meta.launchSpec,
-                "版本获取失败", "version-exit-${versionResult[0]}", now)
+            return AcpEnvReport(product, "probe-failed-unknown", pathStr, "", meta.launchSpec, "版本获取失败",
+                "version-exit-${versionResult[0]}", now)
         }
 
         var authState = "installed-usable"
@@ -121,17 +121,15 @@ public class AcpEnvProbe {
             }
         }
 
-        return AcpEnvReport(product, authState, pathStr, versionStr, meta.launchSpec,
-            authPrecondition, "probe-ok", now)
+        return AcpEnvReport(product, authState, pathStr, versionStr, meta.launchSpec, authPrecondition, "probe-ok", now)
     }
 
     private func runCommand(cmd: String, args: Array<String>): (Int64, String) {
         try {
-            let p = launch(cmd, args, workingDirectory: Some(Path(".")),
-                           stdIn: ProcessRedirect.Discard, stdOut: ProcessRedirect.Pipe,
-                           stdErr: ProcessRedirect.Pipe)
-            let outFuture = spawn { => readAllStream(p.stdOutPipe) }
-            let errFuture = spawn { => readAllStream(p.stdErrPipe) }
+            let p = launch(cmd, args, workingDirectory: Some(Path(".")), stdIn: ProcessRedirect.Discard,
+                stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Pipe)
+            let outFuture = spawn {=> readAllStream(p.stdOutPipe)}
+            let errFuture = spawn {=> readAllStream(p.stdErrPipe)}
             let exitCode = p.wait(timeout: 10000 * Duration.millisecond)
             let outStr = outFuture.get()
             let _ = errFuture.get()

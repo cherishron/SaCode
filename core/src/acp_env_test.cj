@@ -31,17 +31,14 @@ func acpEnvProbeOpencodeNotInstalledReportsNotInstalled() {
 }
 
 @Test
-func acpEnvProbeCodebuddyAuthMissingWhenNoEnv() {
+func acpEnvProbeCodebuddyDoesNotRequireApiKey() {
     let probe = AcpEnvProbe()
     let report = probe.probeOne("codebuddy", refresh: true)
-    // 若 codebuddy 已装但无 CODEBUDDY_API_KEY → installed-auth-missing
-    // 若未装 → not-installed
-    // 两种都合法
-    let valid = (report.state == "installed-auth-missing" || report.state == "not-installed" || report.state == "installed-usable")
+    // 登录与认证由 CodeBuddy 管理；没有 API_KEY 不能推断认证缺失。
+    @Expect(probe.productTable["codebuddy"].authEnvVar, "")
+    let valid = (report.state == "probe-failed-unknown" || report.state == "not-installed" || report.state == "installed-usable")
     @Expect(valid, true)
-    if (report.state == "installed-auth-missing") {
-        @Expect(report.authPrecondition.contains("CODEBUDDY_API_KEY"), true)
-    }
+    @Expect(report.authPrecondition.contains("CODEBUDDY_API_KEY"), false)
 }
 
 @Test
