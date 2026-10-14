@@ -19,3 +19,8 @@ test('缺字段和未知契约安全展示，不泄露任意原始配置',()=>{
  }
  assert.equal(readAcpDiagnostics(undefined),null);
 });
+
+test('进程完整性是只读环境说明，未知值不被冒充为普通权限',()=>{
+ const input={...value(),processIntegrity:'low'};assert.ok(JSON.stringify(renderAcpDiagnostics(input)).includes('低（Low）'));
+ assert.throws(()=>readAcpDiagnostics({...input,processIntegrity:'bypass'}));
+});

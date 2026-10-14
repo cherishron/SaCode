@@ -106,7 +106,7 @@ test('关闭开关不杀在途任务，用户另行选择取消且使用绑定�
 
 test('未核价与插件覆盖未知仅作诊断提示，不拦截已接通协议的显式委派',async()=>{
  let starts=0;const current=view();current.delegation.taskId='2';current.delegation.requestId='1';
- const diagnostics={version:1,diagnosticId:'acp-'+'a'.repeat(32),workspace:'workspace',executable:'trusted-executable',agentName:'OpenCode',agentVersion:'2.fixture',sessionModel:null,sessionMode:null,source:'acp-observation',configSources:'unknown',processIdentity:'unknown',primaryAgent:'unknown',price:'unknown',pluginModels:'unknown',network:'not-tested',modelTask:'not-tested'};
+ const diagnostics={version:1,diagnosticId:'acp-'+'a'.repeat(32),workspace:'workspace',executable:'trusted-executable',agentName:'OpenCode',agentVersion:'2.fixture',sessionModel:null,sessionMode:null,source:'acp-observation',processIntegrity:'low',configSources:'unknown',processIdentity:'unknown',primaryAgent:'unknown',price:'unknown',pluginModels:'unknown',network:'not-tested',modelTask:'not-tested'};
  const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-usable',protocolReady:true,verdict:'measured',protocolVersion:1,evidence:'controlled-fixture:no-model-task',modelTaskTested:false,diagnostics}),acpDelegationCreate:async()=>{starts++;return current;}});
  await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
  assert.ok(JSON.stringify(f.nodes()).includes('未确认动态插件覆盖'));

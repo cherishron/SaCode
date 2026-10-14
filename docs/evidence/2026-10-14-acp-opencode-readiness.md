@@ -1,5 +1,15 @@
 # ACP：OpenCode 装配与就绪检查
 
+## 最新修正：验收目录的完整性标签（2026-10-14）
+
+当前 HEAD `1148e2c` 加本批完整性观测代码。原生启动失败的环境原因已定位：`.tmp-test` 及其中生成的 exe 继承 Low Mandatory Label；独立仓颉 SDK 最小程序（不导入 std.process/std.fs）读取自身 RID=4096，父子探针均为 4096。OpenCode 日志文件没有显式完整性标签，按 Windows 规则为 Medium。普通 Node 可执行文件启动的同一 OpenCode 完成 initialize/session-new，原生 Low 上下文则返回日志 EPERM。不能再归因于仓颉启动 API 主动降权，也不能解释为缺少认证。
+
+新增只读令牌观测 `processIntegrity`，进入核心 → Host/CLI → 页面；未知值保留未知，不改 ACL/标签、不提权、不绕行替代执行器。依据：[Windows Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)。本次没有发送模型 prompt，没有修改 OpenCode 配置或认证数据库。
+
+验证：仓颉 1.1.3 Host/CLI release 构建成功；私有 ACP 核心集 TOTAL 396 / PASSED 99 / SKIPPED 297 / ERROR 0 / FAILED 0，rc=0（非全核心回归）；原生入口与验收客户端 14/14；最终诊断与页面单测 14/14。私有候选的 210 份生产仓颉源码与 HEAD 加本批修改一致。日志在 `apps/desktop/.tmp-test/page-tree-a6e22601/acp-integrity-*-final.log` 与 `approval-binding-candidate/acp-integrity-core-final.log`。
+
+普通用户目录的实际协议复验尚待执行，提供只发初始化和建会话的固定候选验收客户端；不能因当前受控夹具通过就宣称实际 OpenCode 模型可调用。插件有效配置、后台修复、CAS/审批/取消/结算与通知仍未收口。
+
 ## 口径纠正：不再用认证列表做准入（2026-10-14）
 
 以下历史读数保留为当时实现的记录，不代表当前准入契约。此前要求 `auth list` 非空是实现错误，已移除；不要求在 SaCode 配置 OpenCode 密钥，也不要求为无认证端点登录。当前直接执行 ACP initialize / session-new，沿用提供方默认配置，不发送 prompt、不选择模型、不自动登录。

@@ -58,6 +58,6 @@ test('取消后重新开启可再次诊断，不复用旧取消令牌或发送�
  await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:true,revision:2});
  const report=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
  assert.equal(report.protocolReady,true);assert.equal(report.modelTaskTested,false);assert.equal(report.verdict,'measured');
- assert.equal(report.diagnostics.agentVersion,'2.fixture');assert.equal(report.diagnostics.sessionModel,'fixture-free-name');assert.equal(report.diagnostics.price,'unknown');assert.equal(report.diagnostics.workspace,root);
+ assert.equal(report.diagnostics.agentVersion,'2.fixture');assert.equal(report.diagnostics.sessionModel,'fixture-free-name');assert.equal(report.diagnostics.price,'unknown');assert.equal(report.diagnostics.workspace,root);assert.ok(['low','medium','high','system','untrusted'].includes(report.diagnostics.processIntegrity));
  assert.equal((await bridge.stop(10000)).forced,false);
 });

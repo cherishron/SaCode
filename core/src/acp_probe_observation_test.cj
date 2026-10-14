@@ -1,6 +1,7 @@
 package core
 
 import std.unittest.*
+import core.launch_context.currentProcessIntegrity
 
 @Test
 func acpProbeObservationKeepsOnlyBoundProtocolMetadataAndNeverInfersFreePrice() {
@@ -32,4 +33,20 @@ func acpProbeObservationClassifiesReportedLogDenialWithoutEchoingDiagnosticSecre
     @Expect(acpProbeFailureEvidence("initialize", "EPERM open C:\\private\\log\\opencode.log secret=must-not-echo"),
         "protocol-initialize-log-file-permission-denied-unconfirmed:no-task")
     @Expect(acpProbeFailureEvidence("session-new", "network timeout bearer=must-not-echo"), "protocol-session-new-unconfirmed:no-task")
+}
+
+@Test
+func acpProbeObservationPreservesMeasuredIntegrityAcrossProtocolFields() {
+    let observed = AcpProbeObservation(diagnosticId: "fixture").withProcessIntegrity("low").withExecutable("fixture.exe")
+    let next = acpProbeObservedSession(observed, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"sessionId\":\"fixture\"}}")
+    @Expect(next.processIntegrity, "low")
+    @Expect(next.toJson().contains("\"processIntegrity\":\"low\""), true)
+}
+
+@When[os == "Windows"]
+@Test
+func acpProbeObservationReadsActualWindowsIntegrityWithoutChangingIt() {
+    let first = currentProcessIntegrity()
+    @Expect(first == "untrusted" || first == "low" || first == "medium" || first == "high" || first == "system", true)
+    @Expect(currentProcessIntegrity(), first)
 }

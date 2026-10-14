@@ -11,8 +11,10 @@ public class AcpProbeObservation {
     public let agentVersion: String
     public let sessionModel: String
     public let sessionMode: String
+    public let processIntegrity: String
     public init(diagnosticId!: String = "", workspace!: String = "", executable!: String = "", agentName!: String = "",
-        agentVersion!: String = "", sessionModel!: String = "", sessionMode!: String = "") {
+        agentVersion!: String = "", sessionModel!: String = "", sessionMode!: String = "",
+        processIntegrity!: String = "unknown") {
         this.diagnosticId = diagnosticId
         this.workspace = workspace
         this.executable = executable
@@ -20,10 +22,17 @@ public class AcpProbeObservation {
         this.agentVersion = agentVersion
         this.sessionModel = sessionModel
         this.sessionMode = sessionMode
+        this.processIntegrity = processIntegrity
     }
     public func withExecutable(value: String): AcpProbeObservation {
         return AcpProbeObservation(diagnosticId: diagnosticId, workspace: workspace, executable: value,
-            agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode)
+            agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode,
+            processIntegrity: processIntegrity)
+    }
+    public func withProcessIntegrity(value: String): AcpProbeObservation {
+        return AcpProbeObservation(diagnosticId: diagnosticId, workspace: workspace, executable: executable,
+            agentName: agentName, agentVersion: agentVersion, sessionModel: sessionModel, sessionMode: sessionMode,
+            processIntegrity: value)
     }
     func report(environment: String, authenticated: Bool, verdict: String, version: Int64, evidence: String): AcpProviderReadiness {
         return AcpProviderReadiness(environment, authenticated, verdict, version, evidence, observation: this)
@@ -43,6 +52,7 @@ public class AcpProbeObservation {
             }
         }
         value.put("source", JsonString("acp-observation"))
+        value.put("processIntegrity", JsonString(processIntegrity))
         value.put("configSources", JsonString("unknown"));
         value.put("processIdentity", JsonString("unknown"))
         value.put("primaryAgent", JsonString("unknown"));
@@ -81,7 +91,7 @@ func acpProbeObservedInitialization(previous: AcpProbeObservation, raw: String):
     } catch (_: Exception) {}
     return AcpProbeObservation(diagnosticId: previous.diagnosticId, workspace: previous.workspace,
         executable: previous.executable, agentName: name, agentVersion: version, sessionModel: previous.sessionModel,
-        sessionMode: previous.sessionMode)
+        sessionMode: previous.sessionMode, processIntegrity: previous.processIntegrity)
 }
 
 func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpProbeObservation {
@@ -113,7 +123,7 @@ func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpPro
     } catch (_: Exception) {}
     return AcpProbeObservation(diagnosticId: previous.diagnosticId, workspace: previous.workspace,
         executable: previous.executable, agentName: previous.agentName, agentVersion: previous.agentVersion,
-        sessionModel: model, sessionMode: mode)
+        sessionModel: model, sessionMode: mode, processIntegrity: previous.processIntegrity)
 }
 
 // 仅返回封闭原因码，不把 stderr 中的路径、配置、令牌或原始异常送到页面。

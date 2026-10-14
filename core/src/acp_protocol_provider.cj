@@ -1,6 +1,7 @@
 package core
 
 import std.fs.*
+import core.launch_context.currentProcessIntegrity
 
 // 命令和认证探针只由可信插件构造，不解析页面或模型传入的启动向量。
 public class AcpProtocolProvider <: AcpProvider {
@@ -40,6 +41,7 @@ public class AcpProtocolProvider <: AcpProvider {
             return observation.report("installed-auth-missing", false, "pending-verification", 0,
                 "authentication-not-verified")
         }
+        observation = observation.withProcessIntegrity(currentProcessIntegrity())
         let process = open(workspace)
         var stage = "initialize"
         var version: Int64 = 0
