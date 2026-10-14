@@ -43,6 +43,18 @@ func acpProbeObservationPreservesMeasuredIntegrityAcrossProtocolFields() {
     @Expect(next.toJson().contains("\"processIntegrity\":\"low\""), true)
 }
 
+@Test
+func acpProbeObservationPrefersConfigModeAndNeverFallsBackFromAmbiguousSelectors() {
+    let base = AcpProbeObservation()
+    let modern = acpProbeObservedSession(base, ##"{"jsonrpc":"2.0","id":1,"result":{"configOptions":[{"category":"mode","type":"select","currentValue":"plan"}],"modes":{"currentModeId":"legacy-build"}}}"##)
+    @Expect(modern.sessionMode, "plan")
+    let ambiguous = acpProbeObservedSession(base, ##"{"jsonrpc":"2.0","id":2,"result":{"configOptions":[{"category":"mode","type":"select","currentValue":"plan"},{"category":"mode","type":"select","currentValue":"build"}],"modes":{"currentModeId":"legacy-build"}}}"##)
+    @Expect(ambiguous.sessionMode, "")
+    let unsupported = acpProbeObservedSession(base, ##"{"jsonrpc":"2.0","id":3,"result":{"configOptions":[{"category":"mode","type":"boolean","currentValue":true}],"modes":{"currentModeId":"legacy-build"}}}"##)
+    @Expect(unsupported.sessionMode, "")
+    @Expect(modern.toJson().contains("\"primaryAgent\":\"unknown\""), true)
+}
+
 @When[os == "Windows"]
 @Test
 func acpProbeObservationReadsActualWindowsIntegrityWithoutChangingIt() {

@@ -99,6 +99,7 @@ func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpPro
     var model = "";
     var mode = "";
     var modelSelectors: Int64 = 0
+    var modeSelectors: Int64 = 0
     try {
         let options = result.get("configOptions").getOrThrow().asArray()
         if (options.size() <= 128) {
@@ -111,6 +112,12 @@ func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpPro
                             model = acpObservedText(option, "currentValue")
                         }
                     }
+                    if (acpObservedText(option, "category") == "mode") {
+                        modeSelectors += 1
+                        if (acpObservedText(option, "type") == "select") {
+                            mode = acpObservedText(option, "currentValue")
+                        }
+                    }
                 } catch (_: Exception) {}
             }
         }
@@ -118,9 +125,14 @@ func acpProbeObservedSession(previous: AcpProbeObservation, raw: String): AcpPro
     if (modelSelectors != 1) {
         model = ""
     }
-    try {
-        mode = acpObservedText(result.get("modes").getOrThrow().asObject(), "currentModeId")
-    } catch (_: Exception) {}
+    // 优先配置选项；只有没有 mode 选择器时才读取旧 modes，不能让旧值覆盖新值。
+    if (modeSelectors == 0) {
+        try {
+            mode = acpObservedText(result.get("modes").getOrThrow().asObject(), "currentModeId")
+        } catch (_: Exception) {}
+    } else if (modeSelectors != 1) {
+        mode = ""
+    }
     return AcpProbeObservation(diagnosticId: previous.diagnosticId, workspace: previous.workspace,
         executable: previous.executable, agentName: previous.agentName, agentVersion: previous.agentVersion,
         sessionModel: model, sessionMode: mode, processIntegrity: previous.processIntegrity)

@@ -9,13 +9,13 @@ const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
 test('真实Host和CLI恢复同一诊断决定，读取与保留不启动OpenCode或模型任务',{timeout:30000},async t=>{
  assert.ok(process.env.SACODE_HOST);assert.ok(process.env.SACODE_CLI);
  const root=mkdtempSync(join(tmpdir(),'sacode-acp-journal-')),methods=join(root,'methods');
- writeFileSync(join(root,'acp'),"const fs=require('node:fs');require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);fs.appendFileSync('methods',q.method+'\\n');let result;if(q.method==='initialize')result={protocolVersion:1,agentCapabilities:{},agentInfo:{name:'fixture',version:'2.fixture'}};else if(q.method==='session/new')result={sessionId:'fixture'};else throw Error('model-task-forbidden');console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));});");
+ writeFileSync(join(root,'acp'),"const fs=require('node:fs');require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);fs.appendFileSync('methods',q.method+'\\n');let result;if(q.method==='initialize')result={protocolVersion:1,agentCapabilities:{},agentInfo:{name:'fixture',version:'2.fixture'}};else if(q.method==='session/new')result={sessionId:'fixture',configOptions:[{category:'mode',type:'select',currentValue:'plan'}],modes:{currentModeId:'legacy-build'}};else throw Error('model-task-forbidden');console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));});");
  const env={...process.env,SACODE_ACP_OPENCODE_EXECUTABLE:process.execPath,SACODE_USER_SETTINGS_DIR:join(root,'settings')};
  const first=new HostBridge(process.env.SACODE_HOST,env);t.after(()=>first.stop(10000));await first.start(root);
  assert.equal((await first.request('acp/diagnostics/describe',{sessionId:'current'})).record,null);assert.equal(existsSync(methods),false);
  await first.request('workspace/set-directory',{sessionId:'current',directory:root});
  await first.request('acp/settings/set-enabled',{sessionId:'current',enabled:true,revision:0});
- const report=await first.request('acp/provider/probe',{sessionId:'current'},30000);assert.equal(report.protocolReady,true);
+ const report=await first.request('acp/provider/probe',{sessionId:'current'},30000);assert.equal(report.protocolReady,true);assert.equal(report.diagnostics.sessionMode,'plan');
  const history=await first.request('acp/diagnostics/describe',{sessionId:'current'});assert.equal(history.scopeCurrent,true);
  const args={sessionId:'current',diagnosticId:history.record.diagnosticId,revision:history.record.revision};
  await assert.rejects(first.request('acp/diagnostics/keep',{...args,diagnosticId:'other'}),/conflict/);

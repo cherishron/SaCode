@@ -39,6 +39,14 @@
 
 ## 本轮进展
 
+### 实际 V2 配置契约核对
+
+已核本机安装清单为 `@opencode/cli` 2.0.28；官方 tag v2.0.28 指向 `026b106bc5d41b679ffc413264229c340871e4d3`。V2 使用 agents/providers 等字段，不能用 V1 的 agent/provider 或旧项目搜索边界生成修复。依据：[V2 配置](https://opencode.ai/v2/docs/config)。
+
+V2 `debug config` 不是简单本地文件读取：[固定源码](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/commands/handlers/debug/config.ts)先解析服务连接，再调用带当前目录的配置 API，并经过供应方脱敏。尚未确认服务身份与本次 ACP 进程的配置实例一致；不能直接运行该命令就宣称诊断了同一有效配置。[脱敏实现](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/commands/handlers/debug/redact.ts)有键名/headers/URL规则，但不构成任意插件私有字段无秘密的证明。后续必须核对实例/用户/目录，并只接纳白名单来源、Agent 和模型元数据，禁止保存原始配置输出。此轮未调用 debug config、未读取认证库。
+
+ACP 观测已纠正 configOptions 的 mode/select 优先于旧 modes；歧义或未知类型保留未确认，模式仍不当作主 Agent。依据：[ACP v1 配置选项](https://agentclientprotocol.com/protocol/v1/session-config-options)。
+
 原生检查的日志拒绝已定位到验收目录继承的 Windows Low 完整性标签：独立 SDK 最小程序亦为 Low，不能归因于仓颉进程 API 主动降权。新增只读完整性观测供核心、Host/CLI 和页面解释环境，不修改标签、ACL 或 OpenCode 配置，不作为独立准入门槛。普通用户目录中的固定候选复验仍待进行。此项诊断修正不推进后台修复或通知完成状态。
 
 e85e624 后继续修复同步诊断：Host 单飞异步探测，关闭/工作区变化/EOF 取消并等待收束；Windows 真实入口与 Electron 并发读取通过。F10-ACP-02 仍为实施中：尚需诊断编号、可信实例实际版本、生效模型与来源等结构化内容。不要因 async worker 已存在将 F10-ACP-05 后台修复标为完成；修复仍必须接现有任务服务。

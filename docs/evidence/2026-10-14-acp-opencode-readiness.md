@@ -1,5 +1,7 @@
 # ACP：OpenCode 装配与就绪检查
 
+模式回执修正（基线 0a289b6）：新 configOptions mode/select 优先，多个 mode 或未知类型不回退到旧 modes 冒充当前值；未提供 mode 选择器时保留旧协议兼容读面。核心 acp-mode-precedence.log：TOTAL400/PASSED103/SKIPPED297/ERROR0/FAILED0，rc=0；Host/CLI release 构建成功；真实 Host/CLI 协议夹具验证 plan 覆盖 legacy-build、持久回看/不重发任务及取消竞争，acp-mode-entry.log 5/5。来源与 V2 诊断命令实例边界详见同名计划，本轮不新增配置写或模型请求。
+
 ## 历史诊断与“保留现状”真实接线
 
 基线 `e9e6298` 加本批明确路径。新增共享核心 AcpDiagnosticJournal，将诊断白名单报告、会话、诊断编号、工作区/ACP 设置事件修订和 pending/kept 决定写入原 SessionLog。Host 增加 describe/keep 两个有限 RPC，CLI 增加 diagnostics/keep，IPC 与页面接同一核心。历史诊断单独回看，不能恢复 providerReady 或执行许可。重复同一决定不重复落库；旧编号、跨会话、陈旧修订或失效作用域拒绝。
