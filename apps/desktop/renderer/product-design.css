@@ -419,3 +419,9 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
 .acp-history .stack{display:flex;flex-direction:column;align-items:stretch;gap:10px}
 .acp-history pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
 .acp-history .tool-card details{display:block}
+
+/* ACP 白名单诊断：长路径换行，窄窗保持可读。 */
+.acp-diagnostics dl { display: grid; grid-template-columns: minmax(6rem, .6fr) minmax(0, 1.4fr); gap: .55rem .8rem; margin: .9rem 0; font-size: 12px; }
+.acp-diagnostics dt { color: var(--text-muted, #777); }
+.acp-diagnostics dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.acp-diagnostics summary { cursor: pointer; font-weight: 500; }

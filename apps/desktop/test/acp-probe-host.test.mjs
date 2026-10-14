@@ -54,9 +54,10 @@ test('取消后重新开启可再次诊断，不复用旧取消令牌或发送�
  const {root,bridge,pending,pid}=await fixture(t);
  await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:false,revision:1});
  await pending;assert.equal(alive(pid),false);
- writeFileSync(join(root,'acp'),"require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);let result;if(q.method==='initialize')result={protocolVersion:1,agentCapabilities:{}};else if(q.method==='session/new')result={sessionId:'reopened-probe'};else throw Error('no-task-allowed');console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));});");
+ writeFileSync(join(root,'acp'),"require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);let result;if(q.method==='initialize')result={protocolVersion:1,agentCapabilities:{},agentInfo:{name:'OpenCode fixture',version:'2.fixture'}};else if(q.method==='session/new')result={sessionId:'reopened-probe',configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'fixture-free-name',options:[]}]};else throw Error('no-task-allowed');console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));});");
  await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:true,revision:2});
  const report=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
  assert.equal(report.protocolReady,true);assert.equal(report.modelTaskTested,false);assert.equal(report.verdict,'measured');
+ assert.equal(report.diagnostics.agentVersion,'2.fixture');assert.equal(report.diagnostics.sessionModel,'fixture-free-name');assert.equal(report.diagnostics.price,'unknown');assert.equal(report.diagnostics.workspace,root);
  assert.equal((await bridge.stop(10000)).forced,false);
 });

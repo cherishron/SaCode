@@ -65,6 +65,7 @@ public func openCodeReadinessJson(report: AcpProviderReadiness): String {
     result.put("protocolVersion", JsonInt(report.protocolVersion));
     result.put("evidence", JsonString(report.evidence))
     result.put("modelTaskTested", JsonBool(false))
+    result.put("diagnostics", JsonValue.fromStr(report.observation.toJson()))
     return result.toString()
 }
 
@@ -91,6 +92,7 @@ public class OpenCodeAcpProvider <: AcpProvider {
             authentication: {=> true}, environment: environment)
         let report = protocol.probeWithToken(workspace, token)
         return AcpProviderReadiness(report.environment, report.authenticated, report.verdict, report.protocolVersion,
-            report.evidence + ";configuration-owner=opencode;model-selection=provider-default;remote-model-not-tested")
+            report.evidence + ";configuration-owner=opencode;model-selection=provider-default;remote-model-not-tested",
+            observation: report.observation.withExecutable(command))
     }
 }

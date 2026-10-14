@@ -80,7 +80,7 @@ test('日志权限拒绝显示真实阻塞，不伪装成未配置凭据或允�
   let starts=0;const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'probe-failed-unknown',protocolReady:false,verdict:'pending-verification',protocolVersion:0,evidence:'opencode-local-auth-exit-1-log-file-permission-denied-unconfirmed:no-task',modelTaskTested:false}),acpDelegationCreate:async()=>{starts++;}});
   await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
   f.find('textarea').props.onInput({target:{value:'不得执行'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
-  const text=JSON.stringify(f.nodes());assert.ok(text.includes('日志文件被拒绝'));assert.equal(text.includes('本地凭据列表为空'),false);
+  const text=JSON.stringify(f.nodes());assert.ok(text.includes('日志文件访问被拒绝'));assert.equal(text.includes('本地凭据列表为空'),false);
   assert.equal(f.find('button','提交给 OpenCode').props.disabled,true);assert.equal(starts,0);
 });
 
@@ -102,4 +102,14 @@ test('关闭开关不杀在途任务，用户另行选择取消且使用绑定�
  await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();f.find('textarea').props.onInput({target:{value:'test'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
  f.find('button','关闭 ACP').props.onClick();await f.flush();assert.equal(calls.length,0);assert.ok(f.find('button','等待收尾／刷新状态'));
  f.find('button','取消在途委派').props.onClick();await f.flush();assert.deepEqual(calls,[['s1','d1',4]]);
+});
+
+test('未核价与插件覆盖未知仅作诊断提示，不拦截已接通协议的显式委派',async()=>{
+ let starts=0;const current=view();current.delegation.taskId='2';current.delegation.requestId='1';
+ const diagnostics={version:1,diagnosticId:'acp-'+'a'.repeat(32),workspace:'workspace',executable:'trusted-executable',agentName:'OpenCode',agentVersion:'2.fixture',sessionModel:null,sessionMode:null,source:'acp-observation',configSources:'unknown',processIdentity:'unknown',primaryAgent:'unknown',price:'unknown',pluginModels:'unknown',network:'not-tested',modelTask:'not-tested'};
+ const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-usable',protocolReady:true,verdict:'measured',protocolVersion:1,evidence:'controlled-fixture:no-model-task',modelTaskTested:false,diagnostics}),acpDelegationCreate:async()=>{starts++;return current;}});
+ await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
+ assert.ok(JSON.stringify(f.nodes()).includes('未确认动态插件覆盖'));
+ f.find('textarea').props.onInput({target:{value:'显式任务'}});assert.equal(f.find('button','提交给 OpenCode').props.disabled,false);
+ f.find('form').props.onSubmit({preventDefault(){}});await f.flush();assert.equal(starts,1);
 });

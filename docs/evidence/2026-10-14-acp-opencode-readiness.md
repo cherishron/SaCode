@@ -24,6 +24,25 @@
 
 本地凭据列表非空只代表配置前提，不证明远端凭据有效。协议探针通过也不证明模型任务可完成。页面始终标明真实模型任务未验证；首次装配时复查提供方，后续创建仍受开关及注册代际门控。
 
+## 结构化协议观测与原生启动差异（基线 1a92aa0）
+
+新增白名单观测：每次探测随机诊断编号、请求工作目录、可信启动程序、initialize 返回的 Agent 名称/版本，以及 session/new 的模型选择值和当前模式。缺失或畸形可选字段保持未知，不阻断已验证的基础协议。只解释 ACP v1 `configOptions` 的单一 model/select 项，不猜测保留 `_meta` 的语义，不读取 authMethods 或认证数据库，也不将模式名当主 Agent。价格、插件动态覆盖、配置来源、系统身份及网络可达性仍明确未确认。
+
+模型名称含 free 不会自动成为免费证明。结构化内容不作写授权；诊断编号目前仅标识本次观测，尚未持久绑定修复任务或文件修订。页面同时明确真实委派可能发送数据与产生费用，未知配置项不成为全局阻断。
+
+- 仓颉 1.1.3：私有核心包 TOTAL 394 / PASSED 97 / SKIPPED 297 / ERROR 0 / FAILED 0（ACP 专项），rc=0；不代表全量核心。新增白名单、畸形/歧义字段、未知价格与封闭错误分类验证。
+- Host、CLI release 构建 rc=0；真实入口 12/12。受控协议进程实际返回版本与模型，Host 观测 JSON 读回；CLI 与 Host 诊断编号各自唯一、其余同作用域观测一致。核心与前端均不保留任意原始配置。
+- 页面与 IPC 17/17。未知价格/插件覆盖不拦已接通协议的显式委派；非法诊断不渲染原始敏感字段。
+- Electron rc=0，`ACP_HISTORY_MAIN_SMOKE PASS`。通过真实 main/preload/Host 验证结构化字段及诊断编号，并复核截图的长路径换行。仍带 `--no-sandbox`，不是安装态验收。
+
+### 原生问题的实测定位
+
+同一可信 OpenCode 程序经 Node 直接启动，在仓库工作目录完成 initialize 与 session/new，没有发送 prompt，stderr 为零。最小 SDK-only 仓颉进程则收到日志文件 EPERM。参数数组、已比对的公开用户/配置根路径一致，用户 SID 相同；whoami 分组观测显示 Node 直接子进程为中完整性 `S-1-16-8192`，仓颉启动子进程为低完整性 `S-1-16-4096`。
+
+这证明不能将该失败归为“必须登录”。尚未确定完整性级别差异来自父进程上下文、运行时、启动实现或本机策略；没有证明 SDK 主动降权。后续须先测父进程令牌与受支持的进程契约，再决定修复；本轮没有改 ACL、提升完整性级别、替换模型、复制凭据或发模型任务。原生产品链仍报告连接未确认，不能拿 Node 的协议成功替代 SaCode 原生验收。
+
+原始证据均在忽略目录：`approval-binding-candidate/acp-observation-core-final.log`；`page-tree-a6e22601/acp-observation-{host,cli}-final.log`、`acp-observation-real-entry-final.log`、`opencode-direct-protocol-diagnostic.json`、`acp-observation-electron-fcc3d098-b62a-4228-9a85-6296a67b7162/`；SDK-only 探针 `sdk-opencode-ce989b0b-13db-4ef0-a3c3-ae165ed691dd/{sdk-transport-diagnostic.log,argv-trace-result.json}`。
+
 ## 异步协议诊断与退出收束（基线 e85e624）
 
 当前 Host 将只读协议探测放入单飞 worker；主循环继续接收其他 RPC。取消只传 TurnToken，ReplyTable 的等待检查令牌，进程启动和回收仍由原探测线程独占。关闭开关、工作区切换和 Host EOF 都取消诊断。EOF 等待 worker 与实际进程收束；无法确认时不开放第二次诊断，`host/settled.executionSettled` 不报 true。桥接退出窗口覆盖收束时间，并清理已完成的超时定时器。

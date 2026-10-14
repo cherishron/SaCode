@@ -54,7 +54,11 @@ test('CLI只读OpenCode探针以非零状态报告未就绪，不创建任务',{
   assert.ok(process.env.SACODE_HOST);
   const bridge=new HostBridge(process.env.SACODE_HOST,{...environment(),SACODE_ACP_OPENCODE_EXECUTABLE:process.env.SACODE_ACP_OPENCODE_TEST_EXECUTABLE,SACODE_USER_SETTINGS_DIR:join(root,'settings')});
   await bridge.start(root);t.after(()=>bridge.stop());await bridge.request('workspace/set-directory',{sessionId:'current',directory:root});
-  assert.deepEqual(await bridge.request('acp/provider/probe',{sessionId:'current'},30000),report);await bridge.stop();
+  const hostReport=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
+  assert.match(report.diagnostics.diagnosticId,/^acp-[0-9a-f]{32}$/);assert.match(hostReport.diagnostics.diagnosticId,/^acp-[0-9a-f]{32}$/);
+  assert.notEqual(report.diagnostics.diagnosticId,hostReport.diagnostics.diagnosticId);
+  const comparable=value=>({...value,diagnostics:{...value.diagnostics,diagnosticId:'per-probe'}});
+  assert.deepEqual(comparable(hostReport),comparable(report));await bridge.stop();
 });
 
 test('CLI从真实npm shim自动发现二进制，不依赖手工覆盖路径',{

@@ -36,8 +36,9 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
       await js("Promise.all([window.sacode.goalDescribe('current'),window.sacode.teamDescribe('current')])");
       await wait("(()=>{const t=document.querySelector('.acp-history').textContent;return t.includes('提供方尚未就绪')||t.includes('ACP 协议已连接');})()",1200);
       if(!await js("document.querySelector('.acp-history').textContent.includes('真实模型任务尚未验证')"))throw Error('acp-provider-task-boundary-missing');
+      if(!await js("(()=>{const t=document.querySelector('.acp-diagnostics')?.textContent||'';return t.includes('诊断编号 acp-')&&t.includes('模型价格')&&t.includes('未知，未核价')&&t.includes('请求工作目录');})()"))throw Error('acp-structured-diagnostics-missing');
       const detail=await js("[...document.querySelectorAll('.acp-history pre')].map(p=>p.textContent).join('\\n')");
-      if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件被拒绝')"))throw Error('acp-log-permission-reason-hidden');
+      if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件访问被拒绝')"))throw Error('acp-log-permission-reason-hidden');
     }
     const after=readFileSync(SESSION_LOG,'utf8');
     if((after.match(/\tacp\/task\/start\t/g)||[]).length!==1)throw Error('acp-settings-started-task');

@@ -21,11 +21,13 @@ func acpProtocolProviderRequiresVerifiedAuthenticationBeforeSpawn() {
 func acpProtocolProviderObservesRealHandshakeWithoutSendingTask() {
     let f = AcpTaskFixture("end_turn")
     try {
-        let program = "const fs=require('node:fs'),p=require('node:path');const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);fs.appendFileSync(p.join(process.cwd(),'probe-methods'),q.method+'\\n');if(q.method==='initialize')reply(q.id,{protocolVersion:1,agentCapabilities:{}});else if(q.method==='session/new')reply(q.id,{sessionId:'probe-session'});else if(q.method==='session/prompt')throw Error('probe-must-not-send-task');});"
+        let program = "const fs=require('node:fs'),p=require('node:path');const reply=(id,result)=>console.log(JSON.stringify({jsonrpc:'2.0',id,result}));require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);fs.appendFileSync(p.join(process.cwd(),'probe-methods'),q.method+'\\n');if(q.method==='initialize')reply(q.id,{protocolVersion:1,agentCapabilities:{},agentInfo:{name:'OpenCode fixture',version:'2.fixture'}});else if(q.method==='session/new')reply(q.id,{sessionId:'probe-session',configOptions:[{id:'model',name:'Model',category:'model',type:'select',currentValue:'fixture-model',options:[]}]});else if(q.method==='session/prompt')throw Error('probe-must-not-send-task');});"
         let provider = AcpProtocolProvider("fixture-peer", "node", ["-e", program], authentication: { => true })
         let report = provider.probe(f.root)
         @Expect(report.verdict, "measured")
         @Expect(report.protocolVersion, 1)
+        @Expect(report.observation.agentVersion, "2.fixture")
+        @Expect(report.observation.sessionModel, "fixture-model")
         @Expect(String.fromUtf8(File.readFrom(Path(f.root).join("probe-methods"))), "initialize\nsession/new\n")
     } finally { f.close() }
 }

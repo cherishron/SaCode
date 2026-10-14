@@ -1,5 +1,6 @@
 import {defineComponent,h,ref,watch,onBeforeUnmount} from 'vue';
 import {AcpSessionController,type AcpLiveView} from './acp-live';
+import {renderAcpDiagnostics} from './acp-diagnostics';
 interface Delegation {delegationId:string;sessionId:string;taskId:string;requestId:string;peerId:string;protocolSessionId:string;phase:string;revision:number;result:string;source:string}
 const labels:Record<string,string>={completed:'已结束',cancelled:'已确认取消',incomplete:'未完整结束','outcome-unknown':'运行结果未知'};
 export const AcpHistoryPanel=defineComponent({
@@ -45,8 +46,9 @@ export const AcpHistoryPanel=defineComponent({
       provider.value?h('section',{class:'tool-card'},[
         h('strong',{},providerReady()?'ACP 协议已连接':'提供方尚未就绪'),
         provider.value.evidence.includes('acp-auth-required:no-task')?h('p',{class:'note',role:'status'},'OpenCode 实际返回认证要求。请在 OpenCode 中处理对应提供方；SaCode 不自动登录。'):null,
-        provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 子进程打开本地日志文件被拒绝，协议连接尚未确认。'):null,
-        h('p',{class:'note'},'沿用 OpenCode 当前工作目录下生效的模型、Agent 与插件配置；SaCode 不复制凭据、不自动登录或更换模型。'),h('p',{class:'note'},'主模型、免费属性、插件覆盖及端点可达性尚未确认；协议检查不等于模型调用成功。'),h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
+        provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 报告日志文件访问被拒绝，具体原因尚未确认；这不代表需要登录。'):null,
+        provider.value.evidence.includes('protocol-session-new-unconfirmed')?h('p',{class:'note',role:'status'},'ACP 初始化已通过，但会话创建尚未确认；未发送模型任务。'):null,
+        h('p',{class:'note'},'沿用 OpenCode 当前工作目录下生效的模型、Agent 与插件配置；SaCode 不复制凭据、不自动登录或更换模型。'),renderAcpDiagnostics(provider.value.diagnostics),h('p',{class:'note'},'免费属性、插件覆盖及端点可达性仍未验证；协议检查不等于模型调用成功。'),h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
       ]):h('p',{class:'note'},'提交前请检查提供方；检查不会发送模型任务。'),
       h('form',{class:'stack',onSubmit:(event:Event)=>{event.preventDefault();void start();}},[
         h('p',{class:'note'},'提交会将任务数据发送给 OpenCode 的有效模型，可能产生费用；当前价格尚未确认。'),h('label',{class:'note'},'委派任务'),h('textarea',{class:'input','aria-label':'OpenCode 委派任务',value:draft.value,disabled:acting.value,placeholder:'描述任务范围、限制与验收条件',onInput:(event:Event)=>{const next=(event.target as HTMLTextAreaElement).value;if(next!==draft.value){draft.value=next;requestId='';taskId='';}}}),

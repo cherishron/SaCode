@@ -31,12 +31,13 @@ public class AcpProtocolProvider <: AcpProvider {
     }
     // 取消只传令牌，由探测线程独占启动、等待及回收，不跨线程操作进程生命周期。
     public func probeWithToken(workspace: String, token: TurnToken): AcpProviderReadiness {
+        var observation = AcpProbeObservation(diagnosticId: "acp-" + randomHex(16), workspace: workspace)
         if (token.cancelled()) {
-            return AcpProviderReadiness("pending-verification", false, "pending-verification", 0,
+            return observation.report("pending-verification", false, "pending-verification", 0,
                 "probe-cancelled-before-start:no-task")
         }
         if (!authentication()) {
-            return AcpProviderReadiness("installed-auth-missing", false, "pending-verification", 0,
+            return observation.report("installed-auth-missing", false, "pending-verification", 0,
                 "authentication-not-verified")
         }
         let process = open(workspace)
@@ -47,16 +48,19 @@ public class AcpProtocolProvider <: AcpProvider {
                 throw Exception("acp-probe-cancelled")
             }
             if (!process.start()) {
-                return AcpProviderReadiness("probe-failed-unknown", false, "blocked", 0, "transport-start-failed")
+                return observation.report("probe-failed-unknown", false, "blocked", 0, "transport-start-failed")
             }
             let initialization = process.acpInitialize(1, "sacode-probe", "0.1.0", token: token).getOrThrow()
             acpValidateInitialization(initialization)
+            observation = acpProbeObservedInitialization(observation, initialization)
             version = 1
             stage = "session-new"
             if (token.cancelled()) {
                 throw Exception("acp-probe-cancelled")
             }
-            let session = acpReadCreatedSession(process.sessionNew(workspace, token: token).getOrThrow())
+            let sessionReply = process.sessionNew(workspace, token: token).getOrThrow()
+            let session = acpReadCreatedSession(sessionReply)
+            observation = acpProbeObservedSession(observation, sessionReply)
             if (token.cancelled()) {
                 throw Exception("acp-probe-cancelled")
             }
@@ -65,31 +69,33 @@ public class AcpProtocolProvider <: AcpProvider {
             }
             process.kill()
             if (!process.exitObserved()) {
-                return AcpProviderReadiness("probe-failed-unknown", false, "blocked", 1,
-                    "probe-process-exit-unconfirmed")
+                return observation.report("probe-failed-unknown", false, "blocked", 1, "probe-process-exit-unconfirmed")
             }
             if (token.cancelled()) {
-                return AcpProviderReadiness("pending-verification", false, "pending-verification", version,
+                return observation.report("pending-verification", false, "pending-verification", version,
                     "probe-cancelled:no-task")
             }
-            return AcpProviderReadiness("installed-usable", true, "measured", 1,
+            return observation.report("installed-usable", true, "measured", 1,
                 "initialize-and-session-new-observed:no-task")
         } catch (e: Exception) {
             process.kill()
             if (!process.exitObserved()) {
-                return AcpProviderReadiness("probe-failed-unknown", false, "blocked", 0,
-                    "probe-process-exit-unconfirmed")
+                return observation.report("probe-failed-unknown", false, "blocked", 0, "probe-process-exit-unconfirmed")
             }
             if (token.cancelled()) {
-                return AcpProviderReadiness("pending-verification", false, "pending-verification", version,
+                return observation.report("pending-verification", false, "pending-verification", version,
                     "probe-cancelled:no-task")
             }
             // ACP v1 的 -32000 才是认证要求；超时、日志和其他失败不冒充认证错误。
             if (e.message == "provider-unavailable:acp-rpc-error:-32000") {
-                return AcpProviderReadiness("installed-auth-missing", false, "blocked", 1, "acp-auth-required:no-task")
+                return observation.report("installed-auth-missing", false, "blocked", 1, "acp-auth-required:no-task")
             }
-            return AcpProviderReadiness("probe-failed-unknown", false, "blocked", version,
-                "protocol-${stage}-unconfirmed:no-task")
+            var diagnostic = ""
+            try {
+                diagnostic = process.diagnostics()
+            } catch (_: Exception) {}
+            return observation.report("probe-failed-unknown", false, "blocked", version,
+                acpProbeFailureEvidence(stage, diagnostic))
         }
     }
 }
