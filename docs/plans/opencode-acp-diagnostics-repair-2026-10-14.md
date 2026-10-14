@@ -27,6 +27,14 @@
 
 ## 历史诊断与决定契约
 
+### 后台修复依赖核对（9d45748 后）
+
+现有 `ExecutionService` 是持久进程执行服务，提案固定为 cwd、workspaceRevision、executable、argv、timeoutMs、outputLimit 六字段；它不是配置补丁执行器，不能往 argv 塞任意脚本绕过文件修订和授权。`ExecutionSupervisor` 复用既有令牌、许可、输出和结算；当前会话的 `task/start` 模型轮次也不能直接当作可切会话独立运行的修复任务。新增修复须明确任务载体及配置补丁边界，不另起一个后台 Agent 或队列。
+
+已补现有执行历史的只读入口，作为后台任务记录的公共前置能力：`execution/list`、CLI `job list <JSON>`、有限 `executionList(sessionId,cursor,limit)` IPC 和终端任务列表共用日志投影。输入严格为 sessionId/cursor/limit，cursor 从 -1 开始、limit 为1–16；按稳定创建顺序分页，返回 version/source/sessionId/records/nextCursor/hasMore。摘要仅有任务/请求/执行身份、状态与修订，不返回命令参数、审批票或输出；选中记录才使用既有 describe/output。列表不恢复许可、不调用 recover、不启动进程；损坏日志、跨会话、非法游标和字段明确拒绝。
+
+仍缺配置来源、用户确认范围与文件修订绑定，以及修复执行前CAS、复验结算和通知。当前只读注册表不能证明某一文件导致模型异常，禁止由此生成写命令。此历史入口不能升级 F10-ACP-05 为完成。
+
 诊断事实使用现有 SessionLog 的 `acp/diagnostic` 事件，不增加执行器或持久队列。版本 1 保存会话、诊断编号、单调修订、工作区/ACP 设置事件修订、白名单协议报告和 pending/kept 决定。它不是配置文件快照或修复授权，尚不能用于批准实际配置写入。
 
 | 动作 | 输入 | 输出与约束 |

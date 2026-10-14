@@ -250,6 +250,7 @@ for (const [action,[method,fields]] of Object.entries(executionActions)) {
   });
 }
 
+require('./execution-history-ipc.cjs').registerExecutionHistoryIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
 ipcMain.handle("sacode:projection", async () => withHost(() => bridge.request("session/projection")));
 
 // 暂存凭证是宿主铸造的短串，界面只能原样带回，拼不出别的形状

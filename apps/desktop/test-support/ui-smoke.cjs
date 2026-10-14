@@ -10,6 +10,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 async function uiSmoke(context) {
   if (process.env.SACODE_UI_SMOKE_SUITE === 'model-center') return require('./model-center-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'acp-history') return require('./acp-history-main-smoke.cjs')(context);
+  if (process.env.SACODE_UI_SMOKE_SUITE === 'execution-history') return require('./execution-history-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'page-tools') return require('./page-tools-main-smoke.cjs')(context);
   const { app, nativeTheme, HOST, SESSION_DIR, SESSION_LOG, bridge, seedIfNeeded, createWindow } = context;
   let win;

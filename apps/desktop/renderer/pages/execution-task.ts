@@ -1,11 +1,13 @@
 import {defineComponent,h,ref,watch,onBeforeUnmount} from 'vue';
 import {createExecutionTask} from './execution-task-state';
+import {createExecutionHistory} from './execution-history';
 const labels:Record<string,string>={'awaiting-approval':'等待审批',admitted:'已准入',starting:'启动中',running:'运行中',stopping:'停止中',exited:'已退出',unknown:'无法确认状态','cancelled-before-start':'启动前已取消'};
 export const ExecutionTask=defineComponent({name:'SaCodeExecutionTask',props:{active:Boolean,sessionId:String,api:Object},setup(props){
  const revision=ref(0),executable=ref(''),argv=ref('[]'),lookup=ref(''),timeout=ref(30000),limit=ref(8192),formError=ref('');let prepared:{body:string;id:string}|null=null;
  const view=createExecutionTask(props.api as any,()=>props.sessionId||'',()=>revision.value++);
- watch(()=>[props.active,props.sessionId],()=>{view.reset();prepared=null;formError.value='';executable.value='';argv.value='[]';lookup.value='';if(props.active&&props.sessionId)void view.workspace();},{immediate:true});
- onBeforeUnmount(()=>view.dispose());
+ const history=createExecutionHistory(props.api,()=>props.sessionId||'',()=>revision.value++);
+ watch(()=>[props.active,props.sessionId],()=>{view.reset();history.reset();prepared=null;formError.value='';executable.value='';argv.value='[]';lookup.value='';if(props.active&&props.sessionId){void view.workspace();void history.load();}},{immediate:true});
+ onBeforeUnmount(()=>{view.dispose();history.dispose();});
  function propose(){try{
   const args=JSON.parse(argv.value);if(!executable.value.trim()||!Array.isArray(args)||args.some(a=>typeof a!=='string'))throw Error('程序不能为空；参数应为 JSON 字符串数组');
   if(!Number.isSafeInteger(timeout.value)||timeout.value<1||timeout.value>300000||!Number.isSafeInteger(limit.value)||limit.value<1||limit.value>65536)throw Error('超时需在 1–300000 ms，单流输出限额需在 1–65536 字节');
@@ -16,6 +18,14 @@ export const ExecutionTask=defineComponent({name:'SaCodeExecutionTask',props:{ac
  return()=>{void revision.value;const s=view.state,t=s.task;return h('section',{class:'execution-task'},[
   h('header',{class:'row spread'},[h('h2',{},'持久任务'),h('button',{class:'btn',disabled:!!s.busy,onClick:()=>view.workspace()},'读取工作区')]),
   s.workspace?h('p',{class:'note'},s.workspace.directory+' · 修订 '+s.workspace.revision):h('p',{class:'note'},'请先配置当前会话工作区。'),
+  h('section',{'aria-label':'持久执行任务'},[
+   h('div',{class:'row'},[h('h3',{},'任务记录'),h('button',{class:'btn',disabled:history.state.busy,onClick:()=>history.load()},history.state.busy?'正在读取…':'刷新记录')]),
+   h('p',{class:'note'},'恢复记录不会启动命令或继承审批；选择记录查看提案、输出与退出事实。'),
+   history.state.error?h('p',{class:'resource-error',role:'alert'},history.state.error):null,
+   history.state.loaded&&!history.state.rows.length?h('p',{class:'note'},'当前会话暂无执行任务'):null,
+   ...history.state.rows.map(row=>h('button',{class:'btn',key:row.executionId,disabled:!!s.busy,onClick:()=>view.describe(row.executionId)},row.executionId+' · '+(labels[row.phase]||row.phase))),
+   history.state.more?h('button',{class:'btn',disabled:history.state.busy,onClick:()=>history.load(true)},'加载更多记录'):null,
+  ]),
   h('details',{open:!t},[h('summary',{},'创建执行提案'),h('div',{class:'execution-form'},[
    field('可执行程序',executable.value,v=>executable.value=v),
    h('label',{class:'execution-field'},[h('span',{},'参数（JSON 数组）'),h('textarea',{class:'input',value:argv.value,disabled:!!s.busy,onInput:(e:any)=>argv.value=e.target.value})]),

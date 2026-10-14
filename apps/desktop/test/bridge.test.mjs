@@ -1196,7 +1196,7 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
     'acpDelegationAnswer', 'acpDelegationCancel', 'acpDelegationClose', 'acpDelegationCreate', 'acpDelegationDescribe', 'acpDelegationList', 'acpDelegationPoll', 'acpDiagnosticsDescribe', 'acpDiagnosticsKeep', 'acpProviderProbe', 'acpSettingsDescribe', 'acpSettingsSetEnabled',
     'appearanceGet', 'appearanceSetTheme', 'approvalAnswer', 'approvalAsk', 'approvalGetMode', 'approvalSetMode', 'attachmentImageRead', 'attachmentUpload',
     'bindingRemove', 'bindingReorder', 'bindingUpsert', 'customImportInto', 'customImportNew', 'customsDescribe',
-    'customsRemove', 'customsUpsert', 'executionAuthorize', 'executionDescribe', 'executionOutput', 'executionPropose',
+    'customsRemove', 'customsUpsert', 'executionAuthorize', 'executionDescribe', 'executionList', 'executionOutput', 'executionPropose',
     'executionStart', 'executionStop', 'globalAppearanceGet', 'globalAppearanceSetBusySend', 'globalAppearanceSetFontSize', 'globalAppearanceSetTheme',
     'globalSettingsGet', 'globalSettingsSet', 'goalClear', 'goalCreate', 'goalDescribe', 'goalEdit',
     'goalPause', 'goalResume', 'ledgerStats', 'lspCallHierarchy', 'lspDefine', 'lspDiagnostics',
@@ -1213,7 +1213,7 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
     'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
   ]);
-  assert.equal(Object.keys(exposed).length, 123, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 124, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1238,7 +1238,7 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 123, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
+  assert.equal(handlers.size, 124, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }

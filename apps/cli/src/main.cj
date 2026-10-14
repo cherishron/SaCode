@@ -227,7 +227,7 @@ func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
 
 func runJob(args: Array<String>): Int64 {
     if (args.size != 3) {
-        getStdErr().writeln("usage: sacode job <propose|authorize|start|describe|output|stop> <JSON参数>")
+        getStdErr().writeln("usage: sacode job <propose|authorize|start|describe|list|output|stop> <JSON参数>")
         return 64
     }
     let method = "execution/${args[1]}"

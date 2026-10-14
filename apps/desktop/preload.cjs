@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("sacode", {
   executionPropose: (sessionId, taskId, requestId, proposal) => ipcRenderer.invoke("sacode:executionPropose", {sessionId, taskId, requestId, proposal}),
   executionAuthorize: (sessionId, executionId, revision, proposalDigest, approvalId) => ipcRenderer.invoke("sacode:executionAuthorize", {sessionId, executionId, revision, proposalDigest, approvalId}),
   executionStart: (sessionId, executionId, revision) => ipcRenderer.invoke("sacode:executionStart", {sessionId, executionId, revision}),
+  executionList: (sessionId, cursor, limit) => ipcRenderer.invoke("sacode:executionList", {sessionId, cursor, limit}),
   executionDescribe: (sessionId, executionId) => ipcRenderer.invoke("sacode:executionDescribe", {sessionId, executionId}),
   executionOutput: (sessionId, executionId, cursor, limit) => ipcRenderer.invoke("sacode:executionOutput", {sessionId, executionId, cursor, limit}),
   executionStop: (sessionId, executionId, revision) => ipcRenderer.invoke("sacode:executionStop", {sessionId, executionId, revision}),
