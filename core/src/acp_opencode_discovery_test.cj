@@ -34,3 +34,36 @@ func acpOpenCodeDiscoveryRejectsRelativeSearchAndForeignPackageMetadata() {
         @Expect(openCodeFromWindowsSearchPath(".;" + root.toString()), canonicalize(root.join("opencode.exe")).toString())
     } finally { removeIfExists(root.toString(), recursive: true) }
 }
+
+@Test
+func acpOpenCodeDiscoveryFailureIsStructuredAndNeverDemandsAuthentication() {
+    let report = probeConfiguredOpenCode("fixture-workspace", TurnToken(), resolver: {
+        => throw Exception("provider-unavailable:opencode-executable-not-configured")
+    })
+    @Expect(report.evidence, "opencode-executable-not-found:no-task")
+    @Expect(report.observation.workspace, "fixture-workspace")
+    @Expect(report.observation.diagnosticId.startsWith("acp-"), true)
+    @Expect(report.observation.diagnosticId.size, Int64(36))
+    @Expect(report.protocolVersion, Int64(0))
+    @Expect(openCodeReadinessJson(report).contains("\"protocolReady\":false"), true)
+    let unknown = probeConfiguredOpenCode("fixture-workspace", TurnToken(), resolver: {
+        => throw Exception("permission fault must-not-retain bearer=private")
+    })
+    @Expect(unknown.evidence, "opencode-discovery-unconfirmed:no-task")
+    @Expect(openCodeReadinessJson(unknown).contains("must-not-retain"), false)
+    @Expect(openCodeReadinessJson(unknown).contains("auth-required"), false)
+}
+
+@Test
+func acpOpenCodeCancelledDiscoveryDoesNotResolveOrReplaceCancellationWithFailure() {
+    let token = TurnToken(); token.cancel()
+    let called = TurnToken()
+    let report = probeConfiguredOpenCode("fixture-workspace", token, resolver: { => called.cancel(); "unused" })
+    @Expect(called.cancelled(), false)
+    @Expect(report.evidence, "probe-cancelled-before-start:no-task")
+    let later = TurnToken()
+    let cancelled = probeConfiguredOpenCode("fixture-workspace", later, resolver: {
+        => later.cancel(); throw Exception("must-not-retain")
+    })
+    @Expect(cancelled.evidence, "probe-cancelled-before-start:no-task")
+}

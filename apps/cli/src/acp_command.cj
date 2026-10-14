@@ -32,7 +32,7 @@ func runAcpCommand(args: Array<String>): Int64 {
                 let workspace = canonicalize(".").toString()
                 let journal = AcpDiagnosticJournal(source, lease, "current", workspace)
                 let scope = journal.scopeRevision()
-                let report = OpenCodeAcpProvider(configuredOpenCodeExecutable()).probe(workspace)
+                let report = probeConfiguredOpenCode(workspace, TurnToken())
                 journal.record(report, scope)
                 println(openCodeReadinessJson(report, diagnosticSaved: Some(true)))
                 return if (report.environment == "installed-usable" && report.verdict == "measured" && report.protocolVersion == 1) { 0 } else { 2 }

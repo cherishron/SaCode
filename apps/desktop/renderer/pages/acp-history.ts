@@ -63,6 +63,8 @@ export const AcpHistoryPanel=defineComponent({
       ]):null,
       provider.value?h('section',{class:'tool-card'},[
         h('strong',{},providerReady()?'ACP 协议已连接':'提供方尚未就绪'),
+        provider.value.evidence.includes('opencode-executable-not-found')?h('p',{class:'note',role:'status'},'未找到可启动的 OpenCode。请检查安装或实例位置；SaCode 不会自动安装、登录或切换执行者。'):null,
+        provider.value.evidence.includes('opencode-discovery-unconfirmed')?h('p',{class:'note',role:'status'},'OpenCode 启动位置尚未确认，不能据此判断模型或认证有问题。请查看实例设置后重新检查。'):null,
         provider.value.diagnosticSaved===false?h('p',{class:'note'},'本次诊断未保存：检查已取消或作用域发生变化；历史记录未更新。'):null,
         provider.value.evidence.includes('acp-auth-required:no-task')?h('p',{class:'note',role:'status'},'OpenCode 实际返回认证要求。请在 OpenCode 中处理对应提供方；SaCode 不自动登录。'):null,
         lowContext()&&provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'SaCode 当前以低完整性运行，普通用户日志可能无法写入。请从正常安装位置复验；无需因此重新登录。'):null,

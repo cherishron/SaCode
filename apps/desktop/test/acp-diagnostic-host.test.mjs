@@ -32,3 +32,21 @@ test('真实Host和CLI恢复同一诊断决定，读取与保留不启动OpenCod
  assert.equal(read.status,0,read.stderr);assert.equal(JSON.parse(read.stdout).record.decision,'kept');
  assert.equal(readFileSync(join(root,'session.log'),'utf8'),before);assert.equal(readFileSync(methods,'utf8'),'initialize\nsession/new\n');
 });
+
+test('启动位置不存在时双入口返回具体诊断，保留开启选择且可以保留现状',{timeout:20000},async t=>{
+ const root=mkdtempSync(join(tmpdir(),'sacode-acp-no-instance-'));
+ const env={...process.env,SACODE_ACP_OPENCODE_EXECUTABLE:join(root,'no-installed-instance.exe'),SACODE_USER_SETTINGS_DIR:join(root,'settings')};
+ const bridge=new HostBridge(process.env.SACODE_HOST,env);t.after(()=>bridge.stop(10000));await bridge.start(root);
+ await bridge.request('workspace/set-directory',{sessionId:'current',directory:root});
+ await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:true,revision:0});
+ const report=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
+ assert.equal(report.protocolReady,false);assert.equal(report.modelTaskTested,false);assert.equal(report.diagnosticSaved,true);
+ assert.match(report.evidence,/opencode-(executable-not-found|discovery-unconfirmed)/);assert.doesNotMatch(report.evidence,/auth-required/);
+ const history=await bridge.request('acp/diagnostics/describe',{sessionId:'current'});
+ await bridge.request('acp/diagnostics/keep',{sessionId:'current',diagnosticId:history.record.diagnosticId,revision:history.record.revision});
+ assert.equal((await bridge.request('acp/settings/describe',{sessionId:'current'})).enabled,true);
+ assert.equal((await bridge.stop(10000)).forced,false);
+ const cli=spawnSync(process.env.SACODE_CLI,['acp','probe'],{cwd:root,env,encoding:'utf8',windowsHide:true,timeout:10000});
+ assert.equal(cli.status,2,cli.stderr);assert.equal(JSON.parse(cli.stdout).diagnosticSaved,true);
+ assert.equal(readFileSync(join(root,'session.log'),'utf8').includes('acp/task/start'),false);
+});

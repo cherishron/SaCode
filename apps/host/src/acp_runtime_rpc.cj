@@ -63,7 +63,7 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
             }
             let journal = AcpDiagnosticJournal(host.shared, host.lease, host.activeId, workspace)
             let scope = journal.scopeRevision()
-            host.acpProbe.start(OpenCodeAcpProvider(hostOpenCodeExecutable()), workspace, idText,
+            host.acpProbe.start(workspace, idText,
                 record: { result, token => journal.recordIfCurrent(result, scope, token) })
             return true
         }

@@ -12,7 +12,7 @@ class HostAcpProbe {
     var token: ?TurnToken = None
     var worker: ?Future<Unit> = None
 
-    func start(provider: OpenCodeAcpProvider, workspace: String, rpcId: String,
+    func start(workspace: String, rpcId: String,
         record!: (AcpProviderReadiness, TurnToken) -> Bool = { _, _ => false }) {
         mtx.lock()
         try {
@@ -32,7 +32,7 @@ class HostAcpProbe {
             let state = this
             worker = Some(spawn {
                 => try {
-                    let result = provider.probeWithToken(workspace, cancellation)
+                    let result = probeConfiguredOpenCode(workspace, cancellation)
                     state.mtx.lock()
                     state.settled = !result.evidence.contains("probe-process-exit-unconfirmed")
                     state.mtx.unlock()

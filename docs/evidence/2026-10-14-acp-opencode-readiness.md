@@ -1,5 +1,17 @@
 # ACP：OpenCode 装配与就绪检查
 
+## 程序发现失败也进入诊断与用户决定链
+
+基线 8f0530b 加本批明确文件。Host 原先在创建检查 worker 前解析程序，解析失败只抛通用 RPC 错误。现将可信程序解析放入原检查 worker，核心统一返回有诊断编号的 executable-not-found/discovery-unconfirmed 报告；不回显异常正文，不推断认证错误，不改变用户开关。CLI 使用同一核心入口；取消发生在解析前时完全不解析，解析期间取消则保留取消结果、不启动程序。失败报告可持久回看及保留现状。
+
+仓颉 1.1.3 Host/CLI release 构建通过；211份生产源码与 HEAD 加本批修改一致。核心最终 acp-discovery-final.log：TOTAL402/PASSED105/SKIPPED297/ERROR0/FAILED0，rc=0。首次新测试捕获局部 var 导致编译失败，无 Summary，后按技能捕获规则修正。中间误用已有测试文件名覆盖了两条旧用例，计数归因缓存的推测已撤回；提交前恢复原文件并追加新测试，最终同时点名运行原 npm shim 安全检查和新增结构化失败/取消检查。没有删除旧断言凑绿。
+
+真实 Host/CLI/OpenCode 专项14/14，页面/IPC18/18；真实 Electron 通过配置的缺失程序实例，验证失败诊断与保留决定落盘、开关保持和零模型任务（测试使用 --no-sandbox，非默认沙箱/安装态通过）。OpenCode 真实提供方正向仍受 Low 环境日志拒绝，本轮不升级为模型可用。
+
+完整 IPC 门禁的旧列表漏了12个 ACP 动作及2个既有模型动作。补齐逐项白名单，并修正 VM 夹具只模拟旧 paths 导出导致的 caBundleSidecar 缺失；固定候选123个有限动作与实际主进程注册集合完全相等，三条完整契约检查通过。工作区还有两个并发动作，不能把工作区125计为候选数量；没有放开任意方法转发或删除集合比对。库存扫描 wiring-inventory-1791979594196.json 仅定位工作区125条，不代表全部动作已有业务或提供方验收。
+
+原件在 apps/desktop/.tmp-test/page-tree-a6e22601：acp-discovery-host.log、acp-discovery-cli.log、acp-discovery-entry.log、acp-discovery-ui.log、acp-discovery-bridge-final.log；Electron 截图 acp-discovery-electron-fa2fdfa9-7895-41c9-9a64-b96d60264ebc/acp-readiness.png。核心最终日志在邻级 approval-binding-candidate。有效插件模型、同实例配置元数据、修复任务和通知仍待完成。
+
 模式回执修正（基线 0a289b6）：新 configOptions mode/select 优先，多个 mode 或未知类型不回退到旧 modes 冒充当前值；未提供 mode 选择器时保留旧协议兼容读面。核心 acp-mode-precedence.log：TOTAL400/PASSED103/SKIPPED297/ERROR0/FAILED0，rc=0；Host/CLI release 构建成功；真实 Host/CLI 协议夹具验证 plan 覆盖 legacy-build、持久回看/不重发任务及取消竞争，acp-mode-entry.log 5/5。来源与 V2 诊断命令实例边界详见同名计划，本轮不新增配置写或模型请求。
 
 ## 历史诊断与“保留现状”真实接线

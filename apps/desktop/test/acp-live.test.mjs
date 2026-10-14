@@ -125,3 +125,11 @@ test('恢复历史诊断只供回看，保留决定不启动任务且切会话�
  f.props.sessionId='s2';f.hooks[0]();await f.flush();reply({...history,record:{...history.record,decision:'kept',revision:2}});await f.flush();
  assert.equal(f.find('strong','已保留现状'),undefined);assert.equal(starts,0);
 });
+
+test('程序发现失败显示安装或实例问题，不要求登录也不关闭开关',async()=>{
+ let settings=0;
+ const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'probe-failed-unknown',protocolReady:false,verdict:'blocked',protocolVersion:0,evidence:'opencode-executable-not-found:no-task',modelTaskTested:false}),acpSettingsSetEnabled:async()=>{settings++;}});
+ await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
+ assert.ok(JSON.stringify(f.nodes()).includes('未找到可启动的 OpenCode'));
+ assert.ok(f.find('button','关闭 ACP'));assert.equal(settings,0);
+});

@@ -3,6 +3,7 @@ package core
 import std.env.getVariable
 import std.fs.*
 import stdx.encoding.json.*
+import core.launch_context.currentProcessIntegrity
 
 // Host 与 CLI 共用可信启动位置解析；模型或页面参数没有此入口。
 func openCodeFromWindowsSearchPath(searchPath: String): String {
@@ -55,6 +56,41 @@ public func configuredOpenCodeExecutable(): String {
     return openCodeFromWindowsSearchPath(getVariable("PATH") ?? getVariable("Path") ?? "")
 }
 
+// 发现失败也返回可持久、可解释的诊断；关闭入口不得调用本函数。
+// resolver 仅供可信装配/测试使用，不进入 RPC 参数。
+public func probeConfiguredOpenCode(workspace: String, token: TurnToken,
+    resolver!: () -> String = {=> configuredOpenCodeExecutable()}): AcpProviderReadiness {
+    var observation = AcpProbeObservation(diagnosticId: "acp-" + randomHex(16), workspace: workspace)
+    if (token.cancelled()) {
+        return observation.report("pending-verification", false, "pending-verification", 0,
+            "probe-cancelled-before-start:no-task")
+    }
+    observation = observation.withProcessIntegrity(currentProcessIntegrity())
+    try {
+        let executable = resolver()
+        if (token.cancelled()) {
+            return observation.report("pending-verification", false, "pending-verification", 0,
+                "probe-cancelled-before-start:no-task")
+        }
+        if (!exists(executable) || FileInfo(executable).isDirectory()) {
+            return observation.report("probe-failed-unknown", false, "blocked", 0,
+                "opencode-executable-not-found:no-task")
+        }
+        return OpenCodeAcpProvider(executable).probeWithToken(workspace, token)
+    } catch (e: Exception) {
+        if (token.cancelled()) {
+            return observation.report("pending-verification", false, "pending-verification", 0,
+                "probe-cancelled-before-start:no-task")
+        }
+        let reason = if (e.message == "provider-unavailable:opencode-executable-not-configured") {
+            "opencode-executable-not-found:no-task"
+        } else {
+            "opencode-discovery-unconfirmed:no-task"
+        }
+        return observation.report("probe-failed-unknown", false, "blocked", 0, reason)
+    }
+}
+
 public func openCodeReadinessJson(report: AcpProviderReadiness, diagnosticSaved!: ?Bool = None): String {
     let result = JsonObject()
     result.put("peerId", JsonString("opencode"));
@@ -65,7 +101,9 @@ public func openCodeReadinessJson(report: AcpProviderReadiness, diagnosticSaved!
     result.put("protocolVersion", JsonInt(report.protocolVersion));
     result.put("evidence", JsonString(report.evidence))
     result.put("modelTaskTested", JsonBool(false))
-    if (let Some(saved) <- diagnosticSaved) { result.put("diagnosticSaved", JsonBool(saved)) }
+    if (let Some(saved) <- diagnosticSaved) {
+        result.put("diagnosticSaved", JsonBool(saved))
+    }
     result.put("diagnostics", JsonValue.fromStr(report.observation.toJson()))
     return result.toString()
 }

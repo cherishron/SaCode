@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | F10-ACP-01 用户开关与无认证准入 | 待验收 | 关闭零启动；打开只允许连接/必要探测；空认证记录不拦；保留默认模型；关闭不杀在途任务 | Codex |
 | F10-ACP-02 实例及协议诊断 | 实施中 | 绑定诊断编号、可信程序、实际版本、用户、工作目录；区分启动/初始化/建会话/退出，保持明确错误，不输出敏感正文 | Codex |
-| F10-ACP-03 有效模型与插件诊断 | 未开始 | 按实际 OpenCode 版本核对全局/项目合并契约，优先使用提供方返回的生效配置；主模型、Agent 覆盖分别列出；价格、动态插件和网络未验证标未知 | Codex |
+| F10-ACP-03 有效模型与插件诊断 | 设计中 | 已核 V2 独立服务与配置读取的实例差异；继续提供方元数据契约，主模型、Agent 覆盖分别列出；价格、动态插件和网络未验证标未知 | Codex |
 | F10-ACP-04 用户决策与修复提案 | 实施中 | 历史诊断与“保留现状”决定复用会话日志；修复范围确认、配置文件修订与已有后台任务绑定仍待接通；不要为未知问题生成写命令 | Codex |
 | F10-ACP-05 后台修复链 | 未开始 | 现有任务身份绑定诊断、实例、文件修订；请求去重；执行前重读/CAS；走现有审批/取消/持久化；不复制密钥或重写无关配置 | Codex |
 | F10-ACP-06 复验与通知 | 未开始 | 文件修改、协议复验、真实模型分别结算；切会话不串结果；应用内记录及按偏好的系统通知；不抢焦点 | Codex |
@@ -44,6 +44,10 @@
 已核本机安装清单为 `@opencode/cli` 2.0.28；官方 tag v2.0.28 指向 `026b106bc5d41b679ffc413264229c340871e4d3`。V2 使用 agents/providers 等字段，不能用 V1 的 agent/provider 或旧项目搜索边界生成修复。依据：[V2 配置](https://opencode.ai/v2/docs/config)。
 
 V2 `debug config` 不是简单本地文件读取：[固定源码](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/commands/handlers/debug/config.ts)先解析服务连接，再调用带当前目录的配置 API，并经过供应方脱敏。尚未确认服务身份与本次 ACP 进程的配置实例一致；不能直接运行该命令就宣称诊断了同一有效配置。[脱敏实现](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/commands/handlers/debug/redact.ts)有键名/headers/URL规则，但不构成任意插件私有字段无秘密的证明。后续必须核对实例/用户/目录，并只接纳白名单来源、Agent 和模型元数据，禁止保存原始配置输出。此轮未调用 debug config、未读取认证库。
+
+已进一步确认实例差异：[ACP 启动器](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/commands/handlers/acp.ts)直接启动 Standalone；[普通命令连接解析](https://github.com/anomalyco/opencode/blob/026b106bc5d41b679ffc413264229c340871e4d3/packages/cli/src/services/server-connection.ts)默认发现或创建托管服务。因此不能用 `debug config` 的另一个服务结果冒充本次 ACP 进程的动态插件结果，也不能为了检查静默启动新的长期服务。当前 ACP 请求分派没有公开的配置来源读取方法；后续需要提供方的只读白名单元数据能力或明确受限的静态检查，必须保留未确认边界。
+
+程序发现失败现已进入现有诊断链：可信解析在原异步检查工作线程内执行；明确缺少启动程序与无法确认发现结果分开编码，不回显底层异常、路径配置正文或密钥。Host/CLI 将失败报告与诊断编号持久保存，页面允许保留现状，不自动关闭开关。关闭入口仍不调用发现函数；取消在解析前发生时不解析，解析期间发生时不继续启动，也不将取消冒充发现失败。
 
 ACP 观测已纠正 configOptions 的 mode/select 优先于旧 modes；歧义或未知类型保留未确认，模式仍不当作主 Agent。依据：[ACP v1 配置选项](https://agentclientprotocol.com/protocol/v1/session-config-options)。
 
