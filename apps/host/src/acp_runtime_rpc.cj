@@ -42,8 +42,7 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
             if (workspace.size == 0) {
                 throw Exception("workspace-not-selected")
             }
-            let report = OpenCodeAcpProvider(hostOpenCodeExecutable()).probe(workspace)
-            emit(okFrame(idText, openCodeReadinessJson(report)));
+            host.acpProbe.start(OpenCodeAcpProvider(hostOpenCodeExecutable()), workspace, idText)
             return true
         }
         if (method == "acp/settings/set-enabled" || method == "acp/delegation/create") {
@@ -76,10 +75,12 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
                 if (params.size() != 3) {
                     throw Exception("invalid-input:acp-settings")
                 }
-                emit(
-                    okFrame(idText,
-                        settings.setEnabled(params.get("enabled").getOrThrow().asBool().getValue(),
-                            params.get("revision").getOrThrow().asInt().getValue())))
+                let enabled = params.get("enabled").getOrThrow().asBool().getValue()
+                let result = settings.setEnabled(enabled, params.get("revision").getOrThrow().asInt().getValue())
+                if (!enabled) {
+                    host.acpProbe.cancel()
+                }
+                emit(okFrame(idText, result))
                 return true
             }
             if (!settings.effective.describe("project").enabled) {

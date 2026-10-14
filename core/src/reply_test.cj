@@ -76,3 +76,15 @@ func replyTableBackpressuresWithoutDropping() {
     @Expect(o3, "c")
     @Expect(t.dropped(), Int64(0))
 }
+
+@Test
+func replyTableCancellationDoesNotUntrackAnotherRequestOrConsumeItsReply() {
+    let table = ReplyTable(4); let token = TurnToken()
+    table.track(1); table.track(2); table.put(2, "second")
+    let waiting = spawn {=> table.take(1, 10000, token: token)}
+    sleep(40 * Duration.millisecond); token.cancel()
+    @Expect(waiting.get(1000 * Duration.millisecond).isNone(), true)
+    table.untrack(1); table.put(1, "late")
+    @Expect(table.take(2, 100).getOrThrow(), "second")
+    @Expect(table.late(), Int64(1))
+}

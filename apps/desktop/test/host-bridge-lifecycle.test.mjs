@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 
 const source=readFileSync(new URL('../host-bridge.cjs',import.meta.url),'utf8');
 function fixture(){
- const children=[];
+ const children=[],timers=new Set();
  const spawn=()=>{
   const child=new EventEmitter();child.exitCode=null;child.signalCode=null;child.pid=children.length+1;
   child.stdin=new EventEmitter();child.stdin.destroyed=false;child.stdin.writableEnded=false;
@@ -16,9 +16,9 @@ function fixture(){
   child.kill=()=>{child.signalCode='SIGTERM';child.emit('exit',null,'SIGTERM');};
   queueMicrotask(()=>child.emit('spawn'));children.push(child);return child;
  };
- const context={module:{exports:{}},require:name=>{assert.equal(name,'node:child_process');return{spawn};},process:{env:{},stderr:{write(){}}},setTimeout,clearTimeout};
+ const context={module:{exports:{}},require:name=>{if(name==='./paths.cjs')return{hostRuntimeEnv:env=>env};assert.equal(name,'node:child_process');return{spawn};},process:{env:{},stderr:{write(){}}},setTimeout:(...args)=>{const timer=setTimeout(...args);timers.add(timer);return timer;},clearTimeout:timer=>{timers.delete(timer);clearTimeout(timer);}};
  vm.runInNewContext(source,context);
- return{bridge:new context.module.exports.HostBridge('host'),children};
+ return{bridge:new context.module.exports.HostBridge('host'),children,timers};
 }
 test('旧进程退出和管道错误不能打掉重启后的在途请求',async()=>{
  const {bridge,children}=fixture();await bridge.start('.');const old=children[0];
@@ -63,4 +63,9 @@ test('未创建进程的 spawn 错误允许显式重试，不重放旧请求',as
  const {bridge,children}=fixture();const first=bridge.start('.');const old=children[0];old.pid=undefined;
  old.emit('error',Error('ENOENT'));await assert.rejects(first,/ENOENT/);
  await bridge.start('.');assert.equal(children.length,2);assert.equal(children[1].writes.length,0);await bridge.stop();
+});
+
+test('Host已退出后释放收束定时器，不让已完成请求继续占用事件循环',async()=>{
+ const {bridge,timers}=fixture();await bridge.start('.');
+ const stopped=await bridge.stop();assert.equal(stopped.forced,false);assert.equal(timers.size,0);
 });

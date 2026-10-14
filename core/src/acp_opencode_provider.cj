@@ -84,9 +84,12 @@ public class OpenCodeAcpProvider <: AcpProvider {
             environment: environment)
     }
     public func probe(workspace: String): AcpProviderReadiness {
+        return probeWithToken(workspace, TurnToken())
+    }
+    public func probeWithToken(workspace: String, token: TurnToken): AcpProviderReadiness {
         let protocol = AcpProtocolProvider("opencode", command, ["acp", "--log-level", "none"],
             authentication: {=> true}, environment: environment)
-        let report = protocol.probe(workspace)
+        let report = protocol.probeWithToken(workspace, token)
         return AcpProviderReadiness(report.environment, report.authenticated, report.verdict, report.protocolVersion,
             report.evidence + ";configuration-owner=opencode;model-selection=provider-default;remote-model-not-tested")
     }

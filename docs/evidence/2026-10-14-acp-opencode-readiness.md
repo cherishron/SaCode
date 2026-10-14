@@ -24,6 +24,21 @@
 
 本地凭据列表非空只代表配置前提，不证明远端凭据有效。协议探针通过也不证明模型任务可完成。页面始终标明真实模型任务未验证；首次装配时复查提供方，后续创建仍受开关及注册代际门控。
 
+## 异步协议诊断与退出收束（基线 e85e624）
+
+当前 Host 将只读协议探测放入单飞 worker；主循环继续接收其他 RPC。取消只传 TurnToken，ReplyTable 的等待检查令牌，进程启动和回收仍由原探测线程独占。关闭开关、工作区切换和 Host EOF 都取消诊断。EOF 等待 worker 与实际进程收束；无法确认时不开放第二次诊断，`host/settled.executionSettled` 不报 true。桥接退出窗口覆盖收束时间，并清理已完成的超时定时器。
+
+- **红先复现**：e85e624 Host 的挂起协议夹具使后续 `initialize` 超时，专项 0/1、rc=1；日志 `page-tree-a6e22601/acp-probe-red.log`。
+- **核心**：私有测试包 TOTAL 391 / PASSED 94 / SKIPPED 297 / ERROR 0 / FAILED 0（ACP 筛选）；ReplyTable 筛选 PASSED 4 / SKIPPED 387 / ERROR 0 / FAILED 0。包括取消前零启动、挂起握手取消及取消不串其他回包；不是全量 core 通过。
+- **真实入口**：Windows release Host / CLI 构建 rc=0；实际请求 12/12、rc=0。四条受控真实子进程测试覆盖非阻塞、重复探测拒绝、关闭取消、EOF、工作区切换以及重新开启后再次探测。明确观察夹具 PID 不再存活；本轮没有证明外部 Agent 任意孙进程树的收束，不能扩大为全部进程树验收。
+- **页面及桥**：21/21、rc=0。增加主进程生命周期定时器回收验证，保留迟到/旧连接隔离断言。
+- **Electron**：`ACP_HISTORY_MAIN_SMOKE PASS`，rc=0。探测同时通过真实 preload 查询 goal 与 team；本轮日志无这两类超时。仍使用 `--no-sandbox` 测试参数，不代表默认安全启动或安装包验收。
+- **实际 OpenCode**：`protocol-initialize-unconfirmed:no-task`，配置、模型调用仍未实测通过。没有自动登录、替换模型或发送 prompt。页面明确真实委派的数据发送及价格未知边界。
+
+日志：`approval-binding-candidate/acp-async-core-test.log`、`acp-async-reply-test.log`；`page-tree-a6e22601/acp-async-host-final-build.log`、`acp-async-cli-build.log`、`acp-async-real-entry-final.log`、`acp-async-electron-e628c06d-35d2-414f-b4ef-a5e3407edb29/`。均在忽略目录 `apps/desktop/.tmp-test/`。
+
+此批是只读诊断生命周期修复，不是后台配置修复任务。有效版本/模型/插件、诊断编号及修复绑定、审批/CAS、后台通知仍按开发计划继续。
+
 ## 准入纠正专项实测
 
 - 仓颉 1.1.3：私有核心测试集 TOTAL 385 / PASSED 12 / SKIPPED 373 / ERROR 0 / FAILED 0，rc=0（提供方筛选，不是全量核心）。覆盖真实子进程协议、空认证前提默认配置、实际认证错误及畸形握手。

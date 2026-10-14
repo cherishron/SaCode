@@ -89,3 +89,35 @@ func acpProtocolProviderReportsAuthenticationOnlyFromActualRpcError() {
         @Expect(report.evidence, "acp-auth-required:no-task")
     } finally { f.close() }
 }
+
+@Test
+func acpProtocolProbeCancelledBeforeStartDoesNotSpawnOrCheckAuthentication() {
+    let token = TurnToken(); token.cancel()
+    let provider = AcpProtocolProvider("fixture-peer", "missing-must-not-spawn", [],
+        authentication: {=> throw Exception("must-not-check")})
+    let report = provider.probeWithToken("missing-workspace", token)
+    @Expect(report.evidence, "probe-cancelled-before-start:no-task")
+    @Expect(report.verdict, "pending-verification")
+}
+
+@Test
+func acpProtocolProbeCancellationInterruptsSilentHandshakeAndSettlesOwnedProcess() {
+    let f = AcpTaskFixture("end_turn")
+    let token = TurnToken()
+    try {
+        let program = "const fs=require('node:fs');setTimeout(()=>process.exit(0),15000);require('node:readline').createInterface({input:process.stdin}).on('line',s=>{fs.writeFileSync('waiting-probe',JSON.parse(s).method);});"
+        let provider = AcpProtocolProvider("fixture-peer", "node", ["-e", program], authentication: {=> true})
+        let root = f.root
+        let result = spawn {=> provider.probeWithToken(root, token)}
+        var attempts: Int64 = 0
+        while (!exists(Path(root).join("waiting-probe")) && attempts < 300) {
+            sleep(20 * Duration.millisecond); attempts += 1
+        }
+        @Expect(exists(Path(root).join("waiting-probe")), true)
+        token.cancel()
+        let report = result.get(5000 * Duration.millisecond)
+        @Expect(report.evidence, "probe-cancelled:no-task")
+        @Expect(report.environment, "pending-verification")
+        @Expect(String.fromUtf8(File.readFrom(Path(root).join("waiting-probe"))), "initialize")
+    } finally { token.cancel(); f.close() }
+}

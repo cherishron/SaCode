@@ -49,7 +49,7 @@ export const AcpHistoryPanel=defineComponent({
         h('p',{class:'note'},'沿用 OpenCode 当前工作目录下生效的模型、Agent 与插件配置；SaCode 不复制凭据、不自动登录或更换模型。'),h('p',{class:'note'},'主模型、免费属性、插件覆盖及端点可达性尚未确认；协议检查不等于模型调用成功。'),h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
       ]):h('p',{class:'note'},'提交前请检查提供方；检查不会发送模型任务。'),
       h('form',{class:'stack',onSubmit:(event:Event)=>{event.preventDefault();void start();}},[
-        h('label',{class:'note'},'委派任务'),h('textarea',{class:'input','aria-label':'OpenCode 委派任务',value:draft.value,disabled:acting.value,placeholder:'描述任务范围、限制与验收条件',onInput:(event:Event)=>{const next=(event.target as HTMLTextAreaElement).value;if(next!==draft.value){draft.value=next;requestId='';taskId='';}}}),
+        h('p',{class:'note'},'提交会将任务数据发送给 OpenCode 的有效模型，可能产生费用；当前价格尚未确认。'),h('label',{class:'note'},'委派任务'),h('textarea',{class:'input','aria-label':'OpenCode 委派任务',value:draft.value,disabled:acting.value,placeholder:'描述任务范围、限制与验收条件',onInput:(event:Event)=>{const next=(event.target as HTMLTextAreaElement).value;if(next!==draft.value){draft.value=next;requestId='';taskId='';}}}),
         h('button',{class:'btn',type:'submit',disabled:acting.value||!draft.value.trim()||!settings.value?.enabled||!providerReady()},acting.value?'正在处理…':requestId?'重试同一请求':'提交给 OpenCode'),
       ]),
       actionError.value?h('p',{class:'resource-error',role:'alert'},actionError.value):null,

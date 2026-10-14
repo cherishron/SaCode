@@ -1,4 +1,5 @@
 package core
+
 import std.collection.ArrayList
 import std.sync.*
 
@@ -82,11 +83,11 @@ public class ReplyTable {
         mtx.unlock()
     }
 
-    public func take(id: Int64, timeoutMs: Int64): Option<String> {
+    public func take(id: Int64, timeoutMs: Int64, token!: TurnToken = TurnToken()): Option<String> {
         var waited: Int64 = 0
         var out: Option<String> = None
         var done = false
-        while (!done && waited < timeoutMs) {
+        while (!done && waited < timeoutMs && !token.cancelled()) {
             mtx.lock()
             let i = findFrame(id)
             if (i >= 0) {

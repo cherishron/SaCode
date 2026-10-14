@@ -843,6 +843,7 @@ class HostRuntime {
     var pageRuntime: ?HostPageRuntime = None
     var acpRuntime: ?AcpRuntimeApi = None
     var acpSettings: ?AcpSessionSettings = None
+    let acpProbe = HostAcpProbe()
     var executionService: Option<ExecutionService> = None
     let executionRuns = ArrayList<ExecutionRun>()
     var executionSettled = true
@@ -2930,7 +2931,7 @@ class HostRuntime {
                 acpRuntime = None
             }
         }
-        if (acpChangesOwner(method)) { acpSettings = None }
+        if (acpChangesOwner(method)) { acpSettings = None; acpProbe.cancel() }
         if (let Some(bound) <- pageRuntime) {
             if (bound.busy()) {
                 let safe = (isPageToolMethod(method) && method != "page/tool/prepare" && method != "page/tool/call") ||
@@ -3115,6 +3116,7 @@ class HostRuntime {
     if (let Some(bound) <- pageRuntime) {
         if (!bound.shutdown()) { executionSettled = false; getStdErr().writeln("host-exit-page-unsettled: lease retained") }
     }
+    if (!acpProbe.shutdown()) { executionSettled = false; getStdErr().writeln("host-exit-acp-probe-unsettled") }
     let es = if (executionSettled) { "true" } else { "false" }
     // 无 id 的通知帧：调用方（Electron 主进程 / 测试）在退出前拿到一份结算账，
     // 事后能区分「在途调用被收束」和「进程直接没了」。

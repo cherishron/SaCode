@@ -109,13 +109,15 @@ class HostBridge {
 
   // 优雅退出：关闭 stdin 触发 Host 的 EOF 结算路径（未 flush 的写入在此落盘并归还租约），
   // 等到进程真正退出；超时才强杀，并把强杀结果如实报出来。
-  async stop(timeoutMs = 3000) {
+  async stop(timeoutMs = 10000) {
     const p = this.proc;
     if (!p) return { code: null, signal: null, forced: false };
     const exited = new Promise((res) => p.once("exit", (code, signal) => res({ code, signal })));
     if (p.exitCode !== null || p.signalCode !== null) return { code: p.exitCode, signal: p.signalCode, forced: false };
     p.stdin.end();
-    const win = await Promise.race([exited, new Promise((res) => setTimeout(() => res(null), timeoutMs))]);
+    let timer;
+    const win = await Promise.race([exited, new Promise((res) => { timer = setTimeout(() => res(null), timeoutMs); })])
+      .finally(() => clearTimeout(timer));
     if (win !== null) return { ...win, forced: false };
     p.kill();
     const late = await exited;

@@ -353,11 +353,15 @@ public class AcpProcess {
     }
 
     // 按 id 配对，允许多条请求同时在途；超时只回 None，绝不编一个终态出来
-    public func request(id: Int64, method: String, params: String, timeoutMs!: Int64 = 8000): Option<String> {
+    public func request(id: Int64, method: String, params: String, timeoutMs!: Int64 = 8000,
+        token!: TurnToken = TurnToken()): Option<String> {
+        if (token.cancelled()) {
+            return None
+        }
         if (!sendRequest(id, method, params)) {
             return None
         }
-        return awaitReply(id, timeoutMs)
+        return awaitReply(id, timeoutMs, token: token)
     }
 
     public func sendRequest(id: Int64, method: String, params: String): Bool {
@@ -408,8 +412,8 @@ public class AcpProcess {
         }
     }
 
-    public func awaitReply(id: Int64, timeoutMs: Int64): Option<String> {
-        let out = table.take(id, timeoutMs)
+    public func awaitReply(id: Int64, timeoutMs: Int64, token!: TurnToken = TurnToken()): Option<String> {
+        let out = table.take(id, timeoutMs, token: token)
         table.untrack(id)
         return out
     }
@@ -418,9 +422,9 @@ public class AcpProcess {
 
     // initialize：能力协商（protocolVersion + client 信息）
     public func acpInitialize(protocolVersion: Int64, clientName: String, clientVersion: String,
-        timeoutMs!: Int64 = 8000): Option<String> {
+        timeoutMs!: Int64 = 8000, token!: TurnToken = TurnToken()): Option<String> {
         let params = "{\"protocolVersion\":${protocolVersion},\"clientCapabilities\":{},\"clientInfo\":{\"name\":\"${jsonEscapeText(clientName)}\",\"version\":\"${jsonEscapeText(clientVersion)}\"}}"
-        let reply = request(nextId(), "initialize", params, timeoutMs: timeoutMs)
+        let reply = request(nextId(), "initialize", params, timeoutMs: timeoutMs, token: token)
         var supported = false
         if (let Some(raw) <- reply) {
             try {
@@ -437,7 +441,7 @@ public class AcpProcess {
     }
 
     // session/new：创建委派会话
-    public func sessionNew(cwd: String, timeoutMs!: Int64 = 8000): Option<String> {
+    public func sessionNew(cwd: String, timeoutMs!: Int64 = 8000, token!: TurnToken = TurnToken()): Option<String> {
         var absolute = ""
         try {
             absolute = canonicalize(cwd).toString()
@@ -446,7 +450,7 @@ public class AcpProcess {
             return None
         }
         let params = "{\"cwd\":\"${jsonEscapeText(absolute)}\",\"mcpServers\":[]}"
-        let reply = request(nextId(), "session/new", params, timeoutMs: timeoutMs)
+        let reply = request(nextId(), "session/new", params, timeoutMs: timeoutMs, token: token)
         var session = ""
         if (let Some(raw) <- reply) {
             try {
