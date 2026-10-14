@@ -43,17 +43,18 @@ test('CLI只读OpenCode探针以非零状态报告未就绪，不创建任务',{
 },async t=>{
   assert.ok(process.env.SACODE_CLI);
   const root=mkdtempSync(join(tmpdir(),'sacode-acp-cli-probe-'));
+  assert.equal(run(root,'enable','0').status,0);
   const result=spawnSync(process.env.SACODE_CLI,['acp','probe'],{cwd:root,env:{...environment(),SACODE_ACP_OPENCODE_EXECUTABLE:process.env.SACODE_ACP_OPENCODE_TEST_EXECUTABLE},encoding:'utf8',windowsHide:true,timeout:20000});
   assert.ok([0,2].includes(result.status),result.stderr);const report=JSON.parse(result.stdout);
   assert.equal(report.peerId,'opencode');assert.equal(report.modelTaskTested,false);
   console.log('CLI OpenCode 只读状态：'+JSON.stringify(report));
   if(result.status===0){assert.equal(report.environment,'installed-usable');assert.equal(report.verdict,'measured');}
-  else assert.notEqual(report.environment==='installed-usable'&&report.localCredentialPrecondition&&report.verdict==='measured'&&report.protocolVersion===1,true);
-  assert.equal(existsSync(join(root,'session.log')),false);
+  else assert.notEqual(report.environment==='installed-usable'&&report.protocolReady&&report.verdict==='measured'&&report.protocolVersion===1,true);
+  assert.equal(readFileSync(join(root,'session.log'),'utf8').includes('acp/task/start'),false);
   assert.ok(process.env.SACODE_HOST);
   const bridge=new HostBridge(process.env.SACODE_HOST,{...environment(),SACODE_ACP_OPENCODE_EXECUTABLE:process.env.SACODE_ACP_OPENCODE_TEST_EXECUTABLE,SACODE_USER_SETTINGS_DIR:join(root,'settings')});
   await bridge.start(root);t.after(()=>bridge.stop());await bridge.request('workspace/set-directory',{sessionId:'current',directory:root});
-  assert.deepEqual(await bridge.request('acp/provider/probe',{sessionId:'current'}),report);await bridge.stop();
+  assert.deepEqual(await bridge.request('acp/provider/probe',{sessionId:'current'},30000),report);await bridge.stop();
 });
 
 test('CLI从真实npm shim自动发现二进制，不依赖手工覆盖路径',{
@@ -64,7 +65,14 @@ test('CLI从真实npm shim自动发现二进制，不依赖手工覆盖路径',{
   const env=environment();delete env.SACODE_ACP_OPENCODE_EXECUTABLE;
   const pathKey=Object.keys(env).find(key=>key.toLowerCase()==='path')||'PATH';env[pathKey]=[shimDirectory,env[pathKey]||''].join(delimiter);
   const root=mkdtempSync(join(tmpdir(),'sacode-acp-cli-discovery-'));
+  assert.equal(run(root,'enable','0').status,0);
   const result=spawnSync(process.env.SACODE_CLI,['acp','probe'],{cwd:root,env,encoding:'utf8',windowsHide:true,timeout:20000});
   assert.ok([0,2].includes(result.status),result.stderr);const report=JSON.parse(result.stdout);
-  assert.equal(report.peerId,'opencode');assert.equal(report.modelTaskTested,false);assert.equal(existsSync(join(root,'session.log')),false);
+  assert.equal(report.peerId,'opencode');assert.equal(report.modelTaskTested,false);assert.equal(readFileSync(join(root,'session.log'),'utf8').includes('acp/task/start'),false);
+});
+
+test('关闭状态的CLI探测被核心配置拒绝，不启动配置的程序',()=>{
+ const root=mkdtempSync(join(tmpdir(),'sacode-acp-off-'));
+ const result=spawnSync(process.env.SACODE_CLI,['acp','probe'],{cwd:root,env:{...environment(),SACODE_ACP_OPENCODE_EXECUTABLE:join(root,'must-not-start.exe')},encoding:'utf8',windowsHide:true,timeout:5000});
+ assert.equal(result.status,1);assert.match(result.stderr,/acp-disabled/);assert.equal(existsSync(join(root,'session.log')),false);
 });

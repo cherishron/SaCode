@@ -7,11 +7,11 @@ export const AcpHistoryPanel=defineComponent({
     const rows=ref<Delegation[]>([]),busy=ref(false),error=ref(''),loaded=ref(false);let serial=0,disposed=false;
     const live=ref<AcpLiveView[]>([]),draft=ref(''),acting=ref(false),actionError=ref('');let epoch=0,requestId='',taskId='';
     const settings=ref<{enabled:boolean;revision:number;source:string}|null>(null),provider=ref<any>(null);
-    const providerReady=()=>provider.value?.peerId==='opencode'&&provider.value.environment==='installed-usable'&&provider.value.localCredentialPrecondition===true&&provider.value.verdict==='measured'&&provider.value.protocolVersion===1;
+    const providerReady=()=>provider.value?.peerId==='opencode'&&provider.value.environment==='installed-usable'&&provider.value.protocolReady===true&&provider.value.verdict==='measured'&&provider.value.protocolVersion===1;
     function checkedSettings(value:any){if(typeof value?.enabled!=='boolean'||!Number.isSafeInteger(value.revision)||value.revision<0||!['default','project'].includes(value.source)||value.scope!=='project-session')throw Error('ACP 配置回执无效');return value;}
     async function readSettings(){const ticket=epoch,id=props.sessionId||'';try{const api=props.api as any;if(!api?.acpSettingsDescribe)throw Error('ACP 配置入口未接通');const value=checkedSettings(await api.acpSettingsDescribe(id));if(!disposed&&ticket===epoch)settings.value=value;}catch(e){if(!disposed&&ticket===epoch)actionError.value=String((e as Error).message||e);}}
     async function toggle(){const before=settings.value;if(!before)return;const ticket=epoch,id=props.sessionId||'';await perform(async()=>{const value=checkedSettings(await (props.api as any).acpSettingsSetEnabled(id,!before.enabled,before.revision));if(!disposed&&ticket===epoch)settings.value=value;});}
-    async function probe(){const ticket=epoch,id=props.sessionId||'';await perform(async()=>{provider.value=null;const api=props.api as any;if(!api?.acpProviderProbe)throw Error('ACP 提供方探针入口未接通');const value=await api.acpProviderProbe(id);if(!value||value.peerId!=='opencode'||typeof value.environment!=='string'||typeof value.localCredentialPrecondition!=='boolean'||typeof value.verdict!=='string'||!Number.isSafeInteger(value.protocolVersion)||typeof value.evidence!=='string'||value.modelTaskTested!==false)throw Error('ACP 提供方回执无效');if(!disposed&&ticket===epoch)provider.value=value;});}
+    async function probe(){if(!settings.value?.enabled){actionError.value='请先启用 OpenCode ACP';return;}const ticket=epoch,id=props.sessionId||'';await perform(async()=>{provider.value=null;const api=props.api as any;if(!api?.acpProviderProbe)throw Error('ACP 提供方探针入口未接通');const value=await api.acpProviderProbe(id);if(!value||value.peerId!=='opencode'||typeof value.environment!=='string'||typeof value.protocolReady!=='boolean'||typeof value.verdict!=='string'||!Number.isSafeInteger(value.protocolVersion)||typeof value.evidence!=='string'||value.modelTaskTested!==false)throw Error('ACP 提供方回执无效');if(!disposed&&ticket===epoch)provider.value=value;});}
     const controller=new AcpSessionController(props.api,view=>{live.value=[...live.value.filter(v=>v.delegation.delegationId!==view.delegation.delegationId),view];});
     async function perform(action:()=>Promise<void>){if(acting.value)return;const ticket=epoch;acting.value=true;actionError.value='';try{await action();}catch(e){if(!disposed&&ticket===epoch)actionError.value=String((e as Error).message||e);}finally{if(!disposed&&ticket===epoch)acting.value=false;}}
     async function start(){if(!draft.value.trim()||!settings.value?.enabled||!providerReady())return;const ticket=epoch,text=draft.value;if(!requestId){requestId=crypto.randomUUID();taskId=crypto.randomUUID();}
@@ -35,11 +35,18 @@ export const AcpHistoryPanel=defineComponent({
         h('button',{class:'btn',type:'button',disabled:acting.value||!settings.value,onClick:()=>void toggle()},settings.value?.enabled?'关闭 ACP':'开启 ACP'),
         h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void perform(readSettings)},'刷新配置'),
       ]),
-      h('button',{class:'btn',type:'button',disabled:acting.value,onClick:()=>void probe()},'检查 OpenCode 提供方'),
+      h('button',{class:'btn',type:'button',disabled:acting.value||!settings.value?.enabled,onClick:()=>void probe()},'检查 OpenCode 提供方'),
+      settings.value?.enabled===false&&live.value.some(v=>!v.workerFinished)?h('section',{class:'tool-card',role:'status'},[
+        h('strong',{},'已停止接收新委派；在途任务仍在运行'),
+        h('p',{class:'note'},'可以等待收尾，或明确取消。关闭开关不会杀死进程。'),
+        h('button',{class:'btn',disabled:acting.value,onClick:()=>void refreshLive()},'等待收尾／刷新状态'),
+        h('button',{class:'btn',disabled:acting.value,onClick:()=>void perform(async()=>{for(const view of [...live.value])if(!view.workerFinished)await controller.control(view,'cancel');})},'取消在途委派'),
+      ]):null,
       provider.value?h('section',{class:'tool-card'},[
-        h('strong',{},providerReady()?'本地凭据前提及 ACP 协议探针通过':provider.value.environment==='installed-auth-missing'?'本地凭据列表为空':'提供方尚未就绪'),
-        provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 子进程打开本地日志文件被拒绝，尚不能确认认证状态。'):null,
-        h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
+        h('strong',{},providerReady()?'ACP 协议已连接':'提供方尚未就绪'),
+        provider.value.evidence.includes('acp-auth-required:no-task')?h('p',{class:'note',role:'status'},'OpenCode 实际返回认证要求。请在 OpenCode 中处理对应提供方；SaCode 不自动登录。'):null,
+        provider.value.evidence.includes('log-file-permission-denied')?h('p',{class:'note',role:'status'},'OpenCode 子进程打开本地日志文件被拒绝，协议连接尚未确认。'):null,
+        h('p',{class:'note'},'沿用 OpenCode 当前工作目录下生效的模型、Agent 与插件配置；SaCode 不复制凭据、不自动登录或更换模型。'),h('p',{class:'note'},'主模型、免费属性、插件覆盖及端点可达性尚未确认；协议检查不等于模型调用成功。'),h('p',{class:'note'},'真实模型任务尚未验证。'),h('details',{},[h('summary',{},'探针详情'),h('pre',{},provider.value.evidence)]),
       ]):h('p',{class:'note'},'提交前请检查提供方；检查不会发送模型任务。'),
       h('form',{class:'stack',onSubmit:(event:Event)=>{event.preventDefault();void start();}},[
         h('label',{class:'note'},'委派任务'),h('textarea',{class:'input','aria-label':'OpenCode 委派任务',value:draft.value,disabled:acting.value,placeholder:'描述任务范围、限制与验收条件',onInput:(event:Event)=>{const next=(event.target as HTMLTextAreaElement).value;if(next!==draft.value){draft.value=next;requestId='';taskId='';}}}),

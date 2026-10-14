@@ -1,5 +1,6 @@
 package core
 import std.fs.*
+import std.process.*
 import std.env.getVariable
 import std.unittest.*
 import stdx.encoding.json.*
@@ -55,5 +56,36 @@ func acpProtocolProviderCopiesPrivateEnvironmentAndPreservesInheritedValues() {
         let proof = JsonValue.fromStr(String.fromUtf8(File.readFrom(Path(f.root).join("environment-proof")))).asObject()
         @Expect(proof.get("private").getOrThrow().asString().getValue(), f.root)
         @Expect(proof.get("tmp").getOrThrow().asString().getValue(), getVariable("TMP").getOrThrow())
+    } finally { f.close() }
+}
+
+// node 的固定 acp 参数作为工作目录下的脚本入口；任何 auth 调用都会失败。
+@Test
+func acpOpenCodeUsesOnlyProtocolAndProviderDefaultsWithoutCredentialGate() {
+    let f = AcpTaskFixture("end_turn")
+    try {
+        let resolver = launch("node", ["-e", "require('node:fs').writeFileSync('node-path',process.execPath)"],
+            workingDirectory: Some(Path(f.root)), stdIn: ProcessRedirect.Discard,
+            stdOut: ProcessRedirect.Discard, stdErr: ProcessRedirect.Discard)
+        @Expect(resolver.wait(timeout: 3000 * Duration.millisecond), Int64(0))
+        let node = String.fromUtf8(File.readFrom(Path(f.root).join("node-path")))
+        let program = "const fs=require('node:fs');require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);fs.appendFileSync('methods',q.method+'\\n');let result;if(q.method==='initialize')result={protocolVersion:1,agentCapabilities:{}};else if(q.method==='session/new'){if(Object.keys(q.params).sort().join(',')!=='cwd,mcpServers')throw Error('default-config-overridden');result={sessionId:'no-auth-session'};}else throw Error('unexpected-method');console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));});"
+        File.writeTo(Path(f.root).join("acp"), program.toArray())
+        let report = OpenCodeAcpProvider(node).probe(f.root)
+        @Expect(report.verdict, "measured")
+        @Expect(report.evidence.contains("model-selection=provider-default"), true)
+        @Expect(String.fromUtf8(File.readFrom(Path(f.root).join("methods"))), "initialize\nsession/new\n")
+        @Expect(openCodeReadinessJson(report).contains("localCredentialPrecondition"), false)
+    } finally { f.close() }
+}
+
+@Test
+func acpProtocolProviderReportsAuthenticationOnlyFromActualRpcError() {
+    let f = AcpTaskFixture("end_turn")
+    try {
+        let program = "require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);if(q.method==='initialize')console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result:{protocolVersion:1,agentCapabilities:{}}}));else console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,error:{code:-32000,message:'Authentication required'}}));});"
+        let report = AcpProtocolProvider("fixture-peer", "node", ["-e", program], authentication: {=> true}).probe(f.root)
+        @Expect(report.environment, "installed-auth-missing")
+        @Expect(report.evidence, "acp-auth-required:no-task")
     } finally { f.close() }
 }

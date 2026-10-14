@@ -1,5 +1,16 @@
 # ACP：OpenCode 装配与就绪检查
 
+## 口径纠正：不再用认证列表做准入（2026-10-14）
+
+以下历史读数保留为当时实现的记录，不代表当前准入契约。此前要求 `auth list` 非空是实现错误，已移除；不要求在 SaCode 配置 OpenCode 密钥，也不要求为无认证端点登录。当前直接执行 ACP initialize / session-new，沿用提供方默认配置，不发送 prompt、不选择模型、不自动登录。
+
+- 对外状态字段由 `localCredentialPrecondition` 改为 `protocolReady`；后者只描述协议，不代表远端模型可用。
+- ACP 关闭时 Host、CLI、页面均拒绝探测；开关失败不会自动改回关闭。在途任务不因关闭开关被杀，页面提供等待及明确取消操作。
+- 只有实际 RPC 返回 ACP v1 `-32000` 才展示认证要求；超时、程序退出等保持未确认，不猜测为凭据问题。
+- 配置来源、主模型、免费属性、插件覆盖和端点可达性还未完成诊断；后台修复及通知链尚未交付，不能将本批修正称为全部需求完成。
+- 依据：[OpenCode ACP](https://opencode.ai/docs/acp/)、[ACP v1 认证](https://agentclientprotocol.com/protocol/v1/authentication)、[ACP v1 错误码 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/schema/v1/schema.json)。
+
+
 基线：`31577ef` 加本批明确路径。Windows，仓颉 1.1.3 / stdx 1.1.3.1；未使用真实模型任务验证。
 
 | 链路 | 当前事实 | 尚缺 |
@@ -12,6 +23,17 @@
 | 产物 | 私有目录的新版 Host 与 Electron 开发载荷验证 | 统一 CLI、安装包与默认沙箱态验收 |
 
 本地凭据列表非空只代表配置前提，不证明远端凭据有效。协议探针通过也不证明模型任务可完成。页面始终标明真实模型任务未验证；首次装配时复查提供方，后续创建仍受开关及注册代际门控。
+
+## 准入纠正专项实测
+
+- 仓颉 1.1.3：私有核心测试集 TOTAL 385 / PASSED 12 / SKIPPED 373 / ERROR 0 / FAILED 0，rc=0（提供方筛选，不是全量核心）。覆盖真实子进程协议、空认证前提默认配置、实际认证错误及畸形握手。
+- 新版 Host / CLI release 生产构建 rc=0；去 SDK 搜索路径后真实入口 8/8，rc=0。关闭状态拒绝探测，实际 OpenCode 探测不生成模型任务。
+- 页面与 IPC 14/14，rc=0：关闭零调用、探测失败保留开关、实际认证错误、在途任务关闭后等待/明确取消、有限超时窗口。
+- Electron ACP 窄范围冒烟 rc=0，`ACP_HISTORY_MAIN_SMOKE PASS`，包含真实 main/preload/Host、开启/关闭/重新开启、自动发现及协议探测。测试参数包含 `--no-sandbox`，不代表安装或默认安全启动验收。
+- **实际 OpenCode 尚未连通**：新版 CLI/Host 返回 `protocol-probe-unconfirmed`，不是认证失败，也未验证模型。未更换其配置或模型。
+- **新发现的产品缺口**：Host 当前同步执行探针，约 12 秒期间其他 goal/team 查询可超时，Electron 日志记录了该现象。请求窗口修复避免 ACP 提前报超时，但并未解决诊断占用 Host 主循环；异步监督及退出收束须继续实现，不能宣称后台诊断完成。
+
+日志：`apps/desktop/.tmp-test/approval-binding-candidate/opencode-default-config-final.log`；`page-tree-a6e22601/acp-no-auth-host-build.log`、`acp-no-auth-cli-final.log`、`acp-default-real-entry-v3.log`、`acp-default-electron-a23b2993-a4b4-4c05-a02c-388ab1b51084/`。本批首次误取旧 debug 二进制的入口失败轮不作新版读数；最终使用本次 release 文件重跑。
 
 ## 本轮实测
 

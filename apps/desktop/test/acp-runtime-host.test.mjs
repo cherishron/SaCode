@@ -55,14 +55,15 @@ test('真实OpenCode探针返回就绪或明确阻塞，不发送模型任务',{
   const root=mkdtempSync(join(tmpdir(),'sacode-opencode-readiness-'));
   const bridge=new HostBridge(process.env.SACODE_HOST,{...process.env,SACODE_ACP_OPENCODE_EXECUTABLE:process.env.SACODE_ACP_OPENCODE_TEST_EXECUTABLE,SACODE_USER_SETTINGS_DIR:join(root,'settings')});
   await bridge.start(root);t.after(()=>bridge.stop());
-  await assert.rejects(bridge.request('acp/provider/probe',{sessionId:'current'}),/workspace-not-selected/);
+  await assert.rejects(bridge.request('acp/provider/probe',{sessionId:'current'},30000),/acp-disabled/);
+  await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:true,revision:0});
+  await assert.rejects(bridge.request('acp/provider/probe',{sessionId:'current'},30000),/workspace-not-selected/);
   await bridge.request('workspace/set-directory',{sessionId:'current',directory:root});
-  const report=await bridge.request('acp/provider/probe',{sessionId:'current'});
+  const report=await bridge.request('acp/provider/probe',{sessionId:'current'},30000);
   console.log('OpenCode 只读探针：'+JSON.stringify(report));
   assert.equal(report.peerId,'opencode');assert.equal(report.modelTaskTested,false);
   assert.ok(['installed-auth-missing','probe-failed-unknown','installed-usable'].includes(report.environment));
-  if(report.environment==='installed-auth-missing')assert.equal(report.evidence,'opencode-auth-list-empty:no-task');
-  if(report.environment==='probe-failed-unknown'){assert.equal(report.localCredentialPrecondition,false);assert.notEqual(report.verdict,'measured');}
+  if(report.environment==='probe-failed-unknown'){assert.equal(report.protocolReady,false);assert.notEqual(report.verdict,'measured');}
   await bridge.stop();const log=readFileSync(join(root,'session.log'),'utf8');
   assert.equal(log.includes('acp/task/start'),false);assert.equal(log.includes('acp/admission'),false);
 });

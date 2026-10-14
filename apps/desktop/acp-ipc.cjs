@@ -42,4 +42,11 @@ function registerAcpIpc(ipcMain, request) {
     });
   }
 }
-module.exports = { registerAcpIpc };
+// 请求窗口覆盖核心有界的握手、建会话与进程收束；页面不能指定窗口。
+function acpRequestTimeout(method) {
+  if (method === 'acp/provider/probe') return 30000;
+  if (method === 'acp/delegation/create') return 60000;
+  if (method === 'acp/delegation/close') return 15000;
+  return 5000;
+}
+module.exports = { registerAcpIpc, acpRequestTimeout };

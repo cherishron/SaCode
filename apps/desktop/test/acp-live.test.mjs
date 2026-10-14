@@ -44,7 +44,7 @@ function panel(api){
   const m={exports:{}},hooks=[];
   const vue={defineComponent:v=>v,ref:value=>({value}),watch:(_get,callback,options)=>{hooks.push(callback);if(options?.immediate)callback();},onBeforeUnmount:()=>{},h:(type,props,children)=>({type,props:props||{},children})};
   let seq=0;vm.runInNewContext(panelOutput.outputFiles[0].text,{module:m,exports:m.exports,require:()=>vue,crypto:{randomUUID:()=>String(++seq)}});
-  const props={api:{acpSettingsDescribe:async()=>({enabled:true,revision:1,source:'project',scope:'project-session'}),acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-usable',localCredentialPrecondition:true,verdict:'measured',protocolVersion:1,evidence:'controlled-fixture:no-real-provider',modelTaskTested:false}),...api},sessionId:'s1',active:true};const render=m.exports.AcpHistoryPanel.setup(props);
+  const props={api:{acpSettingsDescribe:async()=>({enabled:true,revision:1,source:'project',scope:'project-session'}),acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-usable',protocolReady:true,verdict:'measured',protocolVersion:1,evidence:'controlled-fixture:no-real-provider',modelTaskTested:false}),...api},sessionId:'s1',active:true};const render=m.exports.AcpHistoryPanel.setup(props);
   const nodes=()=>{const all=[];const walk=v=>{if(Array.isArray(v))v.forEach(walk);else if(v&&typeof v==='object'){all.push(v);walk(v.children);}};walk(render());return all;};
   return{props,hooks,nodes,find:(type,label)=>nodes().find(n=>n.type===type&&(label===undefined||n.children===label)),flush:async()=>{for(let i=0;i<24;i++)await Promise.resolve();}};
 }
@@ -77,9 +77,29 @@ test('面板默认关闭，不以提交任务隐式开启，提供方检查不�
 });
 
 test('日志权限拒绝显示真实阻塞，不伪装成未配置凭据或允许提交',async()=>{
-  let starts=0;const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'probe-failed-unknown',localCredentialPrecondition:false,verdict:'pending-verification',protocolVersion:0,evidence:'opencode-local-auth-exit-1-log-file-permission-denied-unconfirmed:no-task',modelTaskTested:false}),acpDelegationCreate:async()=>{starts++;}});
+  let starts=0;const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'probe-failed-unknown',protocolReady:false,verdict:'pending-verification',protocolVersion:0,evidence:'opencode-local-auth-exit-1-log-file-permission-denied-unconfirmed:no-task',modelTaskTested:false}),acpDelegationCreate:async()=>{starts++;}});
   await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
   f.find('textarea').props.onInput({target:{value:'不得执行'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
   const text=JSON.stringify(f.nodes());assert.ok(text.includes('日志文件被拒绝'));assert.equal(text.includes('本地凭据列表为空'),false);
   assert.equal(f.find('button','提交给 OpenCode').props.disabled,true);assert.equal(starts,0);
+});
+
+test('ACP关闭时连手工探测也不调用提供方，失败不回写开关',async()=>{
+ let probes=0,sets=0;const f=panel({acpSettingsDescribe:async()=>({enabled:false,revision:0,source:'default',scope:'project-session'}),acpProviderProbe:async()=>{probes++;throw Error('must-not-run');},acpSettingsSetEnabled:async()=>{sets++;}});
+ await f.flush();const button=f.find('button','检查 OpenCode 提供方');assert.equal(button.props.disabled,true);button.props.onClick();await f.flush();assert.equal(probes,0);assert.equal(sets,0);
+});
+
+test('只有协议明确要求认证才提示OpenCode处理，探测失败保留已开启选择',async()=>{
+ let sets=0;const f=panel({acpProviderProbe:async()=>({peerId:'opencode',environment:'installed-auth-missing',protocolReady:false,verdict:'blocked',protocolVersion:1,evidence:'acp-auth-required:no-task',modelTaskTested:false}),acpSettingsSetEnabled:async()=>{sets++;}});
+ await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
+ assert.ok(JSON.stringify(f.nodes()).includes('OpenCode 实际返回认证要求'));assert.ok(f.find('button','关闭 ACP'));assert.equal(sets,0);
+});
+
+test('关闭开关不杀在途任务，用户另行选择取消且使用绑定修订',async()=>{
+ const calls=[];const current=view();current.delegation.taskId='2';current.delegation.requestId='1';
+ const f=panel({acpDelegationList:async()=>({version:1,sessionId:'s1',delegations:[]}),acpDelegationCreate:async()=>current,
+ acpSettingsSetEnabled:async()=>({enabled:false,revision:2,source:'project',scope:'project-session'}),acpDelegationCancel:async(...args)=>{calls.push(args);return current;}});
+ await f.flush();f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();f.find('textarea').props.onInput({target:{value:'test'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
+ f.find('button','关闭 ACP').props.onClick();await f.flush();assert.equal(calls.length,0);assert.ok(f.find('button','等待收尾／刷新状态'));
+ f.find('button','取消在途委派').props.onClick();await f.flush();assert.deepEqual(calls,[['s1','d1',4]]);
 });

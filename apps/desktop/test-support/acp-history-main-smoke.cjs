@@ -9,7 +9,7 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
   const field=text=>text.replaceAll('\\','\\\\').replaceAll('\t','\\t').replaceAll('\n','\\n').replaceAll('\r','\\r');
   writeFileSync(SESSION_LOG,[[0,'acp/admission',admission],[1,'acp/task/start',started],[2,'acp/task/settled',ended]].map(([seq,type,data])=>seq+'\t'+type+'\t'+field(JSON.stringify(data))+'\n').join(''));
   const before=readFileSync(SESSION_LOG);const win=createWindow();const js=code=>win.webContents.executeJavaScript(code);
-  const wait=async code=>{for(let i=0;i<200;i++){if(await js(code))return;await new Promise(resolve=>setTimeout(resolve,30));}throw Error('acp-page-timeout:'+code);};
+  const wait=async (code,attempts=200)=>{for(let i=0;i<attempts;i++){if(await js(code))return;await new Promise(resolve=>setTimeout(resolve,30));}throw Error('acp-page-timeout:'+code);};
   try {
     await wait("!!document.querySelector('#toggle-side') && !!window.sacode?.acpDelegationList");
     await js("(()=>{if(!document.querySelector('#add-resource')?.getClientRects().length)document.querySelector('#toggle-side').click();})()");
@@ -31,8 +31,9 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
     if(saved.enabled!==false||saved.revision!==2)throw Error('acp-settings-roundtrip-mismatch');
     if(process.env.SACODE_ACP_OPENCODE_EXECUTABLE||process.env.SACODE_ACP_DISCOVERY_SMOKE==='1'){
       await bridge.request('workspace/set-directory',{sessionId:'current',directory:SESSION_DIR});
+      await click('开启 ACP');await wait("document.querySelector('.acp-history').textContent.includes('本项目会话 ACP 已开启')");
       await click('检查 OpenCode 提供方');
-      await wait("(()=>{const t=document.querySelector('.acp-history').textContent;return t.includes('提供方尚未就绪')||t.includes('本地凭据列表为空')||t.includes('本地凭据前提及 ACP 协议探针通过');})()");
+      await wait("(()=>{const t=document.querySelector('.acp-history').textContent;return t.includes('提供方尚未就绪')||t.includes('ACP 协议已连接');})()",1200);
       if(!await js("document.querySelector('.acp-history').textContent.includes('真实模型任务尚未验证')"))throw Error('acp-provider-task-boundary-missing');
       const detail=await js("[...document.querySelectorAll('.acp-history pre')].map(p=>p.textContent).join('\\n')");
       if(detail.includes('log-file-permission-denied')&&!await js("document.querySelector('.acp-history').textContent.includes('日志文件被拒绝')"))throw Error('acp-log-permission-reason-hidden');

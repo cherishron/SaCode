@@ -49,8 +49,16 @@ public class AcpProtocolProvider <: AcpProvider {
             }
             return AcpProviderReadiness("installed-usable", true, "measured", 1,
                 "initialize-and-session-new-observed:no-task")
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             process.kill()
+            if (!process.exitObserved()) {
+                return AcpProviderReadiness("probe-failed-unknown", false, "blocked", 0,
+                    "probe-process-exit-unconfirmed")
+            }
+            // ACP v1 的 -32000 才是认证要求；超时、日志和其他失败不冒充认证错误。
+            if (e.message == "provider-unavailable:acp-rpc-error:-32000") {
+                return AcpProviderReadiness("installed-auth-missing", false, "blocked", 1, "acp-auth-required:no-task")
+            }
             return AcpProviderReadiness("probe-failed-unknown", false, "blocked", 0, "protocol-probe-unconfirmed")
         }
     }

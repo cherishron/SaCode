@@ -19,6 +19,11 @@ func runAcpCommand(args: Array<String>): Int64 {
     }
     try {
         if (probe) {
+            let source = SessionLog("session.log")
+            if (!source.load()) { throw Exception("replay-rejected") }
+            if (!AcpSessionSettings(source, WriteLease("session.log")).effective.describe("project").enabled) {
+                throw Exception("provider-unavailable:acp-disabled")
+            }
             let report = OpenCodeAcpProvider(configuredOpenCodeExecutable()).probe(canonicalize(".").toString())
             println(openCodeReadinessJson(report))
             return if (report.environment == "installed-usable" && report.authenticated && report.verdict == "measured" &&

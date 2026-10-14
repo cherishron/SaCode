@@ -40,10 +40,10 @@ func acpSessionSettingsRejectsMissingLeaseAndBrokenReplayRevision() {
 }
 
 @Test
-func acpOpenCodeLocalCredentialListDoesNotTreatEmptyOrMalformedOutputAsReady() {
-    @Expect(openCodeLocalCredentialRecords("[]"), false)
-    @Expect(openCodeLocalCredentialRecords("[{\"fixture\":\"configured-record\"}]"), true)
-    @ExpectThrows[Exception](openCodeLocalCredentialRecords("{}"))
-    @ExpectThrows[Exception](openCodeLocalCredentialRecords("[null]"))
-    @ExpectThrows[Exception](openCodeLocalCredentialRecords("[{}]"))
+func acpOpenCodeReadinessReportsProtocolWithoutClaimingCredentialsOrModel() {
+    let report = AcpProviderReadiness("installed-usable", true, "measured", 1, "fixture:no-task")
+    let value = JsonValue.fromStr(openCodeReadinessJson(report)).asObject()
+    @Expect(value.get("protocolReady").getOrThrow().asBool().getValue(), true)
+    @Expect(value.get("modelTaskTested").getOrThrow().asBool().getValue(), false)
+    @Expect(openCodeReadinessJson(report).contains("localCredentialPrecondition"), false)
 }

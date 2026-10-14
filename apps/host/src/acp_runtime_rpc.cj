@@ -35,6 +35,9 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
             if (!source.load()) {
                 throw Exception("replay-rejected")
             }
+            if (!AcpSessionSettings(source, host.lease).effective.describe("project").enabled) {
+                throw Exception("provider-unavailable:acp-disabled")
+            }
             let workspace = sessionWorkingDirectory(source)
             if (workspace.size == 0) {
                 throw Exception("workspace-not-selected")

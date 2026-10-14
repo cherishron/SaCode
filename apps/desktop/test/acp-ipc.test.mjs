@@ -47,3 +47,9 @@ test('ACP运行操作逐字段校验，审批保留五字段且禁止启动向�
   await answer({}, {...fixtures.Answer,decision:'denied',optionId:''});
   assert.equal(calls.length,6);
 });
+
+test('ACP握手与收束使用独立有界窗口，页面不能设置超时',async()=>{
+ const {acpRequestTimeout}=await import('../acp-ipc.cjs');
+ assert.equal(acpRequestTimeout('acp/provider/probe'),30000);assert.equal(acpRequestTimeout('acp/delegation/create'),60000);
+ assert.equal(acpRequestTimeout('acp/delegation/close'),15000);assert.equal(acpRequestTimeout('acp/delegation/poll'),5000);
+});
