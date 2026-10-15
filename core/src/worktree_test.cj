@@ -25,9 +25,31 @@ import stdx.encoding.json.*
 // ---------- 夹具 ----------
 
 // 每份用例各占一个私有临时目录：并发会话之间不共享 .sacode/worktrees 与归属判定。
+//
+// 两处修正（2026-10-11 实测）：
+// 1. 夹具不再直接散落在 TMP 根下。散落时 Git 只读对象删不动，清理抛
+//    `Failed to remove … Access is denied`，把「用例绿」变成 ERROR；实测一轮就在
+//    TMP 根下积了 211 个 tmpDir* 残留。改落 `sacode-core-tests/` 下集中清理。
+// 2. 每份夹具先 `git init`，形成独立的仓库根，git 不会向上发现本仓主仓。
+//    非 Git 用例（wtCoreRejectsOutsideRepository 之类）改用 wtInertGitBoundary
+//    写一个 `.git` 文件把搜索边界钉死，否则 worktree 会建到本仓主仓里去 ——
+//    实测主仓 `.sacode/worktrees/` 下因此出现过 alpha 与两条 agent 登记。
 func wtTempDir(): String {
-    let base = getVariable("TMP") ?? (getVariable("TEMP") ?? ".")
-    return Directory.createTemp(Path(base)).toString()
+    return Directory.createTemp(Path(coreTestRoot())).toString()
+}
+
+// 把「非 Git 目录」和「本仓主仓」隔开。
+//
+// 实测过的关键差别（2026-10-11 私有探针，不要照着直觉改成目录）：
+//   - 建空的 `.git` **目录**：git 认为它不是有效仓库，继续向上找 → 找到本仓主仓
+//     （`git rev-parse --show-toplevel` 返回主仓路径，rc=0）。这正是主仓
+//     `.sacode/worktrees/` 下出现 alpha 与两条 agent 登记的成因。
+//   - 写一个 `.git` **文件**：git 判定为无效 gitfile 并就地失败，**不再向上**，
+//     rc=128。实测 `gitdir: /nonexistent-xyz` 与空内容两种写法都成立。
+func wtInertGitBoundary(dir: String): String {
+    let marker = "${dir}/.git"
+    if (!exists(marker)) { File.writeTo(Path(marker), "gitdir: /nonexistent-xyz".toArray()) }
+    return canonicalize(dir).toString()
 }
 
 func wtGitAt(dir: String, args: Array<String>): String {
@@ -148,13 +170,13 @@ func wtIsGeneratedSlug(s: String): Bool {
         if (bytes.size == 0) { return false }
         for (b in bytes) { if (!(b >= 97 && b <= 122)) { return false } }
     }
-    return wtHexTailOfLength(s, 6)
+    return wtHexTailOfLength(parts[2], 6)
 }
 
 // 代理临时目录名形态：agent- + 恰好 7 位十六进制。
 func wtAgentDirName(s: String): Bool {
     if (!s.startsWith("agent-")) { return false }
-    return wtHexTailOfLength(s, 7)
+    return wtHexTailOfLength(s[6..], 7)
 }
 
 func wtHexTailOfLength(s: String, width: Int64): Bool {
@@ -322,7 +344,10 @@ func wtCoreExitWithoutBindingRejected() {
 
 @Test
 func wtCoreRejectsOutsideRepository() {
-    let outside = wtTempDir()
+    // 这条要验「不在仓库里」被拒。目录必须与本仓主仓隔离，否则 git 向上找到本仓，
+    // enter() 会成功并在本仓 `.sacode/worktrees/` 下真的建出工作树 ——
+    // 那既让本用例失去意义，也在主仓留下登记（实测出现过 alpha 与两条 agent）。
+    let outside = wtInertGitBoundary(wtTempDir())
     let tree = SessionWorktree(SessionLog(Path(outside).join("a.log").toString()), fallback: outside)
     @Expect(wtErrorCode({ => tree.enter("alpha") }), "worktree-not-a-repository")
     @Expect(wtErrorCode({ => tree.enterPullRequest("17") }), "worktree-not-a-repository")
@@ -479,7 +504,9 @@ func wtCoreRemoveRequiresCreatingSession() {
     let dir = creator.enter("owned")
     @Expect(ownerLog.flush(), true)
     // 回放同一份日志的实例拿到的是同一份归属，所以它删得动。
-    let sameSession = SessionWorktree(SessionLog(Path(root).join("owner.log").toString()), fallback: root)
+    let replayed = SessionLog(Path(root).join("owner.log").toString())
+    @Expect(replayed.load(), true)
+    let sameSession = SessionWorktree(replayed, fallback: root)
     @Expect(sameSession.exit("remove").contains("\"active\":false"), true)
     @Expect(exists(dir), false)
     // 归属不明就凭空造不出删除：先手工建一个同名目录，别的会话既进不去也删不掉。

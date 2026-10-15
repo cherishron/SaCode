@@ -23,8 +23,7 @@ import std.unittest.*
 // ---------- 夹具 ----------
 
 func wsTTemp(): String {
-    let base = getVariable("TMP") ?? (getVariable("TEMP") ?? ".")
-    return Directory.createTemp(Path(base)).toString()
+    return Directory.createTemp(Path(coreTestRoot())).toString()
 }
 
 func wsTGitAt(dir: String, args: Array<String>): String {

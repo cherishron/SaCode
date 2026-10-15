@@ -150,9 +150,10 @@ public class WorktreeSetup {
     // 两个设置路径都可注入：生产走默认（~/.sacode 与 <repo>/.sacode），
     // 用例传私有路径，不拿真用户配置去赌断言。
     public init(repoRoot: String, userSettingsFile!: String = "", projectSettingsFile!: String = "") {
-        this.repoRoot = repoRoot
+        let mainRepo = wtRepoRoots(repoRoot).repoRoot
+        this.repoRoot = mainRepo
         this.userFile = if (userSettingsFile.size > 0) { userSettingsFile } else { wsUserSettingsFile() }
-        this.projectFile = if (projectSettingsFile.size > 0) { projectSettingsFile } else { wsProjectSettingsFile(repoRoot) }
+        this.projectFile = if (projectSettingsFile.size > 0) { projectSettingsFile } else { wsProjectSettingsFile(mainRepo) }
     }
 
     // 生效的条目表：项目配了就整份覆盖用户。
@@ -172,6 +173,7 @@ public class WorktreeSetup {
 
     // 纯核验：不做任何副作用。用例直接断言这张表，apply 也复用它。
     public func plan(worktreeDirectory: String): Array<WorktreeLink> {
+        // 即便调用方传入链接工作树，也从构造时解析出的主仓读取源目录和项目设置。
         let root = wsCanonical(repoRoot)
         let worktree = wsCanonical(worktreeDirectory)
         let links = ArrayList<WorktreeLink>()

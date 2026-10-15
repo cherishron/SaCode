@@ -175,6 +175,38 @@ func wtGitText(directory: String, action: Array<String>, timeoutMs!: Int64 = wtG
     return result.output
 }
 
+// 「这里根本不是仓库」要报领域码 worktree-not-a-repository，而不是 worktree-git-failed。
+//
+// 为什么必须单独探（2026-10-11 实测）：原先 wtRepoRoots 直接跑 rev-parse，
+// 非仓库目录里 git 以 rc=128 退出，于是先被 wtGitText 判成 worktree-git-failed，
+// 后面那行 worktree-not-a-repository 永远到不了 —— 对任何真实的非仓库目录都不可达。
+// 私有探针在真实系统 TEMP 的非仓库目录里复核过：`rev-parse --show-toplevel`
+// 同样是 rc=128（fatal: not a git repository (or any of the parent directories)）。
+//
+// 与 worktree-git-failed 的分工：git 跑不起来（超时、流损坏、其它非零）仍走
+// worktree-git-failed 保留 detail；只有「git 明确说这里没有仓库」才翻译成领域码。
+// 这也让 worktree.cj 自述的「错误码是稳定闭集」成立——调用方不必去匹配 git 的
+// 可变长诊断串去分辨两种失败。
+func wtGitRepositoryProbe(directory: String): String {
+    let result = wtGitRun(directory, ["rev-parse", "--show-toplevel"])
+    if (result.timedOut) { wtFail("worktree-git-timeout", detail: "rev-parse") }
+    if (result.incomplete) { wtFail("worktree-git-incomplete", detail: "rev-parse") }
+    if (result.exitCode != 0) {
+        if (wtIsNotARepositoryDiagnostic(result.diagnostic)) { wtFail("worktree-not-a-repository", detail: directory) }
+        wtFail("worktree-git-failed", detail: "rev-parse:${result.exitCode}:${result.diagnostic}")
+    }
+    return result.output
+}
+
+// git 在「这里不是仓库」时的诊断有两种措辞，都会随版本与场景变化：
+//   - 没有任何祖先含 .git： "not a git repository (or any of the parent directories: .git)"
+//   - 遇到无效 gitfile：   "not a git repository: <路径>"
+// 因此只认稳定片段，不做整句匹配；片段也只在这两种措辞里出现。
+func wtIsNotARepositoryDiagnostic(diagnostic: String): Bool {
+    let text = diagnostic.toAsciiLower()
+    return text.contains("not a git repository")
+}
+
 func wtGitCode(directory: String, action: Array<String>): Int64 {
     return wtGitRun(directory, action).exitCode
 }
@@ -306,7 +338,7 @@ public func wtValidateSlug(raw: String): String {
     if (tail == 45 || tail == 46) { wtFail("worktree-bad-name", detail: raw) }
     if (raw.contains("..") || raw == ".") { wtFail("worktree-bad-name", detail: raw) }
     if (wtIsWindowsReservedName(raw)) { wtFail("worktree-bad-name", detail: raw) }
-    if (raw.startsWith(wtAgentPrefix)) { wtFail("worktree-bad-name", detail: raw) }
+    if (raw.toAsciiLower().startsWith(wtAgentPrefix)) { wtFail("worktree-bad-name", detail: raw) }
     return raw
 }
 
@@ -382,7 +414,9 @@ func wtParsePrNumber(raw: String): Int64 {
 // 只收三种形态：`N`、`#N`、`https://github.com/<owner>/<repo>/pull/<N>`。
 // http、带尾斜杠、带额外段、非 github.com 主机都拒——URL 是身份核验的输入，不是装饰。
 public func wtParsePrReference(reference: String): WtPrReference {
-    let text = reference.trimAscii()
+    // 不把首尾空白当作可接受语法；引用值会参与远端身份核验，必须按输入原样解析。
+    let text = reference
+    if (text != text.trimAscii()) { wtFail("worktree-pr-bad-reference", detail: reference) }
     if (text.startsWith("#")) {
         return WtPrReference(wtParsePrNumber(text[1..text.size]), "", "", false)
     }
@@ -440,7 +474,8 @@ public class WtRoots {
 public func wtRepoRoots(directory: String): WtRoots {
     if (directory.size == 0) { wtFail("worktree-no-directory") }
     if (!exists(directory)) { wtFail("worktree-directory-missing", detail: directory) }
-    let top = wtGitText(directory, ["rev-parse", "--show-toplevel"])
+    // 第一个 rev-parse 用仓库探针：非仓库要报 worktree-not-a-repository（见 wtGitRepositoryProbe）。
+    let top = wtGitRepositoryProbe(directory)
     let gitDir = wtResolveGitPath(directory, wtGitText(directory, ["rev-parse", "--absolute-git-dir"]))
     let common = wtResolveGitPath(directory, wtGitText(directory, ["rev-parse", "--git-common-dir"]))
     let worktreeRoot = wtResolveGitPath(directory, top)
@@ -755,12 +790,14 @@ public class SessionWorktree {
 
     // 固定目录 <repoRoot>/.sacode/worktrees/<slug> + 分支 worktree-<slug>。
     private func bindCreated(roots: WtRoots, slug: String, startRef: String): String {
-        let base = wtEnsureBaseDirectory(roots.repoRoot)
-        let target = wtJoin(base, slug)
+        // 先在纯路径上核对会话归属与分支冲突，再创建 .sacode/worktrees。
+        // 拒绝被占用的分支不应留下一个空的 .sacode 目录。
+        let target = wtJoin(wtBaseDirectory(roots.repoRoot), slug)
         let branch = wtBranchOf(slug)
+        let owned = hasCreateRecord(target)
         if (exists(target)) {
             // 磁盘上已有同名目录：只有本会话建过的才算我们的东西。
-            if (!hasCreateRecord(target)) { wtFail("worktree-name-taken", detail: target) }
+            if (!owned) { wtFail("worktree-name-taken", detail: target) }
             let real = wtCanonical(target)
             let top = wtGitText(real, ["rev-parse", "--show-toplevel"])
             if (wtNormalisedPath(wtResolveGitPath(real, top)) != wtNormalisedPath(real)) {
@@ -769,7 +806,9 @@ public class SessionWorktree {
             writeBind(real, slug, branch, roots.repoRoot)
             return real
         }
-        let created = wtCreateWorktree(roots.repoRoot, target, branch, false, startRef: startRef)
+        if (!owned && wtBranchExists(roots.repoRoot, branch)) { wtFail("worktree-branch-taken", detail: branch) }
+        let base = wtEnsureBaseDirectory(roots.repoRoot)
+        let created = wtCreateWorktree(roots.repoRoot, wtJoin(base, slug), branch, owned, startRef: startRef)
         // 创建后装配（T2）：装配失败就把刚建出来的工作树撤掉，再把原异常码原样交回去——
         // 「进入」要么完整生效，要么像没发生过，不留一份没接好依赖的半成品。
         var refused: Option<Exception> = None
@@ -876,6 +915,7 @@ public class SessionWorktree {
         synchronized(wtProcessLock) {
             let id = wtAgentIdOf(agentId)
             if (let Some(record) <- agentRecord(id)) {
+                if (!record.prepared) { wtFail("worktree-agent-unknown", detail: id) }
                 var retained = false
                 var removed = false
                 if (exists(record.directory)) {
