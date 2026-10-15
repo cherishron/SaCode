@@ -133,6 +133,11 @@ contextBridge.exposeInMainWorld("sacode", {
   pluginsInstall: (request) => ipcRenderer.invoke("sacode:pluginsInstall", { spec: request?.spec, registry: request?.registry, requestId: request?.requestId, approvedBuilds: request?.approvedBuilds }),
   pluginsInstallPoll: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallPoll", { requestId }),
   pluginsInstallCancel: (requestId) => ipcRenderer.invoke("sacode:pluginsInstallCancel", { requestId }),
+  // 网络搜索设置面：3 条固定动作，修订号屏障与补丁键位由主进程守卫（web-settings-ipc.cjs）。
+  // 密钥只走独立凭证通道；设置快照里永远不出现密钥本体。
+  webSettingsDescribe: () => ipcRenderer.invoke("sacode:webSettingsDescribe"),
+  webSettingsApply: (expectedRevision, patch) => ipcRenderer.invoke("sacode:webSettingsApply", { expectedRevision, patch }),
+  webSettingsSetCredential: (providerId, key) => ipcRenderer.invoke("sacode:webSettingsSetCredential", { providerId, key }),
   // LSP 语义工具（L1）：7 个固定动作，位置是 0 起始行 + UTF-16 列。
   // 没有 request(method, params) 这种万能通道——渲染层拼不出第四个键，也说不出动词之外的路径。
   lspDefine: (path, line, character, documentVersion) => ipcRenderer.invoke("sacode:lspDefine", documentVersion === undefined ? { path, line, character } : { path, line, character, documentVersion }),

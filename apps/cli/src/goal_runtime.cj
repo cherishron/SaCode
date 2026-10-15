@@ -81,7 +81,7 @@ func runGoalCommand(args: Array<String>): Int64 {
                     return platformExecutionReady(getWorkingDirectory().toString())
                 }
                 return true
-            }, lspSession: "current", lspToken: token)
+            }, lspSession: "current", lspToken: token, webSettings: Some(WebSettings.forUser()))
         let budgetMeter = TokenMeter(log)
         budgetMeter.rebuild()
         if (args.size == 5 && requestedBudget > budgetMeter.budgetValue()) { throw Exception("budget-cannot-increase") }

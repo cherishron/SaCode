@@ -255,6 +255,8 @@
         tools: self.tools,
         // 插件清单适配器：包 = 已装插件，行 = 包内声明的工具。映射只搬数据，不冒充本地状态。
         adapter: self.pluginsInventoryAdapter,
+        // 命名空间配置适配器：只有存在真实仓颉设置存储的命名空间才登记；其余保持「未接入」。
+        configuration: { adapters: self.pluginConfigAdapters || {} },
       }),
       ], { id:"settings-page-plugins", role:"tabpanel", "aria-labelledby":"settings-tab-plugins", hidden:self.settingsTab!=="plugins" }),
       ]),

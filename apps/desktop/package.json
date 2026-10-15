@@ -48,7 +48,8 @@
       "test-support/**",
       "package.json",
       "renderer/**",
-      "plugins-guard.cjs"
+      "plugins-guard.cjs",
+      "web-settings-ipc.cjs"
     ],
     "extraResources": [
       {

@@ -86,7 +86,8 @@ test('capabilities 与源码分派双向相等', async () => {
   const envelope = new Set(['core', 'transport', 'protocolVersion', 'capabilities', 'cangjie', 'stdio-ndjson']);
   const goalVerbs = new Set(['goal/create', 'goal/edit', 'goal/pause', 'goal/resume', 'goal/clear']);
   const dispatched = new Set();
-  for (const m of src.matchAll(/method == "([a-z0-9/-]+)"/g)) dispatched.add(m[1]);
+  const webSource = await readFile(resolve(here, '../../../apps/host/src/web_surface.cj'), 'utf8');
+  for (const m of (src + webSource).matchAll(/method == "([a-z0-9/-]+)"/g)) dispatched.add(m[1]);
   const goalSrc = /isGoalControlMethod\(method\)/.test(src);
   assert.ok(goalSrc, 'isGoalControlMethod 分派点消失，goal/* 五个动词将无处落地');
   for (const v of goalVerbs) dispatched.add(v);

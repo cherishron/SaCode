@@ -99,11 +99,11 @@ export const Inventory = defineComponent({
 
 export const Page = defineComponent({
   name: 'SaCodePluginsPage',
-  props: { adapter: Object as PropType<Adapter>, tabs: Array as PropType<Tab[]>, tools: Array as PropType<Tool[]> },
+  props: { adapter: Object as PropType<Adapter>, tabs: Array as PropType<Tab[]>, tools: Array as PropType<Tool[]>, configuration: Object as PropType<Record<string, unknown>> },
   setup(props) {
     const uid = 'plugins-' + useId() + '-' + (++pageInstance);
     const rows = computed(() => (props.tabs || [
-      { id:'configuration',label:'插件配置',order:10,component:(window as any).SaCodeConfiguration.Page },
+      { id:'configuration',label:'插件配置',order:10,component:(window as any).SaCodeConfiguration.Page, props: props.configuration || {} },
       { id: 'inventory', label: '插件列表', order: 20, component: Inventory, props: { adapter: props.adapter } },
     ]).slice().sort((a,b) => a.order - b.order || a.id.localeCompare(b.id)));
     const chosen = ref(''), visited = ref<string[]>([]);

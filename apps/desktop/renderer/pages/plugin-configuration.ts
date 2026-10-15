@@ -1,14 +1,14 @@
 // 插件配置共用暂存表单：字段值、覆盖层与修订号来自共享核心，密钥不进入设置快照。
 import { defineComponent, h, ref, computed, onMounted, onBeforeUnmount, useId, type PropType } from 'vue';
 import type { Adapter as SubagentAdapter } from './subagent-settings';
-export interface Field { key: string; label: string; hint: string; numeric?: boolean }
+export interface Field { key: string; label: string; hint: string; numeric?: boolean; toggle?: boolean; choices?: { value: string; label: string }[] }
 export interface Definition { namespace: string; title: string; description: string; fields: Field[]; credential?: boolean }
 export interface Snapshot {
   revision: string; available: boolean; writable: boolean;
   fields: Record<string, { text: string; overridden: boolean }>;
   credential?: { configured: boolean; writable: boolean };
 }
-export type Patch = { key: string; op: 'set'; value: string | number } | { key: string; op: 'unset' };
+export type Patch = { key: string; op: 'set'; value: string | number | boolean } | { key: string; op: 'unset' };
 export interface Adapter {
   read(namespace: string): Promise<Snapshot>;
   apply(namespace: string, patches: Patch[], expectedRevision: string): Promise<Snapshot>;
@@ -18,7 +18,11 @@ export interface Adapter {
 export const definitions: Definition[] = [
   { namespace:'agent-loop', title:'Agent 循环', description:'控制 Agent 派发工具调用的方式。', fields:[{key:'maxParallelToolCalls',label:'并行工具调用数',hint:'同一步内最多同时运行多少个可并行的调用。',numeric:true}] },
   { namespace:'shell',title:'终端',description:'限制每条命令最多能跑多久、最多输出多少内容。',fields:[{key:'timeoutMs',label:'命令超时（毫秒）',hint:'单条命令允许运行多久，超时即终止。',numeric:true},{key:'maxOutputBytes',label:'单流输出上限（字节）',hint:'超出部分会转存到临时文件，而不是被丢弃。',numeric:true}] },
-  { namespace:'web-search',title:'网络搜索',description:'设置搜索提供方的接口和请求预算。',credential:true,fields:[{key:'baseURL',label:'接口地址',hint:'留空则使用提供方默认地址。'},{key:'maxUses',label:'单次请求最多搜索次数',hint:'一次请求在必须作答前最多可以搜索多少次。',numeric:true}] },
+  { namespace:'web-search',title:'网络搜索',description:'设置搜索提供方的接口和请求预算。',credential:true,fields:[
+    {key:'enabled',label:'启用网络搜索',hint:'关闭时模型不会获得网络搜索与网页抓取能力。',toggle:true},
+    {key:'selectedProvider',label:'搜索提供方',hint:'接口地址与密钥都作用于所选提供方；随机表示按可用性自动切换。',choices:[{value:'exa',label:'Exa'},{value:'perplexity',label:'Perplexity'},{value:'deepseek-official',label:'DeepSeek 官方'},{value:'tavily',label:'Tavily'},{value:'firecrawl',label:'Firecrawl'},{value:'parallel',label:'Parallel'},{value:'tinyfish',label:'Tinyfish'},{value:'random',label:'随机（自动切换）'}]},
+    {key:'baseURL',label:'接口地址',hint:'留空则使用提供方默认地址。'},
+    {key:'maxUses',label:'单次请求最多搜索次数',hint:'一次请求在必须作答前最多可以搜索多少次。',numeric:true}]},
   { namespace:'subagent',title:'子智能体',description:'设置子智能体的递归层级、数量和模型。',fields:[] },
 ];
 const el = (tag:string,cls:string,children:any,props:any={}) => h(tag,{class:'plugin-config-'+cls,...props},children);
@@ -42,7 +46,7 @@ export const Form = defineComponent({
       if(!(field.key in drafts.value))return [];
       const text=drafts.value[field.key].trim(), accepted=state.value?.fields[field.key];
       if(!text)return accepted?.overridden?[{key:field.key,op:'unset'} as Patch]:[];
-      const value=field.numeric?Number(text):text;
+      const value=field.toggle?text==='true':field.numeric?Number(text):text;
       if(String(value)===accepted?.text&&accepted.overridden)return [];
       return [{key:field.key,op:'set',value} as Patch];
     }));
@@ -69,8 +73,12 @@ export const Form = defineComponent({
           const accepted=state.value!.fields[field.key], text=drafts.value[field.key]??accepted?.text??'';
           const overridden=field.key in drafts.value?drafts.value[field.key].trim()!=='':!!accepted?.overridden;
           const bad=field.numeric&&text.trim()!==''&&!Number.isFinite(Number(text));
+          const control=field.toggle
+            ?el('input','input',null,{id:uid+'-'+field.key,type:'checkbox',role:'switch','aria-label':field.label,checked:text==='true',disabled:busy.value||!state.value!.writable,onChange:(e:Event)=>edit(field.key,(e.target as HTMLInputElement).checked?'true':'false')})
+            :field.choices?el('select','input',field.choices.map(choice=>h('option',{value:choice.value},choice.label)),{id:uid+'-'+field.key,'aria-label':field.label,value:text,disabled:busy.value||!state.value!.writable,onChange:(e:Event)=>edit(field.key,(e.target as HTMLSelectElement).value)})
+            :el('input','input',null,{id:uid+'-'+field.key,'aria-label':field.label,'aria-invalid':!!bad,'aria-describedby':uid+'-'+field.key+'-hint',inputmode:field.numeric?'decimal':undefined,value:text,disabled:busy.value||!state.value!.writable,onInput:(e:Event)=>edit(field.key,(e.target as HTMLInputElement).value)});
           return el('div','field',[el('div','head',[el('label','label',field.label,{for:uid+'-'+field.key}),overridden?el('span','badge','已覆盖'):null,el('button','reset','恢复默认',{type:'button',disabled:busy.value||!state.value!.writable,onClick:()=>edit(field.key,'')})]),
-            el('input','input',null,{id:uid+'-'+field.key,'aria-label':field.label,'aria-invalid':!!bad,'aria-describedby':uid+'-'+field.key+'-hint',inputmode:field.numeric?'decimal':undefined,value:text,disabled:busy.value||!state.value!.writable,onInput:(e:Event)=>edit(field.key,(e.target as HTMLInputElement).value)}),
+            control,
             el('p',bad?'invalid':'hint',bad?'请填数字；留空表示使用默认值。':field.hint,{id:uid+'-'+field.key+'-hint'})],{key:field.key});
         }),
         el('div','footer',[el('button','save',busy.value?'保存中…':'保存',{type:'button',disabled:!canSave.value,onClick:save})]),
@@ -79,10 +87,10 @@ export const Form = defineComponent({
   },
 });
 export const Page=defineComponent({
-  name:'SaCodePluginConfiguration',props:{adapter:Object as PropType<Adapter>,subagentAdapter:Object as PropType<SubagentAdapter>},
+  name:'SaCodePluginConfiguration',props:{adapter:Object as PropType<Adapter>,subagentAdapter:Object as PropType<SubagentAdapter>,adapters:Object as PropType<Record<string,Adapter|undefined>>},
   setup(props){const chosen=ref<string|null>(null);return()=>el('div','page',[
-    !props.adapter?el('p','notice','以下为复刻目标的配置页面，仓颉配置接口尚未接入。',{role:'status'}):null,
+    !props.adapter&&!Object.keys(props.adapters||{}).length?el('p','notice','以下配置暂不可修改；当前环境尚未提供配置保存服务。',{role:'status'}):null,
     ...definitions.map(d=>el('section','card',[el('button','cardHead',[el('strong','title',d.title),el('span','summary',d.description)],{type:'button','aria-expanded':chosen.value===d.namespace,onClick:()=>chosen.value=chosen.value===d.namespace?null:d.namespace}),
-      chosen.value===d.namespace?(d.namespace==='subagent'?h((window as any).SaCodeSubagent.Card,{adapter:props.subagentAdapter}):h(Form,{definition:d,adapter:props.adapter})):null],{key:d.namespace,'data-config-namespace':d.namespace})),
+      chosen.value===d.namespace?(d.namespace==='subagent'?h((window as any).SaCodeSubagent.Card,{adapter:props.subagentAdapter}):h(Form,{definition:d,adapter:props.adapters?.[d.namespace]??props.adapter})):null],{key:d.namespace,'data-config-namespace':d.namespace})),
   ]);},
 });

@@ -1121,6 +1121,57 @@ test('LSP 位置动作携带文档版本并拒绝不安全整数', async () => {
   }
 });
 
+// 网络搜索设置面：3 个动作、修订屏障与逐字段守卫；密钥只走独立凭证通道。
+test('网络搜索 preload 三条通道带精确字段，不提供通用转发', async () => {
+  const { api, calls } = lspPreloadApi();
+  for (const action of ['webSettingsDescribe', 'webSettingsApply', 'webSettingsSetCredential']) {
+    assert.equal(typeof api[action], 'function', `缺少通道 ${action}`);
+  }
+  await api.webSettingsDescribe();
+  await api.webSettingsApply(3, { enabled: true });
+  await api.webSettingsSetCredential('exa', 'fixture-key');
+  assert.deepEqual(calls.map((row) => row[0]), ['sacode:webSettingsDescribe', 'sacode:webSettingsApply', 'sacode:webSettingsSetCredential']);
+  assert.equal(calls[0].length, 1, 'describe 不带参数');
+  assert.equal(JSON.stringify(calls[1][1]), JSON.stringify({ expectedRevision: 3, patch: { enabled: true } }));
+  assert.equal(JSON.stringify(calls[2][1]), JSON.stringify({ providerId: 'exa', key: 'fixture-key' }));
+});
+
+test('网络搜索主进程逐字段守卫负载，拒掉的不会转发到宿主', async () => {
+  const { handlers, requests } = lspMainHandlers(async () => ({ ok: true }));
+  const describe = handlers.get('sacode:webSettingsDescribe');
+  const apply = handlers.get('sacode:webSettingsApply');
+  const credential = handlers.get('sacode:webSettingsSetCredential');
+  for (const handler of [describe, apply, credential]) assert.equal(typeof handler, 'function');
+  await describe({}, undefined);
+  await apply({}, { expectedRevision: 0, patch: { enabled: true, selectedProvider: 'exa', providers: [{ id: 'exa', endpoint: 'https://search.example', maxUses: 3 }, { id: 'tavily', enabled: false }] } });
+  await credential({}, { providerId: 'exa', key: 'fixture-key' });
+  assert.deepEqual(requests.map((row) => row.method), ['web/settings/describe', 'web/settings/apply', 'web/settings/set-credential']);
+  assert.equal(JSON.stringify(requests[1].params), JSON.stringify({ expectedRevision: 0, patch: { enabled: true, selectedProvider: 'exa', providers: [{ id: 'exa', endpoint: 'https://search.example', maxUses: 3 }, { id: 'tavily', enabled: false }] } }));
+  for (const bad of [
+    undefined, null, 'x', {},
+    { expectedRevision: -1, patch: { enabled: true } },
+    { expectedRevision: 0.5, patch: { enabled: true } },
+    { expectedRevision: 0, patch: {} },
+    { expectedRevision: 0, patch: { enabled: 'yes' } },
+    { expectedRevision: 0, patch: { extra: 1 } },
+    { expectedRevision: 0, patch: { selectedProvider: 'nope' } },
+    { expectedRevision: 0, patch: { providers: [] } },
+    { expectedRevision: 0, patch: { providers: [{ endpoint: 'https://x' }] } },
+    { expectedRevision: 0, patch: { providers: [{ id: 'nope' }] } },
+    { expectedRevision: 0, patch: { providers: [{ id: 'exa', maxUses: '3' }] } },
+    { expectedRevision: 0, patch: { providers: [{ id: 'exa', extra: 1 }] } },
+    { expectedRevision: 0, patch: { enabled: true }, extra: 1 },
+  ]) await assert.rejects(apply({}, bad), /bad-web-settings/, `apply 没挡住 ${JSON.stringify(bad)}`);
+  for (const bad of [
+    undefined, {}, [],
+    { providerId: 'nope', key: 'k' },
+    { providerId: 'exa', key: '' },
+    { providerId: 'exa', key: 'line\nbreak' },
+    { providerId: 'exa', key: 'k', extra: 1 },
+  ]) await assert.rejects(credential({}, bad), /bad-web-credential/, `credential 没挡住 ${JSON.stringify(bad)}`);
+  assert.equal(requests.length, 3, '被拒的负载不得触达宿主');
+});
+
 test('真实宿主 7 个 LSP 请求在无插件时如实失败并附非语义线索', async () => {
   const { b, dir } = await boot();
   try {
@@ -1204,16 +1255,17 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
     'modelsCatalog', 'modelsCreateInstance', 'modelsDescribe', 'modelsList', 'modelsRemove', 'modelsSave', 'modelsSaveCredential', 'modelsSetDefault',
     'modelsSetEnabled', 'modelsSort', 'pageToolCall', 'pageToolsList', 'pluginsDescribe', 'pluginsInspect',
     'pluginsInstall', 'pluginsInstallCancel', 'pluginsInstallPoll', 'pluginsRegistries', 'pluginsSetEnabled', 'pluginsSetRowEnabled',
-    'pluginsUninstall', 'projection', 'promptCancel', 'promptEnhance', 'promptPoll', 'queueDescribe',
+    'pluginsUninstall', 'profileGet', 'profileUpdate', 'projection', 'promptCancel', 'promptEnhance', 'promptPoll', 'queueDescribe',
     'queueEnqueue', 'queueUpdate', 'sessionCatalog', 'sessionCreate', 'sessionEvents', 'sessionSelect',
     'taskStart', 'teamApprovalAnswer', 'teamDescribe', 'teamMemberCreate', 'teamMemberStop', 'teamMessageBroadcast',
     'teamMessageSend', 'teamTaskAssign', 'teamTaskClaim', 'teamTaskComplete', 'teamTaskCreate', 'terminalOutput',
     'tipsAfterReply', 'tipsGet', 'tipsSetHidden', 'tipsStartup', 'toolCall', 'toolsList',
     'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userSend',
+    'webSettingsApply', 'webSettingsDescribe', 'webSettingsSetCredential',
     'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
   ]);
-  assert.equal(Object.keys(exposed).length, 124, 'IPC 通道计数须与 AGENTS.md 与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 129, 'IPC 通道计数须与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1238,7 +1290,7 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 124, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（本批 +4：worktree 进出面）');
+  assert.equal(handlers.size, 129, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含最近项目动作）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }

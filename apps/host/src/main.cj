@@ -313,7 +313,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read" || method == "worktree/describe" || isTipsMethod(method)
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read" || method == "worktree/describe" || isTipsMethod(method) || method == "web/settings/describe"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -1068,7 +1068,7 @@ class HostRuntime {
 
     func handleRpc12(method: String, idText: String): Bool {
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             return true
         }
         return false
@@ -1907,10 +1907,15 @@ class HostRuntime {
                     return true
                 }
                 let computerExecutor: ?ComputerToolExecutor = if (let Some(bound) <- turnComputer) { Some(bound.executor) } else { None }
+                // 网络工具与文件工具同一条登记哲学：注入了真实设置根才登记 web_* 声明面；
+                // 设置根缺失时如实不登记，并在 stderr 留下原因，不拿空实现冒名顶替。
+                var webBound: ?WebSettings = None
+                try { webBound = Some(WebSettings.forUser()) } catch (e: Exception) { getStdErr().writeln("web-settings-unavailable:${e.message}") }
                 modelTools = Some(ModelToolRuntime(shared, false, files: SessionWorkspace(shared).directory().size > 0 && SessionWorkspace(shared).available(), desk: modelDesk, approval: modelApproval, computer: computerExecutor,
                     workingDirectory: sessionWorkingDirectory(shared),
                     team: Some(teamRuntime.tools(activeId, activeId)), lspRouter: LspRouters.sharedRouter(), lspSession: activeId, lspToken: tk,
-                    page: if (let Some(bound) <- pageRuntime) { if (bound.sessionId == activeId) { Some(PageToolExecutor(bound.channel, activeId)) } else { None } } else { None }))
+                    page: if (let Some(bound) <- pageRuntime) { if (bound.sessionId == activeId) { Some(PageToolExecutor(bound.channel, activeId)) } else { None } } else { None },
+                    webSettings: webBound))
             }
             // 系统提示必须落日志再进请求：modelRequestJson 只从会话日志重建 messages，
             // 内存里拼一条不发进日志，模型永远收不到（「Model-visible means logged」）。
@@ -2872,6 +2877,16 @@ class HostRuntime {
         return false
     }
 
+    // 网络搜索设置面：读侧在 allowedDuringTurn 放行（在途 turn 也能读），写侧在 turnBusy 期间
+    // 由 handleRpc11 拦下——与模型设置面同一套在途策略。
+    func handleRpc62(method: String, body: String, idText: String): Bool {
+        if (method == "web/settings/describe" || method == "web/settings/apply" || method == "web/settings/set-credential") {
+            webSurfaceRequest(method, body, idText)
+            return true
+        }
+        return false
+    }
+
     func run(): Int64 {
     try { activeId = catalog.selectedId(); p = catalog.pathFor(activeId) } catch (e: Exception) {
         startupFault = e.message != "catalog-index-rejected"
@@ -3050,6 +3065,7 @@ class HostRuntime {
         if (handleRpc59(method, body, idText)) { continue }
         if (handleRpc60(method, idText)) { continue }
         if (handleRpc61(method, body, idText)) { continue }
+        if (handleRpc62(method, body, idText)) { continue }
         emit(errFrame(idText, -32601, "method not found"))
         } catch (e: Exception) {
             emit(errFrame(idText, if (shared.isDurableFrozen()) { Int64(-32026) } else { Int64(-32099) }, e.message))

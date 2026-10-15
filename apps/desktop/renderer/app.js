@@ -376,6 +376,79 @@ createApp({
         return { entries, presets };
       },
     };
+    // 网络搜索设置适配器：read/apply/set-credential 三件套全落在 window.sacode 的有限通道上。
+    // 字段映射：enabled/selectedProvider 是设置文档顶层；baseURL/maxUses 编辑「本次读取所显示的
+    // 提供方」——存储里没有具体选择（空或随机）时，字段编辑会把所见提供方一并定下来，
+    // 否则同一份补丁在下次读取时可能落到另一家。密钥走独立凭证通道，快照里永不出现。
+    const webSearchProvider = (view) => {
+      const providers = Array.isArray(view && view.providers) ? view.providers : [];
+      return providers.find((p) => p.id === view.selectedProvider)
+        || providers.find((p) => p.credential && p.credential.configured)
+        || providers[0] || null;
+    };
+    const webSearchSnapshot = (view) => {
+      const shown = webSearchProvider(view);
+      const fields = {
+        enabled: { text: view.enabled === true ? "true" : "false", overridden: view.enabled === true },
+        selectedProvider: { text: shown ? shown.id : "", overridden: !!(view.selectedProvider && view.selectedProvider.length > 0) },
+      };
+      if (shown) {
+        fields.baseURL = { text: shown.endpoint, overridden: shown.endpoint !== shown.defaults.endpoint };
+        fields.maxUses = { text: String(shown.maxUses), overridden: Number(shown.maxUses) !== Number(shown.defaults.maxUses) };
+      }
+      return {
+        revision: String(view.revision), available: true, writable: true, fields,
+        credential: {
+          configured: !!(shown && shown.credential && shown.credential.configured),
+          writable: !shown || !!(shown.credential && shown.credential.writable),
+        },
+      };
+    };
+    // 冲突必须带上 code：经 IPC 回来的错误只剩 message，表单靠 code 区分「另一入口改过」。
+    const webSearchError = (e) => {
+      const message = String((e && e.message) || "");
+      if (message.includes("web-settings-conflict")) return Object.assign(new Error("settings-conflict"), { code: "settings-conflict" });
+      return e;
+    };
+    const webSearchConfigAdapter = {
+      async read() {
+        try { return webSearchSnapshot(await window.sacode.webSettingsDescribe()); } catch (e) { throw webSearchError(e); }
+      },
+      async apply(_namespace, patches, expectedRevision) {
+        try {
+          const view = await window.sacode.webSettingsDescribe();
+          const shown = webSearchProvider(view);
+          const patch = {};
+          let providerPatch = null;
+          for (const row of patches) {
+            if (row.key === "enabled") patch.enabled = row.op === "unset" ? false : row.value === true;
+            else if (row.key === "selectedProvider") patch.selectedProvider = row.op === "unset" ? "" : String(row.value);
+            else if (row.key === "baseURL" || row.key === "maxUses") {
+              if (!shown) throw new Error("web-search-provider-required");
+              providerPatch = providerPatch || { id: shown.id };
+              if (row.key === "baseURL") providerPatch.endpoint = row.op === "unset" ? shown.defaults.endpoint : String(row.value);
+              else providerPatch.maxUses = row.op === "unset" ? Number(shown.defaults.maxUses) : Number(row.value);
+            }
+          }
+          if (providerPatch) {
+            patch.providers = [providerPatch];
+            if (!view.providers.some((p) => p.id === view.selectedProvider)) patch.selectedProvider = shown.id;
+          }
+          const revision = Number(expectedRevision);
+          if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("bad-web-settings-revision");
+          return webSearchSnapshot(await window.sacode.webSettingsApply(revision, patch));
+        } catch (e) { throw webSearchError(e); }
+      },
+      async writeCredential(_namespace, secret) {
+        try {
+          const view = await window.sacode.webSettingsDescribe();
+          const shown = webSearchProvider(view);
+          if (!shown) throw new Error("web-search-provider-required");
+          await window.sacode.webSettingsSetCredential(shown.id, secret);
+        } catch (e) { throw webSearchError(e); }
+      },
+    };
+    const pluginConfigAdapters = { "web-search": webSearchConfigAdapter };
     // 会话级隔离工作树：绑定按会话生效，面板只消费主进程逐字段校验过的 describe 视图。
     // 用 reactive 而不是 ref：输入草稿、在途标记与拒绝原因都落在同一个对象上，
     // 失败时一个也不清空——草稿是用户的输入，不是可以随手丢弃的中间状态。
@@ -690,6 +763,7 @@ createApp({
       turnOutline, turnActive, turnAnchor,
       generalPrefs, generalPrefsBusy, setGeneralPref,
       pluginsInventoryAdapter,
+      pluginConfigAdapters,
       modelCenter, modelCenterOwner,
       catalogOpen, catalog, catalogBusy, catalogNote, refreshCatalog, openCatalog, newSessionTitle, createSession, selectSession,
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceRecent, workspaceRecentBusy, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, selectRecentWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
