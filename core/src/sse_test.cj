@@ -504,7 +504,7 @@ func sseNetworkDefaultTlsRejectsSelfSigned() {
         var message = ""
         try { let p = RealSseProvider("${secure}/normal", "fixture-only", "{}", TurnToken()); p.close() }
         catch (e: Exception) { message = e.message }
-        @Expect(message, "http-request-error")
+        @Expect(message, "http-request-error:tls-certificate-rejected")
         @Expect((MonoTime.now() - start).toMilliseconds() < 3000, true)
         println("NETWORK TLS ms=${(MonoTime.now() - start).toMilliseconds()}")
     }
