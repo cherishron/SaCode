@@ -1,11 +1,11 @@
 // 同平台原生产物包：CLI、Host、daemon、运行库、扩展源码与可复核清单。
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readdirSync, existsSync, readFileSync, writeFileSync, chmodSync, statSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
 import { selectedPlatform } from './platform.mjs';
 import { copyRuntimeLibraries } from './runtime-libraries.mjs';
+import { prepareZoneinfo } from './prepare-zoneinfo.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
 const spec = selectedPlatform();
@@ -52,13 +52,17 @@ for (const [member, name] of roles) {
   cpSync(input, join(bin, name + spec.suffix));
   if (spec.os !== 'win32') chmodSync(join(bin, name), 0o755);
 }
+if (spec.os === 'win32') {
+  const zoneinfo = prepareZoneinfo(join(bin, 'zoneinfo'));
+  console.log(`Windows CLI 包含 IANA TZif ${zoneinfo.version}`);
+}
 const packageJson = { name: `@stand-alone/sacode-${spec.target}`, version, license: 'MulanPSL-2.0',
   ...(spec.os === 'ohos' ? {} : { os: [spec.os], cpu: [spec.cpu] }),
   publishConfig: { access: 'public' }, files: ['bin', 'extjs', 'build-manifest.json'] };
 writeFileSync(join(pkg, 'package.json'), JSON.stringify(packageJson, null, 2) + '\n');
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-const files = readdirSync(bin).filter(f => statSync(join(bin, f)).isFile()).sort().map(f => ({ path: `bin/${f}`,
-  sha256: createHash('sha256').update(readFileSync(join(bin, f))).digest('hex'), bytes: statSync(join(bin, f)).size }));
+const { collectPackageManifestFiles } = await import('./package-manifest.mjs');
+const files = collectPackageManifestFiles(pkg);
 const dirty = !!execFileSync('git', ['status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim();
 writeFileSync(join(pkg, 'build-manifest.json'), JSON.stringify({ sha, dirty, target: spec.target, version, files, runtimeVerified: false }, null, 2) + '\n');
 console.log(`平台包 ${pkg}；版本 ${version}；运行结果需另验`);

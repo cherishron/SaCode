@@ -1,5 +1,6 @@
 "use strict";
-const { join, resolve, isAbsolute, basename, dirname } = require("node:path");
+const { join, resolve, win32, isAbsolute, basename, dirname } = require("node:path");
+const { existsSync } = require("node:fs");
 
 // 打包态下 __dirname 落在 app.asar 里；sacode-host.exe 是要被操作系统直接执行的外部二进制，
 // 从 asar 里拿路径 spawn 一定失败。所以随包把它落到 resourcesPath 下（extraResources），
@@ -17,11 +18,23 @@ function hostExePath({ packaged, appRoot, resourcesPath, platform = process.plat
 }
 
 // 只给本应用的宿主子进程补加载路径，不改变系统环境或从 cwd 搜库。
-function hostRuntimeEnv(env, hostExe, platform = process.platform) {
-  if (platform === 'win32') return { ...env };
+function hostRuntimeEnv(env, hostExe, platform = process.platform, exists = existsSync) {
+  const runtime = { ...env };
+  if (platform === 'win32') {
+    const zoneinfo = join(dirname(hostExe), 'zoneinfo');
+    if (exists(join(zoneinfo, 'Asia', 'Shanghai'))) {
+      const existing = typeof env.CJ_TZPATH === 'string' ? env.CJ_TZPATH.split(';').filter(Boolean) : [];
+      const normalize = value => win32.resolve(value).toLowerCase();
+      if (!existing.some(value => normalize(value) === normalize(zoneinfo))) {
+        runtime.CJ_TZPATH = [...existing, zoneinfo].join(';');
+      }
+    }
+    return runtime;
+  }
   const key = platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
   const directory = dirname(hostExe);
-  return { ...env, [key]: [directory, env[key]].filter(Boolean).join(':') };
+  runtime[key] = [directory, env[key]].filter(Boolean).join(':');
+  return runtime;
 }
 
 // 信任锚随包放在宿主 exe 的同一目录：extraResources 已经把整个 host/bin 搬到 asar 之外，

@@ -79,6 +79,6 @@ assert.equal(hostEnvWithCaBundle({}, { sidecarPath: '/missing.pem', exists: () =
 assert.equal(hostEnvWithCaBundle({}, { sidecarPath: '/ca.pem', exists: () => true }).SACODE_CA_BUNDLE, '/ca.pem'); count++;
 const desktop = JSON.parse(readFileSync(join(root, 'apps/desktop/package.json'), 'utf8'));
 assert(desktop.build.linux.target.includes('AppImage')); assert(desktop.build.mac.target.includes('dmg')); count += 2;
-const files = ['platform.mjs','build-native.mjs','build-platform.mjs','pack-cli.mjs','pack-cli-windows.mjs','pack-host.mjs','package-platform.mjs','setup-sdk.mjs','setup-stdx.mjs','verify-platform.mjs','run-build.mjs','verify-npm-install.mjs','verify-desktop-payload.mjs','runtime-libraries.mjs'];
+const files = ['platform.mjs','build-native.mjs','build-platform.mjs','pack-cli.mjs','pack-cli-windows.mjs','pack-host.mjs','package-platform.mjs','setup-sdk.mjs','setup-stdx.mjs','verify-platform.mjs','run-build.mjs','verify-npm-install.mjs','verify-desktop-payload.mjs','runtime-libraries.mjs','prepare-zoneinfo.mjs','package-manifest.mjs'];
 for (const f of files) { execFileSync(process.execPath, ['--check', join(root, 'scripts', f)]); count++; }
 console.log(`平台静态/路径检查 PASS ${count}；未运行仓颉旧测试或设备任务`);

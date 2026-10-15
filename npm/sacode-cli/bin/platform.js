@@ -3,6 +3,18 @@ const path = require('node:path');
 const fs = require('node:fs');
 const packages = Object.fromEntries(['win32:x64', 'linux:x64', 'linux:arm64', 'darwin:x64', 'darwin:arm64']
   .map(k => [k, `@stand-alone/sacode-${k.replace(':', '-')}`]));
+function withZoneinfoPath(env, bin, platform = process.platform, exists = fs.existsSync) {
+  const result = { ...env };
+  if (platform !== 'win32') return result;
+  const zoneinfo = path.join(bin, 'zoneinfo');
+  if (!exists(path.join(zoneinfo, 'Asia', 'Shanghai'))) return result;
+  const current = typeof result.CJ_TZPATH === 'string' ? result.CJ_TZPATH.split(';').filter(Boolean) : [];
+  const normalize = value => path.win32.resolve(value).toLowerCase();
+  if (!current.some(value => normalize(value) === normalize(zoneinfo))) {
+    result.CJ_TZPATH = [...current, zoneinfo].join(';');
+  }
+  return result;
+}
 function resolvePlatform(role) {
   const key = packages[`${process.platform}:${process.arch}`];
   if (!key) throw new Error(`未支持当前平台 ${process.platform}/${process.arch}`);
@@ -10,7 +22,7 @@ function resolvePlatform(role) {
   const bin = path.join(pkgDir, 'bin');
   const exe = path.join(bin, role + (process.platform === 'win32' ? '.exe' : ''));
   if (!fs.existsSync(exe)) throw new Error(`平台包 ${key} 缺少 ${role}`);
-  const env = { ...process.env };
+  const env = withZoneinfoPath({ ...process.env }, bin);
   if (process.platform !== 'win32') {
     const library = process.platform === 'darwin' ? 'DYLD_LIBRARY_PATH' : 'LD_LIBRARY_PATH';
     env[library] = [bin, env[library]].filter(Boolean).join(':');
@@ -20,4 +32,4 @@ function resolvePlatform(role) {
   if (fs.existsSync(host)) env.SACODE_HOST = host;
   return { exe, env };
 }
-module.exports = { resolvePlatform };
+module.exports = { resolvePlatform, withZoneinfoPath };

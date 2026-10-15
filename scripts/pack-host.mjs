@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, chmodSync } from "n
 import { join, resolve } from "node:path";
 import { selectedPlatform } from './platform.mjs';
 import { copyRuntimeLibraries } from './runtime-libraries.mjs';
+import { prepareZoneinfo } from './prepare-zoneinfo.mjs';
 const spec = selectedPlatform();
 const CA_FLAG = "--ca-bundle=";
 const rawArgs = process.argv.slice(2);
@@ -58,5 +59,9 @@ if (caBundle) {
   // 文件名由壳层 paths.cjs 的查找规则决定（宿主 exe 同目录），两边漂开就没人能吃着锚。
   cpSync(caBundle, join(dst, "ca-bundle.pem"));
   console.log(`  + ca-bundle.pem ← ${caBundle}`);
+}
+if (spec.os === 'win32') {
+  const zoneinfo = prepareZoneinfo(join(dst, 'zoneinfo'));
+  console.log(`  + IANA TZif ${zoneinfo.version} ← ${zoneinfo.destination}`);
 }
 console.log(`host 打包完成：${readdirSync(dst).length} 个文件 → ${dst}`);

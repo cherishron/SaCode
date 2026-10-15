@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { hostExePath, caBundleSidecar, hostEnvWithCaBundle } = require("../paths.cjs");
+const { hostExePath, hostRuntimeEnv, caBundleSidecar, hostEnvWithCaBundle } = require("../paths.cjs");
 
 // win32 的 path.join 会混进反斜杠，断言按分隔符归一化后再比，避免只在一台机器上绿
 const norm = (s) => s.split("\\").join("/");
@@ -28,6 +28,18 @@ test("打包态缺 resourcesPath 时明确失败，不回退到 asar 路径", ()
     /resourcesPath/,
     "静默回退会让安装包在运行期才炸"
   );
+});
+
+test("Windows Host 使用包内 TZif，并保留用户指定路径的优先顺序", () => {
+  const env = hostRuntimeEnv({ CJ_TZPATH: "D:/custom/zones" }, "C:/app/resources/host/bin/sacode-host.exe", "win32",
+    () => true);
+  assert.equal(norm(env.CJ_TZPATH), "D:/custom/zones;C:/app/resources/host/bin/zoneinfo");
+});
+
+test("Windows Host 检测不到包内 TZif 时不伪造时区能力", () => {
+  const env = hostRuntimeEnv({ PATH: "C:/Windows/System32" }, "C:/app/resources/host/bin/sacode-host.exe", "win32",
+    () => false);
+  assert.ok(!("CJ_TZPATH" in env));
 });
 
 // 随包信任锚：宿主目录里那颗 libssl 的编译期默认证书库在干净机器上是空的（实测：不带
