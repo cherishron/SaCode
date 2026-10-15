@@ -10,7 +10,7 @@ import { rmSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const HOST = resolve(here, '../dist/host/bin/sacode-host.exe');
+const HOST = process.env.SACODE_HOST || resolve(here, '../dist/host/bin/sacode-host.exe');
 // 干净的设置目录：custom/describe 的「空目录」断言不能读上一批留下的文档
 const SETTINGS = resolve(here, '../../../target/host-verbs-settings');
 rmSync(SETTINGS, { recursive: true, force: true });
@@ -86,8 +86,19 @@ test('capabilities 与源码分派双向相等', async () => {
   const envelope = new Set(['core', 'transport', 'protocolVersion', 'capabilities', 'cangjie', 'stdio-ndjson']);
   const goalVerbs = new Set(['goal/create', 'goal/edit', 'goal/pause', 'goal/resume', 'goal/clear']);
   const dispatched = new Set();
-  const webSource = await readFile(resolve(here, '../../../apps/host/src/web_surface.cj'), 'utf8');
-  for (const m of (src + webSource).matchAll(/method == "([a-z0-9/-]+)"/g)) dispatched.add(m[1]);
+  const routeFiles = [
+    '../../../apps/host/src/acp_runtime_rpc.cj',
+    '../../../apps/host/src/page_tool_rpc.cj',
+    '../../../apps/host/src/team_runtime.cj',
+    '../../../apps/host/src/tips_surface.cj',
+    '../../../apps/host/src/worktree_rpc.cj',
+    '../../../core/src/acp_runtime_api.cj',
+    '../../../core/src/acp_history.cj',
+    '../../../core/src/execution_api.cj',
+    '../../../apps/host/src/web_surface.cj',
+  ];
+  const routeSources = await Promise.all(routeFiles.map((path) => readFile(resolve(here, path), 'utf8')));
+  for (const m of [src, ...routeSources].join('\n').matchAll(/method == "([a-z0-9/-]+)"/g)) dispatched.add(m[1]);
   const goalSrc = /isGoalControlMethod\(method\)/.test(src);
   assert.ok(goalSrc, 'isGoalControlMethod 分派点消失，goal/* 五个动词将无处落地');
   for (const v of goalVerbs) dispatched.add(v);
