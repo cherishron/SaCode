@@ -84,3 +84,84 @@ public func queryWorkspaceGit(directory: String, kind: String, path: String, sco
     args.add("--"); args.add(path)
     return gitRun(directory, args.toArray())
 }
+
+// Resolve the effective push destination without exposing any configured URL or credential.
+// The returned record is remote, refs/heads/<branch>, and the exact current commit object ID.
+public func queryWorkspaceGitPushTarget(directory: String): GitQueryResult {
+    let root = gitRun(directory, ["rev-parse", "--show-toplevel"])
+    if (root.failure.size > 0 || root.truncated) { return root }
+    try {
+        if (canonicalize(root.output.trimAscii()).toString() != canonicalize(directory).toString()) {
+            return GitQueryResult("", "", -1, false, "workspace-is-not-repository-root")
+        }
+    } catch (_: Exception) { return GitQueryResult("", "", -1, false, "git-root-unavailable") }
+
+    let branchResult = gitRun(directory, ["symbolic-ref", "--quiet", "--short", "HEAD"])
+    if (branchResult.failure.size > 0 || branchResult.truncated || branchResult.exitCode != 0) {
+        return GitQueryResult("", "", branchResult.exitCode, branchResult.truncated, "git-push-branch-unavailable")
+    }
+    let branch = branchResult.output.trimAscii()
+    if (branch.size == 0 || branch.contains("\n") || branch.contains("\r")) {
+        return GitQueryResult("", "", -1, false, "git-push-branch-invalid")
+    }
+
+    // %(push:remotename) and %(push:short) reflect the effective push destination,
+    // including branch.<name>.pushRemote and remote.pushDefault. Do not infer it from
+    // the fetch upstream shown by `git status`.
+    let destination = gitRun(directory, ["for-each-ref", "--format=%(push:remotename)\n%(push:short)", "refs/heads/${branch}"])
+    if (destination.failure.size > 0 || destination.truncated || destination.exitCode != 0) {
+        return GitQueryResult("", "", destination.exitCode, destination.truncated, "git-push-target-unavailable")
+    }
+    let destinationFields = destination.output.split("\n", removeEmpty: true)
+    if (destinationFields.size != 2) {
+        return GitQueryResult("", "", 1, false, "git-push-target-unconfigured")
+    }
+    let remote = destinationFields[0].trimAscii()
+    let remoteBranch = destinationFields[1].trimAscii()
+    if (remote.size == 0 || remote == "." || remote.startsWith("-") || remote.size > 128 ||
+        remote.contains(":") || remote.contains("@") || remote.contains("\\") || remote.contains(" ") ||
+        remote.contains("\t") || remote.contains("\r") || remote.contains("\n") ||
+        !remoteBranch.startsWith("${remote}/") || remoteBranch.size <= remote.size + 1 ||
+        remoteBranch.contains("\r") || remoteBranch.contains("\n")) {
+        return GitQueryResult("", "", 1, false, "git-push-target-invalid")
+    }
+    let branchRef = "refs/heads/${remoteBranch[remote.size + 1..remoteBranch.size]}"
+
+    // One remote alias can have multiple push URLs; Git would send the same authorized
+    // ref to each. Reject that configuration instead of silently widening the target.
+    let pushUrls = gitRun(directory, ["remote", "get-url", "--push", "--all", "--", remote])
+    if (pushUrls.failure.size > 0 || pushUrls.truncated || pushUrls.exitCode != 0) {
+        return GitQueryResult("", "", pushUrls.exitCode, pushUrls.truncated, "git-push-url-unavailable")
+    }
+    if (pushUrls.output.split("\n", removeEmpty: true).size != 1) {
+        return GitQueryResult("", "", 1, false, "git-push-multiple-urls")
+    }
+
+    // Configured push options can trigger server-side actions outside the displayed ref.
+    let pushOptions = gitRun(directory, ["config", "--get-all", "push.pushOption"])
+    if (pushOptions.exitCode == 0) {
+        return GitQueryResult("", "", 1, false, "git-push-options-configured")
+    }
+    if (pushOptions.exitCode != 1) {
+        return GitQueryResult("", "", pushOptions.exitCode, pushOptions.truncated, "git-push-config-unavailable")
+    }
+    let mirror = gitRun(directory, ["config", "--bool", "--get", "remote.${remote}.mirror"])
+    if (mirror.exitCode == 0 && mirror.output.trimAscii() == "true") {
+        return GitQueryResult("", "", 1, false, "git-push-mirror-configured")
+    }
+    if (mirror.exitCode != 0 && mirror.exitCode != 1) {
+        return GitQueryResult("", "", mirror.exitCode, mirror.truncated, "git-push-config-unavailable")
+    }
+
+    let head = gitRun(directory, ["rev-parse", "--verify", "HEAD^{commit}"])
+    if (head.failure.size > 0 || head.truncated || head.exitCode != 0) {
+        return GitQueryResult("", "", head.exitCode, head.truncated, "git-push-head-unavailable")
+    }
+    let commit = head.output.trimAscii()
+    if ((commit.size != 40 && commit.size != 64) || commit.contains("\r") || commit.contains("\n")) {
+        return GitQueryResult("", "", 1, false, "git-push-head-invalid")
+    }
+
+    // URL output is intentionally discarded. The UI receives only the alias, ref, and OID.
+    return GitQueryResult("${remote}\n${branchRef}\n${commit}", "", 0, false, "")
+}
