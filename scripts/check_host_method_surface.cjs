@@ -10,7 +10,7 @@
 // 不构建不启进程，所以能在「改完 main.cj 的那一刻」就拦住，而不是等下一轮打包。
 //
 // 2026-10-06 的 82 条是历史冻结读数，不能再拿它当当前分母。当前提交基线
-// ef5d923ebcc7e4ace5e89759670c255992552763 经同一闭集口径复核为 158 条；详见
+// 281142e560c49b4737cdc74960d1c54c3e107a4b 经同一闭集口径复核为 161 条；详见
 // docs/evidence/2026-10-16-gate-triad-repair.md。工作区可能有合法的未提交接口增量，故冻结分母
 // 只校验 HEAD 的声明集；当前源码仍须保留 HEAD 的全部能力，且路由与声明双向完全一致。
 // 分拆路由的精确闭集来自下列实际被 main 调用的谓词/handles，而不是从全仓 method 比较式。
@@ -32,7 +32,7 @@ const ROUTE_PREDICATES = [
   { file: "core/src/acp_history.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
   { file: "core/src/execution_api.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
 ];
-const DENOMINATOR = 158;
+const DENOMINATOR = 161;
 
 const checks = [];
 function check(name, ok, detail) {

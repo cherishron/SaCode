@@ -52,3 +52,17 @@
 - `core` 定向用例 `automationDefinitionsPersistLiteralPromptAndRejectStaleEdits`：独立 TMP/TEMP、`--parallel 1`，**1 通过 / 1434 跳过 / 0 失败**。这不是完整 core 套件通过。
 
 本次相关工作区 SHA-256：`scripts/check_host_method_surface.cjs`=`137635c53ab085c8a1a24bdd2345ef234e64dafc220bef05d73610e3841b9a6e`；`apps/host/src/main.cj`=`eabcf7257500cb58e2fa49a36abe59bef56cb9b1fbdbaf1bb767879fcb0857c7`；`apps/host/src/automation_rpc.cj`=`3d38312ecb98901f3e74af83329fd522ff942e8d26dcba8b786464c99c833a1a`；`core/src/automation_store.cj`=`3164a95ba9e783aec6a053366f4eef592f84aca60f74333c9d4668c9e209df6c`。以上工作区代码尚未因此记录为提交态；不得用本节替代后续完整 core、桌面默认安全启动、安装态或调度执行验收。
+
+## 2026-10-16 三次复核：已提交接口推进冻结基线
+
+基线更新为 `281142e560c49b4737cdc74960d1c54c3e107a4b`。该提交把 `automation/list`、`automation/save`、`automation/control` 三个已路由并完成 Host 验收的方法纳入提交态，因此冻结声明数从 158 增至 161。自动化仍只是定义管理，调度执行器未接通。
+
+当前工作区声明 169 条，其中 161 条来自已提交基线，另有未提交的知识库 5 条、个人资料 2 条、Git 推送目标查询 1 条。当前路由与能力逐名一致；其余三个门禁项仍分别独立运行。
+
+### 三次复核读数
+
+- `node scripts/check_host_method_surface.cjs`：**11/11 检查通过**，冻结 HEAD 161 条全部保留，工作区 169 条与路由完全匹配。
+- `node scripts/check_host_method_surface.cjs --selftest`：**13/13 变异探针命中，baseline=green**。
+- `node scripts/verify-all.mjs gates`：**4/4 门禁通过**，退出码 0。
+
+这次基线变化来自已审核且已提交的三条自动化方法，不是通过放宽扫描来消除红灯。知识库 Host 集成测试本轮实际返回 `already-owned` 与 `knowledge-storage-unavailable`；当前 `--skip-build --filter knowledgeStore` 命令没有选中对应用例（`PASSED 0 / SKIPPED 1435`），不能计为通过。知识库批次因此不提交，需单独修复并重新构建验收。
