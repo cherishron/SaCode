@@ -2,10 +2,8 @@ package core
 
 import std.fs.*
 import std.process.*
-import std.sync.AtomicInt64
+import std.env.getVariable
 import std.time.*
-
-let buStampCounter = AtomicInt64(0)
 
 // 浏览器真实驱动（H/W70）：上游 `ctx.browser` 的真 headless 子进程实现。
 //
@@ -73,10 +71,14 @@ func isSafeUrlScheme(url: String): Bool {
 }
 
 func createBuUserDataDir(): String {
-    let stamp = "${buStampCounter.fetchAdd(1)}"
-    let dir = "core-bu-userdata-${stamp}"
-    try { Directory.create(dir, recursive: true) } catch (_: Exception) {}
-    return dir
+    // Chrome 要求独立的用户数据目录。使用系统临时目录下的绝对唯一路径，
+    // 不复用上次进程遗留的相对目录，也不触碰用户日常 Chrome 配置。
+    let base = getVariable("TEMP") ?? (getVariable("TMP") ?? ".")
+    return Directory.createTemp(Path(base)).toString()
+}
+
+func removeBuUserDataDir(path: String): Unit {
+    try { removeIfExists(path, recursive: true) } catch (_: Exception) {}
 }
 
 func buElapsed(started: MonoTime): Int64 {
@@ -132,6 +134,7 @@ public class BrowserExecutor {
 
     func navigateReal(url: String, token: TurnToken, timeoutMs: Int64, started: MonoTime): BrowserExecResult {
         let tmpDir = createBuUserDataDir()
+        try {
         let args = ["--headless", "--no-sandbox", "--disable-gpu",
             "--disable-dev-shm-usage", "--disable-web-security",
             "--user-data-dir=${tmpDir}", "--no-first-run",
@@ -188,6 +191,9 @@ public class BrowserExecutor {
         }
         return BrowserExecResult(false, "navigate", url, stdout, code, false, false,
             "browser-exit", "browser-exit-${code}::${stderrText}", buElapsed(started))
+        } finally {
+            removeBuUserDataDir(tmpDir)
+        }
     }
 
     func launchBrowser(args: Array<String>): Option<SubProcess> {
