@@ -44,8 +44,9 @@ func leaseStampedWithHolderPid() {
 // 判活出错时宁可留着残留租约让人手工清，也不悄悄抢走别人的写权。
 @Test
 func deadHoldersLeaseIsTakenOverButLiveOneIsRespected() {
-    pwClean("takeover")
-    let p = "core-pw-takeover"
+    // 每轮独占目录，避免上次中断留下的根目录租约被误当成这轮的夹具。
+    let root = Directory.createTemp(Path(coreTestRoot())).toString()
+    let p = Path(root).join("core-pw-takeover").toString()
     // 手工造一个「死者」留下的租约：pid 是确认打不开句柄的假值
     try {
         File.writeTo("${p}.lease", "writer=4294967000-stale".toArray())
@@ -53,16 +54,21 @@ func deadHoldersLeaseIsTakenOverButLiveOneIsRespected() {
         @Expect(false, true)
     }
     let lease = WriteLease(p)
-    @Expect(lease.holderPid(), Int64(4294967000))
-    @Expect(lease.takeoverIfStale(), true)
-    @Expect(lease.holderPid(), ownProcessId())
-    // 现在持有者是本进程，第二次接管必须失败且不能清掉这份凭据
-    let other = WriteLease(p)
-    @Expect(other.takeoverIfStale(), false)
-    // 拒绝接管 = 盘上那份凭据一个字都不动
-    @Expect(other.currentOwner().contains("writer="), true)
-    @Expect(other.currentOwner() == lease.ownerToken(), true)
-    @Expect(lease.release(), true)
+    try {
+        @Expect(lease.holderPid(), Int64(4294967000))
+        // 接管策略用确定的死者探针验；具体 PID 是否可判死由平台探针单独验收。
+        @Expect(lease.takeoverIfStale(probe: { _ => "dead" }), true)
+        @Expect(lease.holderPid(), ownProcessId())
+        // 现在持有者是本进程，第二次接管必须失败且不能清掉这份凭据
+        let other = WriteLease(p)
+        @Expect(other.takeoverIfStale(), false)
+        // 拒绝接管 = 盘上那份凭据一个字都不动
+        @Expect(other.currentOwner().contains("writer="), true)
+        @Expect(other.currentOwner() == lease.ownerToken(), true)
+    } finally {
+        lease.release()
+        removeIfExists(root, recursive: true)
+    }
 }
 
 // 认不出格式的凭据（可能是旧版本留下的）一律按「还活着」处理，不动它
