@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrivateTmpDir, disposePrivateTmpDir } from "./verify-tmp.mjs";
+import { persistFailureBundle } from "./verify-log.mjs";
 import { GATE_SCRIPTS, verdict as gateVerdict } from "./gate-verdict.mjs";
 import { parseCjpm, parseNodeTest } from "./verify-output.mjs";
 
@@ -250,6 +251,17 @@ for (const [index, step] of selected.entries()) {
   const passed = outcome.code === 0 && outcome.parsedOk !== false;
   const verdict = outcome.skipped ? "跳过" : passed ? "通过" : "失败";
   console.log(`  → ${verdict}（${seconds}s）${outcome.summary}\n`);
+  if (!passed && !outcome.skipped) {
+    try {
+      const bundle = persistFailureBundle(
+        join(root, "apps", "desktop", ".tmp-test"),
+        { key: step.key, code: outcome.code, summary: outcome.summary, raw: outcome.raw || "" },
+      );
+      console.error(`完整日志已保留：${bundle.logPath}`);
+    } catch (error) {
+      console.error(`完整日志保存失败：${error && error.message}`);
+    }
+  }
   results.push({ key: step.key, title: step.title, verdict, seconds, summary: outcome.summary, skipped: !!outcome.skipped });
   if (!passed && !outcome.skipped) {
     const tail = (outcome.raw || "").split(/\r?\n/).slice(-40).join("\n");
