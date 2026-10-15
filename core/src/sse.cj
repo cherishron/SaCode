@@ -2,6 +2,7 @@ package core
 
 import std.io.*
 import std.collection.ArrayList
+import std.sync.AtomicBool
 import stdx.net.http.*
 import stdx.encoding.json.*
 
@@ -61,7 +62,7 @@ public class RealSseProvider <: Provider & Resource {
     public prop doneReceived: Bool { get() { receivedDone } }
 
     // 生产构造器：发真实 HTTPS POST
-    // 生产默认仍为 30 秒；请求级超时覆盖客户端配置，取消最迟在读返回后检查。
+    // 正常读超时仍为30秒；阻塞读取期间由请求独占Client的取消监视器主动断连。
     // 失败仍在构造期抛（message 形态 http-status:<n> / http-request-error 不变，
     // 既有网络用例按该形态断言）；要拿结构化失败详情的调用方走 open()。
     public init(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
@@ -204,6 +205,33 @@ public class RealSseProvider <: Provider & Resource {
     }
 
     func readChunk(): Int64 {
+        // 只监视本次真实HTTP读取，不捕获provider或更改解析/账本状态。
+        // Client为单请求独占；关闭连接使原读取线程返回，仍由它唯一结算。
+        // 测试注入的InputStream不假定可跨线程关闭，沿用原有同步契约。
+        if (let Some(c) <- clientOpt) {
+            let stopped = AtomicBool(false)
+            let cancelToken = token
+            let monitor = spawn {
+                while (!stopped.load()) {
+                    if (cancelToken.cancelled()) {
+                        try { c.close() } catch (_: Exception) {}
+                        break
+                    }
+                    sleep(Duration.millisecond * 20)
+                }
+            }
+            try {
+                return readChunkOwned()
+            } finally {
+                stopped.store(true)
+                // 不遗弃监视Future，也不提前释放仍在使用body的读取线程。
+                monitor.get()
+            }
+        }
+        return readChunkOwned()
+    }
+
+    func readChunkOwned(): Int64 {
         try { return body.read(buf) }
         catch (_: HttpTimeoutException) {
             if (token.cancelled()) { return 0 }

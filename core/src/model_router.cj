@@ -314,12 +314,16 @@ public class AttemptPlan {
     public let transport: String
     public let bindingIndex: Int64
     public let attemptId: String
+    public let contextWindow: String
+    public let modelOutputLimit: String
+    public let maxOutputTokens: Int64
 
     public init(customModelId: String, providerId: String, modelId: String, baseUrl: String,
         credentialRef: String, protocol: String, images: Bool, currency: String,
         priceVersion: String, priceInMicro: Int64, priceOutMicro: Int64,
         priceCacheReadMicro: Int64, priceCacheWriteMicro: Int64, dailyAmountMicro: Int64,
-        transport: String, bindingIndex: Int64, attemptId: String) {
+        transport: String, bindingIndex: Int64, attemptId: String,
+        contextWindow!: String = "", modelOutputLimit!: String = "", maxOutputTokens!: Int64 = -1) {
         this.customModelId = customModelId
         this.providerId = providerId
         this.modelId = modelId
@@ -337,6 +341,9 @@ public class AttemptPlan {
         this.transport = transport
         this.bindingIndex = bindingIndex
         this.attemptId = attemptId
+        this.contextWindow = contextWindow
+        this.modelOutputLimit = modelOutputLimit
+        this.maxOutputTokens = maxOutputTokens
     }
 
     // 作用域键：必须与 `route` 查健康用的两把键逐字一致，否则熔断记在 A 上、查在 B 上
@@ -355,7 +362,8 @@ public class AttemptPlan {
         return AttemptPlan(customModelId, providerId, modelId, baseUrl, credentialRef,
             protocol, images, currency, priceVersion, priceInMicro, priceOutMicro,
             priceCacheReadMicro, priceCacheWriteMicro, dailyAmountMicro, transport,
-            bindingIndex, next)
+            bindingIndex, next, contextWindow: contextWindow,
+            modelOutputLimit: modelOutputLimit, maxOutputTokens: maxOutputTokens)
     }
 }
 
@@ -404,7 +412,8 @@ public func planFor(customId: String, decision: RouteDecision, customs: CustomMo
     return Some(AttemptPlan(model.id, p.id, decision.modelId, p.baseUrl, p.credentialRef,
         p.protocol, s.image, b.currency, b.priceVersion.toString(), b.priceInMicro,
         b.priceOutMicro, b.priceCacheReadMicro, b.priceCacheWriteMicro,
-        model.dailyAmountMicro, p.transport, decision.bindingIndex, ""))
+        model.dailyAmountMicro, p.transport, decision.bindingIndex, "",
+        contextWindow: s.contextWindow, modelOutputLimit: s.maxTokens, maxOutputTokens: model.maxOutputTokens))
 }
 
 // 失败归因：按**实际受影响范围**选最窄的一档作用域，返回该档 + 是否计数。

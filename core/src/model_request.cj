@@ -3,8 +3,42 @@ import std.collection.ArrayList
 import stdx.encoding.base64.*
 import stdx.encoding.json.*
 
+// 容量字段接受登记表的十进制K/M格式；向下取整，非法/过大值明确拒绝。
+public func requestCapacity(text: String): Int64 {
+    if (text.size == 0) { return -1 }
+    let bytes = text.toArray()
+    var end = bytes.size
+    var scale: Int64 = 1
+    let tail = bytes[end - 1]
+    if (tail == 107 || tail == 75) { scale = 1000; end -= 1 }
+    if (tail == 109 || tail == 77) { scale = 1000000; end -= 1 }
+    var whole: Int64 = 0
+    var fraction: Int64 = 0
+    var divisor: Int64 = 1
+    var dot = false
+    var digits: Int64 = 0
+    for (i in 0..end) {
+        let b = bytes[i]
+        if (b == 46 && !dot) { dot = true; continue }
+        if (b < 48 || b > 57) { throw Exception("request-capacity-invalid") }
+        digits += 1
+        let digit = Int64(b - 48)
+        if (!dot) {
+            if (whole > 100000000) { throw Exception("request-capacity-invalid") }
+            whole = whole * 10 + digit
+        } else if (divisor < 1000000) {
+            fraction = fraction * 10 + digit
+            divisor *= 10
+        }
+    }
+    let value = whole * scale + fraction * scale / divisor
+    if (digits == 0 || value <= 0 || value > 1000000000) { throw Exception("request-capacity-invalid") }
+    return value
+}
+
 // 标准消息与具有关联 ID 的工具结果全部从同一会话日志重建。
-public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = [], attachStore!: ?AttachmentStore = None, supportsImages!: Bool = false): String {
+public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!: Array<ToolSpec> = [], attachStore!: ?AttachmentStore = None, supportsImages!: Bool = false, contextWindow!: String = "",
+    modelOutputLimit!: String = "", maxOutputTokens!: Int64 = -1): String {
     var messages = ""
     let pending = ArrayList<String>()
     // 引用事件服务的是紧跟其后的那条用户消息。「引用 → 请求字节」的物化只发生在这里：
@@ -104,7 +138,23 @@ public func modelRequestJson(model: String, events: Array<SessionEvent>, tools!:
         definitions += "{\"type\":\"function\",\"function\":{\"name\":\"${jsonEscapeText(tool.name)}\",\"description\":\"${jsonEscapeText(tool.description)}\",\"parameters\":${tool.params}}}"
     }
     let toolsPart = if (definitions.size > 0) { ",\"tools\":[${definitions}]" } else { "" }
-    return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[${messages}],\"stream\":true,\"stream_options\":{\"include_usage\":true}${toolsPart}}"
+    let window = requestCapacity(contextWindow)
+    let declaredOutput = requestCapacity(modelOutputLimit)
+    if (maxOutputTokens < -1 || maxOutputTokens == 0) { throw Exception("request-output-limit-invalid") }
+    var output = declaredOutput
+    if (maxOutputTokens > 0 && (output < 0 || maxOutputTokens < output)) { output = maxOutputTokens }
+    if (window > 0) {
+        // 无tokenizer时采用保守UTF-8字节预算，不伪报精确token用量，不写账本。
+        // 图片token依赖模型与分辨率；不能把base64字节假装成图片token。
+        if (messages.contains("\"image_url\"")) { throw Exception("request-context-image-unestimated") }
+        let inputBound = messages.toArray().size + definitions.toArray().size + 256
+        if (inputBound >= window) { throw Exception("request-context-limit") }
+        let remaining = window - inputBound
+        if (output > remaining) { throw Exception("request-context-limit") }
+        if (output < 0) { output = remaining }
+    }
+    let outputPart = if (output > 0) { ",\"max_tokens\":${output}" } else { "" }
+    return "{\"model\":\"${jsonEscapeText(model)}\",\"messages\":[${messages}],\"stream\":true,\"stream_options\":{\"include_usage\":true}${toolsPart}${outputPart}}"
 }
 
 // 带引用事件的 user/message 走多 part 形态：文字一条，图片按引用顺序各一条。

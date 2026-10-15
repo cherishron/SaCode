@@ -70,7 +70,9 @@ class HostModelRoute {
         let plan = select().withAttemptId("${logicalId}-a${seq}")
         // 请求校验先于派发标记，校验失败没有上游尝试。
         let request = modelRequestJson(plan.modelId, log.snapshotEvents().toArray(),
-            tools: tools.specs(), attachStore: attach, supportsImages: plan.images)
+            tools: tools.specs(), attachStore: attach, supportsImages: plan.images,
+            contextWindow: plan.contextWindow, modelOutputLimit: plan.modelOutputLimit,
+            maxOutputTokens: plan.maxOutputTokens)
         let creds = CredentialStore.forUser().resolve(plan.credentialRef)
         if (creds.isNone()) { throw Exception("route-rejected:credential-unconfigured") }
         let ledger = UsageLedger.forUser()
