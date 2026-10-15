@@ -66,3 +66,14 @@
 - `node scripts/verify-all.mjs gates`：**4/4 门禁通过**，退出码 0。
 
 这次基线变化来自已审核且已提交的三条自动化方法，不是通过放宽扫描来消除红灯。知识库 Host 集成测试本轮实际返回 `already-owned` 与 `knowledge-storage-unavailable`；当前 `--skip-build --filter knowledgeStore` 命令没有选中对应用例（`PASSED 0 / SKIPPED 1435`），不能计为通过。知识库批次因此不提交，需单独修复并重新构建验收。
+
+## 2026-10-16 后续批次提交后的冻结更新
+
+随后提交 `a6a3a06`（Host 方法扫描修正）和 `46623c4a1eb0f91303359c0de792fcaf0f57db38`（知识库、用户资料及 Git 推送目标查询）。后者新增知识库 5 个、资料 2 个和 Git 推送目标 1 个 Host 方法，提交态冻结声明数因此从 161 增至 **169**。前节读数和“知识库批次不提交”仅代表该时间点的历史状态。
+
+首次提交后重跑门禁时，旧冻结分母 161 正确报红（HEAD=169）；审查已提交的 8 个新增方法并将 `scripts/check_host_method_surface.cjs` 的冻结分母更新为 169，没有放宽路由扫描或变异判据。更新后实测：
+
+- `node scripts/check_host_method_surface.cjs`：**GATE PASS，11/11**；169 条声明与 169 条路由对齐。
+- `node scripts/check_host_method_surface.cjs --selftest`：**13/13 探针命中，baseline=green**。
+- `node scripts/verify-all.mjs gates`：**4/4 门禁通过**，退出码 0。
+- `node --test test/gate-verdict.test.mjs test/verify-output.test.mjs`（工作目录 `apps/desktop`）：**5/5 通过**。
