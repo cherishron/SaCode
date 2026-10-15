@@ -469,6 +469,7 @@ function gitArguments(args,diff) {
 }
 ipcMain.handle('sacode:workspaceGitStatus',async(_e,args)=>{const params=gitArguments(args,false);return withHost(()=>bridge.request('workspace/git-status',params));});
 ipcMain.handle('sacode:workspaceGitDiff',async(_e,args)=>{const params=gitArguments(args,true);return withHost(()=>bridge.request('workspace/git-diff',params));});
+ipcMain.handle('sacode:workspaceGitPushTarget',async(_e,args)=>{const params=gitArguments(args,false);return withHost(()=>bridge.request('workspace/git-push-target',params));});
 ipcMain.handle("sacode:globalSettingsGet", async () => withHost(()=>bridge.request("global/settings/get")));
 // 通用设置键 → 宿主动词与参数名：宿主侧按驼峰参数名校验（transcriptView 等），
 // 键名连字符只是渲染层的说法，不能拿它直接当宿主参数名。

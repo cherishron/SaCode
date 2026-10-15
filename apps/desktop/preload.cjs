@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld("sacode", {
   workspaceGet: () => ipcRenderer.invoke("sacode:workspaceGet"),
   workspaceGitStatus: (sessionId, directory) => ipcRenderer.invoke('sacode:workspaceGitStatus', {sessionId,directory}),
   workspaceGitDiff: (sessionId, directory, path, scope) => ipcRenderer.invoke('sacode:workspaceGitDiff', {sessionId,directory,path,scope}),
+  workspaceGitPushTarget: (sessionId, directory) => ipcRenderer.invoke('sacode:workspaceGitPushTarget', {sessionId,directory}),
   workspaceChoose: () => ipcRenderer.invoke("sacode:workspaceChoose"),
   workspaceRecent: () => ipcRenderer.invoke('sacode:workspaceRecent'),
   workspaceSelectRecent: (recentId, sessionId) => ipcRenderer.invoke('sacode:workspaceSelectRecent', {recentId,sessionId}),

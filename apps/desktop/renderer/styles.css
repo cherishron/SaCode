@@ -556,3 +556,18 @@ body, body * {
 .cm-brow { display:flex; align-items:center; gap:6px; }
 .cm-brow .order { flex:none; font-size:12px; color:var(--text-muted); }
 .cm-pricings { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px; margin-left:42px; }
+
+/* 独立授权 Git 操作 */
+.git-change-item{display:flex;align-items:center;gap:4px;min-width:0}
+.git-change-item .git-change-row{flex:1;min-width:0}
+.git-stage-choice{display:flex;align-items:center;justify-content:center;flex:0 0 28px;min-height:34px;cursor:pointer}
+.git-stage-choice input{width:16px;height:16px;accent-color:var(--accent)}
+.git-change-path{min-width:0;overflow-wrap:anywhere}
+.git-action-controls,.git-action-session{display:grid;gap:10px;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--surface-2)}
+.git-action-controls h3,.git-action-session h3{margin:0;font-size:13px}
+.git-action-buttons{display:grid;grid-template-columns:1fr;gap:8px}
+.git-commit-message{display:grid;gap:5px;font-size:12px;color:var(--text-muted)}
+.git-commit-message textarea{box-sizing:border-box;width:100%;min-width:0;resize:vertical}
+.git-action-session .execution-task{border:0;margin:0;padding:0}
+.git-action-session .execution-action-summary{display:grid;gap:8px;padding:10px;border-radius:8px;background:var(--surface-3)}
+.git-action-session .execution-action-summary pre{margin:0}
