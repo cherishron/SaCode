@@ -797,6 +797,7 @@ ipcMain.handle("sacode:lspRename", async (_e, args) => {
   return withHost(() => bridge.request("lsp/rename", params));
 });
 
+require('./web-settings-ipc.cjs').registerWebSettingsIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 // Next SDK 页面工具：清单的唯一真源是渲染层那份 window.DshPageTools 注册表，
 // 主进程只做窗口解析、参数校验与传参，不在这里维护工具名或写死的空结果。
 // 名字与参数一律经 JSON.stringify 成为字面量：手写转义把值拼进源码就是注入口。
