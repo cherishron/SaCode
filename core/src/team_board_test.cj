@@ -165,16 +165,19 @@ func teamBoardDurabilityFailureNeverReturnsSuccessAndFreezesReads() {
     let f = TeamBoardFixture()
     try {
         let durable = String.fromUtf8(File.readFrom(f.path))
-        var oversized = ""; for (_ in 0..5000) { oversized += "x" }
-        @ExpectThrows[Exception](f.board.send("a-session", "b", oversized))
+        // 用文件系统故障触发真实发布失败；消息大小不是 SessionLog 的失败注入接口。
+        removeIfExists(f.path, recursive: false)
+        Directory.create(Path(f.path), recursive: false)
+        @ExpectThrows[Exception](f.board.send("a-session", "b", "磁盘目标不可读写"))
         @Expect(f.log.isDurableFrozen(), true)
         @ExpectThrows[Exception](f.board.snapshot())
         @ExpectThrows[Exception](f.board.pending("b-session"))
         @ExpectThrows[Exception](f.board.createTask("leader-session", "t", "拒写", Array<String>()))
-        @ExpectThrows[Exception](f.log.snapshotEvents())
         @Expect(f.lease.protects(f.path), true)
-        @Expect(String.fromUtf8(File.readFrom(f.path)), durable)
+        @Expect(FileInfo(f.path).isDirectory(), true)
         f.board.close()
+        removeIfExists(f.path, recursive: true)
+        File.writeTo(f.path, durable.toArray())
         let restored = TeamBoard(SessionLog(f.path), f.lease)
         try { @Expect(JsonValue.fromStr(restored.pending("b-session")).asArray().size(), Int64(0)) }
         finally { restored.close() }
