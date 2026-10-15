@@ -5,8 +5,8 @@
 // 但这条不变量此前只是文档说法。实测本仓 main.cjs 的 goal/* 与 busy-send 共 7 个 handler
 // 用单引号写通道名，`grep 'ipcMain.handle("sacode:'` 只数得出 60 个，肉眼据此会判出
 // 「preload 有 7 个方法没有后端」的假缺口。这里按语法结构取集，不按引号形态猜。
-const { readFileSync, readdirSync, statSync } = require("node:fs");
-const { join, relative } = require("node:path");
+const { readFileSync, readdirSync, statSync, existsSync } = require("node:fs");
+const { join, relative, resolve } = require("node:path");
 
 const root = join(__dirname, "..");
 const PRELOAD = "apps/desktop/preload.cjs";
@@ -81,27 +81,178 @@ function preloadSurface(text) {
   return { keys, namespaces, objectStart: openAt };
 }
 
-function mainSurface(text) {
-  const scannable = blankOut(text);
-  const total = [...scannable.matchAll(/\bipcMain\.handle\s*\(/g)].length;
-  const names = [...text.matchAll(/\bipcMain\.handle\s*\(\s*(['"])sacode:([^'"]+)\1/g)].map((m) => m[2]);
-  const otherPrefix = [...text.matchAll(/\bipcMain\.handle\s*\(\s*(['"])([^'"]+)\1/g)]
-    .map((m) => m[2]).filter((n) => !n.startsWith("sacode:"));
-  return { total, names, otherPrefix };
+function balancedEnd(text, start, open, close) {
+  if (text[start] !== open) return -1;
+  let depth = 0;
+  let quote = "";
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; continue; }
+    if (ch === open) depth++;
+    else if (ch === close && --depth === 0) return i;
+  }
+  return -1;
 }
 
-function audit(preloadText, mainText) {
+function firstTupleValues(arrayText) {
+  const values = [];
+  let outerDepth = 0;
+  let quote = "";
+  let tupleNeedsFirst = false;
+  for (let i = 0; i < arrayText.length; i++) {
+    const ch = arrayText[i];
+    if (quote) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`") {
+      if (outerDepth === 2 && tupleNeedsFirst) {
+        const match = /^(['"])([^'"\\]*)\1\s*,/.exec(arrayText.slice(i));
+        if (match) { values.push(match[2]); tupleNeedsFirst = false; }
+      }
+      quote = ch;
+      continue;
+    }
+    if (ch === "[") { outerDepth++; if (outerDepth === 2) tupleNeedsFirst = true; }
+    else if (ch === "]") outerDepth--;
+  }
+  return values;
+}
+
+function constLiteral(text, name) {
+  const re = new RegExp(`\\b(?:const|let)\\s+${name}\\s*=\\s*([\\[{])`);
+  const match = re.exec(text);
+  if (!match) return null;
+  const start = match.index + match[0].length - 1;
+  const close = match[1] === "[" ? "]" : "}";
+  const end = balancedEnd(text, start, match[1], close);
+  return end < 0 ? null : { open: match[1], text: text.slice(start, end + 1) };
+}
+
+function loopValues(text, variable, callIndex) {
+  const re = new RegExp(`\\bfor\\s*\\(\\s*(?:const|let)\\s*\\[\\s*${variable}\\b[\\s\\S]{0,240}?\\]\\s*of\\s*`, "g");
+  const matches = [...text.matchAll(re)].filter((match) => match.index < callIndex);
+  const match = matches[matches.length - 1];
+  if (match) {
+    let at = match.index + match[0].length;
+    if (text.startsWith("Object.entries(", at)) {
+      at += "Object.entries(".length;
+      const id = /^[A-Za-z_$][\\w$]*/.exec(text.slice(at))?.[0];
+      if (!id) return [];
+      const literal = constLiteral(text, id);
+      if (literal?.open === "{") {
+        const keys = [...literal.text.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:/gm)].map((m) => m[1]);
+        if (keys.length) return keys;
+      }
+    }
+    if (text[at] === "[") {
+      const end = balancedEnd(text, at, "[", "]");
+      if (end >= 0) return firstTupleValues(text.slice(at, end + 1));
+    }
+    const id = /^[A-Za-z_$][\w$]*/.exec(text.slice(at))?.[0];
+    if (!id) return [];
+    const literal = constLiteral(text, id);
+    if (literal?.open === "[") return firstTupleValues(literal.text);
+    if (literal?.open === "{") {
+      const keys = [...literal.text.matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:/gm)].map((m) => m[1]);
+      if (keys.length) return keys;
+    }
+  }
+  return [];
+}
+
+function moduleRegistrations(mainText) {
+  const paths = new Set();
+  const scannable = blankOut(mainText);
+  const direct = /require\s*\(\s*(['"])(\.\/[^'"]+\.cjs)\1\s*\)\s*\.\s*register[A-Za-z0-9_]*Ipc\s*\(\s*ipcMain\b/g;
+  for (const match of mainText.matchAll(direct)) {
+    if (scannable.slice(match.index, match.index + 7) === "require") paths.add(match[2]);
+  }
+
+  const imported = /(?:const|let)\s*\{([^}]+)\}\s*=\s*require\s*\(\s*(['"])(\.\/[^'"]+\.cjs)\2\s*\)/g;
+  for (const match of mainText.matchAll(imported)) {
+    if (!/^\s*(?:const|let)\s*\{/.test(scannable.slice(match.index, match.index + 20))) continue;
+    const registrations = [...match[1].matchAll(/\b(register[A-Za-z0-9_]*Ipc)\b/g)].map((m) => m[1]);
+    for (const name of registrations) {
+      const call = new RegExp(`\\b${name}\\s*\\(\\s*\\{`, "g");
+      for (const callMatch of mainText.matchAll(call)) {
+        const open = callMatch.index + callMatch[0].lastIndexOf("{");
+        const end = balancedEnd(mainText, open, "{", "}");
+        if (end >= 0 && /\bipcMain\b/.test(mainText.slice(open, end + 1))) paths.add(match[3]);
+      }
+    }
+  }
+  return [...paths].sort();
+}
+
+function sourceSet(mainText) {
+  const sources = new Map([[MAIN, mainText]]);
+  const unresolved = [];
+  for (const modulePath of moduleRegistrations(mainText)) {
+    const absolute = resolve(root, "apps/desktop", modulePath);
+    if (!existsSync(absolute)) { unresolved.push(modulePath); continue; }
+    sources.set(relative(root, absolute).replace(/\\/g, "/"), readFileSync(absolute, "utf8"));
+  }
+  return { sources, unresolved };
+}
+
+function mainSurface(sources) {
+  const names = [];
+  const otherPrefix = [];
+  let total = 0;
+  let parsedCalls = 0;
+  const unresolvedDynamic = [];
+  for (const [file, text] of sources) {
+    const scannable = blankOut(text);
+    const isCodeCall = (index) => scannable.slice(index, index + 14) === "ipcMain.handle";
+    total += [...scannable.matchAll(/\bipcMain\.handle\s*\(/g)].length;
+    const staticMatches = [...text.matchAll(/\bipcMain\.handle\s*\(\s*(['"])([^'"]+)\1(?!\s*\+)/g)]
+      .filter((match) => isCodeCall(match.index));
+    for (const match of staticMatches) {
+      names.push(match[2].startsWith("sacode:") ? match[2].slice("sacode:".length) : match[2]);
+      if (!match[2].startsWith("sacode:")) otherPrefix.push(`${file}:${match[2]}`);
+    }
+    parsedCalls += staticMatches.length;
+
+    const dynamic = [
+      ...[...text.matchAll(/\bipcMain\.handle\s*\(\s*`([^`]*)\$\{\s*([A-Za-z_$][\w$]*)\s*\}([^`]*)`/g)]
+        .filter((m) => isCodeCall(m.index)).map((m) => ({ prefix: m[1], variable: m[2], suffix: m[3], index: m.index })),
+      ...[...text.matchAll(/\bipcMain\.handle\s*\(\s*(['"])([^'"]*)\1\s*\+\s*([A-Za-z_$][\w$]*)\b/g)]
+        .filter((m) => isCodeCall(m.index)).map((m) => ({ prefix: m[2], variable: m[3], suffix: "", index: m.index })),
+    ];
+    for (const call of dynamic) {
+      parsedCalls++;
+      const values = loopValues(text, call.variable, call.index);
+      if (!values.length) { unresolvedDynamic.push(`${file}:${call.variable}`); continue; }
+      for (const value of values) {
+        const channel = `${call.prefix}${value}${call.suffix}`;
+        if (!channel.startsWith("sacode:")) otherPrefix.push(`${file}:${channel}`);
+        names.push(channel.startsWith("sacode:") ? channel.slice("sacode:".length) : channel);
+      }
+    }
+  }
+  return { total, parsedCalls, names, otherPrefix, unresolvedDynamic };
+}
+
+function audit(preloadText, sourceSetResult) {
   const preload = preloadSurface(preloadText);
-  const main = mainSurface(mainText);
+  const main = mainSurface(sourceSetResult.sources);
 
   check("expose-single-namespace", preload.namespaces.length === 1,
     `exposeInMainWorld 调用 ${preload.namespaces.length} 次，命名空间 [${preload.namespaces}]`);
   check("preload-keys-found", preload.keys.length > 0,
     `取到 ${preload.keys.length} 个顶层方法`);
-  check("ipc-main-registered", main.total > 0, `ipcMain.handle 出现 ${main.total} 次`);
-  // 每个 handle( 都必须被按名取到，否则说明有第四种书写形态把通道名藏起来了
-  check("handler-count-matches-names", main.total === main.names.length,
-    `handle( 共 ${main.total} 处，按名取到 ${main.names.length} 个（差值即未被取到的书写形态）`);
+  check("registration-modules-resolved", sourceSetResult.unresolved.length === 0,
+    sourceSetResult.unresolved.length ? `无法读取已注册模块 [${sourceSetResult.unresolved}]` : `扫描主文件及 ${sourceSetResult.sources.size - 1} 个实际注册模块`);
+  check("ipc-main-registered", main.total > 0, `注册源中 ipcMain.handle 出现 ${main.total} 个调用`);
+  check("handler-count-matches-names", main.total === main.parsedCalls && main.unresolvedDynamic.length === 0,
+    `handle 调用 ${main.total} 个，识别 ${main.parsedCalls} 个；未解析动态通道 [${main.unresolvedDynamic}]`);
   check("channels-prefixed", main.otherPrefix.length === 0,
     main.otherPrefix.length ? `非 sacode: 前缀通道 [${main.otherPrefix}]` : "全部通道都在 sacode: 前缀下");
 
@@ -119,7 +270,7 @@ function audit(preloadText, mainText) {
       ? `只在 preload: [${onlyP}]；只在 main: [${onlyM}]`
       : `preload ${setP.size} 个方法 ↔ main ${setM.size} 个通道，双向差集为空`);
 
-  console.log(`分母：preload 方法 ${preload.keys.length}，main 通道 ${main.names.length}，ipcMain.handle 字面 ${main.total}`);
+  console.log(`分母：preload 方法 ${preload.keys.length}，已注册 IPC 通道 ${main.names.length}，handler 调用 ${main.total}`);
   return { onlyP, onlyM, count: setP.size };
 }
 
@@ -143,25 +294,35 @@ function report() {
 function selftest() {
   const preload = readFileSync(join(root, PRELOAD), "utf8");
   const main = readFileSync(join(root, MAIN), "utf8");
+  const { sources } = sourceSet(main);
   const firstMethod = preloadSurface(preload).keys[0];
+  const dynamicProbeFile = "apps/desktop/acp-ipc.cjs";
   const probes = [
     ["expose-single-namespace", "preload", (t) => t.replace("contextBridge.exposeInMainWorld(",
       'contextBridge.exposeInMainWorld("other", {});\ncontextBridge.exposeInMainWorld(')],
     ["preload-keys-found", "preload", (t) => t.replace("contextBridge.exposeInMainWorld(", "contextBridge.exposeInMainWorld_disabled(")],
-    ["ipc-main-registered", "main", (t) => t.replace(/ipcMain\.handle\(/g, "ipcMain.register(")],
+    ["ipc-main-registered", "all", (t) => t.replace(/ipcMain\.handle\s*\(/g, "ipcMain.register(")],
     // 换成反引号书写：handle( 计数不变，但按名的正则只认成对引号，取不到名字
     ["handler-count-matches-names", "main", (t) => t.replace("ipcMain.handle('sacode:goalCreate'", "ipcMain.handle(`sacode:goalCreate`")],
     ["channels-prefixed", "main", (t) => t.replace('ipcMain.handle("sacode:projection"', 'ipcMain.handle("other:projection"')],
     ["no-duplicate-names", "main", (t) => t.replace("ipcMain.handle('sacode:goalCreate'", "ipcMain.handle('sacode:goalDescribe'")],
     ["surface-set-parity", "preload", (t) => t.replace(`${firstMethod}:`, `${firstMethod}Renamed:`)],
+    ["registration-modules-resolved", "registration", (t) => t.replace("./acp-ipc.cjs", "./missing-acp-ipc.cjs")],
+    ["surface-set-parity", "dynamic", (t) => t.replace("'acpDelegationCreate'", "'acpDelegationCreateRenamed'")],
   ];
   let missed = 0;
   for (const [target, face, mutate] of probes) {
     checks.length = 0;
     const brokenPreload = face === "preload" ? mutate(preload) : preload;
-    const brokenMain = face === "main" ? mutate(main) : main;
+    const brokenSources = new Map(sources);
+    let brokenMain = main;
+    if (face === "main") brokenSources.set(MAIN, mutate(main));
+    if (face === "all") for (const [file, text] of brokenSources) brokenSources.set(file, mutate(text));
+    if (face === "registration") brokenMain = mutate(main);
+    if (face === "dynamic") brokenSources.set(dynamicProbeFile, mutate(brokenSources.get(dynamicProbeFile)));
+    const parsedSources = face === "registration" ? sourceSet(brokenMain) : { sources: brokenSources, unresolved: [] };
     try {
-      audit(brokenPreload, brokenMain);
+      audit(brokenPreload, parsedSources);
     } catch (e) {
       console.log(`MISSED ${target} (门禁执行异常: ${e.message})`); missed++; continue;
     }
@@ -170,7 +331,7 @@ function selftest() {
     else { console.log(`MISSED ${target} [${face}] -> FAIL 集为 [${hit.join(",")}]`); missed++; }
   }
   checks.length = 0;
-  audit(preload, main);
+  audit(preload, sourceSet(main));
   const baselineGreen = checks.every((c) => c.ok);
   console.log(`SELFTEST: ${missed === 0 && baselineGreen ? "PASS" : "FAIL"} (probes=${probes.length}, missed=${missed}, baseline=${baselineGreen ? "green" : "RED"})`);
   return missed === 0 && baselineGreen ? 0 : 1;
@@ -222,7 +383,8 @@ else if (args.includes("--consumers")) process.exitCode = consumers();
 else if (args.length) { console.error("用法: node scripts/check_ipc_surface_parity.cjs [--selftest|--consumers]"); process.exitCode = 2; }
 else {
   try {
-    audit(readFileSync(join(root, PRELOAD), "utf8"), readFileSync(join(root, MAIN), "utf8"));
+    const main = readFileSync(join(root, MAIN), "utf8");
+    audit(readFileSync(join(root, PRELOAD), "utf8"), sourceSet(main));
   } catch (e) {
     console.log(`GATE: FAIL (取数失败: ${e.message})`);
     process.exitCode = 1;

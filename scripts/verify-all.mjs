@@ -10,11 +10,12 @@
 //
 // 退出码：全部通过 0；任一步失败 1；用法错误 2。
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPrivateTmpDir, disposePrivateTmpDir } from "./verify-tmp.mjs";
 import { GATE_SCRIPTS, verdict as gateVerdict } from "./gate-verdict.mjs";
+import { parseCjpm, parseNodeTest } from "./verify-output.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const isWin = process.platform === "win32";
@@ -44,11 +45,6 @@ function lastMatch(text, pattern) {
   return hits.length ? hits[hits.length - 1][0].trim() : null;
 }
 
-function numbersIn(text, pattern) {
-  const hit = lastMatch(text, pattern);
-  return hit ? (hit.match(/\d+/g) || []).map(Number) : [];
-}
-
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, {
     cwd,
@@ -69,57 +65,6 @@ function envWithoutElectronRunAsNode() {
     if (key.toLowerCase() === "electron_run_as_node") delete env[key];
   }
   return env;
-}
-
-// 上一个 core.exe / std.testrunner.exe 被系统短暂占用时，重链会 Permission denied。
-// 先删产物再跑；仍失败就退避重试，重试也失败才算真失败。
-function cleanCoreTestBinaries() {
-  const dir = join(root, "core", "target", "release", "unittest_bin");
-  for (const name of ["core.exe", "std.testrunner.exe"]) {
-    const p = join(dir, name);
-    if (existsSync(p)) {
-      try { rmSync(p, { force: true }); } catch (_) { /* 占用中就留给重试那一轮 */ }
-    }
-  }
-}
-
-// cjpm 的汇总形如：
-//   Summary: TOTAL: 585
-//       PASSED: 583, SKIPPED: 2, ERROR: 0
-//       FAILED: 0
-// 解析不到、或总数为 0，都算「没验完」而不是通过——0 条通常是构建或链接阶段就挂了。
-function parseCjpm(out) {
-  const total = numbersIn(out, /Summary:\s*TOTAL:\s*\d+/)[0];
-  const counts = numbersIn(out, /PASSED:\s*\d+.*?(?:ERROR:\s*\d+|$)/s);
-  const passed = counts[0];
-  const failed = counts.find((n, i) => i > 0 && /FAILED/.test("")) ?? null;
-  const failedCount = numbersIn(out, /FAILED:\s*\d+/)[0];
-  const errorCount = numbersIn(out, /ERROR:\s*\d+/)[0];
-  if (total === undefined || total === 0) {
-    return { summary: `未解析到有效的 cjpm 汇总（TOTAL=${total === undefined ? "缺失" : 0}），按未验完处理`, ok: false };
-  }
-  const parts = [`TOTAL ${total}`, `PASSED ${passed}`, `SKIPPED ${numbersIn(out, /SKIPPED:\s*\d+/)[0]}`,
-    `ERROR ${errorCount}`, `FAILED ${failedCount}`].filter((s) => !s.endsWith("undefined"));
-  return { summary: parts.join(" / "), ok: true };
-}
-
-function parseNodeTest(out) {
-  // node --test 的 TAP 汇总形如 "# tests 205 / # pass 205 / # fail 0 / # skipped 0"
-  const tests = numbersIn(out, /# tests \d+/)[0];
-  const pass = numbersIn(out, /# pass \d+/)[0];
-  const fail = numbersIn(out, /# fail \d+/)[0];
-  const skip = numbersIn(out, /# skipped \d+/)[0];
-  // 全 skip（例如真实模型缺凭据）不是失败，但也不能算验过：单独标出来让人决定
-  if (tests !== undefined && tests > 0 && pass === 0 && skip === tests) {
-    return { summary: `全部跳过（tests ${tests} / skipped ${skip}），未实际执行`, ok: true, skippedAll: true };
-  }
-  if (tests === undefined || tests === 0) {
-    return { summary: "未解析到有效的 node --test 汇总，按未验完处理", ok: false };
-  }
-  return {
-    summary: `tests ${tests} / pass ${pass} / fail ${fail}${skip === undefined ? "" : ` / skipped ${skip}`}`,
-    ok: true,
-  };
 }
 
 const STEPS = [
@@ -149,20 +94,10 @@ const STEPS = [
     key: "core",
     title: "核心仓颉单测（cjpm test）",
     run() {
-      cleanCoreTestBinaries();
-      let last = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        const r = run("cjpm", ["test", "--no-color", "--no-progress"], join(root, "core"));
-        last = r;
-        const linkLocked = /ld\.lld: error|failed to write the output file|Permission denied/i.test(r.out);
-        if (r.code === 0 || !linkLocked) break;
-        // 只在「重链被占用」这种环境形态下重试；真失败不重试，避免把红灯拖成绿灯
-        console.log(`  · 第 ${attempt} 次撞到链接互锁，清理产物后退避重试`);
-        cleanCoreTestBinaries();
-        spawnSync(isWin ? "cmd" : "sleep", isWin ? ["/c", "ping -n 6 127.0.0.1 >nul"] : ["5"], { shell: isWin });
-      }
-      const parsed = parseCjpm(last.out);
-      return { code: last.code, summary: parsed.summary, parsedOk: parsed.ok, raw: last.out };
+      const isolatedTarget = join(privateTmp.dir, "core-target");
+      const result = run("cjpm", ["test", "--no-color", "--no-progress", "--target-dir", isolatedTarget], join(root, "core"));
+      const parsed = parseCjpm(result.out);
+      return { code: result.code, summary: parsed.summary, parsedOk: parsed.ok, raw: result.out };
     },
   },
   {

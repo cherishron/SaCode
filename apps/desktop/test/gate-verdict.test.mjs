@@ -41,4 +41,16 @@ test("读数不被相邻形态喂绿", () => {
   assert.equal(verdict(0, "GATE: PASS (9 checks, fail=0)\nSELFTEST: PASS (probes=9, missed=0)\nGATE: FAIL (7 checks, fail=1)\nSELFTEST: PASS").ok, false);
   assert.equal(verdict(0, "GATE: PASS (9 checks, fail=0)\nSELFTEST: FAIL (probes=9, missed=1, baseline=green)").ok, false,
     "门禁自证有 MISSED 即门禁自己在造假绿");
+  assert.equal(verdict(0, "GATE: PASS (9 checks, fail=1)\nSELFTEST: PASS (probes=9, missed=0, baseline=green)").ok, false,
+    "PASS 行里的失败计数非零不能被状态词盖住");
+  assert.equal(verdict(0, "GATE: PASS (9 checks, fail=0)\nSELFTEST: PASS (probes=9, missed=2, baseline=green)").ok, false,
+    "PASS 行里的漏检计数非零不能被状态词盖住");
+  assert.equal(verdict(0, "GATE: PASS (0 checks, fail=0)\nSELFTEST: PASS (9 probes, missed=0, baseline=green)").ok, false,
+    "零检查不能通过");
+  assert.equal(verdict(0, "GATE: PASS (9 checks, fail=0)\nSELFTEST: PASS (probes=0, missed=0, baseline=green)").ok, false,
+    "零反证探针不能通过");
+  assert.equal(verdict(0, "GATE: PASS (9 checks, fail=0)\nSELFTEST: PASS (probes=9, missed=0, baseline=RED)").ok, false,
+    "自证基线为红不能通过");
+  assert.equal(verdict(1, "GATE: PASS (9 checks, fail=0)\nSELFTEST: PASS (probes=9, missed=0, baseline=green)").ok, false,
+    "完整 PASS 文本也不能覆盖非零退出码");
 });

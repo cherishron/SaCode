@@ -1,4 +1,4 @@
-// Host 方法面对账：apps/host/src/main.cj 的分派集 与 initialize 的 capabilities 声明集 必须逐名相等，
+// Host 方法面对账：入口内联分派 + 被入口调用的封闭路由谓词，与 initialize 的 capabilities 声明集逐名相等，
 // 且总量等于冻结分母。判据只有结尾 GATE 行与退出码：0 全绿；1 有 FAIL；2 取数或用法错误（不等于通过）。
 //
 // 为什么要有这条（2026-10-06 实测的两种漂移，都发生在这两面之间）：
@@ -9,16 +9,28 @@
 // 运行时那条断言在 `apps/desktop/test/host-verbs.test.mjs`，要宿主构建才能跑；这条门禁纯静态，
 // 不构建不启进程，所以能在「改完 main.cj 的那一刻」就拦住，而不是等下一轮打包。
 //
-// 冻结分母口径见 `docs/evidence/p0-interface-freeze-2026-10-06.md` §2：
-// 77 个 `method == "…"` 字面量 + `isGoalControlMethod` 白名单里的 5 个 goal 动词 = 82。
-// 分母变了必须同时改这里和那节，两处不同步即本门禁红灯。
+// 2026-10-06 的 82 条是历史冻结读数，不能再拿它当当前分母。当前提交基线
+// ef5d923ebcc7e4ace5e89759670c255992552763 经同一闭集口径复核为 158 条；详见
+// docs/evidence/2026-10-16-gate-triad-repair.md。分拆路由的精确闭集来自下列
+// 实际被 main 调用的谓词/handles，而不是从整个 Host 源码数 method 比较式。后续分母变化须
+// 先在独立产品批次核对接口，再更新本常量与当前基线证据；不把工作区中的任意扩张自动认可。
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const root = join(__dirname, "..");
 const HOST = "apps/host/src/main.cj";
 const GOAL_CONTROL = "core/src/goal_control.cj";
-const DENOMINATOR = 82;
+const ROUTE_PREDICATES = [
+  { file: "apps/host/src/acp_runtime_rpc.cj", signature: /func\s+isAcpProductMethod\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/page_tool_rpc.cj", signature: /func\s+isPageToolMethod\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/worktree_rpc.cj", signature: /func\s+isWorktreeMethod\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/tips_surface.cj", signature: /func\s+isTipsMethod\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/team_runtime.cj", signature: /public\s+static\s+func\s+accepts\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "core/src/acp_runtime_api.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "core/src/acp_history.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "core/src/execution_api.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+];
+const DENOMINATOR = 158;
 
 const checks = [];
 function check(name, ok, detail) {
@@ -97,8 +109,47 @@ function blankComments(text) {
 function dispatchSet(hostText) {
   const scannable = blankOut(hostText);
   const occurrences = [...scannable.matchAll(/\bmethod\s*==/g)].length;
-  const literals = [...hostText.matchAll(/\bmethod\s*==\s*"([A-Za-z0-9\/\-]+)"/g)];
+  const literals = [...hostText.matchAll(/\bmethod\s*==\s*"([A-Za-z0-9\/\-]+)"/g)]
+    .filter((match) => /\bmethod\s*==\s*$/.test(scannable.slice(match.index, match.index + match[0].indexOf('"'))));
   return { names: new Set(literals.map((m) => m[1])), occurrences, literals: literals.length };
+}
+
+function predicateSet(text, signature) {
+  const scanned = blankOut(text);
+  const match = signature.exec(scanned);
+  if (!match) return { names: new Set(), found: false, occurrences: 0, literals: 0 };
+  const bodyStart = scanned.indexOf("{", match.index);
+  let depth = 0;
+  let end = -1;
+  for (let i = bodyStart; i < scanned.length; i++) {
+    if (scanned[i] === "{") depth++;
+    else if (scanned[i] === "}" && --depth === 0) { end = i; break; }
+  }
+  if (end < 0) return { names: new Set(), found: false, occurrences: 0, literals: 0 };
+  const body = text.slice(bodyStart + 1, end);
+  const bodyScanned = blankOut(body);
+  const occurrences = [...bodyScanned.matchAll(/\bmethod\s*==/g)].length;
+  const literals = [...body.matchAll(/\bmethod\s*==\s*"([A-Za-z0-9\/\-]+)"/g)]
+    .filter((item) => /\bmethod\s*==\s*$/.test(bodyScanned.slice(item.index, item.index + item[0].indexOf('"'))));
+  return { names: new Set(literals.map((item) => item[1])), found: true, occurrences, literals: literals.length };
+}
+
+function routeSet(hostText, routeTexts) {
+  const direct = dispatchSet(hostText);
+  const names = new Set(direct.names);
+  const missingSources = [];
+  let predicateOccurrences = 0;
+  let predicateLiterals = 0;
+  for (const route of ROUTE_PREDICATES) {
+    const text = routeTexts.get(route.file);
+    if (text === undefined) { missingSources.push(`${route.file} (文件缺失)`); continue; }
+    const extracted = predicateSet(text, route.signature);
+    if (!extracted.found) { missingSources.push(`${route.file} (闭集函数未找到)`); continue; }
+    predicateOccurrences += extracted.occurrences;
+    predicateLiterals += extracted.literals;
+    for (const name of extracted.names) names.add(name);
+  }
+  return { names, direct, missingSources, predicateOccurrences, predicateLiterals };
 }
 
 // goal 动词只能从 core 的白名单函数体里取，不在这里手抄一遍——手抄会让门禁和被测面各自漂移。
@@ -137,23 +188,26 @@ function diffOnly(a, b) {
   return [...a].filter((x) => !b.has(x)).sort();
 }
 
-function audit(hostText, goalText) {
-  const { names: dispatched, occurrences, literals } = dispatchSet(hostText);
+function audit(hostText, goalText, routeTexts) {
+  const { names: dispatched, direct, missingSources, predicateOccurrences, predicateLiterals } = routeSet(hostText, routeTexts);
   const goal = goalVerbSet(goalText);
   const caps = capabilitySet(hostText);
 
-  check("host-source-scannable", hostText.length > 0 && /\bmain\s*\(args/.test(hostText),
-    `源长 ${hostText.length}，入口 main(args) ${/\bmain\s*\(args/.test(hostText) ? "在位" : "缺失——取数不可信"}`);
+  check("host-source-scannable", hostText.length > 0 && /\bmain\s*\(\s*\)/.test(hostText),
+    `源长 ${hostText.length}，入口 main() ${/\bmain\s*\(\s*\)/.test(hostText) ? "在位" : "缺失——取数不可信"}`);
   check("goal-whitelist-found", goal.names !== null && goal.balanced !== false,
     goal.names === null ? "取不到 isGoalControlMethod 函数体" : `白名单 ${goal.names.size} 个 goal 动词，函数体括号平衡`);
   check("capability-set-found", caps.names !== null && caps.count > 0,
     caps.names === null ? "取不到 capabilities 数组" : `声明面 ${caps.count} 条`);
-  check("literal-shape-coverage", occurrences === literals,
-    `按名取到 ${literals} 条（含重复），而 \`method ==\` 在去注释去字符串后的源里出现 ${occurrences} 次；不等即出现了本门禁不认的书写形态`);
-  check("no-match-dispatch", !/\bmatch\s+method\b/.test(blankOut(hostText)) && !/\bmatch\s*\{/.test(blankOut(hostText)),
-    "未出现 match 分派（出现时本门禁的字面量取数集会漏收，必须改取数口径而不是先改代码）");
-  check("no-dynamic-method-name", !/\b\w*[Mm]ethod\w*\s*=\s*"[^"]*"\s*\+/.test(blankComments(hostText)),
-    "Host 侧没有拼出来的方法名（有即给调用方开了「构造任意动词」通道，封闭字面集不变量破）");
+  check("literal-shape-coverage", direct.occurrences === direct.literals && predicateOccurrences === predicateLiterals,
+    `入口按名 ${direct.literals}/${direct.occurrences}；闭集路由谓词按名 ${predicateLiterals}/${predicateOccurrences}`);
+  const routeSourceTexts = [hostText, ...routeTexts.values()];
+  check("route-predicates-found", missingSources.length === 0,
+    missingSources.length ? `未能读取或识别闭集路由 [${missingSources.join(", ")}]` : `入口外 ${ROUTE_PREDICATES.length} 个实际路由谓词均可扫描`);
+  check("no-match-dispatch", routeSourceTexts.every((text) => !/\bmatch\s+method\b/.test(blankOut(text)) && !/\bmatch\s*\{/.test(blankOut(text))),
+    "分派入口与闭集路由中未出现会绕过字面量扫描的 match 分派");
+  check("no-dynamic-method-name", routeSourceTexts.every((text) => !/\b\w*[Mm]ethod\w*\s*=\s*"[^"]*"\s*\+/.test(blankComments(text))),
+    "Host 分派与闭集路由没有拼接方法名");
 
   if (goal.names === null || caps.names === null) {
     check("dispatch-vs-capability-parity", false, "上游取数失败，无法对账");
@@ -171,7 +225,7 @@ function audit(hostText, goalText) {
       : `分派未声明 ${missingDecl.length} 条 [${missingDecl.join(", ")}]；声明未分派 ${missingDispatch.length} 条 [${missingDispatch.join(", ")}]`);
   check("capability-no-duplicates", caps.count === caps.names.size, `声明 ${caps.count} 条，去重后 ${caps.names.size} 条`);
   check("frozen-denominator", caps.count === DENOMINATOR,
-    `声明面 ${caps.count} 条，冻结分母 ${DENOMINATOR} 条（改分母要同时改本常量与 p0-interface-freeze §2）`);
+    `声明面 ${caps.count} 条，当前基线分母 ${DENOMINATOR} 条（更新时同步维护 2026-10-16-gate-triad-repair 证据）`);
 }
 
 function report() {
@@ -186,19 +240,22 @@ function report() {
 }
 
 function readBoth() {
+  const routeTexts = new Map();
+  for (const route of ROUTE_PREDICATES) routeTexts.set(route.file, readFileSync(join(root, route.file), "utf8"));
   return {
     host: readFileSync(join(root, HOST), "utf8"),
     goal: readFileSync(join(root, GOAL_CONTROL), "utf8"),
+    routeTexts,
   };
 }
 
-// 反证：给每项检查各注入一处只杀它自己的违规。任何一项 MISSED 就是门禁自己在造假绿，
-// 必须先修门禁再采信上面的 GATE: PASS。
+// 反证：每项检查都注入一处明确违规，并要求目标判据出现 FAIL。下游差异判据可连带变红；
+// 任何目标判据 MISSED 就是门禁自己在造假绿，必须先修门禁再采信上面的 GATE: PASS。
 function selftest() {
-  const { host, goal } = readBoth();
-  // (探针表见下)
+  const { host, goal, routeTexts } = readBoth();
+  const routeProbeFile = "apps/host/src/tips_surface.cj";
   const probes = [
-    ["host-source-scannable", "host", (t) => t.replace(/main\s*\(args/g, "notmain(args")],
+    ["host-source-scannable", "host", (t) => t.replace(/main\s*\(\s*\)/g, "notmain()")],
     ["goal-whitelist-found", "goal", (t) => t.replace("func isGoalControlMethod(method: String): Bool {", "func isGoalControlMethodRenamed(method: String): Bool {")],
     ["capability-set-found", "host", (t) => t.replace('\\"capabilities\\":[', '\\"capabilitie2\\":[')],
     // 加一处 `method == 变量` 形态：按名取数收不到，但 `method ==` 计数会 +1
@@ -207,21 +264,27 @@ function selftest() {
     ["no-dynamic-method-name", "host", (t) => t.replace('if (method == "initialize") {', 'let dynMethod = "global/settings/set-" + key\n        if (method == "initialize") {')],
     // 少声明一条：分派还在、capabilities 里没有 → 只有 parity 会红（分母同时红，故归因看 parity 名在不在）
     ["dispatch-vs-capability-parity", "host", (t) => t.replace('\\"workspace/files\\",', "")],
+    ["dispatch-vs-capability-parity", "route", (t) => t.replace('method == "tips/get"', 'method == "tips/get-unregistered"')],
     ["frozen-denominator", "host", (t) => t.replace('\\"workspace/files\\",', "")],
     ["capability-no-duplicates", "host", (t) => t.replace('\\"session/flush\\"', '\\"session/flush\\",\\"session/flush\\"')],
+    ["route-predicates-found", "route", (t) => t.replace("func isTipsMethod(", "func isTipsMethodRenamed(")],
+    ["literal-shape-coverage", "route", (t) => t.replace('method == "tips/get"', "method == dynamicTipMethod")],
   ];
   let missed = 0;
   for (const [target, face, mutate] of probes) {
     checks.length = 0;
     const brokenHost = face === "host" ? mutate(host) : host;
     const brokenGoal = face === "goal" ? mutate(goal) : goal;
-    if (brokenHost === host && brokenGoal === goal) {
+    const brokenRoutes = new Map(routeTexts);
+    if (face === "route") brokenRoutes.set(routeProbeFile, mutate(routeTexts.get(routeProbeFile)));
+    const routesChanged = [...brokenRoutes].some(([file, text]) => text !== routeTexts.get(file));
+    if (brokenHost === host && brokenGoal === goal && !routesChanged) {
       console.log(`UNCREDITED ${target} (探针没改动任何字节)`);
       missed++;
       continue;
     }
     try {
-      audit(brokenHost, brokenGoal);
+      audit(brokenHost, brokenGoal, brokenRoutes);
     } catch (e) {
       console.log(`MISSED ${target} (门禁执行异常: ${e.message})`);
       missed++;
@@ -232,7 +295,7 @@ function selftest() {
     else { console.log(`MISSED ${target} [${face}] -> FAIL 集为 [${hit.join(",")}]`); missed++; }
   }
   checks.length = 0;
-  audit(host, goal);
+  audit(host, goal, routeTexts);
   const baselineGreen = checks.every((c) => c.ok);
   console.log(`SELFTEST: ${missed === 0 && baselineGreen ? "PASS" : "FAIL"} (probes=${probes.length}, missed=${missed}, baseline=${baselineGreen ? "green" : "RED"})`);
   return missed === 0 && baselineGreen ? 0 : 1;
@@ -243,8 +306,8 @@ if (args.includes("--selftest")) process.exitCode = selftest();
 else if (args.length) { console.error("用法: node scripts/check_host_method_surface.cjs [--selftest]"); process.exitCode = 2; }
 else {
   try {
-    const { host, goal } = readBoth();
-    audit(host, goal);
+    const { host, goal, routeTexts } = readBoth();
+    audit(host, goal, routeTexts);
   } catch (e) {
     console.log(`GATE: FAIL (取数失败: ${e.message})`);
     process.exitCode = 1;
