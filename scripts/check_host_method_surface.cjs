@@ -11,9 +11,11 @@
 //
 // 2026-10-06 的 82 条是历史冻结读数，不能再拿它当当前分母。当前提交基线
 // ef5d923ebcc7e4ace5e89759670c255992552763 经同一闭集口径复核为 158 条；详见
-// docs/evidence/2026-10-16-gate-triad-repair.md。分拆路由的精确闭集来自下列
-// 实际被 main 调用的谓词/handles，而不是从整个 Host 源码数 method 比较式。后续分母变化须
-// 先在独立产品批次核对接口，再更新本常量与当前基线证据；不把工作区中的任意扩张自动认可。
+// docs/evidence/2026-10-16-gate-triad-repair.md。工作区可能有合法的未提交接口增量，故冻结分母
+// 只校验 HEAD 的声明集；当前源码仍须保留 HEAD 的全部能力，且路由与声明双向完全一致。
+// 分拆路由的精确闭集来自下列实际被 main 调用的谓词/handles，而不是从全仓 method 比较式。
+// 提交新增接口时再审阅并更新冻结分母及证据，不让工作区总量变化掩盖漏路由、漏声明或删旧接口。
+const { execFileSync } = require("node:child_process");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
@@ -188,7 +190,7 @@ function diffOnly(a, b) {
   return [...a].filter((x) => !b.has(x)).sort();
 }
 
-function audit(hostText, goalText, routeTexts) {
+function audit(hostText, goalText, routeTexts, baselineCapabilities) {
   const { names: dispatched, direct, missingSources, predicateOccurrences, predicateLiterals } = routeSet(hostText, routeTexts);
   const goal = goalVerbSet(goalText);
   const caps = capabilitySet(hostText);
@@ -212,6 +214,7 @@ function audit(hostText, goalText, routeTexts) {
   if (goal.names === null || caps.names === null) {
     check("dispatch-vs-capability-parity", false, "上游取数失败，无法对账");
     check("frozen-denominator", false, "上游取数失败，无法计数");
+    check("baseline-capabilities-preserved", false, "上游取数失败，无法核对 HEAD 能力是否保留");
     check("capability-no-duplicates", false, "上游取数失败，无法查重复");
     return;
   }
@@ -224,8 +227,17 @@ function audit(hostText, goalText, routeTexts) {
       ? `双向差为空（${dispatchedAll.size} 条 = 字面 ${dispatched.size} + goal ${goal.names.size}）`
       : `分派未声明 ${missingDecl.length} 条 [${missingDecl.join(", ")}]；声明未分派 ${missingDispatch.length} 条 [${missingDispatch.join(", ")}]`);
   check("capability-no-duplicates", caps.count === caps.names.size, `声明 ${caps.count} 条，去重后 ${caps.names.size} 条`);
-  check("frozen-denominator", caps.count === DENOMINATOR,
-    `声明面 ${caps.count} 条，当前基线分母 ${DENOMINATOR} 条（更新时同步维护 2026-10-16-gate-triad-repair 证据）`);
+  const baselineNames = baselineCapabilities && baselineCapabilities.names;
+  const baselineMissing = baselineNames ? diffOnly(baselineNames, caps.names) : [];
+  check("baseline-capabilities-preserved", baselineNames instanceof Set && baselineMissing.length === 0,
+    baselineNames instanceof Set
+      ? baselineMissing.length === 0
+        ? `HEAD 的 ${baselineNames.size} 条能力全部保留；工作区声明 ${caps.count} 条`
+        : `工作区移除了 HEAD 已有能力 [${baselineMissing.join(", ")}]`
+      : "无法读取 HEAD 的冻结能力集");
+  const baselineCount = baselineCapabilities ? baselineCapabilities.count : -1;
+  check("frozen-denominator", baselineCount === DENOMINATOR,
+    `HEAD 声明面 ${baselineCount} 条，当前提交基线分母 ${DENOMINATOR} 条（提交新增接口后再审阅并更新证据）`);
 }
 
 function report() {
@@ -242,17 +254,21 @@ function report() {
 function readBoth() {
   const routeTexts = new Map();
   for (const route of ROUTE_PREDICATES) routeTexts.set(route.file, readFileSync(join(root, route.file), "utf8"));
+  const committedHost = execFileSync("git", ["show", `HEAD:${HOST}`], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+  });
   return {
     host: readFileSync(join(root, HOST), "utf8"),
     goal: readFileSync(join(root, GOAL_CONTROL), "utf8"),
     routeTexts,
+    baselineCapabilities: capabilitySet(committedHost),
   };
 }
 
 // 反证：每项检查都注入一处明确违规，并要求目标判据出现 FAIL。下游差异判据可连带变红；
 // 任何目标判据 MISSED 就是门禁自己在造假绿，必须先修门禁再采信上面的 GATE: PASS。
 function selftest() {
-  const { host, goal, routeTexts } = readBoth();
+  const { host, goal, routeTexts, baselineCapabilities } = readBoth();
   const routeProbeFile = "apps/host/src/tips_surface.cj";
   const probes = [
     ["host-source-scannable", "host", (t) => t.replace(/main\s*\(\s*\)/g, "notmain()")],
@@ -265,7 +281,8 @@ function selftest() {
     // 少声明一条：分派还在、capabilities 里没有 → 只有 parity 会红（分母同时红，故归因看 parity 名在不在）
     ["dispatch-vs-capability-parity", "host", (t) => t.replace('\\"workspace/files\\",', "")],
     ["dispatch-vs-capability-parity", "route", (t) => t.replace('method == "tips/get"', 'method == "tips/get-unregistered"')],
-    ["frozen-denominator", "host", (t) => t.replace('\\"workspace/files\\",', "")],
+    ["frozen-denominator", "baseline", (value) => ({ ...value, count: value.count - 1 })],
+    ["baseline-capabilities-preserved", "host", (t) => t.replace('\\"workspace/files\\",', "")],
     ["capability-no-duplicates", "host", (t) => t.replace('\\"session/flush\\"', '\\"session/flush\\",\\"session/flush\\"')],
     ["route-predicates-found", "route", (t) => t.replace("func isTipsMethod(", "func isTipsMethodRenamed(")],
     ["literal-shape-coverage", "route", (t) => t.replace('method == "tips/get"', "method == dynamicTipMethod")],
@@ -275,16 +292,17 @@ function selftest() {
     checks.length = 0;
     const brokenHost = face === "host" ? mutate(host) : host;
     const brokenGoal = face === "goal" ? mutate(goal) : goal;
+    const brokenBaseline = face === "baseline" ? mutate(baselineCapabilities) : baselineCapabilities;
     const brokenRoutes = new Map(routeTexts);
     if (face === "route") brokenRoutes.set(routeProbeFile, mutate(routeTexts.get(routeProbeFile)));
     const routesChanged = [...brokenRoutes].some(([file, text]) => text !== routeTexts.get(file));
-    if (brokenHost === host && brokenGoal === goal && !routesChanged) {
+    if (brokenHost === host && brokenGoal === goal && !routesChanged && brokenBaseline === baselineCapabilities) {
       console.log(`UNCREDITED ${target} (探针没改动任何字节)`);
       missed++;
       continue;
     }
     try {
-      audit(brokenHost, brokenGoal, brokenRoutes);
+      audit(brokenHost, brokenGoal, brokenRoutes, brokenBaseline);
     } catch (e) {
       console.log(`MISSED ${target} (门禁执行异常: ${e.message})`);
       missed++;
@@ -295,7 +313,7 @@ function selftest() {
     else { console.log(`MISSED ${target} [${face}] -> FAIL 集为 [${hit.join(",")}]`); missed++; }
   }
   checks.length = 0;
-  audit(host, goal, routeTexts);
+  audit(host, goal, routeTexts, baselineCapabilities);
   const baselineGreen = checks.every((c) => c.ok);
   console.log(`SELFTEST: ${missed === 0 && baselineGreen ? "PASS" : "FAIL"} (probes=${probes.length}, missed=${missed}, baseline=${baselineGreen ? "green" : "RED"})`);
   return missed === 0 && baselineGreen ? 0 : 1;
@@ -306,8 +324,8 @@ if (args.includes("--selftest")) process.exitCode = selftest();
 else if (args.length) { console.error("用法: node scripts/check_host_method_surface.cjs [--selftest]"); process.exitCode = 2; }
 else {
   try {
-    const { host, goal, routeTexts } = readBoth();
-    audit(host, goal, routeTexts);
+    const { host, goal, routeTexts, baselineCapabilities } = readBoth();
+    audit(host, goal, routeTexts, baselineCapabilities);
   } catch (e) {
     console.log(`GATE: FAIL (取数失败: ${e.message})`);
     process.exitCode = 1;

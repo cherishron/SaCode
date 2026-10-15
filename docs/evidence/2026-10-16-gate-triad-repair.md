@@ -27,3 +27,28 @@
 上述分开的读数不能互相覆盖：固定提交 Host 基线通过，不会掩盖当前工作区新增的自动化能力声明缺失；当前工作区 IPC 通过，也不会掩盖固定提交中 Web 设置的旧缺口。后续产品批次应分别补齐对应真实入口，再重跑门禁。
 
 本批没有暂存或提交其他会话的产品改动，也没有推送。
+
+## 2026-10-16 二次复核：冻结提交基线与脏工作区分离
+
+二次复核基于分支 `refactor/dsh-learning`、HEAD `a55bff0db52b695804df3293e5cd7eb985b8a444`。此时 Host 能力新增属于未提交工作区：HEAD 仍为 158 条；工作区有 11 条新增 RPC，其中知识库 5 条、个人资料 2 条、Git 推送目标查询 1 条已声明，自动化 `list/save/control` 3 条已路由但此前漏声明。
+
+为避免未提交的合法增量把自证整体染红，同时继续拦截回归，Host 门禁现在分别检查：
+
+- 冻结分母只核对 `git show HEAD:apps/host/src/main.cj` 的 158 条能力；
+- 当前工作区必须保留 HEAD 全部能力；
+- 当前闭集路由与 `initialize.capabilities` 必须逐名双向相等、无重复；
+- 每项自证变异独立命中目标判据。
+
+本轮只在未提交 `main.cj` 的初始化能力中补入 `automation/list`、`automation/save`、`automation/control`。这只证明 RPC 已被 Host 宣告并可调用，不代表定时执行器已实现；自动化页面仍显示 `executorAvailable=false`。
+
+### 二次验证读数
+
+- `node scripts/check_host_method_surface.cjs`：**GATE PASS，11 项检查**；当前工作区 169 条声明 = 164 条字面路由 + 5 条目标路由，HEAD 的 158 条全部保留。
+- `node scripts/check_host_method_surface.cjs --selftest`：**13/13 探针命中，baseline=green**。
+- `node scripts/verify-all.mjs gates`：退出码 **0**，责任映射、路径责任、IPC 对账、Host 对账 **4/4 通过**。
+- `node --test test/automation-page.test.mjs test/automation-ipc.test.mjs test/gate-verdict.test.mjs test/verify-output.test.mjs`（工作目录 `apps/desktop`）：**18/18 通过**。
+- 本机仓颉 **1.1.3**，在 `apps/host` 执行 `cjpm build --target-dir D:\Project\sa\saai\sa-code\target\automation-host-d6297f07c262463b859b7891911a5b1c`：退出码 **0**，`cjpm build success`；含既有警告，未把警告数当作产品通过标准。
+- 用该源码新构建的 Host 经 `scripts/pack-host.mjs` 装入独立目录 `apps/desktop/.tmp-test/automation-host-pack-2edd565090374ad79a8b1cd247d4e873`。`SACODE_HOST` 指向该目录的 `bin/sacode-host.exe` 后，真实 Host 测试 `automation-host.test.mjs` 与 `automation-timezone-host.test.mjs` **2/2 通过**：初始化声明三项自动化 RPC、空清单、会话绑定和项目作用域拒绝、保存 Asia/Shanghai 配置及拒绝无效时区。测试包使用 SDK/stdx DLL 与当前进程 PATH 上的 OpenSSL DLL，不是发布载荷验收。
+- `core` 定向用例 `automationDefinitionsPersistLiteralPromptAndRejectStaleEdits`：独立 TMP/TEMP、`--parallel 1`，**1 通过 / 1434 跳过 / 0 失败**。这不是完整 core 套件通过。
+
+本次相关工作区 SHA-256：`scripts/check_host_method_surface.cjs`=`137635c53ab085c8a1a24bdd2345ef234e64dafc220bef05d73610e3841b9a6e`；`apps/host/src/main.cj`=`eabcf7257500cb58e2fa49a36abe59bef56cb9b1fbdbaf1bb767879fcb0857c7`；`apps/host/src/automation_rpc.cj`=`3d38312ecb98901f3e74af83329fd522ff942e8d26dcba8b786464c99c833a1a`；`core/src/automation_store.cj`=`3164a95ba9e783aec6a053366f4eef592f84aca60f74333c9d4668c9e209df6c`。以上工作区代码尚未因此记录为提交态；不得用本节替代后续完整 core、桌面默认安全启动、安装态或调度执行验收。
