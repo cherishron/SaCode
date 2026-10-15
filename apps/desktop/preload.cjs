@@ -2,6 +2,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 // 只暴露固定动作：方法名与宿主路径都留在主进程，渲染层拼不出任意方法或参数结构。
 // 没有通用的 request(everything) 通道——那等于把宿主协议面整个交给网页。
 contextBridge.exposeInMainWorld("sacode", {
+  automationList: (sessionId,scope) => ipcRenderer.invoke('sacode:automationList',{sessionId,scope}),
+  automationSave: (sessionId,scope,definition,revision) => ipcRenderer.invoke('sacode:automationSave',{sessionId,scope,definition,revision}),
+  automationControl: (sessionId,scope,id,action,revision) => ipcRenderer.invoke('sacode:automationControl',{sessionId,scope,id,action,revision}),
+  knowledgeList: (sessionId, scope, query) => ipcRenderer.invoke('sacode:knowledgeList', {sessionId,scope,query}),
+  knowledgeImport: (sessionId, scope, id, title, path, revision) => ipcRenderer.invoke('sacode:knowledgeImport', {sessionId,scope,id,title,path,revision}),
+  knowledgeReference: (sessionId, scope, id, revision) => ipcRenderer.invoke('sacode:knowledgeReference', {sessionId,scope,id,revision}),
+  knowledgeSave: (sessionId, scope, id, title, content, revision) => ipcRenderer.invoke('sacode:knowledgeSave', {sessionId,scope,id,title,content,revision}),
+  knowledgeRemove: (sessionId, scope, id, revision) => ipcRenderer.invoke('sacode:knowledgeRemove', {sessionId,scope,id,title:'',content:'',revision}),
   projection: () => ipcRenderer.invoke("sacode:projection"),
   acpDelegationList: (sessionId) => ipcRenderer.invoke('sacode:acpDelegationList', { sessionId }),
   acpDelegationDescribe: (sessionId, delegationId) => ipcRenderer.invoke('sacode:acpDelegationDescribe', { sessionId, delegationId }),

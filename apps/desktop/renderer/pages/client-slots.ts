@@ -3,6 +3,8 @@ import { ClientScope, SlotCore, type Entry, type OwnerProps } from './slot-core'
 export { ClientScope, SlotCore } from './slot-core';
 export {WorkbenchTabs} from './workbench-tabs';
 export {ProductManagementPage} from './product-management';
+export {AutomationPage} from './automation-page';
+export {KnowledgePage} from './knowledge-page';
 export {createFilePreview} from './file-preview';
 export {AccountMenu} from './account-menu';
 export {ProjectPicker} from './project-picker';

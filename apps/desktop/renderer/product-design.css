@@ -418,6 +418,40 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
 .acp-history .row.spread>span{flex:1 1 160px}
 .acp-history .stack{display:flex;flex-direction:column;align-items:stretch;gap:10px}
 .acp-history pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto}
+
+/* 自动化页显示真实持久化的任务定义；执行状态由共享执行器接通后再开放。 */
+.automation-executor-notice { display:flex; align-items:flex-start; gap:12px; margin:22px 0 4px; padding:14px 16px; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
+.automation-status-dot { flex:none; width:8px; height:8px; margin-top:5px; border-radius:50%; background:#bd8d36; box-shadow:0 0 0 3px color-mix(in srgb,#bd8d36 14%,transparent); }
+.automation-executor-notice strong { font-size:12px; font-weight:600; }
+.automation-executor-notice p { margin:4px 0 0; color:var(--text-muted); font-size:12px; line-height:1.65; }
+.automation-scope { margin-top:20px; }
+.automation-list { display:grid; gap:12px; margin-top:18px; }
+.automation-card { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding:18px 20px; border:1px solid var(--border); border-radius:10px; background:var(--surface-1); }
+.automation-card-main { min-width:0; flex:1; }
+.automation-card-title { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.automation-card-title h3 { margin:0; font-size:14px; font-weight:550; }
+.automation-state { display:inline-flex; align-items:center; min-height:22px; padding:2px 8px; border-radius:999px; font-size:10px; white-space:nowrap; }
+.automation-state.is-enabled { color:var(--text-muted); background:var(--surface-3); }
+.automation-state.is-paused { color:var(--text-muted); border:1px solid var(--border); }
+.automation-prompt { max-width:900px; margin:9px 0; color:var(--text-muted); font-size:12px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; }
+.automation-meta { display:flex; flex-wrap:wrap; gap:7px 16px; color:var(--text-muted); font-size:10px; overflow-wrap:anywhere; }
+.automation-history { margin-top:12px; color:var(--text-muted); font-size:11px; }
+.automation-history summary { cursor:pointer; }
+.automation-history ul { display:grid; gap:4px; padding-left:18px; }
+.automation-history li { display:flex; gap:8px; }
+.automation-history small,.automation-no-history { color:var(--text-muted); font-size:10px; }
+.automation-no-history { margin:10px 0 0; }
+.automation-card-actions { display:flex; flex:none; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+.automation-error { margin:14px 0; color:var(--danger,#b44336); font-size:12px; }
+.automation-notice,.automation-loading { margin:12px 0; color:var(--text-muted); font-size:12px; }
+.automation-empty { margin-top:18px; }
+.automation-enabled-toggle { display:flex; align-items:center; gap:8px; min-height:34px; }
+.automation-primary { color:var(--button-primary-text,var(--text)); background:var(--surface-3); }
+@media(max-width:800px) {
+ .automation-card { flex-direction:column; gap:12px; padding:15px; }
+ .automation-card-actions { justify-content:flex-start; }
+ .automation-meta { gap:6px 12px; }
+}
 .acp-history .tool-card details{display:block}
 
 /* ACP 白名单诊断：长路径换行，窄窗保持可读。 */

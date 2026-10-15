@@ -30,6 +30,8 @@
       "window-visibility.cjs",
       "preload.cjs",
       "host-bridge.cjs",
+      "knowledge-ipc.cjs",
+      "automation-ipc.cjs",
       "execution-history-ipc.cjs",
       "acp-ipc.cjs",
       "page-tool-bridge.cjs",

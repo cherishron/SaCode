@@ -797,6 +797,8 @@ ipcMain.handle("sacode:lspRename", async (_e, args) => {
   return withHost(() => bridge.request("lsp/rename", params));
 });
 
+require('./knowledge-ipc.cjs').registerKnowledgeIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
+require('./automation-ipc.cjs').registerAutomationIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 require('./web-settings-ipc.cjs').registerWebSettingsIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 // Next SDK 页面工具：清单的唯一真源是渲染层那份 window.DshPageTools 注册表，
 // 主进程只做窗口解析、参数校验与传参，不在这里维护工具名或写死的空结果。
