@@ -18,7 +18,7 @@ function checkWrite(reply:unknown):void{
 }
 // 仅保存页面草稿；磁盘观察、审批与原子替换仍由现有共享工具管线执行。
 export function createFileEditor(api:Api,changed:()=>void){
-  const state={path:'',original:'',draft:'',loaded:false,busy:false,review:false,error:'',notice:''};
+  const state={path:'',original:'',draft:'',loaded:false,busy:false,review:false,error:'',notice:'',saveRevision:0};
   let epoch=0,disposed=false;
   const notify=()=>{if(!disposed)changed();};
   const dirty=()=>state.loaded&&state.draft!==state.original;
@@ -54,7 +54,7 @@ export function createFileEditor(api:Api,changed:()=>void){
       if(disposed||ticket!==epoch)return;
       const back=await api.read(path);
       if(readResult(back)!==wanted)throw Error('写后回读不一致，请核对磁盘文件；草稿已保留。');
-      if(!disposed&&ticket===epoch){state.original=wanted;state.review=false;state.notice='已保存并核对磁盘内容。';}
+      if(!disposed&&ticket===epoch){state.original=wanted;state.review=false;state.notice='已保存并核对磁盘内容。';state.saveRevision++;}
     }catch(e){if(!disposed&&ticket===epoch)state.error=String((e as Error).message||e);}
     finally{if(!disposed&&ticket===epoch){state.busy=false;notify();}}
   }

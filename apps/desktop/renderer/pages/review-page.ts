@@ -1,4 +1,4 @@
-import {defineComponent,h,type PropType} from 'vue';
+import {defineComponent,h,ref,watch,type PropType} from 'vue';
 import {FileEditor,createFileEditor} from './file-editor';
 import {GitWorkbench} from './git-workbench';
 import type {GitReply} from './git-workbench-state';
@@ -18,6 +18,12 @@ export const ReviewPage=defineComponent({
   },
   emits:['open','browse','choose'],
   setup(props,{emit}){
+    const refreshSignal=ref(0);
+    let observedSaveRevision=props.editor.state.saveRevision||0;
+    watch(()=>props.revision,()=>{
+      const saved=props.editor.state.saveRevision||0;
+      if(saved>observedSaveRevision){observedSaveRevision=saved;refreshSignal.value++;}
+    });
     return()=>h('section',{class:'side-section file-editor review-page','aria-label':'差异审查'},[
       h('h2',{},'差异审查'),
       h('p',{class:'note'},'分别查看未保存的编辑器草稿，以及当前会话工作区的 Git 索引和工作区差异。Git 查询只读；当前尚未将文件变化归属到具体 Agent 任务。'),
@@ -28,6 +34,7 @@ export const ReviewPage=defineComponent({
         directory:props.directory||'',
         configured:props.configured,
         active:props.active,
+        refreshSignal:refreshSignal.value,
         status:props.status,
         diff:props.diff,
         onOpen:(path:string)=>emit('open',path),

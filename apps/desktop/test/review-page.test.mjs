@@ -10,6 +10,7 @@ const bundle=await build({entryPoints:[entry],bundle:true,write:false,format:'cj
 const module={exports:{}};
 vm.runInNewContext(bundle.outputFiles[0].text,{module,exports:module.exports,require:createRequire(import.meta.url)});
 const {ReviewPage}=module.exports;
+const vue=createRequire(import.meta.url)('vue');
 
 test('差异审查组合真实草稿和当前会话 Git 数据，并保留范围边界',()=>{
   const editor={state:{path:'src/a.cj'}};
@@ -33,4 +34,25 @@ test('差异审查组合真实草稿和当前会话 Git 数据，并保留范围
   gitNode.props.onBrowse('src/');
   gitNode.props.onChoose();
   assert.deepEqual(emitted,[['open','src/a.cj'],['browse','src/'],['choose']]);
+});
+
+test('仅在编辑器写后回读确认成功时通知 Git 差异页刷新',async()=>{
+  const editor={state:{path:'src/a.cj',saveRevision:0}};
+  const props=vue.reactive({editor,revision:3,sessionId:'s1',directory:'D:/work',configured:true,active:true,
+    status:async()=>({sessionId:'s1',directory:'D:/work',output:'',exitCode:0,truncated:false,failure:'',diagnostic:''}),
+    diff:async(path,scope)=>({sessionId:'s1',directory:'D:/work',path,scope,output:'',exitCode:0,truncated:false,failure:'',diagnostic:''})});
+  const scope=vue.effectScope();
+  const render=scope.run(()=>ReviewPage.setup(props,{emit:()=>{}}));
+  try{
+    assert.equal(render().children[3].props.refreshSignal,0);
+    editor.state.saveRevision=1;props.revision++;
+    await vue.nextTick();
+    assert.equal(render().children[3].props.refreshSignal,1);
+    props.revision++;
+    await vue.nextTick();
+    assert.equal(render().children[3].props.refreshSignal,1);
+    editor.state.saveRevision=2;props.revision++;
+    await vue.nextTick();
+    assert.equal(render().children[3].props.refreshSignal,2);
+  }finally{scope.stop();}
 });

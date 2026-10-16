@@ -1,15 +1,16 @@
-import {defineComponent,h,ref,watch,onBeforeUnmount,type PropType} from 'vue';
+import {defineComponent,h,ref,watch,onScopeDispose,type PropType} from 'vue';
 import {createGitWorkbench,type GitReply} from './git-workbench-state';
 import {createGitActionPlan,inspectPushUpstream,parseGitPushTarget,safeGitBranchLabel,type GitActionKind} from './git-action-state';
 import {ExecutionTask,type ExecutionPreset} from './execution-task';
 
-export const GitWorkbench=defineComponent({props:{sessionId:{type:String,required:true},directory:{type:String,required:true},configured:Boolean,active:Boolean,status:{type:Function as PropType<()=>Promise<GitReply>>,required:true},diff:{type:Function as PropType<(path:string,scope:string)=>Promise<GitReply>>,required:true},pushTarget:{type:Function as PropType<()=>Promise<GitReply>>},executionApi:Object},emits:['open','browse','choose'],setup(props,{emit}){
+export const GitWorkbench=defineComponent({props:{sessionId:{type:String,required:true},directory:{type:String,required:true},configured:Boolean,active:Boolean,refreshSignal:Number,status:{type:Function as PropType<()=>Promise<GitReply>>,required:true},diff:{type:Function as PropType<(path:string,scope:string)=>Promise<GitReply>>,required:true},pushTarget:{type:Function as PropType<()=>Promise<GitReply>>},executionApi:Object},emits:['open','browse','choose'],setup(props,{emit}){
   const revision=ref(0),selectedPaths=ref(new Set<string>()),actionPreset=ref<ExecutionPreset|null>(null),actionError=ref(''),actionBusy=ref(false);
-  let actionEpoch=0;
+  let actionEpoch=0,refreshAfterAction=false;
   const view=createGitWorkbench({status:()=>props.status(),diff:(path,scope)=>props.diff(path,scope)},()=>({sessionId:props.sessionId,directory:props.directory}),()=>revision.value++);
-  watch(()=>[props.sessionId,props.directory,props.configured],()=>{actionEpoch++;actionBusy.value=false;view.reset();selectedPaths.value=new Set();actionPreset.value=null;actionError.value='';if(props.active&&props.configured)void view.refresh();},{immediate:true});
-  watch(()=>props.active,active=>{if(active&&props.configured&&!view.state.busy&&!view.state.loaded)void view.refresh();else if(!active)view.reset();},{immediate:true});
-  onBeforeUnmount(()=>view.dispose());
+  watch(()=>[props.sessionId,props.directory,props.configured],()=>{actionEpoch++;actionBusy.value=false;refreshAfterAction=false;view.reset();selectedPaths.value=new Set();actionPreset.value=null;actionError.value='';if(props.active&&props.configured)void view.refresh();},{immediate:true});
+  watch(()=>props.active,active=>{if(active&&props.configured&&!view.state.busy&&!view.state.loaded)void view.refresh();else if(!active)view.reset();});
+  watch(()=>props.refreshSignal,()=>{if(!props.active||!props.configured)return;if(actionBusy.value){refreshAfterAction=true;return;}refresh();});
+  onScopeDispose(()=>view.dispose());
   const labels:Record<string,string>={M:'修改',A:'新增',D:'删除',R:'重命名',C:'复制',U:'冲突','?':'未跟踪'};
   function refresh(){selectedPaths.value=new Set();actionError.value='';void view.refresh();}
   function toggle(path:string,checked:boolean){const next=new Set(selectedPaths.value);if(checked)next.add(path);else next.delete(path);selectedPaths.value=next;}
@@ -36,7 +37,7 @@ export const GitWorkbench=defineComponent({props:{sessionId:{type:String,require
       const plan=createGitActionPlan(kind,{entries:current.entries,selectedPaths:[...selectedPaths.value],stagedPaths:staged.flatMap(e=>e.oldPath?[e.oldPath,e.path]:[e.path]),conflicts:current.entries.filter(e=>e.x==='U'||e.y==='U').map(e=>e.path),branch:current.branch,commitMessage:commitMessage.value,pushTarget});
       actionPreset.value={...plan,id:globalThis.crypto.randomUUID()};
     }catch(e){if(ticket===actionEpoch)actionError.value=String((e as Error).message||e);}
-    finally{if(ticket===actionEpoch)actionBusy.value=false;}
+    finally{if(ticket===actionEpoch){actionBusy.value=false;if(refreshAfterAction){refreshAfterAction=false;refresh();}}}
   }
   return()=>{void revision.value;const s=view.state,staged=s.entries.filter(e=>e.x!==' '&&e.x!=='?'),working=s.entries.filter(e=>e.y!==' '&&e.y!=='?'),untracked=s.entries.filter(e=>e.x==='?');
     const stageable=(e:typeof s.entries[number],scope:string)=>!s.limited&&(scope==='working'||scope==='untracked')&&(e.x===' '&&e.y!==' '&&e.y!=='U'||e.x==='?'&&e.y==='?')&&!e.path.endsWith('/');
