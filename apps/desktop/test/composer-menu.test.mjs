@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/composer-menu.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue']});
 function fixture(listFiles){
   const unmounts=[],emitted=[];
-  const vue={defineComponent:x=>x,ref:value=>({value}),h:(type,props,children)=>({type,props,children}),nextTick:fn=>Promise.resolve().then(fn),onMounted:()=>{},onBeforeUnmount:fn=>unmounts.push(fn)};
+  const vue={watch:()=>{},defineComponent:x=>x,ref:value=>({value}),h:(type,props,children)=>({type,props,children}),nextTick:fn=>Promise.resolve().then(fn),onMounted:()=>{},onBeforeUnmount:fn=>unmounts.push(fn)};
   const ctx={module:{exports:{}},require:()=>vue,innerWidth:1384,innerHeight:764,document:{removeEventListener(){}},window:{removeEventListener(){}}};
   vm.runInNewContext(compiled.outputFiles[0].text,ctx);
   const render=ctx.module.exports.AddButton.setup({workspaceConfigured:true,goalAvailable:true,listFiles},{emit:(...args)=>emitted.push(args)});

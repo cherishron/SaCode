@@ -5,7 +5,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 assert.equal(process.platform,'win32');
 const [coreArg,brokerArg,dllArg]=process.argv.slice(2);assert.ok(coreArg&&brokerArg&&dllArg,'需要明确私有 core、broker 和 DLL 目录');
-const core=resolve(coreArg),broker=resolve(brokerArg),dlls=resolve(dllArg),base=resolve('apps/desktop/.tmp-test');mkdirSync(base,{recursive:true});
+const core=resolve(coreArg),broker=resolve(brokerArg),dlls=resolve(dllArg),base=resolve('target/tmp');mkdirSync(base,{recursive:true});
 const root=mkdtempSync(join(base,'windows-supervisor-'));const env={...process.env,TMP:root,TEMP:root};
 const stdx=readFileSync('apps/host/cjpm.toml','utf8').match(/path-option\s*=\s*\[\s*"([^"]+)"/)[1];
 const exe=join(root,'probe.exe'),source=resolve('core/test-support/windows-supervisor-probe.cj');

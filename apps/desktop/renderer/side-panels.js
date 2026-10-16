@@ -4,7 +4,35 @@
 // 经典脚本（CSP script-src 'self'）。
 (function (root) {
   'use strict';
+  const sourceTraceSession = new WeakMap();
+  const safeAuditText = (value, limit) => typeof value === 'string' ? value.slice(0, limit || 512) : '';
+  const parseRetrievalAudit = (event) => {
+    if (!event || typeof event.data !== 'string') return null;
+    try {
+      const value = JSON.parse(event.data);
+      if (!value || typeof value !== 'object' || Array.isArray(value) ||
+          typeof value.status !== 'string' || typeof value.workspace !== 'string' || !Array.isArray(value.matches)) return null;
+      return value;
+    } catch (_) { return null; }
+  };
+  const retrievalStatus = (value) => ({
+    matched: '已匹配', partial: '部分匹配', 'no-match': '未匹配', skipped: '未执行检索',
+    'budget-exhausted': '上下文预算不足', 'discarded-changed-snapshot': '快照变化，结果已丢弃',
+  }[value] || '未知状态');
   function renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries }) {
+    const refreshSources = () => {
+      const session = self.scrollSession;
+      // 首次打开时无法证明现存 traceEvents 属于当前会话；清掉未绑定会话身份的旧页后再取当前记录。
+      if (!sourceTraceSession.has(self) || sourceTraceSession.get(self) !== session) {
+        self.traceEvents = [];
+        self.traceMore = false;
+        self.traceError = '';
+      }
+      sourceTraceSession.set(self, session);
+      self.refreshTrace(true, session);
+    };
+    // 来源页复用当前会话的持久轨迹。会话在来源页打开时切换，也要重新读取，避免展示上一会话的审计。
+    if (self.sideTab === 'sources' && (!sourceTraceSession.has(self) || sourceTraceSession.get(self) !== self.scrollSession)) refreshSources();
     const toolBtns = self.tools.map((t) =>
       el("div", "tool-card", [
       el("button", "tool", [({ read: "读取文件", write: "写入文件" }[t.name] || t.name), el("span", "tool-desc", (t.description || "") + (t.needsApproval ? " · 需审批" : " · 免审批"))], {
@@ -29,7 +57,7 @@
       : [];
 
     const sideTabs = h(window.SaCodeSlots.WorkbenchTabs,{active:self.sideTab,pendingApproval:!!self.approval,expanded:self.workbenchExpanded,split:self.sideSplit,
-      onSelect:id=>{self.sideTab=id;},onClose:id=>{if(id==='preview')self.filePreview.close();},
+      onSelect:id=>{self.sideTab=id;if(id==='sources')refreshSources();},onClose:id=>{if(id==='preview')self.filePreview.close();},
       onExpand:()=>{self.workbenchExpanded=!self.workbenchExpanded;window.Vue.nextTick(()=>document.getElementById('expand-workbench')?.focus());},
       onSplit:()=>{self.sideSplit=!self.sideSplit;},
       onClosePanel:()=>{self.workbenchExpanded=false;self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side')?.focus());},
@@ -62,19 +90,61 @@
         }),
       ], { id: "files-panel", tabindex: -1 }),
     ], { id: "side-page-files", role: "tabpanel", "aria-labelledby": "side-tab-files", hidden: self.sideTab !== "files" });
-    const tracePage = el("div", "side-page", [
+    const sourceView = self.sideTab === 'sources';
+    const traceEvents = Array.isArray(self.traceEvents) ? self.traceEvents : [];
+    const retrievalEvents = traceEvents.filter(ev => ev && ev.type === 'knowledge/retrieval');
+    const tracePage = el("div", "side-page", [sourceView ?
+      el("section", "side-section", [
+        el("div", "preview-heading", [el("h2", null, "来源"),
+          el("button", "btn", self.traceBusy ? "刷新中…" : "刷新", {
+            id: "refresh-sources", disabled: !!self.traceBusy, onClick: () => self.refreshTrace(true, self.scrollSession),
+          }),
+        ]),
+        el("p", "note", "当前会话已持久化的知识检索来源；仅显示审计元数据，不显示知识正文。"),
+        self.traceError ? el("p", "note", "读取来源审计失败，请检查会话连接后重试。", { role: "alert", id: "sources-error" }) : null,
+        self.traceBusy && !retrievalEvents.length ? el("p", "note", "正在读取来源…", { role: "status" }) : null,
+        !self.traceBusy && !self.traceError && !retrievalEvents.length ? el("div", "empty-card", [
+          el("h3", null, "当前会话暂无知识检索来源"),
+          el("p", "note", "完成一次包含知识库检索的任务后，来源审计会显示在这里。"),
+        ], { id: "sources-empty" }) : null,
+        retrievalEvents.length ? el("div", "trace-timeline", retrievalEvents.slice().reverse().map((event, eventIndex) => {
+          const audit = parseRetrievalAudit(event);
+          if (!audit) return el("article", "trace-event", [
+            el("span", "trace-type", "来源审计格式无法识别"),
+          ], { key: "invalid-" + String(event.seq || eventIndex) });
+          const matches = audit.matches.filter(match => match && typeof match === 'object' && !Array.isArray(match));
+          return el("article", "trace-event", [
+            el("div", "source-audit", [
+              el("strong", null, "检索状态：" + retrievalStatus(safeAuditText(audit.status, 64))),
+              el("p", "note", "工作区：" + (safeAuditText(audit.workspace) || "未记录")),
+              matches.length ? el("div", "source-matches", matches.map((match, matchIndex) => {
+                const scope = safeAuditText(match.scope, 64) || "未知范围";
+                const id = safeAuditText(match.id, 160) || "未知来源";
+                const revision = Number.isSafeInteger(match.revision) && match.revision >= 0 ? String(match.revision) : "未知";
+                const sourcePath = safeAuditText(match.sourcePath) || "（无文件路径）";
+                return el("div", "source-match", [
+                  el("strong", null, scope + " · " + id),
+                  el("span", "trace-type", "修订 " + revision),
+                  el("p", "preview-path", sourcePath),
+                ], { key: String(event.seq || eventIndex) + "-" + matchIndex });
+              })) : el("p", "note", "此检索没有匹配到来源。"),
+            ]),
+          ], { key: String(event.seq || eventIndex) });
+        })) : null,
+        self.traceMore ? el("button", "btn", "加载更早的来源", { disabled: !!self.traceBusy, onClick: () => self.refreshTrace(false, self.scrollSession) }) : null,
+      ], { id: "sources-panel", tabindex: -1 }) :
       el("section", "side-section", [el("h2", null, "会话轨迹"),
         el("p","note","当前会话已落盘的事件时间线（按 seq 倒序显示最近一页）。"),
         self.traceError ? el("p","note","读取失败："+self.traceError,{role:"alert"}) : null,
-        self.traceBusy && !self.traceEvents.length ? el("p","note","加载中…",{role:"status"}) : null,
-        !self.traceBusy && !self.traceEvents.length && !self.traceError ? el("p","note","尚无已落盘事件") : null,
-        self.traceEvents.length ? el("div","trace-timeline",self.traceEvents.slice().reverse().map(ev=>el("div","trace-event",[
+        self.traceBusy && !traceEvents.length ? el("p","note","加载中…",{role:"status"}) : null,
+        !self.traceBusy && !traceEvents.length && !self.traceError ? el("p","note","尚无已落盘事件") : null,
+        traceEvents.length ? el("div","trace-timeline",traceEvents.slice().reverse().map(ev=>el("div","trace-event",[
           el("span","trace-seq","#"+ev.seq),
           el("span","trace-type",String(ev.type||"event")),
         ]))) : null,
         self.traceMore ? el("button","btn","加载更早的事件",{onClick:()=>self.refreshTrace(false)}) : null,
       ], { id: "trace-panel", tabindex: -1 }),
-    ], { id: "side-page-trace", role: "tabpanel", "aria-labelledby": "side-tab-trace", hidden: self.sideTab !== "trace" });
+    ], { id: sourceView ? "side-page-sources" : "side-page-trace", role: "tabpanel", "aria-labelledby": sourceView ? "side-tab-sources" : "side-tab-trace", hidden: !sourceView && self.sideTab !== "trace" });
     const guide = el("div", "side-page", [
       el("section", "side-section", [
         el("h2", null, "SaCode 使用指南"),

@@ -202,7 +202,7 @@ export const Page=defineComponent({
 // --- 槽位注册 ---
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
-    child.register({name:'model-center.tab',id:'budget-stats',order:2,label:'费用统计'},
+    child.register({name:'model-center.tab',id:'budget-stats',order:3,label:'费用统计'},
       defineComponent({name:'SaCodeBudgetStatsSlot',props:['owner'],setup:(props)=>()=>h(Page,{adapter:(props.owner as any)?.adapter})}));
   });
 }

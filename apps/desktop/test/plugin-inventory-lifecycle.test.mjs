@@ -13,7 +13,7 @@ test('插件清单提供者晚绑定、换绑、卸载与迟到读取隔离',{ti
   // 与 model-pages-render 同款 harness 环境硬化：%TEMP% 可能被 ACL/AV 拒写，
   // esbuild 输出与 electron user-data 都落到仓库内可写目录；ELECTRON_RUN_AS_NODE
   // 会被 harness 注入，spawn 子进程必须删掉它，否则 electron 当纯 node 跑、app 未定义。
-  const baseDir=join(here,'..','.tmp-test','plugin-inventory');
+  const baseDir=join(here,'..','..','..','target','tmp','plugin-inventory');
   mkdirSync(baseDir,{recursive:true});
   const dir=mkdtempSync(join(baseDir,'run-'));
   const userData=join(dir,'user-data');mkdirSync(userData,{recursive:true});

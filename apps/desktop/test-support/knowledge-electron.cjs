@@ -12,6 +12,8 @@ app.whenReady().then(async()=>{
   await win.loadFile(join(root,'fixture.html'));
   const start=Date.now();let result;while(Date.now()-start<60000){result=await win.webContents.executeJavaScript('window.knowledgeResult||null');if(result)break;await new Promise(r=>setTimeout(r,100));}
   if(!result?.ok)throw Error(result?.error||'knowledge-ui-timeout');
+  const disclosure=await win.webContents.executeJavaScript("document.body.textContent.includes('相关片段会随任务请求发送给当前模型。')&&!document.body.textContent.includes('不自动发送给模型')");
+  if(!disclosure)throw Error('knowledge-model-disclosure-missing');
   win.showInactive();win.webContents.invalidate();await new Promise(r=>setTimeout(r,200));
   writeFileSync(join(root,'knowledge-light.png'),(await win.webContents.capturePage()).toPNG());
   await win.webContents.executeJavaScript("document.documentElement.dataset.theme='dark'");await new Promise(r=>setTimeout(r,100));writeFileSync(join(root,'knowledge-dark.png'),(await win.webContents.capturePage()).toPNG());

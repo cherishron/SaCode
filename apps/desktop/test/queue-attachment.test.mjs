@@ -23,8 +23,8 @@ const FIXTURE = join(REPO, 'scripts', 'sse-contract-server.cjs');
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAAAAAAA';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('非图片模型拒绝历史图片且宿主继续服务，切换图片模型可重试', { timeout: 120000 }, async () => {
-  const { fixture, bridge } = await open('capability', false);
+test('非图片模型拒绝历史图片且宿主继续服务，切换图片模型可重试', { timeout: 120000 }, async (t) => {
+  const { fixture, bridge } = await open(t, 'capability', false);
   try {
     const up = await bridge.request('attachment/upload', { kind: 'image', name: 'x.png', mediaType: 'image/png', data: PNG_B64 });
     await bridge.request('session/append', { data: '看图', receiptIds: [up.receiptId] });
@@ -49,8 +49,9 @@ test('非图片模型拒绝历史图片且宿主继续服务，切换图片模�
   }
 });
 
-async function startFixture() {
+async function startFixture(t) {
   const proc = spawn(process.execPath, [FIXTURE, '--watchdog-ms', '120000'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  t.after(() => proc.kill());
   const port = await new Promise((res, rej) => {
     let buf = '';
     const to = setTimeout(() => rej(new Error('SSE 夹具启动超时')), 8000);
@@ -61,10 +62,11 @@ async function startFixture() {
   return { proc, port: Number(port) };
 }
 
-async function open(tag, image = true) {
+async function open(t, tag, image = true) {
   const dir = mkdtempSync(join(tmpdir(), `sacode-queue-att-${tag}-`));
-  const fixture = await startFixture();
+  const fixture = await startFixture(t);
   const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings') });
+  t.after(() => bridge.stop());
   await bridge.start(dir);
   // provider 指到夹具的 vision 回显路由：图片 part 到底有没有到，只有 provider 侧能证。
   await bridge.request('model/registry/update', {
@@ -88,8 +90,8 @@ async function settle(bridge) {
   throw new Error('回合未在时限内结算');
 }
 
-test('排队那条带图的消息在轮次边界落为引用与正文，provider 看到一条图片 part', { timeout: 120000 }, async () => {
-  const { dir, fixture, bridge } = await open('commit');
+test('排队那条带图的消息在轮次边界落为引用与正文，provider 看到一条图片 part', { timeout: 120000 }, async (t) => {
+  const { dir, fixture, bridge } = await open(t, 'commit');
   try {
     await bridge.request('session/submit', { eventType: 'user/message', data: '第一句' });
     const up = await bridge.request('attachment/upload', { kind: 'image', name: 'q.png', mediaType: 'image/png', data: PNG_B64 });
@@ -122,8 +124,8 @@ test('排队那条带图的消息在轮次边界落为引用与正文，provider
   }
 });
 
-test('排队条目在送达前被删掉，凭证随之作废，日志一条引用都不多', { timeout: 120000 }, async () => {
-  const { dir, fixture, bridge } = await open('retire');
+test('排队条目在送达前被删掉，凭证随之作废，日志一条引用都不多', { timeout: 120000 }, async (t) => {
+  const { dir, fixture, bridge } = await open(t, 'retire');
   try {
     await bridge.request('session/submit', { eventType: 'user/message', data: '先说一句' });
     const up = await bridge.request('attachment/upload', { kind: 'image', name: 'x.png', mediaType: 'image/png', data: PNG_B64 });

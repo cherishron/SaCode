@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 const here=dirname(fileURLToPath(import.meta.url));
 const require=createRequire(import.meta.url);
 test('真实Electron供应商部分保存与密钥独立重试', {timeout:40000}, async()=>{
-  const base=join(here,'../.tmp-test/provider-retry-render');mkdirSync(base,{recursive:true});
+  const base=join(here,'../../../target/tmp/provider-retry-render');mkdirSync(base,{recursive:true});
   const dir=mkdtempSync(join(base,'run-'));mkdirSync(join(dir,'user-data'));
   await build({entryPoints:[join(here,'../renderer/pages/provider-settings.ts')],bundle:true,format:'iife',globalName:'ProviderPage',outfile:join(dir,'page.js'),plugins:[{name:'vue-runtime',setup(b){b.onResolve({filter:/^vue$/},()=>({path:'vue',namespace:'runtime'}));b.onLoad({filter:/.*/,namespace:'runtime'},()=>({contents:'module.exports=globalThis.Vue;',loader:'js'}));}}]});
   writeFileSync(join(dir,'fixture.html'),`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'"><div id="fixture"></div><script src="${pathToFileURL(join(here,'../renderer/vendor/vue.runtime.global.prod.js')).href}"></script><script src="page.js"></script><script src="checks.js"></script>`);

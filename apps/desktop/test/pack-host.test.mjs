@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,7 +19,10 @@ test('缺少 stdx TLS 的 pthread 依赖时拒绝宣称 Host 自包含',()=>{
 });
 test('Host 从构建环境发现 pthread 并实际带入发布目录',()=>{
  const {result,out}=fixture(true);assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(join(out,'bin','libwinpthread-1.dll'),'utf8'),'pthread-runtime');
+ assert.equal(readFileSync(join(out,'bin','zoneinfo','Asia','Shanghai')).subarray(0,4).toString('ascii'),'TZif');
+ assert.match(readFileSync(join(out,'bin','zoneinfo','SA-CODE-TZDATA.txt'),'utf8'),/2026\.5/);
 });
 test('显式 DLL 目录已有运行库时不要求 PATH 再提供一份',()=>{
  const {result,out}=fixture(true,true);assert.equal(result.status,0,result.stderr);assert.equal(readFileSync(join(out,'bin','libwinpthread-1.dll'),'utf8'),'pthread-runtime');
+ assert.ok(existsSync(join(out,'bin','zoneinfo','Asia','Shanghai')));
 });

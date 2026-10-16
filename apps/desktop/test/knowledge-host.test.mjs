@@ -9,7 +9,7 @@ import {createServer} from 'node:http';
 import {spawnSync} from 'node:child_process';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
 const here=dirname(fileURLToPath(import.meta.url));
-const localTemp=join(here,'..','.tmp-test');
+const localTemp=join(here,'..','..','..','target','tmp');
 function makeTempRoot(prefix){mkdirSync(localTemp,{recursive:true});return mkdtempSync(join(localTemp,prefix));}
 test('真实Host知识库：持久恢复、项目隔离、CAS、来源失效与越界拒绝',{timeout:40000,skip:!process.env.SACODE_HOST},async t=>{
  const root=makeTempRoot('knowledge-host-');const project=join(root,'project');mkdirSync(project);writeFileSync(join(project,'source.md'),'源码约束');const env=fixtureHostEnv(root);

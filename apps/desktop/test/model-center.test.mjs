@@ -1,4 +1,4 @@
-// 模型中心四页测试：槽位注册、纯函数校验、代码安全（无 eval/动态 import/localStorage）。
+// 模型中心五页测试：槽位注册、纯函数校验、代码安全（无 eval/动态 import/localStorage）。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
@@ -14,7 +14,7 @@ const run=async(code)=>{const ctx={module:{exports:{}},queueMicrotask,AggregateE
 const read=fn=>readFileSync(join(pages,fn),'utf8');
 
 // --- 槽位注册测试 ---
-test('createModelCenterAssembly 注册四页到 model-center.tab 列表槽位',async()=>{
+test('createModelCenterAssembly 注册五页到 model-center.tab 列表槽位',async()=>{
   const code=await bundle('client-slots.ts');
   const {SlotCore,ClientScope,createModelCenterAssembly}=await run(code);
   const asm=createModelCenterAssembly();
@@ -27,9 +27,9 @@ test('createModelCenterAssembly 注册四页到 model-center.tab 列表槽位',a
   assert.equal(tabDecl.spec.scope,'root');
   // 四页都在列表里
   const entries=slots.entriesOfSlot('model-center.tab');
-  assert.equal(entries.length,4);
+  assert.equal(entries.length,5);
   const ids=entries.map(e=>e.options.id).sort();
-  assert.deepEqual(Array.from(ids),['budget-stats','custom-models','migration','provider-settings']);
+  assert.deepEqual(Array.from(ids),['budget-stats','custom-models','migration','model-call-log','provider-settings']);
   asm.dispose();
 });
 
@@ -60,6 +60,30 @@ test('供应商新增草稿使用自定义写接口，不误走内置启停', as
   await adapters['provider-settings'].save({id:'test',declared:false,key:'test-key',models:[{id:'grok-4.3',name:'grok-4.3'}]},0);
   assert.equal(saved.d.models[0].id,'grok-4.3');
   assert.equal(saved.key,'test-key');
+});
+
+test('模型调用日志适配器跨会话聚合、按时序倒序、并补全会话归属',async()=>{
+  const {createModelCenterAdapters}=await run(await bundle('model-center-adapter.ts'));
+  const api={
+    sessionCatalog:async()=>({entries:[
+      {id:'s1',title:'会话一'},{id:'s2',title:'会话二'},{id:'s3',title:'会话三'}
+    ]}),
+    requestTrace:async(sessionId)=>{
+      const base=sessionId==='s1'?1000:sessionId==='s2'?2000:3000;
+      return {requests:[
+        {request:{time:base+20,header:{config:{provider:'p-'+sessionId,model:'m-'+sessionId}}},end:{state:'completed',durationMs:10,ttftMs:3,usageTokens:'{"total_tokens":5}'},output:'o1'},
+        {request:{time:base+10,header:{config:{provider:'p-'+sessionId,model:'m-'+sessionId}}},end:{state:'completed',durationMs:8,ttftMs:2,usageTokens:'{"total_tokens":3}'},output:'o2'},
+      ]};
+    },
+  };
+  const adapters=createModelCenterAdapters(api);
+  const view=await adapters['model-call-log'].describe();
+  assert.equal(view.calls.length,6,'三个会话各两条共六条');
+  assert.equal(view.calls[0].sessionId,'s3');
+  assert.equal(view.calls[0].request.time,3020);
+  assert.equal(view.calls[5].request.time,1010);
+  assert.equal(view.calls[0].sessionTitle,'会话三');
+  assert.equal(view.scanned,3);
 });
 
 test('供应商新增表单提交自定义标记及用户填写的模型目录',async()=>{
@@ -169,8 +193,8 @@ test('migration buildExport：输出合法 JSON',async()=>{
 });
 
 // --- 代码安全测试 ---
-test('四页与装配均无 eval/动态 import/localStorage',()=>{
-  const files=['provider-settings.ts','custom-models.ts','budget-stats.ts','migration.ts','client-slots.ts'];
+test('五页与装配均无 eval/动态 import/localStorage',()=>{
+  const files=['provider-settings.ts','custom-models.ts','budget-stats.ts','migration.ts','model-call-log.ts','client-slots.ts'];
   for(const f of files){
     const src=read(f).split('\n').filter(line=>!line.trimStart().startsWith('//')).join('\n');
     assert.equal(/new Function\(|\beval\(/.test(src),false,`${f} 不能运行时求值`);
@@ -179,8 +203,8 @@ test('四页与装配均无 eval/动态 import/localStorage',()=>{
   }
 });
 
-test('四页均无 ipcRenderer 引用',()=>{
-  const files=['provider-settings.ts','custom-models.ts','budget-stats.ts','migration.ts'];
+test('五页均无 ipcRenderer 引用',()=>{
+  const files=['provider-settings.ts','custom-models.ts','budget-stats.ts','migration.ts','model-call-log.ts'];
   for(const f of files){
     const src=read(f);
     assert.equal(/ipcRenderer/.test(src),false,`${f} 不能直接引用 ipcRenderer`);

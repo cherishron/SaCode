@@ -1,6 +1,16 @@
-export type ExecutionState={executionId:string;sessionId:string;taskId:string;requestId:string;proposal:string;proposalDigest:string;revision:number;phase:string;result:string;providerAvailable:boolean;approvalArguments?:string};
+export type ExecutionState={executionId:string;sessionId:string;taskId:string;requestId:string;proposal:string;proposalDigest:string;revision:number;phase:string;result:string;providerAvailable:boolean;providerReason:string;approvalArguments?:string};
 type Api={workspaceGet:()=>Promise<any>;executionPropose:Function;executionDescribe:Function;executionAuthorize:Function;executionStart:Function;executionStop:Function;executionOutput:Function;approvalAsk:Function;approvalAnswer:Function};
 const phases=new Set(['awaiting-approval','admitted','starting','running','stopping','exited','unknown','cancelled-before-start']);
+const providerReasons=new Set(['','platform-sandbox-unavailable','bubblewrap-required','unsafe-workspace','workspace-unavailable','sandbox-probe-failed']);
+export function executionProviderNotice(reason:string):string{
+ switch(reason){
+  case'platform-sandbox-unavailable':return'当前平台尚未接入可验证的执行隔离后端；命令仍是提案，启动未开放。';
+  case'bubblewrap-required':return'缺少 bubblewrap 隔离后端；命令仍是提案，启动未开放。';
+  case'unsafe-workspace':return'当前工作区不符合隔离策略；命令仍是提案，启动未开放。';
+  case'workspace-unavailable':return'当前工作区目录不可用；命令仍是提案，启动未开放。';
+  default:return'隔离与监督探针尚未通过；命令仍是提案，启动未开放。';
+ }
+}
 // 只持有投影和消费游标。标签销毁或会话切换不停止服务端任务。
 export function createExecutionTask(api:Api,session:()=>string,changed:()=>void){
  const state={task:null as ExecutionState|null,workspace:null as any,busy:'',error:'',cursor:-1,more:false,stdout:'',stderr:'',capture:{stdout:{end:false,eof:false,truncated:false},stderr:{end:false,eof:false,truncated:false}}};
@@ -9,8 +19,10 @@ export function createExecutionTask(api:Api,session:()=>string,changed:()=>void)
  function reset(){++epoch;state.task=null;state.workspace=null;state.busy='';state.error='';outputReset();if(!disposed)changed();}
  function check(value:any,id:string,executionId?:string):ExecutionState{
   if(!value||value.sessionId!==id||(executionId&&value.executionId!==executionId)||!/^execution-\d+$/.test(value.executionId)||!Number.isSafeInteger(value.revision)||value.revision<1||!phases.has(value.phase)||typeof value.providerAvailable!=='boolean'||typeof value.proposal!=='string'||!/^[a-f0-9]{64}$/.test(value.proposalDigest)||typeof value.result!=='string')throw Error('任务响应身份或状态无效');
+  const providerReason=value.providerReason===undefined?(value.providerAvailable?'':'sandbox-probe-failed'):value.providerReason;
+  if(typeof providerReason!=='string'||!providerReasons.has(providerReason)||(value.providerAvailable!==(providerReason==='')))throw Error('任务响应隔离状态无效');
   if(state.task?.executionId===value.executionId&&(value.revision<state.task.revision||value.proposal!==state.task.proposal||value.proposalDigest!==state.task.proposalDigest))throw Error('任务修订倒退或提案改变');
-  return value;
+  return {...value,providerReason};
  }
  async function action(name:string,work:(id:string,current:()=>boolean)=>Promise<any>,apply:(value:any,id:string)=>void){
   if(disposed||state.busy)return;const ticket=++epoch,id=session();state.busy=name;state.error='';changed();const current=()=>!disposed&&ticket===epoch&&session()===id;
@@ -25,7 +37,7 @@ export function createExecutionTask(api:Api,session:()=>string,changed:()=>void)
   const answer=await api.approvalAnswer(ticket.approvalId,'allowed-once');if(!current())return;if(answer.accepted!==true)throw Error('审批票已失效');
   return api.executionAuthorize(id,task.executionId,task.revision,task.proposalDigest,ticket.approvalId);
  },(value,id)=>{state.task=check(value,id,task.executionId);});}
- function control(name:'start'|'stop'){const task=state.task;if(!task)return Promise.resolve();if(name==='start'&&!task.providerAvailable){state.error='隔离与监督探针尚未通过，不能启动';changed();return Promise.resolve();}return action(name,id=>name==='start'?api.executionStart(id,task.executionId,task.revision):api.executionStop(id,task.executionId,task.revision),(value,id)=>{state.task=check(value,id,task.executionId);});}
+ function control(name:'start'|'stop'){const task=state.task;if(!task)return Promise.resolve();if(name==='start'&&!task.providerAvailable){state.error=executionProviderNotice(task.providerReason);changed();return Promise.resolve();}return action(name,id=>name==='start'?api.executionStart(id,task.executionId,task.revision):api.executionStop(id,task.executionId,task.revision),(value,id)=>{state.task=check(value,id,task.executionId);});}
  function output(){const task=state.task;if(!task)return Promise.resolve();const cursor=state.cursor;return action('output',id=>api.executionOutput(id,task.executionId,cursor,16),(page,id)=>{
   if(page.sessionId!==id||page.executionId!==task.executionId||!Array.isArray(page.records)||page.records.length>16||!Number.isSafeInteger(page.nextCursor)||page.nextCursor<cursor||typeof page.hasMore!=='boolean'||(page.hasMore&&page.nextCursor<=cursor))throw Error('输出身份或游标无效');
   let previous=cursor;const stagedSequence={...sequence},stagedBytes={...bytes},stagedRetained={...retained},stagedCapture={stdout:{...state.capture.stdout},stderr:{...state.capture.stderr}};

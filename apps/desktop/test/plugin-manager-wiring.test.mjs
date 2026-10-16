@@ -6,14 +6,54 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { HostBridge } = require('../host-bridge.cjs');
+const { registerPluginsIpc } = require('../plugins-ipc.cjs');
+const pluginsGuard = require('../plugins-guard.cjs');
+
+function ipcFixture(request) {
+  const handlers = new Map();
+  registerPluginsIpc({ handle: (name, handler) => handlers.set(name, handler) }, request, pluginsGuard);
+  return (action, args) => handlers.get('sacode:' + action)(null, args);
+}
+
+test('桌面包启停保留布尔类型和核心回执', async () => {
+  const receipt = { revision: 3, packages: [] };
+  let submitted;
+  const invoke = ipcFixture(async (method, args) => { submitted = { method, args }; return receipt; });
+  assert.equal(await invoke('pluginsSetEnabled', { name: '@local/echo', enabled: false, expectedRevision: 2 }), receipt);
+  assert.deepEqual(submitted, { method: 'plugin/set-enabled', args: { name: '@local/echo', enabled: false, expectedRevision: 2 } });
+});
+
+test('桌面组件启停请求写动作，宿主拒绝不得伪装成功', async () => {
+  let submitted;
+  const invoke = ipcFixture(async (method, args) => { submitted = { method, args }; throw Error('plugin-entry-not-wired'); });
+  await assert.rejects(invoke('pluginsSetRowEnabled', { entryId: 'echo', enabled: true, expectedRevision: 2 }), /plugin-entry-not-wired/);
+  assert.deepEqual(submitted, { method: 'plugin/entry/set-enabled', args: { entryId: 'echo', enabled: true, expectedRevision: 2 } });
+});
+
+test('宿主没有安装取消契约时桌面不得假报已取消', async () => {
+  const invoke = ipcFixture(async () => { throw Error('不应发请求'); });
+  await assert.rejects(invoke('pluginsInstallCancel', { requestId: 'request-1' }), /plugin-install-cancel-not-wired/);
+});
+
+test('桌面检视和安装进度原样返回宿主事实', async () => {
+  const calls = [];
+  const invoke = ipcFixture(async (method, args) => { calls.push({ method, args }); return { method }; });
+  assert.deepEqual(await invoke('pluginsInspect', { spec: '本地目录', registry: null }), { method: 'plugin/install/inspect' });
+  assert.deepEqual(await invoke('pluginsInstall', { spec: '本地目录', registry: null, requestId: 'request-1', approvedBuilds: [] }), { method: 'plugin/install/start' });
+  assert.deepEqual(await invoke('pluginsInstallPoll', { requestId: 'request-1' }), { method: 'plugin/install/progress' });
+  assert.deepEqual(calls.map(call => call.method), ['plugin/install/inspect', 'plugin/install/start', 'plugin/install/progress']);
+  assert.equal(calls[1].args.requestId, 'request-1');
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// 私有夹具与临时目录避开系统 Temp 的权限及并发污染。
+const TEST_ROOT = join(HERE, '..', '..', '..', 'target', 'tmp', 'plugin-wiring');
+mkdirSync(TEST_ROOT, { recursive: true });
 const HOST = process.env.SACODE_HOST || join(HERE, '..', 'dist', 'host', 'bin', 'sacode-host.exe');
 
 // 造一个本地插件包源目录。manifest 的四个必填字段与核心 psSource 用的那份一致，
@@ -28,7 +68,9 @@ function makePluginSrc(dir, name, extraFields) {
 }
 
 async function boot(dir) {
-  const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'user-settings') });
+  const temp = join(dir, 'temp');
+  mkdirSync(temp, { recursive: true });
+  const bridge = new HostBridge(HOST, { ...process.env, TEMP: temp, TMP: temp, SACODE_USER_SETTINGS_DIR: join(dir, 'user-settings') });
   await bridge.start(dir);
   return bridge;
 }
@@ -39,7 +81,7 @@ function pkg(inventory, name) {
 }
 
 test('装-启-停-卸四动作都落在宿主真事实上，换进程重读不变', { timeout: 120000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sacode-plugin-wiring-'));
+  const dir = mkdtempSync(join(TEST_ROOT, 'sacode-plugin-wiring-'));
   const bridge = await boot(dir);
   try {
     // 空态必须是 available:true + packages:[]：「还没装」不是「本部署不管理插件」，
@@ -50,16 +92,17 @@ test('装-启-停-卸四动作都落在宿主真事实上，换进程重读不�
     assert.deepEqual(empty.packages, []);
 
     const src = makePluginSrc(join(dir, 'src-echo'), '@local/sacode-tool-echo', ['description', '回显一条消息']);
-    const inspected = await bridge.request('plugin/install/inspect', { spec: src, registry: null });
+    const invoke = ipcFixture((method, args) => bridge.request(method, args));
+    const inspected = await invoke('pluginsInspect', { spec: src, registry: null });
     assert.equal(inspected.status, 'accepted', `本地目录应当被接受，实际是 ${JSON.stringify(inspected)}`);
     assert.equal(inspected.name, '@local/sacode-tool-echo');
     assert.equal(inspected.version, '0.1.0');
     // 检视是预览，不是安装：动过修订号就说明它偷偷落位了。
     assert.equal((await bridge.request('plugin/inventory')).revision, 0, '检视不得落位');
 
-    const started = await bridge.request('plugin/install/start', { spec: src, registry: null, requestId: 'req-1' });
+    const started = await invoke('pluginsInstall', { spec: src, registry: null, requestId: 'req-1', approvedBuilds: [] });
     assert.equal(started.requestId, 'req-1', '应答必须认得出是在问哪一次安装');
-    const progress = await bridge.request('plugin/install/progress', { requestId: 'req-1' });
+    const progress = await invoke('pluginsInstallPoll', { requestId: 'req-1' });
     assert.equal(progress.requestId, 'req-1');
     assert.equal(progress.phase, 'done', `本地目录安装应当结算成 done，实际 ${progress.phase}`);
 
@@ -70,15 +113,15 @@ test('装-启-停-卸四动作都落在宿主真事实上，换进程重读不�
     assert.ok(existsSync(join(dir, 'user-settings', 'plugins.log')), '安装事实必须落进用户目录的 plugins.log');
 
     // 停用再启用：两次写都带写前的修订号，每次成功都要把修订号推进一格。
-    const off = await bridge.request('plugin/bundle/set-enabled', { name: '@local/sacode-tool-echo', enabled: false, expectedRevision: after.revision });
+    const off = await invoke('pluginsSetEnabled', { name: '@local/sacode-tool-echo', enabled: false, expectedRevision: after.revision });
     assert.equal(pkg(off, '@local/sacode-tool-echo').enabled, false, '停用必须在写后的清单里立刻可见');
     assert.equal(off.revision, after.revision + 1, '每一次写都要推进修订号');
-    const on = await bridge.request('plugin/bundle/set-enabled', { name: '@local/sacode-tool-echo', enabled: true, expectedRevision: off.revision });
+    const on = await invoke('pluginsSetEnabled', { name: '@local/sacode-tool-echo', enabled: true, expectedRevision: off.revision });
     assert.equal(pkg(on, '@local/sacode-tool-echo').enabled, true);
 
     // 卸载：清单里没了，目录也没了——只删事件不删目录会留下孤儿包，
     // 只删目录不删事件会得到一条指向不存在目录的记录，两者都是「装了但打不开」。
-    const removed = await bridge.request('plugin/bundle/remove', { name: '@local/sacode-tool-echo', expectedRevision: on.revision });
+    const removed = await invoke('pluginsUninstall', { name: '@local/sacode-tool-echo', expectedRevision: on.revision });
     assert.equal(pkg(removed, '@local/sacode-tool-echo'), undefined, '卸载后不能再出现在清单里');
     assert.equal(existsSync(join(dir, 'user-settings', 'plugins', 'local-sacode-tool-echo')), false, '卸载要把包目录一起撤掉');
 
@@ -99,7 +142,7 @@ test('装-启-停-卸四动作都落在宿主真事实上，换进程重读不�
 });
 
 test('修订号过期的写动作被拒，并且盘上事实一字未动', { timeout: 120000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sacode-plugin-conflict-'));
+  const dir = mkdtempSync(join(TEST_ROOT, 'sacode-plugin-conflict-'));
   const bridge = await boot(dir);
   try {
     const src = makePluginSrc(join(dir, 'src-echo'), '@local/sacode-tool-echo');
@@ -133,7 +176,7 @@ test('修订号过期的写动作被拒，并且盘上事实一字未动', { tim
 });
 
 test('安装任务的修订与远端源不在这一片：注册表只报本机事实，未接的动作如实拒绝', { timeout: 120000 }, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sacode-plugin-honest-'));
+  const dir = mkdtempSync(join(TEST_ROOT, 'sacode-plugin-honest-'));
   const bridge = await boot(dir);
   try {
     // 注册表面前只接本机：没有配置任何远端源时必须如实报空，
@@ -141,6 +184,10 @@ test('安装任务的修订与远端源不在这一片：注册表只报本机�
     const reg = await bridge.request('plugin/registries');
     assert.equal(reg.registry, null);
     assert.deepEqual(reg.fallbackRegistries, []);
+    await assert.rejects(
+      () => bridge.request('plugin/install/progress', { requestId: 'never-started' }),
+      /plugin-install-request-not-found/
+    );
 
     // npm 名形态还没接（这一片只接本地目录）：必须明确拒绝并给出 problem，
     // 而不是当成一个不存在的本地目录报 not-found——那会把用户指向错的方向。

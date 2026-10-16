@@ -57,7 +57,7 @@ function loadMain() {
       if (id === './host-bridge.cjs') {
         return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
       }
-      if (id === './paths.cjs') return { hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
+      if (id === './paths.cjs') return { ...nodeRequire(jj(dirname(fileURLToPath(import.meta.url)), '..', id)), hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => nodeRequire };

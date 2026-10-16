@@ -16,7 +16,7 @@
 .new-session { justify-content:center; margin:6px 0; background:var(--new-session-fill); box-shadow:var(--elevation-stroke); }
 .workspace-heading { display:flex; align-items:center; gap:4px; margin-top:12px; color:var(--text-muted); }
 .workspace-heading>.nav-label { flex:1; padding-left:4px; }
-/* 会话检索与状态筛选：PRD §3.1 的「顶部为搜索」，过滤对象是核心目录投影出的会话树。 */
+/* 首屏仅会话搜索；日志完整性筛选收进本地会话弹窗，避免常驻技术诊断项。 */
 .sidebar-search-box { display:flex; align-items:center; gap:6px; height:32px; min-height:32px; margin-top:8px; padding:0 8px; border:.5px solid var(--border); border-radius:8px; background:var(--input-surface); color:var(--text-muted); }
 .sidebar-search { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--text); font:13px/20px var(--font-ui); }
 .sidebar-search::placeholder { color:var(--text-muted); }
@@ -79,8 +79,8 @@
 .to-bottom:hover { background:var(--surface-3); }
 /* 会话内历史对话侧栏：覆盖在对话区右缘，条目取自投影里的用户提问，点一条就把那条钉到顶部。
  * 不改 .conversation 的盒子——框架列宽判据拿的是它的左右边。 */
-.turn-nav { position:absolute; top:64px; bottom:calc(var(--composer-height,152px) + 24px); right:6px; width:152px; display:flex; flex-direction:column; gap:2px; overflow-y:auto; z-index:6; }
-.turn-nav-entry { position:relative; display:flex; align-items:center; gap:6px; height:22px; min-height:22px; padding:0 6px; border:0; border-radius:6px; background:transparent; color:var(--text-muted); font:11px/16px var(--font-ui); cursor:pointer; text-align:left; }
+.turn-nav { position:absolute; top:64px; bottom:calc(var(--composer-height,152px) + 24px); right:6px; width:152px; display:flex; flex-direction:column; gap:2px; overflow-y:auto; z-index:6; pointer-events:none; }
+.turn-nav-entry { position:relative; display:flex; align-items:center; gap:6px; height:22px; min-height:22px; padding:0 6px; border:0; border-radius:6px; background:transparent; color:var(--text-muted); font:11px/16px var(--font-ui); cursor:pointer; text-align:left; pointer-events:auto; }
 .turn-nav-entry:hover { background:var(--surface-3); color:var(--text); }
 .turn-nav-entry.active { color:var(--text); }
 .turn-nav-tick { flex:none; width:12px; height:2px; border-radius:1px; background:currentColor; opacity:.5; }
@@ -140,3 +140,7 @@
 .settings-dialog .settings-tab[aria-selected=true] { background:var(--settings-nav-active); }
 .settings-dialog .theme-choice:not([aria-pressed=true]) { border-color:var(--settings-card-border); }
 .settings-dialog .font-unit { color:var(--text-muted); }
+/* 新会话默认权限四档沿用主题选择的按钮组形态，不带图标。 */
+.permission-choices { display:flex; flex:none; gap:6px; }
+.permission-choice { min-width:64px; height:36px; padding:0 12px; border:.5px solid var(--settings-card-border); border-radius:12px; background:transparent; color:inherit; font-size:13px; cursor:pointer; }
+.permission-choice[aria-pressed=true] { background:var(--settings-module); }

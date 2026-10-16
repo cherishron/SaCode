@@ -53,24 +53,42 @@
       fileTreeBusy.value = '';
     }
 
-    async function refreshTrace(reset) {
-      const session = scrollSession.value;
-      if (!session || session === 'initial' || session === 0) {
-        traceEvents.value = []; traceCursor.value = 0; traceMore.value = false; traceError.value = ''; return;
+    function invalidateTrace() {
+      incrementTraceGeneration();
+      traceEvents.value = []; traceCursor.value = 0; traceMore.value = false;
+      traceBusy.value = false; traceError.value = '';
+    }
+
+    async function refreshTrace(reset, requestedSession) {
+      const session = String(requestedSession ?? scrollSession.value ?? '');
+      const currentSession = String(scrollSession.value ?? '');
+      if (!session || session === 'initial' || session === '0') {
+        invalidateTrace(); return;
       }
+      // A panel can request a refresh while a session switch is in flight. Never
+      // ask the mutable Host session for a different session than the renderer shows.
+      if (session !== currentSession) return;
+      const sessionGeneration = getSessionGeneration();
       const generation = incrementTraceGeneration();
       const cursor = reset ? 0 : traceCursor.value;
       traceBusy.value = true; traceError.value = '';
+      const stillCurrent = () => generation === getTraceGeneration() &&
+        sessionGeneration === getSessionGeneration() &&
+        session === String(scrollSession.value ?? '');
       try {
-        const r = await api.sessionEvents(cursor, 64);
-        if (generation !== getTraceGeneration()) return;
+        const r = await api.sessionEvents(session, cursor, 64);
+        if (!stillCurrent()) return;
+        if (!r || String(r.sessionId ?? '') !== session) {
+          traceError.value = '会话记录响应身份不匹配。';
+          return;
+        }
         const events = Array.isArray(r && r.events) ? r.events : [];
         const merged = reset ? events : [...traceEvents.value, ...events];
         traceEvents.value = merged;
         traceCursor.value = (r && typeof r.nextCursor === 'number') ? r.nextCursor : cursor;
         traceMore.value = !!(r && r.more);
       } catch (e) {
-        if (generation === getTraceGeneration()) traceError.value = String((e && e.message) || e);
+        if (stillCurrent()) traceError.value = String((e && e.message) || e);
       } finally {
         if (generation === getTraceGeneration()) traceBusy.value = false;
       }
@@ -112,7 +130,7 @@
       return changeWorkspace(() => api.workspaceSelectRecent(recentId, workspace.value.sessionId));
     }
 
-    return { refreshWorkspace: doRefreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace };
+    return { refreshWorkspace: doRefreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, invalidateTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace };
   }
 
   root.SaCodeWorkspace = { createWorkspaceAssembly };

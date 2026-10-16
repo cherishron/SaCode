@@ -6,9 +6,9 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 if(process.platform!=='win32')throw Error('本探针尚未取其他平台编译与运行证据');
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
-const root=join(repo,'apps/desktop/.tmp-test','exact-approval-'+Date.now());mkdirSync(root,{recursive:true});
+const root=join(repo,'target/tmp','exact-approval-'+Date.now());mkdirSync(root,{recursive:true});
 
-const core=resolve(process.env.SACODE_CORE_PROBE_TARGET||join(repo,'apps/desktop/.tmp-test/exact-approval-host/release/core'));
+const core=resolve(process.env.SACODE_CORE_PROBE_TARGET||join(repo,'target/tmp/exact-approval-host/release/core'));
 const toml=readFileSync(join(repo,'apps/host/cjpm.toml'),'utf8');const stdx=toml.match(/path-option\s*=\s*\[\s*"([^"]+)"/)?.[1];if(!stdx)throw Error('未找到 Host 的实际 stdx 依赖目录');
 const source=join(repo,'core/test-support/exact-approval-probe.cj');
 const args=['-O0','--import-path',core,'--import-path',stdx,'-L',core,'-L',stdx,'-lcore',...readdirSync(stdx).filter(n=>n.endsWith('.dll')).sort().map(n=>'-l:'+n),source,'-o',join(root,'probe.exe')];

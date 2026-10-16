@@ -9,7 +9,7 @@ import {createHash} from 'node:crypto';
 import {fixtureHostEnv} from './fixture-env.mjs';
 const require=createRequire(import.meta.url),{HostBridge}=require('../host-bridge.cjs'),modelApproval=require('../renderer/model-approval.js');
 const exe=resolve(process.env.SACODE_HOST||'');assert.ok(process.env.SACODE_HOST&&existsSync(exe),'必须指定已重建 Host');
-const evidence=mkdtempSync(resolve('apps/desktop/.tmp-test/model-approval-host-'));
+const evidence=mkdtempSync(resolve('target/tmp/model-approval-host-'));
 const source=readFileSync(new URL('../main.cjs',import.meta.url),'utf8'),handlers=new Map();
 const begin=source.indexOf('ipcMain.handle("sacode:turnPoll"'),end=source.indexOf('ipcMain.handle("sacode:turnCancel"',begin);
 assert.ok(begin>=0&&end>begin);

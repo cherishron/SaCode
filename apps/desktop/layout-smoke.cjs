@@ -3,7 +3,10 @@ const { mkdirSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expectedReadPath }) {
   mkdirSync(outDir, { recursive: true });
-  const js = (source) => win.webContents.executeJavaScript(source, true);
+  const js = (source) => win.webContents.executeJavaScript(source, true).catch(error => {
+    console.error('LAYOUT SCRIPT FAIL', source, error.message);
+    throw error;
+  });
   let toolsReady = false;
   for (let i = 0; i < 100; i++) {
     if (await js("!!document.querySelector('#tool-write')")) { toolsReady = true; break; }
@@ -26,6 +29,9 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       if (await js(probe)) return;
       await new Promise(r=>setTimeout(r,50));
     }
+    const state = await js("(()=>({active:document.activeElement?.outerHTML,viewport:{width:innerWidth,height:innerHeight},tips:[...document.querySelectorAll('.sacode-tooltip')].map(n=>({text:n.textContent,visibility:n.style.visibility})),wrap:[...document.querySelectorAll('.code-wrap')].map(n=>{const r=n.getBoundingClientRect(),hit=document.elementFromPoint(Math.round(r.left+r.width/2),Math.round(r.top+r.height/2));return {rect:{top:r.top,left:r.left,width:r.width,height:r.height},hover:n.matches(':hover'),described:n.getAttribute('aria-describedby'),hit:hit?.outerHTML};})}))()");
+    writeFileSync(join(outDir,'layout-timeout.json'),JSON.stringify({probe,state},null,2));
+    writeFileSync(join(outDir,'layout-timeout.png'),(await win.webContents.capturePage()).toPNG());
     throw new Error('布局验收状态未就绪：'+probe);
   };
   await waitFor("document.querySelector('#outcome')?.textContent.startsWith('结果：')");
@@ -39,6 +45,15 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
   // 通过界面发送真实长中文消息，覆盖用户气泡宽度与展开折行。
   await js("(async()=>{const n=document.querySelector('#composer');n.value='长中文消息与输入对齐。'.repeat(35);n.dispatchEvent(new Event('input',{bubbles:true}));await Vue.nextTick();document.querySelector('#send').click();})()");
   await waitFor("[...document.querySelectorAll('.msg-text')].some(e=>e.textContent.startsWith('长中文消息与输入对齐。'))");
+  async function selectResource(id, label) {
+    if (!await js(`!!document.querySelector(${JSON.stringify('#side-tab-' + id)})`)) {
+      await js("document.querySelector('#add-resource').click()");
+      await waitFor("!!document.querySelector('.workbench-resource-list')");
+      await js(`(()=>{const button=[...document.querySelectorAll('.workbench-resource-list button')].find(node=>node.textContent.trim()===${JSON.stringify(label)});if(!button)throw Error('资源入口不存在');button.click();})()`);
+    }
+    await js(`document.querySelector(${JSON.stringify('#side-tab-' + id)}).click()`);
+    await waitFor(`!document.querySelector(${JSON.stringify('#side-page-' + id)}).hidden`);
+  }
   const reports = [];
   for (const theme of ["light", "dark"]) {
     await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click()");
@@ -53,15 +68,22 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       await js("(()=>{const n=document.querySelector('#composer');n.value='布局验收草稿';n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       // 等库的主题/启用态颜色过渡完成，再比较最终色值与截图。
       await new Promise((r) => setTimeout(r, 500));
-      const sendBefore=await js("(()=>{const r=document.querySelector('#send').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()");
+      win.webContents.sendInputEvent({type:'mouseMove',x:1,y:1});
+      await waitFor("!document.querySelector('#send').matches(':hover')");
+      await new Promise(resolve=>setTimeout(resolve,150));
+      const sendBefore=await js("(()=>{const node=document.querySelector('#send'),r=node.getBoundingClientRect(),style=getComputedStyle(node);return {x:r.x,y:r.y,width:r.width,height:r.height,fill:style.backgroundColor,color:style.color};})()");
       win.webContents.focus();
       await waitFor("document.hasFocus()");
       win.webContents.sendInputEvent({type:'mouseMove',x:Math.round(sendBefore.x+sendBefore.width/2),y:Math.round(sendBefore.y+sendBefore.height/2)});
       await js("document.querySelector('#composer').focus()");
       const composerFocus=await js("getComputedStyle(document.querySelector('.composer-card')).outlineStyle==='solid' && getComputedStyle(document.querySelector('#composer')).outlineStyle==='none'");
-      // 真实 Tab 进入按钮，验证键盘焦点而非鼠标模式下的脚本 focus。
-      win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
-      win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
+      const composerControls = await js("document.querySelectorAll('.composer-card button,.composer-card input,.composer-card textarea,.composer-card select').length");
+      for (let step = 0; step < composerControls; step++) {
+        win.webContents.sendInputEvent({type:'keyDown',keyCode:'Tab'});
+        win.webContents.sendInputEvent({type:'keyUp',keyCode:'Tab'});
+        await js("new Promise(resolve=>requestAnimationFrame(resolve))");
+        if (await js("document.activeElement.id==='send'")) break;
+      }
       await waitFor("document.activeElement.id==='send' && document.querySelector('#send').matches(':hover')");
       // 主题过渡可能直到绘制帧才启动，固定毫秒等待不能证明 TinyVue 已到终态。
       await js("(async()=>{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await Promise.all(['#run-turn','#send'].flatMap(s=>document.querySelector(s).getAnimations()).map(a=>a.finished.catch(()=>{})));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));})()");
@@ -83,36 +105,34 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           controlHeights: controls.every(s => equal(box(s).height, 36)),
           stateGeometry: equal(send.width,${sendBefore.width}) && equal(send.height,${sendBefore.height}) && document.querySelector('#send').matches(':hover') && document.activeElement.id==='send' && getComputedStyle(document.querySelector('#send')).outlineStyle!=='none',
           standardRadius: controls.every(s => getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='12px') && getComputedStyle(document.querySelector('#budget-input')).borderTopLeftRadius==='12px',
-          navigationRadius: [...document.querySelectorAll('.nav-item')].filter(e=>e.getClientRects().length).every(e=>getComputedStyle(e).borderTopLeftRadius===(e.matches('.new-session') && document.querySelector('.app').dataset.platform==='win32' && document.querySelector('.app').dataset.sidebarCollapsed==='true'?'50%':'12px')),
-          composerRadius: getComputedStyle(document.querySelector('.composer-card')).borderTopLeftRadius==='28px',
+          navigationRadius: [...document.querySelectorAll('.nav-item')].filter(e=>e.getClientRects().length).every(e=>getComputedStyle(e).borderTopLeftRadius===(e.matches('.new-session') && document.querySelector('.app').dataset.platform==='win32' && document.querySelector('.app').dataset.sidebarCollapsed==='true'?'50%':'8px')),
+          composerRadius: getComputedStyle(document.querySelector('.composer-card')).borderTopLeftRadius==='18px',
           contentTypography: getComputedStyle(document.querySelector('#composer')).fontSize==='14px' && getComputedStyle(document.querySelector('#composer')).lineHeight==='24px' && [...document.querySelectorAll('.msg-text')].every(e=>getComputedStyle(e).fontSize==='14px' && getComputedStyle(e).lineHeight===(e.closest('[data-role=user]')?'22px':'24px')),
-          inputElevation: ['.composer-card','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return style.borderTopWidth==='0px' && style.boxShadow!=='none';}),
+          inputElevation: ['.composer-card','#budget-input'].every(s=>{const style=getComputedStyle(document.querySelector(s));return (s==='.composer-card'?equal(parseFloat(style.borderTopWidth),Math.max(1,Math.floor(devicePixelRatio))/devicePixelRatio):style.borderTopWidth==='0px') && style.boxShadow!=='none';}),
           // Chromium 在分数 DPR 下将实体边框量化为整数设备像素。
           warningBorder: equal(parseFloat(getComputedStyle(document.querySelector('#approval')).borderTopWidth),Math.max(1,Math.floor(devicePixelRatio))/devicePixelRatio),
           inputStrokeRebind: (()=>{const node=document.querySelector('#budget-input'),before=getComputedStyle(node).boxShadow;node.style.setProperty('--elevation-stroke-color','var(--accent)');try{return getComputedStyle(node).boxShadow!==before;}finally{node.style.removeProperty('--elevation-stroke-color');}})(),
           bubbleRadius: document.querySelectorAll('.tr-bubble__box').length>0 && [...document.querySelectorAll('.tr-bubble__box')].every(e=>getComputedStyle(e).borderTopLeftRadius==='20px'),
           groupedRadius: ['#tool-write','#approval'].every(s=>getComputedStyle(document.querySelector(s)).borderTopLeftRadius==='16px'),
           cornerCurve: !CSS.supports('corner-shape','superellipse(1.5)') || getComputedStyle(document.querySelector('#run-turn')).cornerShape==='superellipse(1.5)',
-          sendGeometry:equal(send.width,34)&&equal(send.height,34)&&getComputedStyle(document.querySelector('#send')).borderTopLeftRadius==='999px'&&(!CSS.supports('corner-shape','round')||getComputedStyle(document.querySelector('#send')).cornerShape==='round'),
+          sendGeometry:equal(send.width,34)&&equal(send.height,34)&&getComputedStyle(document.querySelector('#send')).borderTopLeftRadius==='50%'&&(!CSS.supports('corner-shape','round')||getComputedStyle(document.querySelector('#send')).cornerShape==='round'),
           sendGlyph:equal(box('#send svg').width,16)&&equal(box('#send svg').height,16),
-          sendPalette:getComputedStyle(document.querySelector('#send')).backgroundColor==='${theme==='dark'?'rgb(65, 118, 230)':'rgb(122, 170, 255)'}'&&getComputedStyle(document.querySelector('#send')).color==='rgb(255, 255, 255)',
+          sendPalette:getComputedStyle(document.querySelector('#send')).backgroundColor==='${theme==='dark'?'rgb(255, 255, 255)':'rgb(69, 75, 64)'}'&&getComputedStyle(document.querySelector('#send')).color==='${theme==='dark'?'rgb(32, 33, 31)':'rgb(255, 255, 255)'}',
+          sendRestPalette:${JSON.stringify(sendBefore.fill)}==='${theme==='dark'?'rgb(229, 232, 223)':'rgb(48, 52, 46)'}' && ${JSON.stringify(sendBefore.color)}==='${theme==='dark'?'rgb(32, 33, 31)':'rgb(255, 255, 255)'}',
+          sendContrast:(()=>{const style=getComputedStyle(document.querySelector('#send'));const luminance=color=>{const channels=color.match(/[0-9.]+/g).slice(0,3).map(value=>{const c=Number(value)/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;});return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722;};const foreground=luminance(style.color),background=luminance(style.backgroundColor);return (Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)>=4.5;})(),
           composerRow:getComputedStyle(document.querySelector('.composer-controls')).padding==='2px 8px 6px'&&getComputedStyle(document.querySelector('.composer-card')).gap==='12px'&&getComputedStyle(document.querySelector('#composer')).padding==='4px 8px 0px 14px',
           circularStatus: !!document.querySelector('.pending-dot') && (!CSS.supports('corner-shape','round') || getComputedStyle(document.querySelector('.pending-dot')).cornerShape==='round'),
-          primaryPalette: (()=>{const style=getComputedStyle(document.querySelector('#run-turn'));return style.backgroundColor==='${theme==='dark'?'rgb(126, 160, 255)':'rgb(36, 85, 230)'}'&&style.borderTopColor===style.backgroundColor&&style.color==='${theme==='dark'?'rgb(16, 19, 26)':'rgb(255, 255, 255)'}';})(),
-          icons: [...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).every(e => {const size=e.closest('.sidebar-empty')?24:e.closest('.sidebar-session,.workspace-folder')?16:18;return equal(e.getBoundingClientRect().width,size) && equal(e.getBoundingClientRect().height,size);}),
+          primaryPalette: (()=>{const style=getComputedStyle(document.querySelector('#run-turn'));return style.backgroundColor==='${theme==='dark'?'rgb(139, 175, 255)':'rgb(56, 107, 210)'}'&&style.borderTopColor===style.backgroundColor&&style.color==='${theme==='dark'?'rgb(32, 33, 31)':'rgb(255, 255, 255)'}';})(),
+          icons: [...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).every(e => {const size=e.closest('.sidebar-empty')?24:e.matches('.workspace-folder svg:first-child') && e.parentElement.querySelectorAll('svg').length>1?12:e.closest('.sidebar-session,.workspace-folder,.file-tree-entry')?16:18;return equal(e.getBoundingClientRect().width,size) && equal(e.getBoundingClientRect().height,size);}),
           approvalFits: box('#approval').right <= side.right && box('#approval').left >= side.left,
           messageContentLoaded: document.querySelectorAll('.msg-text').length > 0,
-          messageLabels: [...document.querySelectorAll('.tr-bubble')].every(e => {
-            const label=e.querySelector('.msg-role'), text=e.querySelector('.msg-text');
-            if (!label || !text) return false;
-            return label.getBoundingClientRect().bottom <= text.getBoundingClientRect().top;
-          }),
+          noRoleLabels: document.querySelectorAll('#messages .msg-role').length === 0,
           chineseNavigation: [...document.querySelectorAll('.nav-item')].every(e => /[\\u4e00-\\u9fff]/.test(e.getAttribute('aria-label'))),
           noEval: typeof window.require === 'undefined',
         };
         const palette = (s) => { const style=getComputedStyle(document.querySelector(s));
           return [style.backgroundColor,style.color,style.borderTopColor]; };
-        return { width:innerWidth, height:innerHeight, stateFacts:{before:${JSON.stringify(sendBefore)},after:{width:send.width,height:send.height},hover:document.querySelector('#send').matches(':hover'),focus:document.activeElement.id,outline:getComputedStyle(document.querySelector('#send')).outlineStyle}, cornerShapeSupported:CSS.supports('corner-shape','superellipse(1.5)'), checks, primary:[palette('#run-turn'),palette('#send')], failed:Object.keys(checks).filter(k => !checks[k]) };
+        return { width:innerWidth, height:innerHeight, stateFacts:{before:${JSON.stringify(sendBefore)},after:{width:send.width,height:send.height},hover:document.querySelector('#send').matches(':hover'),focus:document.activeElement.id,outline:getComputedStyle(document.querySelector('#send')).outlineStyle}, cornerShapeSupported:CSS.supports('corner-shape','superellipse(1.5)'), checks, iconFacts:[...document.querySelectorAll('.nav-symbol')].filter(e=>e.getClientRects().length).map(e=>({parent:e.parentElement.className,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height})), primary:[palette('#run-turn'),palette('#send')], failed:Object.keys(checks).filter(k => !checks[k]) };
       })()`);
       report.theme = theme;
       reports.push(report);
@@ -152,7 +172,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
       })()`);
       // 在真实渲染组件上截取 Clipboard API 的写入参数，不改用户系统剪贴板。
-      await js("window.__toolbarClipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__toolbarCopiedText=text;}}})");
+      await js("(()=>{window.__toolbarClipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__toolbarCopiedText=text;}}});})()");
       try {
         await js("document.querySelector('#markdown-layout-fixture .code-copy').click()");
         await waitFor("document.querySelector('#markdown-layout-fixture .code-copy').getAttribute('aria-label')==='已复制' || !!document.querySelector('#markdown-layout-fixture .code-copy-error')");
@@ -286,13 +306,13 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const equal = (a,b) => Math.abs(a-b)<1;
         const checks = {
           opened: true,
-          elevation: getComputedStyle(dialog).borderTopWidth==='0px' && getComputedStyle(dialog).boxShadow!=='none',
+          elevation: equal(parseFloat(getComputedStyle(dialog).borderTopWidth),Math.max(1,Math.floor(devicePixelRatio))/devicePixelRatio) && getComputedStyle(dialog).borderTopLeftRadius==='16px' && getComputedStyle(dialog).boxShadow!=='none',
           fits: box.left>=0 && box.top>=0 && box.right<=innerWidth && box.bottom<=innerHeight,
           centered: equal(box.left+box.width/2,innerWidth/2),
           noOverflow: dialog.scrollWidth<=dialog.clientWidth,
           alignedFields: keys.length===4 && values.length===4 && keys.every((key,i) =>
             equal(key.left,keys[0].left) && equal(values[i].left,values[0].left) && equal(key.top,values[i].top)),
-          controlHeight: equal(header.querySelector('button').getBoundingClientRect().height,36),
+          controlHeight: equal(header.querySelector('button').getBoundingClientRect().height,32),
           focusInside: dialog.contains(document.activeElement),
         };
         return { checks, failed:Object.keys(checks).filter(k => !checks[k]) };
@@ -302,7 +322,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       writeFileSync(join(outDir, `sacode-detail-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${dialogReport.failed.length ? "FAIL" : "PASS"} tool-detail ${theme} ${width}x${height} ${dialogReport.failed.join(',')}`);
       await js("document.querySelector('dialog[open] .dialog-header button').click()");
-      await js("document.querySelector('#side-tab-guide').click()");
+      await selectResource('guide', '使用指南');
       await new Promise((r) => setTimeout(r, 50));
       const guideReport = await js(`(() => {
         const box = e => e.getBoundingClientRect();
@@ -313,7 +333,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           tabAlignment: Math.abs(box(tabs[0]).top-box(tabs[1]).top)<1 && Math.abs(box(tabs[0]).height-box(tabs[1]).height)<1,
           contentFits: content.scrollWidth<=content.clientWidth && box(content).bottom<=box(side).bottom+1,
           cardAlignment: cards.length===5 && cards.every(e => Math.abs(box(e).left-box(cards[0]).left)<1 && Math.abs(box(e).right-box(cards[0]).right)<1),
-          approvalVisible: document.querySelector('#side-tab-inspect').getAttribute('aria-label').includes('待审批') && !!document.querySelector('.pending-dot') && !!document.querySelector('#guide-approval'),
+          approvalVisible: !!document.querySelector('#side-tab-inspect .pending-dot[aria-label="待审批"]') && !!document.querySelector('#guide-approval'),
           noPageOverflow: document.documentElement.scrollWidth<=innerWidth && document.documentElement.scrollHeight<=innerHeight,
         };
         return { checks, contentWidth:content.clientWidth, scrollWidth:content.scrollWidth,
@@ -325,7 +345,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       writeFileSync(join(outDir, `sacode-guide-${theme}-${width}x${height}.png`), (await win.webContents.capturePage()).toPNG());
       console.log(`LAYOUT ${guideReport.failed.length ? "FAIL" : "PASS"} guide ${theme} ${width}x${height} ${guideReport.failed.join(',')}`);
       await js("document.querySelector('#guide-approval').click()");
-      await js("document.querySelector('#side-tab-preview').click()");
+      await selectResource('preview', '文件预览');
       await new Promise(r=>setTimeout(r,50));
       const previewReport = await js(`(() => {
         const content=document.querySelector('.side-content'), path=document.querySelector('#preview-path'), text=document.querySelector('#preview-text');
@@ -365,12 +385,16 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       console.log(`LAYOUT ${errorReport.failed.length ? "FAIL" : "PASS"} long-error ${theme} ${width}x${height} ${errorReport.failed.join(',')}`);
       await js("document.querySelector('#layout-error-fixture').remove()");
       await js("document.querySelector('#open-settings').click()");
-      for (const page of ['general','models','plugins']) {
+      await waitFor("!!document.querySelector('.settings-dialog[open]')");
+      for (const page of ['general','appearance','model-center','plugins']) {
+        await waitFor(`!!document.querySelector('#settings-tab-${page}')`);
         await js(`document.querySelector('#settings-tab-${page}').click()`);
         await new Promise(r=>setTimeout(r,50));
         const settingsReport = await js(`(() => {
-          const dialog=document.querySelector('.settings-dialog[open]'), panel=document.querySelector('#settings-page-${page}'), r=dialog.getBoundingClientRect();
-          const tabs=[...dialog.querySelectorAll('.settings-tab')], controls=[...dialog.querySelectorAll('.btn')].filter(e=>e.getClientRects().length>0);
+          const dialog=document.querySelector('.settings-dialog[open]'), panel=document.querySelector('#settings-page-${page}');
+          if (!dialog || !panel) return {checks:{opened:false},failed:['opened']};
+          const r=dialog.getBoundingClientRect();
+          const tabs=[...dialog.querySelectorAll('.settings-tab')].filter(e=>e.getClientRects().length>0), controls=[...dialog.querySelectorAll('.btn')].filter(e=>e.getClientRects().length>0);
           const cubes=[...panel.querySelectorAll('.theme-choice')], cubeRows=new Map();
           for(const cube of cubes){const rect=cube.getBoundingClientRect(),key=Math.round(rect.top);if(!cubeRows.has(key))cubeRows.set(key,[]);cubeRows.get(key).push(rect);}
           const checks={
@@ -378,29 +402,30 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
             fits: r.left>=0 && r.top>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1,
             noOverflow: dialog.scrollWidth<=dialog.clientWidth,
             controlsAligned: controls.every(e=>Math.abs(e.getBoundingClientRect().height-36)<1) && tabs.every(e=>Math.abs(e.getBoundingClientRect().height-40)<1 && Math.abs(e.getBoundingClientRect().left-tabs[0].getBoundingClientRect().left)<1),
-            panelFrame:Math.abs(r.width-Math.min(800,innerWidth-48))<1 && Math.abs(r.height-Math.min(800,innerHeight-80))<1,
+            panelFrame:Math.abs(r.width-Math.min(800,innerWidth-48))<1 && Math.abs(r.height-Math.min(800,innerHeight-84))<1,
             navWidth:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().width-188)<1,
             columnsAligned:Math.abs(dialog.querySelector('.settings-nav').getBoundingClientRect().right-dialog.querySelector('.settings-content').getBoundingClientRect().left)<1,
             navStack:getComputedStyle(dialog.querySelector('.settings-tabs')).flexDirection==='column' && getComputedStyle(dialog.querySelector('.settings-tabs')).gap==='4px',
             headerFrame:Math.abs(dialog.querySelector('.settings-header').getBoundingClientRect().height-54)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().width-28)<1 && Math.abs(dialog.querySelector('.settings-close').getBoundingClientRect().height-28)<1,
             optionsInsets:getComputedStyle(dialog.querySelector('.settings-options')).padding==='0px 24px 24px',
-            navIcons:tabs.every(e=>{const i=e.querySelector('.settings-nav-icon').getBoundingClientRect(),label=e.querySelector('.settings-nav-label').getBoundingClientRect();return Math.abs(i.width-16)<1 && Math.abs(i.height-16)<1 && Math.abs((i.top+i.bottom)-(label.top+label.bottom))<1 && Math.abs(label.left-i.right-8)<1;}),
+            navIcons:tabs.every(e=>{const icon=e.querySelector('svg'),text=e.querySelector('.settings-nav-label');if(!icon||!text)return false;const i=icon.getBoundingClientRect(),label=text.getBoundingClientRect();return Math.abs(i.width-17)<1 && Math.abs(i.height-17)<1 && Math.abs((i.top+i.bottom)-(label.top+label.bottom))<1 && Math.abs(label.left-i.right-8)<1;}),
             generalRows: '${page}'!=='general' || (getComputedStyle(panel).gap==='0px' && !panel.querySelector('[id^="settings-budget"]')),
-            ...('${page}'==='general'?{
+            ...('${page}'==='appearance'?{
               themeOrder:cubes.map(e=>e.id).join(',')==='theme-light,theme-dark,theme-system',
               themeSelected:cubes.filter(e=>e.getAttribute('aria-pressed')==='true').length===1 && document.querySelector('#theme-${theme}').getAttribute('aria-pressed')==='true',
-              settingsModulePalette:[panel.querySelector('.theme-choice[aria-pressed=true]'),panel.querySelector('.font-stepper'),panel.querySelector('.settings-fixed-value')].every(e=>getComputedStyle(e).backgroundColor===('${theme}'==='dark'?'rgb(53, 54, 56)':'rgb(249, 250, 251)')),
+              settingsModulePalette:[panel.querySelector('.theme-choice[aria-pressed=true]'),panel.querySelector('.font-stepper'),dialog.querySelector('#settings-page-general .settings-fixed-value')].every(e=>!!e && getComputedStyle(e).backgroundColor===('${theme}'==='dark'?'rgb(51, 53, 47)':'rgb(238, 237, 232)')),
               themeColumns:cubes.length===3 && cubes.every(e=>getComputedStyle(e).flexDirection==='column' && getComputedStyle(e).alignItems==='center' && getComputedStyle(e).gap==='4px'),
               themeRowAlignment:[...cubeRows.values()].every(row=>row.every(rect=>Math.abs(rect.height-row[0].height)<1 && rect.left>=panel.getBoundingClientRect().left && rect.right<=panel.getBoundingClientRect().right+1)),
-              themeInsets:cubes.every(e=>getComputedStyle(e).padding==='20px 32px' && getComputedStyle(e).borderTopLeftRadius==='20px'),
+              themeInsets:cubes.every(e=>getComputedStyle(e).padding==='20px 12px' && getComputedStyle(e).borderTopLeftRadius==='20px'),
               themeIconLabel:cubes.every(e=>{const icon=e.querySelector('.theme-icon').getBoundingClientRect(),label=e.querySelector('.theme-label').getBoundingClientRect();return Math.abs(icon.width-16)<1 && Math.abs(icon.height-16)<1 && Math.abs((icon.left+icon.right)-(label.left+label.right))<1 && Math.abs(label.top-icon.bottom-4)<1;}),
               themeGap:getComputedStyle(panel.querySelector('.theme-choices')).gap==='8px',
             }:{}),
           };
-          return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
+          return {checks,metrics:{frame:{width:r.width,height:r.height},tabs:tabs.map(e=>{const icon=e.querySelector('svg'),label=e.querySelector('.settings-nav-label');return {icon:icon?.getBoundingClientRect().width,gap:icon&&label?label.getBoundingClientRect().left-icon.getBoundingClientRect().right:null};})},failed:Object.keys(checks).filter(k=>!checks[k])};
         })()`);
         Object.assign(settingsReport,{theme,width,height,surface:'settings-'+page}); reports.push(settingsReport);
         writeFileSync(join(outDir, `sacode-settings-${page}-${theme}-${width}x${height}.png`),(await win.webContents.capturePage()).toPNG());
+        writeFileSync(join(outDir, "layout-report.json"), JSON.stringify(reports, null, 2));
         console.log(`LAYOUT ${settingsReport.failed.length ? "FAIL" : "PASS"} settings-${page} ${theme} ${width}x${height} ${settingsReport.failed.join(',')}`);
       }
       // 长内容只作为几何压力样本，不虚构工具或配置能力。
@@ -432,7 +457,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
       console.log(`LAYOUT ${longSettingsReport.failed.length ? "FAIL" : "PASS"} long-settings ${theme} ${width}x${height} ${longSettingsReport.failed.join(',')}`);
       await js("document.querySelector('#layout-settings-fixture').remove(); document.querySelector('.settings-dialog .dialog-body').scrollTop=0");
       await js("document.querySelector('.settings-dialog .dialog-header button').click()");
-      await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click();document.querySelector('#settings-tab-general').click()");
+      await js("document.querySelector('#open-settings').focus();document.querySelector('#open-settings').click();document.querySelector('#settings-tab-appearance').click()");
       await waitFor("document.querySelector('.settings-dialog[open]') && document.querySelector('#font-value').textContent==='14'");
       await js("(()=>{const n=document.querySelector('#composer');n.value='字号变化与高度适配\\n'.repeat(5);n.dispatchEvent(new Event('input',{bubbles:true}));})()");
       const typographyText='# 一级\n\n## 二级\n\n### 三级\n\n#### 四级\n\n##### 五级\n\n###### 六级\n\n`行内代码`\n\n```js\nconst x = 1;\n```\n\n| 名称 | 值 |\n| --- | --- |\n| 项目 | 内容 |';
@@ -502,9 +527,9 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
         const box=e=>e.getBoundingClientRect(), rect=box(dialog), controls=[...dialog.querySelectorAll('.btn')];
         const checks={
           actualDirectory: directory.textContent.length>0,
-          surfaceRadius: getComputedStyle(dialog).borderTopLeftRadius==='28px' && getComputedStyle(panel).borderTopLeftRadius==='20px',
+          surfaceRadius: getComputedStyle(dialog).borderTopLeftRadius==='16px' && getComputedStyle(panel).borderTopLeftRadius==='20px',
           fits:rect.left>=0 && rect.top>=0 && rect.right<=innerWidth+1 && rect.bottom<=innerHeight+1,
-          controls:controls.length===2 && controls.every(e=>Math.abs(box(e).height-36)<1),
+          controls:controls.length===1 && controls[0].id==='choose-workspace' && Math.abs(box(controls[0]).height-36)<1 && Math.abs(box(dialog.querySelector('.dialog-close')).height-32)<1,
           aligned:Math.abs(box(directory).left-box(panel.querySelector('.badge')).left)<1,
           wrappedPath:directory.textContent.includes('长中文目录与空格路径') && box(directory).height>parseFloat(getComputedStyle(directory).lineHeight)*1.5,
           toolbarCentered:Math.abs(box(dialog.querySelector('.catalog-toolbar h2')).top+box(dialog.querySelector('.catalog-toolbar h2')).height/2-box(document.querySelector('#choose-workspace')).top-box(document.querySelector('#choose-workspace')).height/2)<1,
@@ -526,7 +551,7 @@ module.exports = async function layoutSmoke({ win, nativeTheme, outDir, expected
           noOverflow: dialog.scrollWidth<=dialog.clientWidth,
           sameSnapshot: text.textContent===document.querySelector('#preview-text').textContent,
           nonModal: dialog.getAttribute('aria-modal')==='false',
-          controlHeight: Math.abs(dialog.querySelector('.dialog-header button').getBoundingClientRect().height-36)<1,
+          controlHeight: Math.abs(dialog.querySelector('.dialog-header button').getBoundingClientRect().height-32)<1,
         };
         return {checks,failed:Object.keys(checks).filter(k=>!checks[k])};
       })()`);

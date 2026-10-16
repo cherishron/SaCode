@@ -8,7 +8,7 @@ import { fixtureHostEnv } from './fixture-env.mjs';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 const exe = resolve(process.env.SACODE_HOST || '');
 assert.ok(process.env.SACODE_HOST && existsSync(exe), '必须指定本轮新 Host');
-const base = resolve('apps/desktop/.tmp-test'); mkdirSync(base, { recursive: true });
+const base = resolve('target/tmp'); mkdirSync(base, { recursive: true });
 const evidence = mkdtempSync(join(base, 'goal-host-proof-'));
 const results = [];
 let bridge;

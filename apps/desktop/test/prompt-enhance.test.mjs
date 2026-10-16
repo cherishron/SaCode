@@ -39,7 +39,7 @@ function stopFixture(proc) {
 }
 
 function freshDir(tag) {
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "dualtest");
   mkdirSync(root, { recursive: true });
   return { dir: mkdtempSync(jj(root, `${tag}-`)), settings: mkdtempSync(jj(root, `${tag}-cfg-`)) };
 }

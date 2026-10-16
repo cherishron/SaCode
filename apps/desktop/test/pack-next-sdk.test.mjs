@@ -11,7 +11,7 @@ const root = resolve(desktop, '../..');
 const source = readFileSync(join(root, 'scripts/pack-next-sdk.mjs'), 'utf8');
 
 function build(t, mutate = value => value) {
-  const parent = join(desktop, '.tmp-test');
+  const parent = join(root, 'target', 'tmp');
   mkdirSync(parent, { recursive: true });
   const work = mkdtempSync(join(parent, 'pack-next-sdk-'));
   t.after(() => rmSync(work, { recursive: true, force: true }));
@@ -33,7 +33,7 @@ test('Next SDK 真实生产构建必须成功且无运行时求值或模块加�
   const code = readFileSync(join(app, 'renderer/vendor/next-sdk.iife.js'), 'utf8');
   assert.doesNotMatch(code, /new Function\(|\beval\(|import\(/);
   assert.ok(code.includes('__nextSDK'));
-  assert.deepEqual(readdirSync(join(app, '.tmp-test')), [], '成功后必须清理临时入口');
+  assert.deepEqual(readdirSync(join(app, '..', '..', 'target', 'tmp')), [], '成功后必须清理临时入口');
 });
 
 for (const expression of ['eval("1")', 'new Function("return 1")']) {
@@ -44,7 +44,7 @@ for (const expression of ['eval("1")', 'new Function("return 1")']) {
     ));
     assert.equal(result.status, 2, output);
     assert.match(output, /渲染产物含运行时求值/);
-    assert.deepEqual(readdirSync(join(app, '.tmp-test')), []);
+    assert.deepEqual(readdirSync(join(app, '..', '..', 'target', 'tmp')), []);
   });
 }
 
@@ -157,7 +157,7 @@ test('活跃 Ajv 实现未被替换，真正使用动态校验器仍被原守卫
   assert.match(output, /渲染产物含运行时求值/);
   const code = readFileSync(join(app, 'renderer/vendor/next-sdk.iife.js'), 'utf8');
   assert.throws(() => assertStaticRendererBundle(code), /渲染产物含运行时求值/);
-  assert.deepEqual(readdirSync(join(app, '.tmp-test')), []);
+  assert.deepEqual(readdirSync(join(app, '..', '..', 'target', 'tmp')), []);
 });
 
 test('真实构建反证：块内 buildResult 必须被拒绝且清理临时入口', t => {
@@ -169,5 +169,5 @@ test('真实构建反证：块内 buildResult 必须被拒绝且清理临时入�
   assert.equal(result.status, 2, output);
   assert.match(output, /buildResult is not defined/);
   assert.equal(existsSync(join(app, 'renderer/vendor/.next-sdk-tmp')), false, '失败路径不能残留源码目录临时入口');
-  if (existsSync(join(app, '.tmp-test'))) assert.deepEqual(readdirSync(join(app, '.tmp-test')), []);
+  if (existsSync(join(app, '..', '..', 'target', 'tmp'))) assert.deepEqual(readdirSync(join(app, '..', '..', 'target', 'tmp')), []);
 });

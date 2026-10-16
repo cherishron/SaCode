@@ -29,7 +29,9 @@ test('task/start 把系统提示落日志并带进模型请求体', { timeout: 3
         assert.ok(system.content.includes(`${name}:`), `系统提示必须列出工具 ${name}`);
       }
       // 缺口二：请求里的 tools 与执行器同源，三个都要在
-      assert.deepEqual(body.tools.map(x => x.function.name), ['todo_write', 'read', 'write']);
+      const names = body.tools.map(x => x.function.name);
+      for (const name of ['todo_write', 'read', 'write']) assert.ok(names.includes(name), `缺少工具 ${name}`);
+      assert.equal(new Set(names).size, names.length, '工具名不可重复');
       assert.equal(requests.length, 1, '本用例只发一次请求');
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const event = value => res.write('data: ' + JSON.stringify(value) + '\n\n');

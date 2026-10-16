@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { persistFailureBundle } from "../../../scripts/verify-log.mjs";
 
 const root = join(fileURLToPath(new URL("..", import.meta.url)), "..", "..");
-const tmpRoot = join(root, "apps", "desktop", ".tmp-test");
+const tmpRoot = join(root, "target", "tmp");
 
 test("验收失败保留完整原始日志和摘要，目录唯一且位于忽略的临时根", () => {
   const raw = `首段诊断\nERROR: test-a\n${"警告尾部\n".repeat(80)}`;

@@ -3,9 +3,9 @@ import {mkdirSync,mkdtempSync,writeFileSync,readFileSync,existsSync} from 'node:
 import {resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
 import assert from 'node:assert/strict';
-const exe=resolve(process.env.SACODE_CLI||'apps/desktop/.tmp-test/execution-api-cli/bin/sacode.exe');
+const exe=resolve(process.env.SACODE_CLI||'target/tmp/execution-api-cli/bin/sacode.exe');
 if(!existsSync(exe)) throw Error('缺新编译的私有 CLI，不能沿用旧安装包');
-const evidenceBase=resolve(process.env.SACODE_EXECUTION_EVIDENCE||'apps/desktop/.tmp-test');
+const evidenceBase=resolve(process.env.SACODE_EXECUTION_EVIDENCE||'target/tmp');
 mkdirSync(evidenceBase,{recursive:true});
 const root=mkdtempSync(join(evidenceBase,'sacode-execution-cli-'));
 writeFileSync(join(root,'session.log'),`0\tworkspace/directory\t${root.replaceAll('\\','\\\\')}\n`);

@@ -1,11 +1,12 @@
-import {defineComponent,h,ref,nextTick,onMounted,onBeforeUnmount,type PropType} from 'vue';
+import {defineComponent,h,ref,nextTick,onMounted,onBeforeUnmount,watch,type PropType} from 'vue';
+import {getCommands} from './composer-commands';
 type Entry={name:string;isDir:boolean;size?:number};
 const icon=(d:string)=>h('svg',{width:16,height:16,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':1.6,'stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'},[h('path',{d})]);
 let sequence=0;
 export const AddButton=defineComponent({
   name:'SaCodeComposerMenu',
-  props:{disabled:Boolean,goalAvailable:Boolean,workspaceConfigured:Boolean,listFiles:Function as PropType<(path:string)=>Promise<{files:Entry[]}>>},
-  emits:['add','goal','reference','extensions'],
+  props:{disabled:Boolean,goalAvailable:Boolean,workspaceConfigured:Boolean,listFiles:Function as PropType<(path:string)=>Promise<{files:Entry[]}>>,slashTrigger:Number},
+  emits:['add','goal','reference','extensions','command'],
   setup(props,{emit}){
     const id='composer-menu-'+(++sequence),root=ref<HTMLElement|null>(null),trigger=ref<HTMLButtonElement|null>(null),input=ref<HTMLInputElement|null>(null);
     const open=ref(false),section=ref(''),query=ref(''),path=ref(''),rows=ref<Entry[]>([]),busy=ref(false),error=ref(''),position=ref({left:'0px',bottom:'0px'});
@@ -13,13 +14,14 @@ export const AddButton=defineComponent({
     const close=(focus=false)=>{open.value=false;section.value='';++serial;busy.value=false;if(focus)trigger.value?.focus();};
     const place=()=>{const r=trigger.value?.getBoundingClientRect();if(!r)return;const width=Math.min(section.value?480:216,innerWidth-24);position.value={left:Math.max(12,Math.min(r.left,innerWidth-width-12))+'px',bottom:Math.max(12,innerHeight-r.top+8)+'px'};};
     const show=async()=>{if(props.disabled)return;if(open.value){close();return;}open.value=true;place();await nextTick();root.value?.querySelector<HTMLButtonElement>('[role=menuitem]:not(:disabled)')?.focus();};
+    watch(()=>props.slashTrigger,()=>{if(props.slashTrigger&&props.slashTrigger>0){section.value='commands';if(!open.value)void show();}});
     async function load(directory:string){
       const ticket=++serial;path.value=directory;rows.value=[];query.value='';error.value='';busy.value=true;
       try{if(!props.listFiles)throw Error('目录读取接口未接入');const result=await props.listFiles(directory);if(!disposed&&open.value&&ticket===serial)rows.value=result.files||[];}
       catch(e){if(!disposed&&open.value&&ticket===serial)error.value=String((e as Error).message||e);}
       finally{if(!disposed&&ticket===serial)busy.value=false;}
     }
-    const enter=(name:string)=>{section.value=name;place();if(name==='files')void load('');nextTick(()=>root.value?.querySelector<HTMLInputElement>('.composer-menu-search')?.focus());};
+    const enter=(name:string)=>{section.value=name;place();if(name==='files')void load('');if(name==='commands'){}nextTick(()=>root.value?.querySelector<HTMLInputElement>('.composer-menu-search')?.focus());};
     const outside=(e:PointerEvent)=>{if(open.value&&!root.value?.contains(e.target as Node))close();};
     const resize=()=>{if(open.value)close(true);};
     onMounted(()=>{document.addEventListener('pointerdown',outside);window.addEventListener('resize',resize);});
@@ -45,8 +47,8 @@ export const AddButton=defineComponent({
           item('设置目标','M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8',()=>{close();emit('goal');},!props.goalAvailable),
           item('创建计划','M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1',()=>{},true,'待接入'),
         ]),
-        section.value?h('section',{class:'composer-menu-secondary','aria-label':section.value==='files'?'工作区文件选择':'扩展选择'},[
-          h('header',{},section.value==='files'?'工作区文件':section.value==='skills'?'技能':'MCP'),
+        section.value?h('section',{class:'composer-menu-secondary','aria-label':section.value==='files'?'工作区文件选择':section.value==='commands'?'命令列表':'扩展选择'},[
+          h('header',{},section.value==='files'?'工作区文件':section.value==='commands'?'可用命令':section.value==='skills'?'技能':'MCP'),
           section.value==='files'?[
             h('input',{class:'composer-menu-search',type:'search',placeholder:'搜索当前目录','aria-label':'搜索当前目录',value:query.value,onInput:(e:Event)=>query.value=(e.target as HTMLInputElement).value}),
             h('div',{class:'composer-menu-path'},[path.value?h('button',{type:'button',onClick:()=>void load(path.value.split('/').slice(0,-1).join('/'))},'← 上级'):null,h('span',{},path.value||'工作区根目录')]),
@@ -56,6 +58,8 @@ export const AddButton=defineComponent({
               !rows.value.filter(e=>e.name.toLowerCase().includes(query.value.toLowerCase())).length?h('p',{},'暂无匹配文件'):null,
             ]),
             h('small',{class:'composer-menu-hint'},'选择后插入草稿路径，不上传文件内容。'),
+          ]:section.value==='commands'?[
+            ...getCommands().map(cmd=>item(cmd.label,cmd.help,()=>{emit('command',cmd.name);close(true);})),
           ]:[h('p',{},'当前客户端尚未接入可引用的'+(section.value==='skills'?'技能':'MCP')+'清单。'),h('button',{type:'button',onClick:()=>{close();emit('extensions');}},'打开扩展管理')],
         ]):null,
       ]):null,

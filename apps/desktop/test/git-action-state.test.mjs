@@ -24,7 +24,7 @@ test('暂存提案只接受当前可暂存文件，并用 literal pathspec 防�
 });
 
 test('暂存提案拒绝覆盖部分暂存，索引内容保持原样',()=>{
- const root=mkdtempSync(join(fileURLToPath(new URL('../.tmp-test/',import.meta.url)),'git-partial-stage-'));
+ const root=mkdtempSync(join(fileURLToPath(new URL('../../../target/tmp/',import.meta.url)),'git-partial-stage-'));
  const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git('init','-q','-b','main');git('config','user.name','SaCode Test');git('config','user.email','test@example.invalid');
  writeFileSync(join(root,'partial.txt'),'base one\nbase two\n');git('add','--','partial.txt');git('commit','-m','fixture');
@@ -37,7 +37,7 @@ test('暂存提案拒绝覆盖部分暂存，索引内容保持原样',()=>{
 });
 
 test('真实 Git 暂存只匹配选中的字面文件名，并保留其他未跟踪文件',()=>{
- const root=mkdtempSync(join(fileURLToPath(new URL('../.tmp-test/',import.meta.url)),'git-action-'));
+ const root=mkdtempSync(join(fileURLToPath(new URL('../../../target/tmp/',import.meta.url)),'git-action-'));
  const git=(...args)=>execFileSync('git',['-C',root,...args],{encoding:'utf8'});
  git('init','-q','-b','main');
  writeFileSync(join(root,'wild[1].txt'),'chosen\n');

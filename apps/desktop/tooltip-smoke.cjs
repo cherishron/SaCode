@@ -7,8 +7,10 @@ module.exports=async function tooltipSmoke({win,js,waitFor,outDir,theme,width,he
   const painted=async selector=>js(`(async()=>{await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await Promise.all(document.querySelector(${JSON.stringify(selector)}).getAnimations().map(a=>a.finished.catch(()=>{})));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));})()`);
   const tip=selector=>`(()=>{const n=document.querySelector(${JSON.stringify(selector)}),id=n?.getAttribute('aria-describedby')?.split(' ').at(-1);return id?document.getElementById(id):null;})()`;
   const move=async selector=>{
+    await js(`(async()=>{document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center',inline:'nearest'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()`);
     const rect=await js(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2};})()`);
     win.webContents.sendInputEvent({type:'mouseMove',x:Math.round(rect.x),y:Math.round(rect.y)});
+    await js("new Promise(resolve=>requestAnimationFrame(resolve))");
   };
   const clear=async()=>{await move('#send');await js("document.querySelector('#composer').focus();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");};
   await clear();
@@ -27,6 +29,8 @@ module.exports=async function tooltipSmoke({win,js,waitFor,outDir,theme,width,he
   checks.escapeDismissed=await js("!document.querySelector('.sacode-tooltip')");
   await js("document.querySelector('#open-settings').click()");
   await waitFor("!!document.querySelector('.settings-dialog[open]')");
+  await js("document.querySelector('#settings-tab-appearance').click()");
+  await waitFor("document.querySelector('#font-increase').getClientRects().length>0 && !document.querySelector('#font-increase').disabled");
   await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Shift',bubbles:true}));document.querySelector('#font-increase').focus()");
   await waitFor(`!!${tip('#font-increase')}`);
   Object.assign(checks,await js(`(()=>{const t=${tip('#font-increase')},r=t.getBoundingClientRect();t.style.pointerEvents='auto';const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);t.style.pointerEvents='';return {aboveModal:hit===t||t.contains(hit),modalFocusPreserved:document.activeElement===document.querySelector('#font-increase'),modalPortal:t.parentElement===document.querySelector('.settings-dialog[open]')&&t.matches(':popover-open')};})()`));
@@ -79,7 +83,7 @@ module.exports=async function tooltipSmoke({win,js,waitFor,outDir,theme,width,he
     await js("__tooltipApp.unmount();document.querySelector('#tooltip-test-fixture').remove()");checks.unmountCleanup=await js("!document.querySelector('.sacode-tooltip')");
   } finally {await js("if(document.querySelector('#tooltip-test-fixture')){__tooltipApp.unmount();document.querySelector('#tooltip-test-fixture').remove()}delete window.__tooltipApp;delete window.__tooltipOptions;");}
   await clear();
-  await js("(()=>{const root=document.createElement('div');root.id='tooltip-nested-fixture';document.body.append(root);window.__tooltipNested=Vue.createApp({setup:()=>()=>SaCodeTooltip.wrap(Vue.h('div',{id:'tooltip-outer',tabindex:0,style:{position:'fixed',left:'4px',top:'100px',width:'100px',height:'56px',padding:'16px',boxSizing:'border-box'}},[SaCodeTooltip.wrap(Vue.h('button',{id:'tooltip-inner',type:'button',style:{width:'24px',height:'24px',padding:0}},'?'),{label:'内层提示'})]),{label:'外层提示'})});__tooltipNested.mount(root);})()");
+  await js("(()=>{const root=document.createElement('div');root.id='tooltip-nested-fixture';document.body.append(root);window.__tooltipNested=Vue.createApp({setup:()=>()=>SaCodeTooltip.wrap(Vue.h('div',{id:'tooltip-outer',tabindex:0,style:{position:'fixed',left:'4px',top:'100px',width:'100px',height:'56px',padding:'16px',boxSizing:'border-box',zIndex:1000}},[SaCodeTooltip.wrap(Vue.h('button',{id:'tooltip-inner',type:'button',style:{width:'24px',height:'24px',padding:0}},'?'),{label:'内层提示'})]),{label:'外层提示'})});__tooltipNested.mount(root);})()");
   try {
     await move('#tooltip-outer');await waitFor(`!!${tip('#tooltip-outer')}`);
     await move('#tooltip-inner');await waitFor(`!!${tip('#tooltip-inner')}`);

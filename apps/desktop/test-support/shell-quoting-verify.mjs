@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 import {release} from 'node:os';
 if(process.platform!=='win32')throw Error('本探针只验证 Windows cmd 与 Windows PowerShell');
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
-const root=join(repo,'apps/desktop/.tmp-test','shell-quoting-'+Date.now());
+const root=join(repo,'target/tmp','shell-quoting-'+Date.now());
 const workspace=join(root,"quoted 中文' path");mkdirSync(workspace,{recursive:true});
 const node=join(workspace,'node quoted.exe');copyFileSync(process.execPath,node);
 const fixture=join(workspace,'read args.cjs');writeFileSync(fixture,'console.log(JSON.stringify(process.argv.slice(2)));console.log(process.cwd());');

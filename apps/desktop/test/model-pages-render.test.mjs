@@ -12,7 +12,7 @@ for(const theme of ['light','dark'])for(const width of [1000,600])test('模型�
   // %TEMP% 在某些环境被 ACL/AV 拒写：esbuild 输出与 electron user-data 都落到仓库内可写目录，
   // 不依赖系统 temp。ELECTRON_RUN_AS_NODE 会被 harness 注入，spawn 子进程必须删掉它，
   // 否则 electron 当纯 node 跑、app 未定义；并给 --user-data-dir 绕开 %APPDATA%\Electron 的 ACL。
-  const baseDir=join(here,'..','.tmp-test','model-pages');
+  const baseDir=join(here,'..','..','..','target','tmp','model-pages');
   mkdirSync(baseDir,{recursive:true});
   const dir=mkdtempSync(join(baseDir,'run-'));
   const userData=join(dir,'user-data');mkdirSync(userData,{recursive:true});

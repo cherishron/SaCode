@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const dir=dirname(fileURLToPath(import.meta.url)),desktop=resolve(dir,'..');
 const require=createRequire(join(desktop,'package.json'));
 const exe=process.env.SACODE_ELECTRON_TEST_EXE||require('electron');
-const root=process.env.SACODE_DESIGN_SMOKE_DIR||join(desktop,'.tmp-test','product-design-'+Date.now());
+const root=process.env.SACODE_DESIGN_SMOKE_DIR||join(desktop,'..','..','target','tmp','product-design-'+Date.now());
 mkdirSync(root,{recursive:true});
 const env={...process.env,SACODE_DESIGN_SMOKE_DIR:root,TEMP:root,TMP:root};delete env.ELECTRON_RUN_AS_NODE;
 const sha=execFileSync('git',['rev-parse','HEAD'],{cwd:desktop,encoding:'utf8'}).trim();

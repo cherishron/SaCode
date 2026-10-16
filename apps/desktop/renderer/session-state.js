@@ -40,8 +40,21 @@
       if (editorBlocked()) throw Error('请先保存或放弃文件编辑中的修改，再切换会话。');
       if (taskRunning()) throw new Error('请先结算执行任务并处理待审批工单。');
       if (busy()) throw new Error('正在处理当前会话，请稍后切换。');
-      const oldId = catalog.value?.entries.find(item => item.current)?.id;
-      await api.sessionSelect(id);
+      const currentCatalogId = catalog.value?.entries.find(item => item.current)?.id;
+      const oldId = [scrollSession.value, selectedScrollId.value, currentCatalogId].find(value => value && value !== 'initial' && value !== 0);
+      // Invalidate outstanding trace reads before Host changes its active session.
+      // This prevents a late old-session reply from repainting the source panel.
+      if (deps.invalidateTrace) deps.invalidateTrace();
+      try {
+        await api.sessionSelect(id);
+      } catch (e) {
+        // Keep the current session's sources available if selection failed. The
+        // explicit id also lets Host reject a stale/mismatched subscription reply.
+        if (oldId && oldId !== 'initial' && deps.refreshTrace) {
+          try { await deps.refreshTrace(true, oldId); } catch (_) {}
+        }
+        throw e;
+      }
       fileEditor.reset();
       incrementSessionGeneration();
       if (deps.tipsPressure) deps.tipsPressure.value = undefined;

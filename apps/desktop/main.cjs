@@ -5,7 +5,6 @@ const { installWindowVisibility } = require('./window-visibility.cjs');
 const modelApproval = require('./renderer/model-approval.js');
 let modelTurnRequestId = null;
 const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
-const { createRequire } = require("node:module");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
 const { HostBridge } = require("./host-bridge.cjs");
@@ -23,7 +22,8 @@ const HOST = hostExePath({
 // 用 --session-dir=<路径> 指定一次性目录；不传时仍用应用自己的目录（给人工运行用）。
 const SESSION_ARG = process.argv.find((a) => a.startsWith("--session-dir="));
 const FRAME_SMOKE = process.argv.includes('--frame-smoke');
-const WILL_SMOKE = FRAME_SMOKE || process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
+const STARTUP_CHECK = process.argv.includes('--startup-check');
+const WILL_SMOKE = STARTUP_CHECK || FRAME_SMOKE || process.argv.includes("--smoke") || process.argv.includes("--ui-smoke") || process.argv.includes("--layout-smoke");
 const dataPaths = require('./data-paths.cjs').configureDataPaths({
   app, env: process.env, isolated: WILL_SMOKE || !!SESSION_ARG,
 });
@@ -123,8 +123,12 @@ function createWindow() {
       .then((proceed) => settleWorktreeClose(proceed))
       .catch((error) => resolveWorktreeCloseFailure(error, stateUnknown).then(settleWorktreeClose));
   });
-  win.on("closed", () => (win = null));
-  return win;
+    win.on("closed", () => (win = null));
+    // 导航级防护：被 XSS 攻破的渲染层也不能跳去攻击者页面或挂 <webview>。
+    // 协议面已是有限动作集，这里再补一道纵深——任何导航尝试一律拒绝。
+    win.webContents.on("will-navigate", (event) => event.preventDefault());
+    win.webContents.on("will-attach-webview", (event) => event.preventDefault());
+    return win;
 }
 // 守卫结论落地：不放行就收起闸门让用户继续处理；放行时先落「已结算」再真正关窗。
 // 此刻 bridge.stop() 仍由 window-all-closed 负责，工作树没结算的字节不会假装已经落盘。
@@ -228,27 +232,7 @@ registerWorktreeIpc({
   confirmDelete: (state, discardChanges) => confirmWorktreeRemoval(state, discardChanges),
 });
 
-const executionActions = {
-  executionPropose: ['execution/propose', ['sessionId','taskId','requestId','proposal']],
-  executionAuthorize: ['execution/authorize', ['sessionId','executionId','revision','proposalDigest','approvalId']],
-  executionStart: ['execution/start', ['sessionId','executionId','revision']],
-  executionDescribe: ['execution/describe', ['sessionId','executionId']],
-  executionOutput: ['execution/output', ['sessionId','executionId','cursor','limit']],
-  executionStop: ['execution/stop', ['sessionId','executionId','revision']],
-};
-for (const [action,[method,fields]] of Object.entries(executionActions)) {
-  ipcMain.handle(`sacode:${action}`, async (_event, args) => {
-    if (!args || Object.keys(args).length !== fields.length || fields.some(key => !Object.hasOwn(args,key))) throw Error('bad-execution-arguments');
-    for (const key of fields) {
-      const value=args[key];
-      if (['revision','approvalId','cursor','limit'].includes(key)) {
-        if (!Number.isSafeInteger(value) || (key==='cursor' ? value < -1 : value < 1) || (key==='limit' && value > 16)) throw Error('bad-execution-arguments');
-      } else if (!isStr(value) || !value.trim() || Buffer.byteLength(value,'utf8') > (key==='proposal' ? 1024 : 256)) throw Error('bad-execution-arguments');
-    }
-    if ('proposalDigest' in args && !/^[0-9a-f]{64}$/.test(args.proposalDigest)) throw Error('bad-execution-arguments');
-    return withHost(() => bridge.request(method,args));
-  });
-}
+require('./execution-ipc.cjs').registerExecutionIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
 
 require('./execution-history-ipc.cjs').registerExecutionHistoryIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
 ipcMain.handle("sacode:projection", async () => withHost(() => bridge.request("session/projection")));
@@ -309,7 +293,8 @@ ipcMain.handle("sacode:attachmentImageRead", async (_e, args) => {
 
 ipcMain.handle("sacode:toolCall", async (_e, args) => {
   // 审批凭据只能是工单号：渲染层传不动「我已经批过了」这句话——它得先去 ask/answer。
-  if (!args || !isStr(args.name) || !isStr(args.args)) {
+  // 主进程补长度上限，与 approvalAsk（name≤200、args≤262144）对齐，挡住超大 payload。
+  if (!args || !isStr(args.name) || args.name.length === 0 || args.name.length > 200 || !isStr(args.args) || args.args.length > 262144) {
     throw new Error("bad arguments");
   }
   const approvalId = args.approvalId === undefined ? 0 : args.approvalId;
@@ -332,7 +317,7 @@ ipcMain.handle("sacode:approvalAsk", async (_e, args) => {
 });
 
 ipcMain.handle("sacode:approvalAnswer", async (_e, args) => {
-  if (!args || !Number.isInteger(args.approvalId) || args.approvalId < 1 || !isStr(args.decision)) {
+  if (!args || !Number.isInteger(args.approvalId) || args.approvalId < 1 || !isStr(args.decision) || !["allowed-once", "denied"].includes(args.decision)) {
     throw new Error("bad arguments");
   }
   return withHost(() => bridge.request("approval/answer", { approvalId: args.approvalId, decision: args.decision }));
@@ -361,7 +346,8 @@ ipcMain.handle("sacode:taskStart", async (_e, args) => {
   return withHost(async () => {
     if (pageToolsWindow()) await pageToolBridge.attach(true);
     const turnRequestId = String(bridge.nextId);
-    // HostBridge.request 自行封装 params，禁止二次嵌套模型身份。
+    // HostBridge.request 已经封装 JSON-RPC params，不能在这里再嵌套一层 params。
+    // 二次嵌套会让宿主忽略 customModelId，退回默认模型而不是执行页面选中的模型。
     const started = await bridge.request("task/start", customModelId ? { customModelId } : {});
     modelTurnRequestId = turnRequestId;
     modelApproval.discardPreviousRequests(bridge, turnRequestId);
@@ -471,12 +457,19 @@ ipcMain.handle('sacode:workspaceGitStatus',async(_e,args)=>{const params=gitArgu
 ipcMain.handle('sacode:workspaceGitDiff',async(_e,args)=>{const params=gitArguments(args,true);return withHost(()=>bridge.request('workspace/git-diff',params));});
 ipcMain.handle('sacode:workspaceGitPushTarget',async(_e,args)=>{const params=gitArguments(args,false);return withHost(()=>bridge.request('workspace/git-push-target',params));});
 ipcMain.handle("sacode:globalSettingsGet", async () => withHost(()=>bridge.request("global/settings/get")));
+ipcMain.handle('sacode:profileGet', async () => withHost(() => bridge.request('profile/get')));
+ipcMain.handle('sacode:profileUpdate', async (_e, args) => {
+  if (!args || Object.keys(args).length !== 2 || !isStr(args.nickname) || !args.nickname.trim()
+    || Array.from(args.nickname.trim()).length > 40 || /[\x00-\x1f\x7f]/.test(args.nickname)
+    || !Number.isSafeInteger(args.expectedRevision) || args.expectedRevision < 0) throw Error('bad-profile-nickname');
+  return withHost(() => bridge.request('profile/update', { nickname: args.nickname, expectedRevision: args.expectedRevision }));
+});
 // 通用设置键 → 宿主动词与参数名：宿主侧按驼峰参数名校验（transcriptView 等），
 // 键名连字符只是渲染层的说法，不能拿它直接当宿主参数名。
 ipcMain.handle("sacode:globalSettingsSet", async (_e, args) => {
   const key = args && args.key;
   const value = args && args.value;
-  const KEY_TO_PARAM = { "transcript-view": "transcriptView", "composer-enter": "composerEnter", "session-log": "sessionLog" };
+  const KEY_TO_PARAM = { "transcript-view": "transcriptView", "composer-enter": "composerEnter", "session-log": "sessionLog", "default-permission": "defaultPermissionMode" };
   if (!isStr(key) || !Object.prototype.hasOwnProperty.call(KEY_TO_PARAM, key)) throw new Error("bad-settings-key");
   if (!isStr(value)) throw new Error("bad-settings-value");
   const method = "global/settings/set-" + key;
@@ -484,11 +477,24 @@ ipcMain.handle("sacode:globalSettingsSet", async (_e, args) => {
 });
 // 已落盘事件流（轨迹视图）：cursor/limit 都是整数，limit 夹在 1..64（宿主同款上限）。
 ipcMain.handle("sacode:sessionEvents", async (_e, args) => {
+  const sessionId = args && args.sessionId;
   const cursor = args && args.cursor;
   const limit = args && args.limit;
+  if (!isStr(sessionId) || !sessionId || sessionId.length > 160) throw new Error("bad-session-id");
   if (typeof cursor !== "number" || !Number.isInteger(cursor) || cursor < 0) throw new Error("bad-cursor");
   if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 64)) throw new Error("bad-limit");
-  return withHost(()=>bridge.request("session/subscribe", { cursor, limit: limit ?? 64 }));
+  return withHost(()=>bridge.request("session/subscribe", { sessionId, cursor, limit: limit ?? 64 }));
+});
+// 模型调用日志：跨会话回放请求追踪（供应商 + 模型 + 耗时 + 状态 + 用量）。
+// 宿主按任意会话读日志后投影，桌面只转发参数并校验边界。
+ipcMain.handle("sacode:requestTrace", async (_e, args) => {
+  const sessionId = args && args.sessionId;
+  const beforeSeq = args && args.beforeSeq;
+  const limit = args && args.limit;
+  if (!isStr(sessionId) || !sessionId || sessionId.length > 160) throw new Error("bad-session-id");
+  if (beforeSeq !== undefined && (typeof beforeSeq !== "number" || !Number.isInteger(beforeSeq) || beforeSeq < -1)) throw new Error("bad-before-seq");
+  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > 50)) throw new Error("bad-limit");
+  return withHost(()=>bridge.request("session/request-trace", { sessionId, beforeSeq: beforeSeq ?? -1, limit: limit ?? 50 }));
 });
 ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
@@ -531,6 +537,40 @@ ipcMain.handle("sacode:globalAppearanceGet", async () => {
   nativeTheme.themeSource=result.theme;
   return result;
 });
+// 关于页的版本读数只取壳层事实（应用/Electron/Chromium/Node/平台），不碰宿主、不猜更新状态：
+// 更新检查确实尚未开放，界面如实写「尚未开放」，不给假按钮、不提示未核实的更新。
+ipcMain.handle("sacode:appVersion", async () => ({
+  app: app.getVersion(),
+  electron: process.versions.electron,
+  chrome: process.versions.chrome,
+  node: process.versions.node,
+  platform: process.platform,
+  arch: process.arch,
+  packaged: app.isPackaged,
+}));
+// 开机自启走 Electron 自己的登录项接口（Windows 写 HKCU Run、macOS 写登录项），
+// 不手拼注册表命令。开发目录下注册的是开发壳而不是安装版程序，如实把这个差别说出去；
+// 写不进去时把错误抛回渲染层，不在界面上伪报「已开启」。
+const autoLaunchDescribe = () => {
+  const settings = app.getLoginItemSettings();
+  return {
+    openAtLogin: !!settings.openAtLogin,
+    openAsHidden: !!settings.openAsHidden,
+    packaged: app.isPackaged,
+    note: app.isPackaged ? "" : "开发目录下注册的是开发壳，安装版需在安装后另行设置。",
+  };
+};
+ipcMain.handle("sacode:autoLaunchGet", async () => autoLaunchDescribe());
+ipcMain.handle("sacode:autoLaunchSet", async (_e, args) => {
+  if (!args || typeof args.enabled !== "boolean") throw new Error("bad-autolaunch-value");
+  try {
+    app.setLoginItemSettings({ openAtLogin: args.enabled });
+  } catch (e) {
+    throw new Error("autolaunch-write-failed: " + String((e && e.message) || e));
+  }
+  // 以回读值为准：注册失败或被系统策略挡下时界面显示的是真实状态，不是刚提交的请求。
+  return autoLaunchDescribe();
+});
 ipcMain.handle("sacode:globalAppearanceSetTheme", async (_e, args) => {
   if (!args || !["system", "light", "dark"].includes(args.theme)) throw new Error("bad-theme");
   const result=await withHost(() => bridge.request("global/appearance/set-theme", { theme:args.theme }));
@@ -552,260 +592,25 @@ ipcMain.handle("sacode:appearanceSetTheme", async (_e, args) => {
   return result;
 });
 
-// 模型配置面：字段守卫在主进程（models-guard.cjs），凭据名由核心按 ID 派生。
-// 密钥只在「写凭据」这一次调用里存在：不透传进注册表文档，不回写，不落日志。
 const modelsGuard = require("./models-guard.cjs");
-
+require('./models-ipc.cjs').registerModelsIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), modelsGuard, isStr);
 require('./model-credential-ipc.cjs').registerModelCredentialIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), modelsGuard);
-ipcMain.handle("sacode:modelsDescribe", async () => withHost(() => bridge.request("model/registry/describe")));
-ipcMain.handle("sacode:modelsCatalog", async () => withHost(() => bridge.request("model/registry/catalog")));
 
-ipcMain.handle("sacode:modelsSave", async (_e, args) => {
-  const draft = modelsGuard.sanitizeDraft(args && args.draft);
-  const key = modelsGuard.sanitizeKey(args ? args.key : undefined);
-  const expectedRevision = modelsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
-  return require('./models-save.cjs').saveModelConfiguration((method, params) => withHost(() => bridge.request(method, params)), draft, key, expectedRevision);
-});
-
-ipcMain.handle("sacode:modelsRemove", async (_e, args) => {
-  const id = args && args.id;
-  if (!isStr(id) || id.length === 0 || id.length > 64) throw new Error("bad-model-id");
-  return withHost(() => bridge.request("model/registry/remove", { id, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:modelsSetDefault", async (_e, args) => {
-  const providerId = args && args.providerId;
-  const model = args && args.model;
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
-  if (!isStr(model) || model.length === 0 || model.length > 200) throw new Error("bad-model-name");
-  return withHost(() => bridge.request("model/registry/set-default", {
-    providerId, model, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
-  }));
-});
-
-// 供应商单列写：排序只改 sortOrder、启停只改 enabled，宿主核心不重写整条记录。
-ipcMain.handle("sacode:modelsSort", async (_e, args) => {
-  const providerId = args && args.providerId;
-  const sortOrder = args && args.sortOrder;
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
-  if (typeof sortOrder !== "number" || !Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 1e9) throw new Error("bad-sort-order");
-  return withHost(() => bridge.request("model/registry/sort", {
-    providerId, sortOrder, expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
-  }));
-});
-
-ipcMain.handle("sacode:modelsSetEnabled", async (_e, args) => {
-  const providerId = args && args.providerId;
-  const enabled = args && args.enabled;
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
-  if (typeof enabled !== "boolean") throw new Error("bad-enabled-flag");
-  return withHost(() => bridge.request("model/registry/set-enabled", {
-    providerId, enabled: enabled ? "true" : "false", expectedRevision: modelsGuard.sanitizeRevision(args.expectedRevision),
-  }));
-});
-
-// 「测试连接 / 获取可用模型」：草稿还没保存就能问远端，内联明文只活在这一次调用里。
-ipcMain.handle("sacode:modelsList", async (_e, args) => {
-  const request = modelsGuard.sanitizeListRequest(args);
-  return withHost(() => bridge.request("model/list", request));
-});
-
-// 第 3 层自定义模型与模型目录写面：字段守卫在主进程（customs-guard.cjs），
-// 第 3 层文档不认识 baseUrl 与凭据，草稿里出现它们一律拒收。
 const customsGuard = require("./customs-guard.cjs");
+require('./customs-ipc.cjs').registerCustomsIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), customsGuard, isStr);
 
-ipcMain.handle("sacode:customsDescribe", async () => withHost(() => bridge.request("custom/describe")));
+const pluginsGuard = require("./plugins-guard.cjs");
+require('./plugins-ipc.cjs').registerPluginsIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), pluginsGuard, isStr);
 
-ipcMain.handle("sacode:customsUpsert", async (_e, args) => {
-  const draft = customsGuard.sanitizeDraft(args && args.draft);
-  const expectedRevision = customsGuard.sanitizeRevision(args ? args.expectedRevision : undefined);
-  return withHost(() => bridge.request("custom/upsert", { draft, expectedRevision }));
-});
-
-ipcMain.handle("sacode:customsRemove", async (_e, args) => {
-  const customId = args && args.customId;
-  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
-  return withHost(() => bridge.request("custom/remove", { customId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:bindingUpsert", async (_e, args) => {
-  const customId = args && args.customId;
-  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
-  const binding = customsGuard.sanitizeBinding(args && args.binding);
-  return withHost(() => bridge.request("binding/upsert", { customId, binding, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:bindingRemove", async (_e, args) => {
-  const customId = args && args.customId;
-  const providerId = args && args.providerId;
-  const modelId = args && args.modelId;
-  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-custom-provider");
-  if (!isStr(modelId) || modelId.length === 0 || modelId.length > 200) throw new Error("bad-custom-model");
-  return withHost(() => bridge.request("binding/remove", { customId, providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:bindingReorder", async (_e, args) => {
-  const customId = args && args.customId;
-  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
-  const keys = customsGuard.sanitizeKeyList(args && args.keys);
-  return withHost(() => bridge.request("binding/reorder", { customId, keys, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:modelPull", async (_e, args) => {
-  const providerId = args && args.providerId;
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
-  return withHost(() => bridge.request("model/pull", { providerId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:modelUpstreamUpsert", async (_e, args) => {
-  const providerId = args && args.providerId;
-  const modelId = args && args.modelId;
-  if (!isStr(providerId) || providerId.length === 0 || providerId.length > 64) throw new Error("bad-model-provider");
-  if (!isStr(modelId) || modelId.length === 0 || modelId.length > 200) throw new Error("bad-model-name");
-  return withHost(() => bridge.request("model/upstream/upsert", { providerId, modelId, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:customImportNew", async (_e, args) => {
-  const items = customsGuard.sanitizeKeyList(args && args.items);
-  return withHost(() => bridge.request("custom/import/new", { items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-ipcMain.handle("sacode:customImportInto", async (_e, args) => {
-  const customId = args && args.customId;
-  if (!isStr(customId) || customId.length === 0 || customId.length > 64) throw new Error("bad-custom-id");
-  const items = customsGuard.sanitizeKeyList(args && args.items);
-  return withHost(() => bridge.request("custom/import/into", { customId, items, expectedRevision: customsGuard.sanitizeRevision(args.expectedRevision) }));
-});
-
-// ---- 插件管理：9 条通道逐条落地，逐字段校验 ----
-// 缺通道的适配器保持 unconnected，不冒充本地状态。
-
-ipcMain.handle("sacode:pluginsDescribe", async () => {
-  return withHost(() => bridge.request("plugin/describe"));
-});
-
-ipcMain.handle("sacode:pluginsSetEnabled", async (_e, args) => {
-  const name = args && args.name;
-  if (!isStr(name) || name.length === 0 || name.length > 200) throw new Error("bad-plugin-name");
-  if (typeof args.enabled !== "boolean") throw new Error("bad-plugin-enabled");
-  const expectedRevision = args.expectedRevision;
-  return withHost(() => bridge.request("plugin/set-enabled", { name, enabled: args.enabled ? "true" : "false", expectedRevision }));
-});
-
-ipcMain.handle("sacode:pluginsSetRowEnabled", async (_e, args) => {
-  // 行级启用：PluginStore 当前无此能力，返回空清单让适配器 fail-loud（不静默）
-  return withHost(() => bridge.request("plugin/describe"));
-});
-
-ipcMain.handle("sacode:pluginsUninstall", async (_e, args) => {
-  const name = args && args.name;
-  if (!isStr(name) || name.length === 0 || name.length > 200) throw new Error("bad-plugin-name");
-  return withHost(() => bridge.request("plugin/uninstall", { name, expectedRevision: args.expectedRevision }));
-});
-
-ipcMain.handle("sacode:pluginsRegistries", async () => {
-  return { registry: "https://registry.npmjs.org", fallbackRegistries: ["https://registry.npmmirror.com"], resolved: "https://registry.npmjs.org" };
-});
-
-ipcMain.handle("sacode:pluginsInspect", async (_e, args) => {
-  const spec = args && args.spec;
-  if (!spec || typeof spec !== "string" || spec.length === 0) {
-    return { status: "invalid", reason: "empty-spec" };
-  }
-  // 校验格式：name@version 或 name（只允许字母数字和连字符下划线点斜杠@）
-  if (!/^[a-zA-Z0-9._\-/][a-zA-Z0-9._\-/]*(?:@[a-zA-Z0-9._\-]+)?$/.test(spec)) {
-    return { status: "invalid", reason: "bad-spec-format" };
-  }
-  return { status: "valid", name: spec.split("@")[0], version: spec.includes("@") ? spec.split("@")[1] : "" };
-});
-
-ipcMain.handle("sacode:pluginsInstall", async (_e, args) => {
-  // 安装尚未接后端，返回 failed 状态让适配器正确显示失败
-  return { requestId: "", phase: "failed", output: "plugin-install-not-implemented" };
-});
-
-ipcMain.handle("sacode:pluginsInstallPoll", async (_e, args) => {
-  const requestId = args && args.requestId;
-  if (!requestId) return { requestId: "", phase: "failed", output: "unknown-request" };
-  return { requestId, phase: "failed", output: "plugin-install-not-implemented" };
-});
-
-ipcMain.handle("sacode:pluginsInstallCancel", async (_e, args) => {
-  return { cancelled: true, output: "install-was-not-running" };
-});
-
-// LSP 语义工具（L1）：7 个动作、7 条通道，method 名在主进程写死。
-// 键集是 verb 的函数：渲染层说不出第四个键，更没有「发任意 method」的通路。
-// 没有语言插件时宿主如实回 error（data.reason=lsp-no-server + 非语义线索），
-// 主进程不在此把失败改写成空数组——空数组会被界面读成「这个符号没有定义」。
-const lspKeyGuard = {
-  path: (v) => isStr(v) && v.trim().length > 0 && v.length <= 1000,
-  line: (v) => Number.isSafeInteger(v) && v >= 0,
-  character: (v) => Number.isSafeInteger(v) && v >= 0,
-  documentVersion: (v) => Number.isSafeInteger(v) && v >= 0,
-  direction: (v) => v === "incoming" || v === "outgoing",
-  includeDeclaration: (v) => typeof v === "boolean",
-  newName: (v) => isStr(v) && v.trim().length > 0 && v.length <= 500,
-};
-
-function lspArguments(args, extras) {
-  if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("bad arguments");
-  // 键集校验与取值校验同一条循环走完：allowed 里的每个名字都必须在 lspKeyGuard
-  // 里有一格，否则漏写守卫的键会直接 TypeError，而不是拒掉。
-  const allowed = new Set(["path", ...extras]);
-  for (const key of Object.keys(args)) {
-    if (!allowed.has(key)) throw new Error("bad arguments");
-    if (!lspKeyGuard[key]) throw new Error("bad arguments");
-    if (!lspKeyGuard[key](args[key])) throw new Error("bad arguments");
-  }
-  if (!lspKeyGuard.path(args.path)) throw new Error("bad arguments");
-  for (const key of ["line", "character", "direction", "newName"]) {
-    if (extras.includes(key) && !Object.hasOwn(args, key)) throw new Error("bad arguments");
-  }
-  const params = { path: args.path };
-  for (const key of extras) { if (args[key] !== undefined) params[key] = args[key]; }
-  return params;
-}
-
-ipcMain.handle("sacode:lspDefine", async (_e, args) => {
-  const params = lspArguments(args, ["line", "character", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/define", params));
-});
-ipcMain.handle("sacode:lspLookup", async (_e, args) => {
-  const params = lspArguments(args, ["line", "character", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/lookup", params));
-});
-ipcMain.handle("sacode:lspReferences", async (_e, args) => {
-  const params = lspArguments(args, ["line", "character", "includeDeclaration", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/references", params));
-});
-ipcMain.handle("sacode:lspImplementation", async (_e, args) => {
-  const params = lspArguments(args, ["line", "character", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/implementation", params));
-});
-ipcMain.handle("sacode:lspCallHierarchy", async (_e, args) => {
-  const params = lspArguments(args, ["line", "character", "direction", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/call-hierarchy", params));
-});
-ipcMain.handle("sacode:lspDiagnostics", async (_e, args) => {
-  const params = lspArguments(args, ["documentVersion"]);
-  return withHost(() => bridge.request("lsp/diagnostics", params));
-});
-ipcMain.handle("sacode:lspRename", async (_e, args) => {
-  // 只有预览：应用变更归 F08 的审查、冲突检测与授权链，这条通道不写盘。
-  const params = lspArguments(args, ["line", "character", "newName", "documentVersion"]);
-  return withHost(() => bridge.request("lsp/rename", params));
-});
-
+require('./lsp-ipc.cjs').registerLspIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 require('./knowledge-ipc.cjs').registerKnowledgeIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 require('./automation-ipc.cjs').registerAutomationIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
 require('./web-settings-ipc.cjs').registerWebSettingsIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params)));
+require('./acp-ipc.cjs').registerAcpIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params, require('./acp-ipc.cjs').acpRequestTimeout(method))));
+
 // Next SDK 页面工具：清单的唯一真源是渲染层那份 window.DshPageTools 注册表，
 // 主进程只做窗口解析、参数校验与传参，不在这里维护工具名或写死的空结果。
 // 名字与参数一律经 JSON.stringify 成为字面量：手写转义把值拼进源码就是注入口。
-require('./acp-ipc.cjs').registerAcpIpc(ipcMain, (method, params) => withHost(() => bridge.request(method, params, require('./acp-ipc.cjs').acpRequestTimeout(method))));
-
 function pageToolsWindow() {
   return win && !win.isDestroyed() ? win : null;
 }

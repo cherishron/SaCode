@@ -1,20 +1,25 @@
 // 断言 31：前端只能比核心更严，不能更宽。断言 60：目录项已添加一份后仍可选（号池）。
-// 桌面测试栈没有 jsdom，node --test 也吃不了 .ts：用仓库现成的 esbuild 只转译不打包
-// （bundle:false 是硬要求——打包会把 vue 折进来得到第二份 runtime，与 vendor 那份
-// 不是同一套响应式系统；这里只借两个纯函数）。
+// 构建本地 TypeScript 依赖，Vue 保持 external，不折入第二份 runtime。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildSync } from 'esbuild';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const testRoot = resolve(here, '../../../target/tmp/models-validate');
+mkdirSync(testRoot, { recursive: true });
+const privateDir = mkdtempSync(resolve(testRoot, 'run-'));
+const output = resolve(privateDir, 'models-page.mjs');
 buildSync({
   entryPoints: [resolve(here, '../renderer/pages/models-page.ts')],
-  outfile: resolve(here, '../dist/ts/modules/models-page.mjs'),
-  format: 'esm', target: 'es2022', bundle: false,
+  outfile: output,
+  format: 'esm', target: 'es2022', bundle: true, external: ['vue'],
 });
-const { validateDraft, selectableCatalogEntries } = await import(pathToFileURL(resolve(here, '../dist/ts/modules/models-page.mjs')).href);
+const { validateDraft, selectableCatalogEntries } = await import(pathToFileURL(output).href);
+
+rmSync(privateDir, { recursive: true, force: true });
 
 const base = { id: 'p', name: 'P', protocol: 'openai-completions', key: '', declared: true,
   models: [{ id: 'm', name: '', contextWindow: '', maxTokens: '', image: false }] };

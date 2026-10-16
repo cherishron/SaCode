@@ -18,9 +18,10 @@ const draft = (id, baseUrl) => ({
            { id: 'm-2', name: '模型二', contextWindow: '', maxTokens: '', image: false }],
 });
 
-async function boot(dir, extraEnv = {}) {
+async function boot(t, dir, extraEnv = {}) {
   assert.ok(existsSync(HOST), '缺少自包含宿主');
   const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings'), ...extraEnv });
+  t.after(() => bridge.stop());
   await bridge.start(dir);
   return bridge;
 }
@@ -46,8 +47,8 @@ async function stubCatalog(acceptToken) {
   return { server, port: server.address().port, seenAuth };
 }
 
-async function registerProvider(dir, port) {
-  const bridge = await boot(dir);
+async function registerProvider(t, dir, port) {
+  const bridge = await boot(t, dir);
   const empty = await bridge.request('model/registry/describe');
   const saved = await bridge.request('model/registry/update', {
     draft: draft('mine', `http://127.0.0.1:${port}`), expectedRevision: empty.revision,
@@ -63,8 +64,7 @@ test('宿主声明配置面能力，并把注册表读写与两类拒绝分开�
   const stub = await stubCatalog('unused');
   t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
 
-  const bridge = await boot(dir);
-  t.after(() => bridge.stop());
+  const bridge = await boot(t, dir);
   const init = await bridge.request('initialize');
   for (const m of ['model/registry/describe', 'model/registry/update', 'model/registry/set-default',
                    'credential/set', 'credential/describe', 'model/list']) {
@@ -107,8 +107,7 @@ test('凭据每次操作现取：旋转落到下一次请求，配置与凭据�
   const stub = await stubCatalog('test-secret-value');
   t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
 
-  const { bridge } = await registerProvider(dir, stub.port);
-  t.after(() => bridge.stop());
+  const { bridge } = await registerProvider(t, dir, stub.port);
 
   const setKey = await bridge.request('credential/set', { ref: 'SA_CODE_TEST_KEY', value: 'test-secret-value' });
   assert.equal(setKey.configured, true);
@@ -127,7 +126,7 @@ test('凭据每次操作现取：旋转落到下一次请求，配置与凭据�
   assert.deepEqual(stub.seenAuth, ['Bearer test-secret-value', 'Bearer rotated-value'],
     '凭证必须每次操作现取：旋转落到下一次请求，不需要重启宿主');
 
-  const stale = await boot(dir);  // 同一目录重开一个宿主进程
+  const stale = await boot(t, dir);  // 同一目录重开一个宿主进程
   try {
     const after = await stale.request('model/registry/describe');
     assert.equal(after.providers.length, 1, '提供商必须从盘上活过重启');
@@ -155,8 +154,7 @@ test('轮次按注册表装配请求：端点、模型名与凭据都来自配�
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => { server.closeAllConnections(); server.close(); });
 
-  const bridge = await boot(dir);
-  t.after(() => bridge.stop());
+  const bridge = await boot(t, dir);
   const empty = await bridge.request('model/registry/describe');
   const saved = await bridge.request('model/registry/update', {
     draft: draft('mine', `http://127.0.0.1:${server.address().port}`), expectedRevision: empty.revision,
@@ -184,8 +182,7 @@ test('轮次按注册表装配请求：端点、模型名与凭据都来自配�
 // 装配器只会说 Chat Completions；把别的方言当成它，等于对着端点发不存在的请求体。
 test('非 Chat Completions 方言的提供商在起轮前显式拒绝', { timeout: 30000 }, async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'sacode-proto-'));
-  const bridge = await boot(dir);
-  t.after(() => bridge.stop());
+  const bridge = await boot(t, dir);
   const empty = await bridge.request('model/registry/describe');
   const saved = await bridge.request('model/registry/update', {
     draft: { ...draft('other', 'http://127.0.0.1:1'), protocol: 'anthropic-messages' }, expectedRevision: empty.revision,
@@ -204,8 +201,7 @@ test('宿主交出派生凭据名与凭据状态，未保存的草稿也能现�
   const stub = await stubCatalog('inline-secret');
   t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
 
-  const bridge = await boot(dir);
-  t.after(() => bridge.stop());
+  const bridge = await boot(t, dir);
   const { credentialRef, ...noRef } = draft('gw', `http://127.0.0.1:${stub.port}`);
   const saved = await bridge.request('model/registry/update', { draft: noRef, expectedRevision: 0 });
   assert.equal(saved.providers[0].credentialRef, 'SA_CODE_GW_API_KEY', '凭据名要由提供商 ID 派生');
@@ -229,8 +225,7 @@ test('环境提供的凭据在描述面标为只读', { timeout: 30000 }, async 
   const stub = await stubCatalog('unused');
   t.after(() => { stub.server.closeAllConnections(); stub.server.close(); });
 
-  const bridge = await boot(dir, { SA_CODE_TEST_KEY: 'from-launch-environment' });
-  t.after(() => bridge.stop());
+  const bridge = await boot(t, dir, { SA_CODE_TEST_KEY: 'from-launch-environment' });
   const saved = await bridge.request('model/registry/update', {
     draft: { ...draft('mine', `http://127.0.0.1:${stub.port}`) }, expectedRevision: 0,
   });

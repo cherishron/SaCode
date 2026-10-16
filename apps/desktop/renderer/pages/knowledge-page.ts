@@ -13,7 +13,7 @@ export const KnowledgePage=defineComponent({name:'SaCodeKnowledge',props:{api:Ob
  return()=>h('main',{class:'management-page',id:'management-knowledge'},[
   h('header',{class:'management-header'},[h('h1',{},'知识库'),button('返回对话',()=>emit('back'))]),
   h('div',{class:'management-body'},[
-   h('div',{class:'management-intro'},[h('div',{},[h('h2',{},'让项目知识随时可查'),h('p',{},'原文保存在本机，用户与项目知识独立。检索采用字面匹配，不自动发送给模型。')]),button('添加文档',()=>edit(),busy.value||dirty.value)]),
+   h('div',{class:'management-intro'},[h('div',{},[h('h2',{},'让项目知识随时可查'),h('p',{},'原文保存在本机，用户与项目知识独立。相关片段会随任务请求发送给当前模型。')]),button('添加文档',()=>edit(),busy.value||dirty.value)]),
    h('nav',{class:'management-scope','aria-label':'知识作用域'},[['user','用户知识'],['project','项目知识']].map(([key,label])=>h('button',{type:'button','aria-pressed':scope.value===key,disabled:busy.value||dirty.value||(key==='project'&&!props.directory),onClick:()=>{stash();scope.value=key;}},label))),
    scope.value==='project'?h('p',{class:'management-project'},'当前项目：'+props.directory):null,
    h('form',{class:'management-search',onSubmit:(e:Event)=>{e.preventDefault();void load();}},[h('input',{type:'search','aria-label':'搜索知识库',placeholder:'搜索标题或正文',value:query.value,onInput:(e:Event)=>query.value=(e.target as HTMLInputElement).value}),button('搜索',()=>void load(),busy.value),button('刷新清单',()=>void load(),busy.value)]),

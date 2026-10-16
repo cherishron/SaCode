@@ -72,6 +72,9 @@ contextBridge.exposeInMainWorld("sacode", {
   promptCancel: () => ipcRenderer.invoke("sacode:promptCancel"),
   usageStatus: () => ipcRenderer.invoke("sacode:usageStatus"),
   usageSetBudget: (budget) => ipcRenderer.invoke("sacode:usageSetBudget", { budget }),
+  appVersion: () => ipcRenderer.invoke("sacode:appVersion"),
+  autoLaunchGet: () => ipcRenderer.invoke("sacode:autoLaunchGet"),
+  autoLaunchSet: (enabled) => ipcRenderer.invoke("sacode:autoLaunchSet", { enabled }),
   appearanceGet: () => ipcRenderer.invoke("sacode:appearanceGet"),
   // 使用提醒：读取/取下一条/回复后提醒/改隐藏开关，四个固定动作，不开放任意方法通道。
   // 取提示与回复后提醒不带参数——比例读数由核心算，渲染层没有可填的分子分母。
@@ -86,7 +89,8 @@ contextBridge.exposeInMainWorld("sacode", {
   sessionCatalog: () => ipcRenderer.invoke("sacode:sessionCatalog"),
   // 已落盘事件流（轨迹视图）：只回放 durable 事件，cursor 之后 limit 之内。
   terminalOutput: (sessionId, cursor, limit) => ipcRenderer.invoke("sacode:terminalOutput", { sessionId, cursor, limit }),
-  sessionEvents: (cursor, limit) => ipcRenderer.invoke("sacode:sessionEvents", { cursor, limit }),
+  sessionEvents: (sessionId, cursor, limit) => ipcRenderer.invoke("sacode:sessionEvents", { sessionId, cursor, limit }),
+  requestTrace: (sessionId, beforeSeq, limit) => ipcRenderer.invoke("sacode:requestTrace", { sessionId, beforeSeq, limit }),
   sessionCreate: (title) => ipcRenderer.invoke("sacode:sessionCreate", { title }),
   sessionSelect: (sessionId) => ipcRenderer.invoke("sacode:sessionSelect", { sessionId }),
   workspaceGet: () => ipcRenderer.invoke("sacode:workspaceGet"),
@@ -107,6 +111,8 @@ contextBridge.exposeInMainWorld("sacode", {
   worktreeCleanup: () => ipcRenderer.invoke("sacode:worktreeCleanup", {}),
   appearanceSetTheme: (theme) => ipcRenderer.invoke("sacode:appearanceSetTheme", { theme }),
   globalSettingsGet: () => ipcRenderer.invoke("sacode:globalSettingsGet"),
+  profileGet: () => ipcRenderer.invoke('sacode:profileGet'),
+  profileUpdate: (nickname, expectedRevision) => ipcRenderer.invoke('sacode:profileUpdate', { nickname, expectedRevision }),
   globalSettingsSet: (key, value) => ipcRenderer.invoke("sacode:globalSettingsSet", { key, value }),
   // 模型配置面：一个动作一条通道，字段形状由主进程守卫，渲染层拼不出任意宿主方法。
   modelsDescribe: () => ipcRenderer.invoke("sacode:modelsDescribe"),

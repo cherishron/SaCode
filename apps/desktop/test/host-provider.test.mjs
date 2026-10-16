@@ -47,7 +47,7 @@ function stopFixture(proc) {
 
 // 全新会话目录：host 以 "current" 会话启动，submit 直接写入。
 function freshDir() {
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "dualtest");
   mkdirSync(root, { recursive: true });
   return mkdtempSync(jj(root, "sse-"));
 }

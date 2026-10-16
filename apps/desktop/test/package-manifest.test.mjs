@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectPackageManifestFiles } from '../../../scripts/package-manifest.mjs';
 
-const tempBase = fileURLToPath(new URL('../.tmp-test/', import.meta.url));
+const tempBase = fileURLToPath(new URL('../../../target/tmp/', import.meta.url));
 
 test('平台包清单递归覆盖 bin 与 extjs，并为嵌套 TZif 文件生成稳定摘要', () => {
   mkdirSync(tempBase, { recursive: true });

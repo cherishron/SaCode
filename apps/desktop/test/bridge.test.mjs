@@ -17,6 +17,57 @@ const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
 
+test('知识库桥接只接受会话作用域，不允许渲染层指定存储根',()=>{
+  const handlers=new Map();let calls=0;
+  require('../knowledge-ipc.cjs').registerKnowledgeIpc({handle:(name,fn)=>handlers.set(name,fn)},()=>{calls++;});
+  assert.throws(()=>handlers.get('sacode:knowledgeList')(null,{sessionId:'current',scope:'user',query:'',directory:'C:/outside'}),/knowledge-bad-args/);
+  assert.throws(()=>handlers.get('sacode:knowledgeImport')(null,{sessionId:'current',scope:'user',id:'a',title:'t',path:'secret',revision:0}),/knowledge-source-rejected/);
+  assert.equal(calls,0);
+});
+
+test('sessionEvents preload binds session identity to the paginated request',()=>{
+  let exposed;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.sessionEvents('session-1',12,8);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['sacode:sessionEvents',{sessionId:'session-1',cursor:12,limit:8}],
+  ]);
+});
+
+test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
+  let exposed;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.acpDelegationList('current');exposed.acpDelegationDescribe('current','delegation-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:acpDelegationList',{sessionId:'current'}],['sacode:acpDelegationDescribe',{sessionId:'current',delegationId:'delegation-1'}]]);
+  assert.equal(exposed.acpRequest,undefined);
+  calls.length=0;
+  exposed.acpDelegationCreate('current','task','request','opencode','仅读接口');
+  exposed.acpDelegationPoll('current','d1');
+  exposed.acpDelegationAnswer('current','d1',1,'denied','');
+  exposed.acpDelegationCancel('current','d1',2);
+  exposed.acpDelegationClose('current','d1',2);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['sacode:acpDelegationCreate',{sessionId:'current',taskId:'task',requestId:'request',peerId:'opencode',taskText:'仅读接口'}],
+    ['sacode:acpDelegationPoll',{sessionId:'current',delegationId:'d1'}],
+    ['sacode:acpDelegationAnswer',{sessionId:'current',delegationId:'d1',approvalId:1,decision:'denied',optionId:''}],
+    ['sacode:acpDelegationCancel',{sessionId:'current',delegationId:'d1',revision:2}],
+    ['sacode:acpDelegationClose',{sessionId:'current',delegationId:'d1',revision:2}],
+  ]);
+  calls.length=0;
+  exposed.acpSettingsDescribe('current');exposed.acpSettingsSetEnabled('current',true,0);exposed.acpProviderProbe('current');exposed.acpDiagnosticsDescribe('current');exposed.acpDiagnosticsKeep('current','acp-'+'a'.repeat(32),1);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['sacode:acpSettingsDescribe',{sessionId:'current'}],
+    ['sacode:acpSettingsSetEnabled',{sessionId:'current',enabled:true,revision:0}],
+    ['sacode:acpProviderProbe',{sessionId:'current'}],
+    ['sacode:acpDiagnosticsDescribe',{sessionId:'current'}],
+    ['sacode:acpDiagnosticsKeep',{sessionId:'current',diagnosticId:'acp-'+'a'.repeat(32),revision:1}],
+  ]);
+});
+
 test('持久任务预加载仅暴露六个固定动作并保留精确提案',()=>{
   let exposed; const calls=[]; const vm=require('node:vm');
   vm.runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
@@ -66,7 +117,7 @@ test('真实 Host 精确审批拒绝换正文，原票仅允许原调用一次',
 
 async function boot() {
   // 不依赖仓库里预先存在某个临时目录：自己把它建出来
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "bridge");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "dst-"));
   writeFileSync(join(dir, "session.log"), SEED);
@@ -76,6 +127,18 @@ async function boot() {
   const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
+}
+
+async function activeSessionId(b) {
+  const catalog = await b.request("session/catalog");
+  const current = Array.isArray(catalog.entries) ? catalog.entries.find(entry => entry && entry.current === true) : null;
+  assert.ok(current && typeof current.id === "string" && current.id.length > 0, "宿主必须提供当前会话身份");
+  return current.id;
+}
+
+async function subscribe(b, params = {}) {
+  const sessionId = params.sessionId || await activeSessionId(b);
+  return b.request("session/subscribe", { ...params, sessionId });
 }
 
 test("握手声明协议与能力", async () => {
@@ -92,6 +155,7 @@ test("握手声明协议与能力", async () => {
   assert.ok(r.capabilities.includes("workspace/get"));
   assert.ok(r.capabilities.includes('workspace/git-status'));
   assert.ok(r.capabilities.includes('workspace/git-diff'));
+  assert.ok(r.capabilities.includes('workspace/git-push-target'));
   assert.ok(r.capabilities.includes("workspace/set-directory"));
   assert.ok(r.capabilities.includes("global/appearance/get"));
   assert.ok(r.capabilities.includes("global/appearance/set-font-size"));
@@ -105,7 +169,7 @@ test("握手声明协议与能力", async () => {
 test("workspace/files 按 path 列子目录且拒绝越界", async () => {
   // 自建会话目录：session.log 只放一条已结算记录，不带未完成 turn——
   // 否则宿主启动时会把未完成 turn 续跑进后台，workspace/files 的首帧就追不上。
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "bridge");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "wf-"));
   writeFileSync(join(dir, "session.log"), "1\tsystem\tready\n");
@@ -169,11 +233,11 @@ test("submit 未 flush 时订阅者看不到，flush 后跨进程可见", async 
   assert.equal(p.events, 5, "实例内可见");
   assert.equal(p.pending, 1);
   assert.equal(p.durable, 4);
-  const before = await b.request("session/subscribe", { cursor: 0 });
+  const before = await subscribe(b, { cursor: 0 });
   assert.equal(before.events.length, 4, "未 flush 不得进入持久回放");
   const f = await b.request("session/flush");
   assert.equal(f.durable, 5);
-  const after = await b.request("session/subscribe", { cursor: 4 });
+  const after = await subscribe(b, { cursor: 4 });
   assert.deepEqual(after.events, [{ seq: 4, type: "user/message" }]);
   assert.equal(after.more, false);
   assert.ok(existsSync(join(dir, "session.log")));
@@ -188,15 +252,15 @@ test("无待写事件时 flush 明确拒绝", async () => {
 
 test("订阅按 cursor/limit 分页并给出 more", async () => {
   const { b } = await boot();
-  const p1 = await b.request("session/subscribe", { cursor: 0, limit: 2 });
+  const p1 = await subscribe(b, { cursor: 0, limit: 2 });
   assert.equal(p1.events.length, 2);
   assert.equal(p1.nextCursor, 2);
   assert.equal(p1.more, true);
-  const p2 = await b.request("session/subscribe", { cursor: p1.nextCursor, limit: 2 });
+  const p2 = await subscribe(b, { cursor: p1.nextCursor, limit: 2 });
   assert.equal(p2.events.length, 2);
   assert.equal(p2.nextCursor, 4);
   assert.equal(p2.more, false);
-  const p3 = await b.request("session/subscribe", { cursor: 4 });
+  const p3 = await subscribe(b, { cursor: 4 });
   assert.equal(p3.events.length, 0);
   assert.equal(p3.more, false);
   await b.stop();
@@ -213,7 +277,7 @@ test("宿主退出前结算未 flush 的写入并归还租约", async () => {
   assert.ok(readFileSync(join(dir, "session.log"), "utf8").includes("4\tassistant/message\tsettled on exit"));
   const b2 = new HostBridge(HOST, fixtureHostEnv(dir));
   await b2.start(dir);
-  const sub = await b2.request("session/subscribe", { cursor: 4 });
+  const sub = await subscribe(b2, { cursor: 4 });
   assert.deepEqual(sub.events, [{ seq: 4, type: "assistant/message" }]);
   const a = await b2.request("session/append", { eventType: "user/message", data: "next writer" });
   assert.equal(a.events, 6, "结算后下一个写者能拿到租约");
@@ -239,7 +303,7 @@ test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒�
     const asked = await b.request("approval/ask", { name: "write" });
     await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
     const w = await b.request("extension/call", { name: "write", args: "fs-entry.txt hello", approvalId: asked.approvalId });
-    assert.equal(w.result, "ok:fs-entry.txt");
+    assert.equal(w.result, `ok:${join(dir, 'fs-entry.txt')}`);
     const r = await b.request("extension/call", { name: "read", args: "fs-entry.txt" });
     assert.equal(r.result, "hello", "读侧必须走同一条管线，交回盘上真实读到的字节");
     // 第三方改成等长的另一串：只比 size 的实现在这里看不出来
@@ -248,7 +312,7 @@ test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒�
     await b.request("approval/answer", { approvalId: asked2.approvalId, decision: "allowed-once" });
     await assert.rejects(
       () => b.request("extension/call", { name: "write", args: "fs-entry.txt world", approvalId: asked2.approvalId }),
-      /fs-stale-version:fs-entry.txt/,
+      error => error.message.includes(`fs-stale-version:${join(dir, 'fs-entry.txt')}`),
       "旧认知过期后不得覆盖第三方改动"
     );
     assert.equal(readFileSync(join(dir, "fs-entry.txt"), "utf8"), "HELLP", "拒绝必须发生在写之前");
@@ -291,7 +355,7 @@ test("桌面文件工具拒绝未观察覆盖和路径别名绕过，解码失�
 
 // 反向：未登记工具必须走 JSON-RPC 错误；自报的审批字符串在协议面上完全不起作用
 test("extension/call 未登记工具被拒且自报审批不放行", async () => {
-  const { b } = await boot();
+  const { b, dir } = await boot();
   await assert.rejects(() => b.request("extension/call", { name: "no.such", args: "a b", approval: "allowed-once" }), /unregistered-tool:no.such/);
   // 关键反向用例：带着「我已经批过了」的自述来调用，没有工单就是不放行
   await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "allowed-once" }), /approval-not-granted:unknown/);
@@ -299,7 +363,7 @@ test("extension/call 未登记工具被拒且自报审批不放行", async () =>
   const asked = await b.request("approval/ask", { name: "write" });
   await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
   const ok = await b.request("extension/call", { name: "write", args: "probe.txt hi", approvalId: asked.approvalId });
-  assert.equal(ok.result, "ok:probe.txt");
+  assert.equal(ok.result, `ok:${join(dir, 'probe.txt')}`);
   const l = await b.request("extension/list", {});
   assert.equal(l.misses, 1, "未登记拒绝必须计数（审批被拒不计入注册表 miss）");
   await b.stop();
@@ -326,13 +390,15 @@ test("extension/dispose 逐个卸载后注册表清空且二次卸载失败", as
 // 全新会话（还没有 session.log 文件）是桌面的第一条黄金路径：
 // 第一次写入与第一个 turn 都必须能进去，不能被当成损坏回放。
 async function bootFresh() {
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "bridge");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "fresh-"));
   const b = new HostBridge(HOST, fixtureHostEnv(dir));
   await b.start(dir);
   return { b, dir };
 }
+
+
 
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -445,7 +511,7 @@ test("turn 在途时读投影与订阅不再被拒，写侧仍串行", async () 
   assert.ok(p.events >= 3, `流式期读不到状态：${JSON.stringify(p)}`);
   assert.equal(p.durable, 0, "turn 在途尚未 flush，跨进程不可见");
   assert.equal(p.pending, p.events, "内存态与已落盘的差额必须如实报 pending");
-  const sub = await b.request("session/subscribe", { cursor: 0 });
+  const sub = await subscribe(b, { cursor: 0 });
   assert.deepEqual(sub.events, [], "订阅只回放已落盘事件");
   await assert.rejects(
     () => b.request("session/submit", { eventType: "user/message", data: "mid-turn" }),
@@ -680,7 +746,7 @@ test("turn/cancel 只结算它自己那一轮发起的在途调用", async () =>
 });
 
 async function bootWithLeaseFile(token) {
-  const root = jj(REPO, "dualtest");
+  const root = jj(REPO, "target", "tmp", "bridge");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "lease-"));
   writeFileSync(join(dir, "session.log"), SEED);
@@ -689,6 +755,8 @@ async function bootWithLeaseFile(token) {
   await b.start(dir);
   return { b, dir };
 }
+
+
 
 // 桌面最常见的死锁：上一次宿主崩了，留下一个没人还的租约，之后每次写入都被拒。
 // 持有者确认已死 → 自动接管；持有者还活着 → 仍须明确拒绝，一个字都不动别人的凭据。
@@ -736,7 +804,7 @@ test("审批工单 ask→answer(allowed-once)→call 只放行一次", async () 
     assert.equal(answered.state, "allowed-once");
 
     const ok = await b.request("extension/call", { name: "write", args: "ticket.txt hi", approvalId: asked.approvalId });
-    assert.equal(ok.result, "ok:ticket.txt");
+    assert.equal(ok.result, `ok:${join(dir, 'ticket.txt')}`);
 
     // 一次性就是字面意思的一次：同一张工单不得再放行第二次调用
     await assert.rejects(
@@ -978,7 +1046,7 @@ function lspPreloadApi() {
   return { api, calls };
 }
 
-function lspMainHandlers() {
+function lspMainHandlers(hostRequest = async () => ({ ok: true })) {
   const vm = require('node:vm');
   const handlers = new Map();
   const requests = [];
@@ -1007,9 +1075,9 @@ function lspMainHandlers() {
     require: (id) => {
       if (id === 'electron') return electron;
       if (id === './host-bridge.cjs') {
-        return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return { ok: true }; } async stop() { return { code: 0 }; } killNow() {} } };
+        return { HostBridge: class { constructor() {} async start() {} async request(method, params) { requests.push({ method, params }); return hostRequest(method, params); } async stop() { return { code: 0 }; } killNow() {} } };
       }
-      if (id === './paths.cjs') return { ...require(jj(dirname(fileURLToPath(import.meta.url)), '..', 'paths.cjs')), hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
+      if (id === './paths.cjs') return { ...require(jj(dirname(fileURLToPath(import.meta.url)), '..', id)), hostExePath: () => '/tmp/does-not-exist-sacode-host.exe' };
       if (id === './stdio-guard.cjs') return { installStdioGuard: () => {} };
       if (id === './frame-smoke.cjs') return { runFrameSmoke: async () => {} };
       if (id === 'node:module') return { createRequire: (p) => require };
@@ -1230,9 +1298,56 @@ test('真实宿主 7 个 LSP 请求在无插件时如实失败并附非语义线
   }
 });
 
+test('审批模式 preload 仅发送具名模式字段，读取不携带参数', async () => {
+  const { api, calls } = lspPreloadApi();
+  for (const mode of ['plan', 'build', 'auto', 'yolo']) {
+    await api.approvalSetMode(mode, { method: 'tool/call', approvalId: 1 });
+    assert.equal(calls.at(-1)[0], 'sacode:approvalSetMode');
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1)[1])), { mode });
+  }
+  await api.approvalGetMode('yolo');
+  assert.deepEqual(calls.at(-1), ['sacode:approvalGetMode']);
+});
+
+test('审批模式主进程注册双动作，四种合法模式精确透传并返回宿主结果', async () => {
+  const result = { mode: 'build', applied: true };
+  const { handlers, requests } = lspMainHandlers(async () => result);
+  const set = handlers.get('sacode:approvalSetMode');
+  const get = handlers.get('sacode:approvalGetMode');
+  assert.equal(typeof set, 'function');
+  assert.equal(typeof get, 'function');
+  for (const mode of ['plan', 'build', 'auto', 'yolo']) {
+    assert.equal(await set({}, { mode, method: 'tool/call', approvalId: 1 }), result);
+    assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1))), { method: 'approval/set-mode', params: { mode } });
+  }
+  assert.equal(await get({}, { mode: 'yolo' }), result);
+  assert.equal(requests.at(-1).method, 'approval/get-mode');
+  assert.equal(requests.at(-1).params, undefined);
+  assert.equal(requests.length, 5);
+});
+
+test('审批模式主进程拒绝缺失、错型与非法枚举，不触发宿主请求', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  const set = handlers.get('sacode:approvalSetMode');
+  for (const args of [undefined, null, {}, { mode: undefined }, { mode: null },
+    { mode: 1 }, { mode: true }, { mode: [] }, { mode: {} }, { mode: '' },
+    { mode: 'BUILD' }, { mode: ' build' }, { mode: 'build ' }, { mode: 'allowed-once' }]) {
+    await assert.rejects(set({}, args), /bad-approval-mode/);
+    assert.equal(requests.length, 0, `非法参数被转发：${JSON.stringify(args)}`);
+  }
+});
+
+test('审批模式宿主失败原样拒绝，不伪造读取或设置成功', async () => {
+  const failure = new Error('approval-mode-host-failure');
+  const { handlers, requests } = lspMainHandlers(async () => { throw failure; });
+  for (const [channel, args] of [['sacode:approvalGetMode', undefined], ['sacode:approvalSetMode', { mode: 'auto' }]]) {
+    await assert.rejects(handlers.get(channel)({}, args), error => error === failure);
+  }
+  assert.deepEqual(requests.map(row => row.method), ['approval/get-mode', 'approval/set-mode']);
+});
+
 // IPC 面的唯一权威是 preload.cjs 里 contextBridge.exposeInMainWorld 的顶层 key（AGENTS.md）。
-// 这份清单与计数是 2026-10-09 在工作区态实测的：105 条，本批新增会话级工作树进出面 4 条
-// （worktreeDescribe / worktreeEnter / worktreeExit / worktreeCleanup）。
+// 顶层 key 为权威；下方逐项登记有限动作，不以历史计数替代。
 // 增删通道必须同时改 preload.cjs 与这里：整串比对，为的就是「悄悄多出一条发任意方法的口子」当场红。
 test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口子', () => {
   const vm = require('node:vm');
@@ -1245,27 +1360,28 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
   });
   assert.deepEqual(Object.keys(exposed).sort(), [
     'acpDelegationAnswer', 'acpDelegationCancel', 'acpDelegationClose', 'acpDelegationCreate', 'acpDelegationDescribe', 'acpDelegationList', 'acpDelegationPoll', 'acpDiagnosticsDescribe', 'acpDiagnosticsKeep', 'acpProviderProbe', 'acpSettingsDescribe', 'acpSettingsSetEnabled',
-    'appearanceGet', 'appearanceSetTheme', 'approvalAnswer', 'approvalAsk', 'approvalGetMode', 'approvalSetMode', 'attachmentImageRead', 'attachmentUpload',
-    'bindingRemove', 'bindingReorder', 'bindingUpsert', 'customImportInto', 'customImportNew', 'customsDescribe',
+    'appVersion', 'appearanceGet', 'appearanceSetTheme', 'approvalAnswer', 'approvalAsk', 'approvalGetMode', 'approvalSetMode', 'attachmentImageRead', 'attachmentUpload',
+    'autoLaunchGet', 'autoLaunchSet',
+    'automationControl', 'automationList', 'automationSave', 'bindingRemove', 'bindingReorder', 'bindingUpsert', 'customImportInto', 'customImportNew', 'customsDescribe',
     'customsRemove', 'customsUpsert', 'executionAuthorize', 'executionDescribe', 'executionList', 'executionOutput', 'executionPropose',
     'executionStart', 'executionStop', 'globalAppearanceGet', 'globalAppearanceSetBusySend', 'globalAppearanceSetFontSize', 'globalAppearanceSetTheme',
     'globalSettingsGet', 'globalSettingsSet', 'goalClear', 'goalCreate', 'goalDescribe', 'goalEdit',
-    'goalPause', 'goalResume', 'ledgerStats', 'lspCallHierarchy', 'lspDefine', 'lspDiagnostics',
+    'goalPause', 'goalResume', 'knowledgeImport', 'knowledgeList', 'knowledgeReference', 'knowledgeRemove', 'knowledgeSave', 'ledgerStats', 'lspCallHierarchy', 'lspDefine', 'lspDiagnostics',
     'lspImplementation', 'lspLookup', 'lspReferences', 'lspRename', 'modelPull', 'modelUpstreamUpsert',
     'modelsCatalog', 'modelsCreateInstance', 'modelsDescribe', 'modelsList', 'modelsRemove', 'modelsSave', 'modelsSaveCredential', 'modelsSetDefault',
     'modelsSetEnabled', 'modelsSort', 'pageToolCall', 'pageToolsList', 'pluginsDescribe', 'pluginsInspect',
     'pluginsInstall', 'pluginsInstallCancel', 'pluginsInstallPoll', 'pluginsRegistries', 'pluginsSetEnabled', 'pluginsSetRowEnabled',
     'pluginsUninstall', 'profileGet', 'profileUpdate', 'projection', 'promptCancel', 'promptEnhance', 'promptPoll', 'queueDescribe',
-    'queueEnqueue', 'queueUpdate', 'sessionCatalog', 'sessionCreate', 'sessionEvents', 'sessionSelect',
+    'queueEnqueue', 'queueUpdate', 'requestTrace', 'sessionCatalog', 'sessionCreate', 'sessionEvents', 'sessionSelect',
     'taskStart', 'teamApprovalAnswer', 'teamDescribe', 'teamMemberCreate', 'teamMemberStop', 'teamMessageBroadcast',
     'teamMessageSend', 'teamTaskAssign', 'teamTaskClaim', 'teamTaskComplete', 'teamTaskCreate', 'terminalOutput',
     'tipsAfterReply', 'tipsGet', 'tipsSetHidden', 'tipsStartup', 'toolCall', 'toolsList',
     'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userSend',
     'webSettingsApply', 'webSettingsDescribe', 'webSettingsSetCredential',
-    'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
+    'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitPushTarget', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
   ]);
-  assert.equal(Object.keys(exposed).length, 129, 'IPC 通道计数须与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 142, 'IPC 通道计数须与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1290,41 +1406,8 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 129, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含最近项目动作）');
+  assert.equal(handlers.size, 142, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含最近项目动作）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }
 });
-
-test('ACP预加载保留会话及委派身份且不开放通用调用',()=>{
-  let exposed;const calls=[];
-  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
-    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
-  });
-  exposed.acpDelegationList('current');exposed.acpDelegationDescribe('current','delegation-1');
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:acpDelegationList',{sessionId:'current'}],['sacode:acpDelegationDescribe',{sessionId:'current',delegationId:'delegation-1'}]]);
-  assert.equal(exposed.acpRequest,undefined);
-  calls.length=0;
-  exposed.acpDelegationCreate('current','task','request','opencode','仅读接口');
-  exposed.acpDelegationPoll('current','d1');
-  exposed.acpDelegationAnswer('current','d1',1,'denied','');
-  exposed.acpDelegationCancel('current','d1',2);
-  exposed.acpDelegationClose('current','d1',2);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
-    ['sacode:acpDelegationCreate',{sessionId:'current',taskId:'task',requestId:'request',peerId:'opencode',taskText:'仅读接口'}],
-    ['sacode:acpDelegationPoll',{sessionId:'current',delegationId:'d1'}],
-    ['sacode:acpDelegationAnswer',{sessionId:'current',delegationId:'d1',approvalId:1,decision:'denied',optionId:''}],
-    ['sacode:acpDelegationCancel',{sessionId:'current',delegationId:'d1',revision:2}],
-    ['sacode:acpDelegationClose',{sessionId:'current',delegationId:'d1',revision:2}],
-  ]);
-  calls.length=0;
-  exposed.acpSettingsDescribe('current');exposed.acpSettingsSetEnabled('current',true,0);exposed.acpProviderProbe('current');exposed.acpDiagnosticsDescribe('current');exposed.acpDiagnosticsKeep('current','acp-'+'a'.repeat(32),1);
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
-    ['sacode:acpSettingsDescribe',{sessionId:'current'}],
-    ['sacode:acpSettingsSetEnabled',{sessionId:'current',enabled:true,revision:0}],
-    ['sacode:acpProviderProbe',{sessionId:'current'}],
-    ['sacode:acpDiagnosticsDescribe',{sessionId:'current'}],
-    ['sacode:acpDiagnosticsKeep',{sessionId:'current',diagnosticId:'acp-'+'a'.repeat(32),revision:1}],
-  ]);
-});
-

@@ -5,7 +5,7 @@ import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 assert.equal(process.platform, 'win32');
-const base = resolve('apps/desktop/.tmp-test'); mkdirSync(base, { recursive: true });
+const base = resolve('target/tmp'); mkdirSync(base, { recursive: true });
 const root = mkdtempSync(join(base, 'windows-job-'));
 const compiler = join(process.env.SystemRoot, 'Microsoft.NET/Framework64/v4.0.30319/csc.exe');
 const sources = ['core/native/windows_job.cs', 'core/test-support/windows-job-probe.cs'].map(p => resolve(p));

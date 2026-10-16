@@ -4,15 +4,10 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 
 test('持久任务 IPC 使用实际主进程守卫，拒绝额外字段和范围错误',async()=>{
-  const source=readFileSync(new URL('../main.cjs',import.meta.url),'utf8');
-  const start=source.indexOf('const executionActions =');
-  const end=source.indexOf('ipcMain.handle("sacode:projection"',start);
-  assert.ok(start>=0 && end>start);
-  const handlers=new Map(),calls=[];
-  vm.runInNewContext(source.slice(start,end),{
-    Buffer,isStr:v=>typeof v==='string',ipcMain:{handle:(key,handler)=>handlers.set(key,handler)},
-    withHost:fn=>fn(),bridge:{request:(method,args)=>{calls.push({method,args});return args;}},
-  });
+  const source=readFileSync(new URL('../execution-ipc.cjs',import.meta.url),'utf8');
+  const handlers=new Map(),calls=[],module={exports:{}};
+  vm.runInNewContext(source,{Buffer,module});
+  module.exports.registerExecutionIpc({handle:(key,handler)=>handlers.set(key,handler)},(method,args)=>{calls.push({method,args});return args;});
   assert.equal(handlers.size,6);
   const propose=handlers.get('sacode:executionPropose');
   const proposal={sessionId:'current',taskId:'t',requestId:'r',proposal:'{"argv":["中文"]}'};

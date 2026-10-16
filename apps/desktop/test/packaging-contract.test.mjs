@@ -1,12 +1,67 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const desktop = fileURLToPath(new URL('../', import.meta.url));
 const manifest = JSON.parse(readFileSync(resolve(desktop, 'package.json'), 'utf8'));
 const normalize = value => posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//, '');
+
+test('打包清理仅撤掉输出目录里的Electron诊断日志和演示包', async () => {
+  const root = mkdtempSync(resolve(desktop, '../..', 'target/tmp/package-hygiene-'));
+  try {
+    mkdirSync(resolve(root, 'resources'));
+    for (const name of ['debug.log', 'resources/default_app.asar', 'resources/app.asar', 'resources.pak']) writeFileSync(resolve(root, name), name);
+    assert.equal(typeof manifest.build.afterPack, 'string');
+    const clean = createRequire(import.meta.url)(resolve(desktop, manifest.build.afterPack));
+    await clean({ appOutDir: root });
+    assert.equal(existsSync(resolve(root, 'debug.log')), false);
+    assert.equal(existsSync(resolve(root, 'resources/default_app.asar')), false);
+    assert.equal(readFileSync(resolve(root, 'resources/app.asar'), 'utf8'), 'resources/app.asar');
+    assert.equal(readFileSync(resolve(root, 'resources.pak'), 'utf8'), 'resources.pak');
+    await clean({ appOutDir: root });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Windows 临时启动入口显式关闭沙箱但不修改默认程序及全局环境', async () => {
+  const root = mkdtempSync(resolve(desktop, '../..', 'target/tmp/no-sandbox-launcher-'));
+  try {
+    mkdirSync(resolve(root, 'resources'));
+    writeFileSync(resolve(root, 'SaCode.exe'), '原始程序');
+    const pack = createRequire(import.meta.url)(resolve(desktop, manifest.build.afterPack));
+    await pack({ appOutDir: root, electronPlatformName: 'win32' });
+    const launcher = readFileSync(resolve(root, 'start-sacode-no-sandbox.cmd'), 'utf8');
+    const source = readFileSync(resolve(desktop, 'start-sacode-no-sandbox.cmd'), 'utf8');
+    assert.equal(launcher, source.replace(/\r?\n/g, '\r\n'));
+    assert.doesNotMatch(source, /[^\x00-\x7f]/);
+    assert.doesNotMatch(launcher, /[^\x00-\x7f]|(?<!\r)\n/);
+    assert.match(launcher, /"%~dp0SaCode\.exe" --no-sandbox %\*/);
+    assert.match(launcher, /setlocal/);
+    assert.match(launcher, /set "ELECTRON_RUN_AS_NODE="/);
+    assert.doesNotMatch(launcher, /\bsetx\b|Set-MpPreference|\breg\s+add|\brunas\b/i);
+    assert.equal(readFileSync(resolve(root, 'SaCode.exe'), 'utf8'), '原始程序');
+    const warning = readFileSync(resolve(root, 'TEMPORARY-NO-SANDBOX.txt'), 'utf8');
+    assert.match(warning, /安全隔离能力降低/);
+    assert.match(warning, /不作为正式发布包/);
+    const main = readFileSync(resolve(desktop, manifest.main), 'utf8');
+    assert.match(main, /sandbox:\s*true/);
+    assert.match(main, /contextIsolation:\s*true/);
+    assert.match(main, /nodeIntegration:\s*false/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('非 Windows 打包不生成 Windows 临时沙箱启动入口', async () => {
+  const root = mkdtempSync(resolve(desktop, '../..', 'target/tmp/no-sandbox-nonwindows-'));
+  try {
+    mkdirSync(resolve(root, 'resources'));
+    const pack = createRequire(import.meta.url)(resolve(desktop, manifest.build.afterPack));
+    await pack({ appOutDir: root, electronPlatformName: 'linux' });
+    assert.equal(existsSync(resolve(root, 'start-sacode-no-sandbox.cmd')), false);
+    assert.equal(existsSync(resolve(root, 'TEMPORARY-NO-SANDBOX.txt')), false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 // 只接受当前有限清单的明确文件或目录/**，未知模式直接拒绝，避免根通配假绿。
 function covered(file, files) {
@@ -97,6 +152,15 @@ test('扫描器处理单双引号、相对规范化、递归循环及目录覆�
   assert.deepEqual(scan(['main.cjs'], ['main.cjs', 'lib/a.cjs'], readFixture).missing, ['lib/nested/b.cjs']);
   assert.equal(covered('library/a.cjs', ['lib/**']), false);
   assert.throws(() => covered('main.cjs', ['**']), /仅支持/);
+});
+
+test('插件守卫必须随包，删项时门禁明确报告该依赖', () => {
+  const result = scan(entries, files, read);
+  assert.ok(result.edges.some(edge => edge.from === 'main.cjs' && edge.to === 'plugins-guard.cjs'));
+  assert.ok(files.includes('plugins-guard.cjs'));
+  const mutated = files.filter(entry => entry !== 'plugins-guard.cjs');
+  assert.deepEqual(scan(entries, mutated, read).missing, ['plugins-guard.cjs']);
+  assert.throws(() => gate(mutated), /plugins-guard\.cjs/);
 });
 
 test('真实清单删除被引用项时同一门禁必须拒绝', t => {

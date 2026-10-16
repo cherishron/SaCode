@@ -17,7 +17,7 @@ const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 
 async function bootFresh(tag) {
-  const root = jj(REPO, "dualtest", "settle");
+  const root = jj(REPO, "target", "tmp", "dualtest", "settle");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, tag + "-"));
   if (!existsSync(HOST)) {

@@ -3,14 +3,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, existsSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const { HostBridge } = createRequire(import.meta.url)('../host-bridge.cjs');
 
 const HOST = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
+const TEST_TMP = fileURLToPath(new URL('../../../target/tmp/frame-escape/', import.meta.url));
+function testDir(prefix) { mkdirSync(TEST_TMP, { recursive: true }); return mkdtempSync(join(TEST_TMP, prefix)); }
 
 // 正文同时覆盖 引号 / 换行 / 反斜杠 / 制表 四类必须转义的字符
 const TRICKY = '他说"引用"完了\n第二行带\\反斜杠\t和一个制表';
@@ -25,7 +26,7 @@ async function realTurn(t, content) {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   t.after(() => { server.closeAllConnections(); server.close(); });
-  const dir = mkdtempSync(join(tmpdir(), 'sacode-frame-escape-'));
+  const dir = testDir('sacode-frame-escape-');
   const bridge = new HostBridge(HOST, {
     ...process.env,
     SACODE_USER_SETTINGS_DIR: join(dir, 'settings'),
@@ -67,13 +68,16 @@ test('真实流式正文里的引号换行反斜杠整帧送达且不丢内容',
 // 会话日志是唯一真源，外来写者可以在事件类型里留下引号和转义换行；
 // 读侧若不解转义直接拼帧，这一行协议就会被撕成两行——注入的是协议本身。
 test('订阅回放里带引号与换行的事件类型不撕裂协议帧', { timeout: 20000 }, async (t) => {
-  const dir = mkdtempSync(join(tmpdir(), 'sacode-subscribe-escape-'));
+  const dir = testDir('sacode-subscribe-escape-');
   writeFileSync(join(dir, 'session.log'), '0\tuser"r\\nmessage\t外来写者的正文\n1\tuser/message\t正常一行\n', 'utf8');
   const bridge = new HostBridge(HOST, { ...process.env, SACODE_USER_SETTINGS_DIR: join(dir, 'settings') });
   await bridge.start(dir);
   try {
     await bridge.request('initialize');
-    const res = await bridge.request('session/subscribe', { cursor: 0, limit: 8 });
+    const catalog = await bridge.request('session/catalog');
+    const sessionId = catalog.entries.find(entry => entry && entry.current === true)?.id;
+    assert.ok(sessionId, '测试会话必须有稳定身份');
+    const res = await bridge.request('session/subscribe', { sessionId, cursor: 0, limit: 8 });
     assert.equal(res.events.length, 2, '两行事件都要作为两个对象送达');
     assert.equal(res.events[0].type, 'user"r\nmessage', '类型必须逐字归还，含解码出的换行');
     assert.equal(res.events[1].type, 'user/message');

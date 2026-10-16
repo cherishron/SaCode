@@ -159,6 +159,29 @@ export function createModelCenterAdapters(api: any) {
         }, revision: view.revision, writable: view.writable };
       },
     },
+    'model-call-log': {
+      async describe() {
+        const catalog = await api.sessionCatalog();
+        const entries = (catalog && Array.isArray(catalog.entries)) ? catalog.entries : [];
+        // 全局聚合：限流扫描前 K 个会话，各取最近 50 条调用后合并取最近 N 条。
+        // 目录扫描序无时间序，跨大量会话时不保证覆盖最活跃者——这是 v1 的已知限制，
+        // 待目录补 last-active 时间戳后改为按时间裁剪。
+        const K = 30, N = 200;
+        const slice = entries.slice(0, K);
+        const perSession = await Promise.all(slice.map(async (e: any) => {
+          try {
+            const raw = await api.requestTrace(e.id, -1, 50);
+            const proj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const requests = (proj && proj.requests) || [];
+            return requests.map((r: any) => Object.assign({}, r, { sessionId: e.id, sessionTitle: e.title }));
+          } catch { return []; }
+        }));
+        let calls = perSession.flat();
+        calls.sort((a: any, b: any) => Number(b.request?.time ?? 0) - Number(a.request?.time ?? 0));
+        calls = calls.slice(0, N);
+        return { sessions: entries.map((e: any) => ({ id: e.id, title: e.title })), calls, scanned: slice.length, total: entries.length };
+      },
+    },
     migration: {
       async describe() {
         const view = await customView();

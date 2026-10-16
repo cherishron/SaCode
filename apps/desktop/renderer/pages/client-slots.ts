@@ -22,6 +22,7 @@ import * as providerSettings from './provider-settings';
 import * as customModels from './custom-models';
 import * as budgetStats from './budget-stats';
 import * as migration from './migration';
+import * as modelCallLog from './model-call-log';
 export { createModelCenterAdapters } from './model-center-adapter';
 
 type RenderOptions = { only?: string; entryKey?: string; fallback?: unknown };
@@ -120,7 +121,7 @@ export function createModelCenterAssembly() {
         props: ['owner', 'renderSlot'],
         setup: props => {
           const active = ref('custom-models');
-          const tabs = [['custom-models','模型'],['provider-settings','供应商'],['budget-stats','费用统计'],['migration','迁移']];
+          const tabs = [['custom-models','模型'],['provider-settings','供应商'],['model-call-log','模型调用日志'],['budget-stats','费用统计'],['migration','迁移']];
           return () => h('div', { class: 'model-center' }, [
             h('h2', '模型中心'),
             h('nav', { class: 'model-center-tabs', 'aria-label': '模型中心分类' }, tabs.map(([id,label]) =>
@@ -138,6 +139,7 @@ export function createModelCenterAssembly() {
   install('ui-provider-settings', providerSettings.install);
   install('ui-custom-models', customModels.install);
   install('ui-budget-stats', budgetStats.install);
+  install('ui-model-call-log', modelCallLog.install);
   install('ui-migration', migration.install);
 
   const Outlet = createSlotRenderer(slots);

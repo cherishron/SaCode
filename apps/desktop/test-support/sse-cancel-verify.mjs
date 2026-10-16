@@ -7,7 +7,7 @@ import {createHash} from 'node:crypto';
 const repo=resolve('.'),core=resolve(process.env.SACODE_CORE_LIBRARY||'');
 assert.ok(process.env.SACODE_CORE_LIBRARY&&existsSync(join(core,'libcore.a')),'必须指定本轮 core 库');
 const stdx='C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx';
-const root=mkdtempSync(resolve('apps/desktop/.tmp-test/sse-cancel-')),exe=join(root,'probe.exe'),tmp=join(root,'tmp');mkdirSync(tmp);
+const root=mkdtempSync(resolve('target/tmp/sse-cancel-')),exe=join(root,'probe.exe'),tmp=join(root,'tmp');mkdirSync(tmp);
 const hash=file=>createHash('sha256').update(readFileSync(file)).digest('hex');
 const source=resolve('core/test-support/sse-cancel-probe.cj');
 const args=['--import-path',core,'--import-path',stdx,'-L',core,'-L',stdx,'-lcore',...readdirSync(stdx).filter(x=>x.endsWith('.dll')).map(x=>'-l:'+x),source,'-o',exe];

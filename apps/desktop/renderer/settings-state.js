@@ -10,10 +10,61 @@
       globalAppearance, fontBusy, fontNote, appearanceBusy, appearanceNote,
       budgetDraft, budgetNote, budgetBusy, usage,
       generalPrefs, generalPrefsBusy, generalPrefsNote,
+      autoLaunch, autoLaunchBusy, autoLaunchNote,
       getSessionGeneration, cleanErr,
       busySendSaving, busySendNote, busySendError,
       tips, tipsHidden, tipsPressure, tipsBusy, tipsNote, tipsError, catalogError,
+      profile, profileDraft, profileBusy, profileNote, profileError,
+      aboutVersion,
     } = deps;
+
+    let profileEpoch = 0, profileDisposed = false, profileReading = false;
+    const profileFailure = e => {
+      const message = String(e.message || e);
+      if (message.includes('bad-profile-nickname')) return '昵称请输入1–40个字符，不能包含控制字符。';
+      if (message.includes('profile-revision-conflict')) return '资料已由其他窗口修改；请重新读取后再保存，输入已保留。';
+      if (message.includes('profile-already-owned')) return '另一窗口正在保存资料，请稍后重试。';
+      if (message.includes('profile-replay-rejected') || message.includes('profile-path-rejected')) return '资料文件无法安全读取，未覆盖原文件。';
+      if (message.includes('profile-owner-unknown')) return '无法确认资料写锁的归属，未保存变更。';
+      return '无法读取或保存本机资料，请检查D盘用户数据目录。';
+    };
+    function checkedProfile(value) {
+      if (!value || typeof value.nickname !== 'string' || !value.nickname.trim() || !Number.isSafeInteger(value.revision) || value.revision < 0) throw Error('invalid-profile-response');
+      return { nickname: value.nickname, revision: value.revision };
+    }
+    async function refreshProfile() {
+      if (!profile || profileDisposed || profileBusy.value || profileReading) return;
+      profileReading = true;
+      const epoch = ++profileEpoch, before = profile.value, draftBefore = profileDraft.value;
+      try {
+        const value = checkedProfile(await api.profileGet());
+        if (profileDisposed || epoch !== profileEpoch) return;
+        const unchanged = profileDraft.value === draftBefore;
+        const dirty = before && draftBefore !== before.nickname;
+        profile.value = value;
+        if (unchanged && !dirty) profileDraft.value = value.nickname;
+        profileError.value = false; profileNote.value = '';
+      } catch (e) {
+        if (!profileDisposed && epoch === profileEpoch) { profileError.value = true; profileNote.value = profileFailure(e); }
+      } finally { profileReading = false; }
+    }
+    async function saveProfile() {
+      if (!profile?.value || profileDisposed || profileBusy.value) return;
+      const nickname = profileDraft.value.trim(), expectedRevision = profile.value.revision;
+      if (!nickname || Array.from(nickname).length > 40 || /[\x00-\x1f\x7f]/.test(nickname)) {
+        profileError.value = true; profileNote.value = '昵称请输入1–40个字符，不能包含控制字符。'; return;
+      }
+      const epoch = ++profileEpoch;
+      profileBusy.value = true; profileError.value = false; profileNote.value = '正在保存本机昵称…';
+      try {
+        const value = checkedProfile(await api.profileUpdate(nickname, expectedRevision));
+        if (profileDisposed || epoch !== profileEpoch) return;
+        profile.value = value; profileDraft.value = value.nickname; profileNote.value = '昵称已保存。';
+      } catch (e) {
+        if (!profileDisposed && epoch === profileEpoch) { profileError.value = true; profileNote.value = profileFailure(e); }
+      } finally { if (!profileDisposed && epoch === profileEpoch) profileBusy.value = false; }
+    }
+    function disposeProfile() { profileDisposed = true; ++profileEpoch; }
 
     async function showStartupTip() {
       try { const r = await api.tipsStartup(); if (r && r.id && r.text) tips.value = { kind: 'startup', text: r.text, reliable: false }; }
@@ -49,8 +100,9 @@
       tipsBusy.value = true; tipsError.value = false; tipsNote.value = '正在保存提醒偏好…';
       try {
         const r = await api.tipsSetHidden(value);
-        tipsHidden.value = !!r.hidden; tipsNote.value = '已保存，界面立即停止出提醒。';
-        if (value) tips.value = null;
+        tipsHidden.value = !!r.hidden;
+        tipsNote.value = tipsHidden.value ? '已保存，使用提醒已关闭。' : '已保存，使用提醒已开启。';
+        if (tipsHidden.value) tips.value = null;
       } catch (e) { tipsError.value = true; tipsNote.value = fontError(e); }
       finally { tipsBusy.value = false; }
     }
@@ -116,15 +168,22 @@
       }
     }
 
+    // 通用偏好只认已知值：宿主返回未预期的值时回落保守档，不把未知串当设置生效。
+    function normalizedPrefs(r) {
+      return {
+        transcriptView: r.transcriptView === 'compact' || r.transcriptView === 'expanded' ? r.transcriptView : 'default',
+        composerEnter: r.composerEnter === 'newline' ? 'newline' : 'send',
+        sessionLog: r.sessionLog === 'on' ? 'on' : 'off',
+        // 新会话默认权限只认核心 PermissionPolicy 的四档；未接或读坏时回落最保守的 build。
+        defaultPermissionMode: ['plan', 'build', 'auto', 'yolo'].includes(r.defaultPermissionMode) ? r.defaultPermissionMode : 'build',
+      };
+    }
+
     async function refreshGeneralPrefs() {
       try {
         const r = await api.globalSettingsGet();
         if (r && typeof r === 'object') {
-          generalPrefs.value = {
-            transcriptView: r.transcriptView === 'compact' || r.transcriptView === 'expanded' ? r.transcriptView : 'default',
-            composerEnter: r.composerEnter === 'newline' ? 'newline' : 'send',
-            sessionLog: r.sessionLog === 'on' ? 'on' : 'off',
-          };
+          generalPrefs.value = normalizedPrefs(r);
         }
       } catch (e) { generalPrefsNote.value = '配置读取失败：' + String(e.message || e); }
     }
@@ -135,13 +194,44 @@
       try {
         const r = await api.globalSettingsSet(key, value);
         if (r && typeof r === 'object') {
-          generalPrefs.value = {
-            transcriptView: r.transcriptView === 'compact' || r.transcriptView === 'expanded' ? r.transcriptView : 'default',
-            composerEnter: r.composerEnter === 'newline' ? 'newline' : 'send',
-            sessionLog: r.sessionLog === 'on' ? 'on' : 'off',
-          };
+          generalPrefs.value = normalizedPrefs(r);
         }
       } catch (e) { generalPrefsNote.value = '保存失败：' + String(e.message || e); } finally { generalPrefsBusy.value = ''; }
+    }
+
+    // 开机自启：状态与写入都走壳层的登录项接口，界面只呈现回读到的真实状态。
+    // 读不到就置 null（界面写「读取失败」），不拿上次的值或刚提交的请求冒充当前系统设置。
+    function checkedAutoLaunch(value) {
+      if (!value || typeof value.openAtLogin !== 'boolean' || typeof value.packaged !== 'boolean') throw Error('invalid-autolaunch-response');
+      return { openAtLogin: value.openAtLogin, packaged: value.packaged, note: typeof value.note === 'string' ? value.note : '' };
+    }
+    async function refreshAutoLaunch() {
+      try { autoLaunch.value = checkedAutoLaunch(await api.autoLaunchGet()); }
+      catch (e) { autoLaunch.value = null; }
+    }
+    async function setAutoLaunch(enabled) {
+      if (autoLaunchBusy.value) return;
+      autoLaunchBusy.value = true; autoLaunchNote.value = '';
+      try {
+        autoLaunch.value = checkedAutoLaunch(await api.autoLaunchSet(enabled));
+      } catch (e) {
+        autoLaunchNote.value = '开机自启设置失败：' + String(e.message || e);
+      } finally { autoLaunchBusy.value = false; }
+    }
+
+    // 关于页只呈现壳层事实：版本与运行时都由 Electron 进程给出，不碰宿主、不猜更新状态
+    // （更新检查确实尚未开放，界面如实写「尚未开放」而不是给一个跑不起来的按钮）。
+    // ref 由装配方持有并随 deps 传入，与 profile/generalPrefs 同一套做法。
+    function checkedVersion(value) {
+      if (!value || typeof value.app !== 'string' || typeof value.electron !== 'string'
+        || typeof value.chrome !== 'string' || typeof value.node !== 'string'
+        || typeof value.platform !== 'string' || typeof value.arch !== 'string'
+        || typeof value.packaged !== 'boolean') throw Error('invalid-version-response');
+      return value;
+    }
+    async function refreshAboutVersion() {
+      try { aboutVersion.value = checkedVersion(await api.appVersion()); }
+      catch (e) { aboutVersion.value = null; }
     }
 
     return {
@@ -149,6 +239,9 @@
       refreshUsage, setBudget,
       refreshGeneralPrefs, setGeneralPref,
       showStartupTip, showContextTip, refreshTips, setTipsHidden, dismissTips,
+      refreshProfile, saveProfile, disposeProfile,
+      aboutVersion, refreshAboutVersion,
+      autoLaunch, autoLaunchBusy, autoLaunchNote, refreshAutoLaunch, setAutoLaunch,
     };
   }
 
@@ -180,6 +273,11 @@
   }
 
   function renderSettings(self, { h, el, navIcon }) {
+    const about = self.aboutVersion;
+    const aboutRows = about
+      ? [el('p','note','版本 ' + about.app + '（' + about.platform + '-' + about.arch + ' · ' + (about.packaged ? '安装态' : '开发目录') + '）'),
+         el('p','note','Electron ' + about.electron + ' · Chromium ' + about.chrome + ' · Node ' + about.node)]
+      : [el('p','note','版本信息正在读取…')];
     return h(window.SaCodeDialog, { open: self.settingsOpen, title: "SaCode 设置", class: "settings-dialog", customFrame:true,
       onClose: () => { self.settingsOpen = false; } }, () => [
       el('nav','settings-nav',[
@@ -204,9 +302,36 @@
       ]),
       el('div','dialog-body settings-options',[
       el("section", "settings-page", [
+        el('h2','settings-section-title','通用'),
         el('section','settings-row language-settings',[el('span','settings-row-title','语言'),el('output','settings-fixed-value','中文',{'aria-label':'界面语言'})]),
-        el('section','settings-row',[el('div',null,[el('strong',null,'新会话默认权限'),el('p','note','Plan / Build / Yolo / Auto Review 的默认权限契约尚未接入。')]),el('button','btn','待接入',{disabled:true})]),
-        el('section','settings-row',[el('div',null,[el('strong',null,'开机自启'),el('p','note','尚无系统启动项接口，当前不会修改系统设置。')]),el('button','btn','待接入',{disabled:true})]),
+        // 新会话默认权限：四档就是核心 PermissionPolicy 的 plan/build/auto/yolo。
+        // 这里只改「之后新建会话」的初始档，不动当前会话，也不等于放宽实际审批。
+        el('section','settings-row',[
+          el('div','settings-row-title',[
+            el('strong',null,'新会话默认权限'),
+            el('p','note','只作用于之后新建的会话，不改变当前会话；实际工具审批仍以核心权限裁决为准。'),
+          ]),
+          el('div','permission-choices',[['plan','Plan'],['build','Build'],['yolo','YOLO'],['auto','Auto Review']].map(([id,label])=>
+            el('button','permission-choice',label,{
+              id:'default-permission-'+id, type:'button',
+              'aria-pressed': self.generalPrefs.defaultPermissionMode===id,
+              disabled: !!self.generalPrefsBusy,
+              onClick:()=>self.setGeneralPref('default-permission',id),
+            })),{'aria-label':'新会话默认权限'}),
+        ]),
+        // 开机自启：开关状态取自壳层回读，读不到时不显示成已开启或已关闭。
+        el('section','settings-row',[
+          el('div','settings-row-title',[
+            el('strong',null,'开机自启'),
+            el('p','note',self.autoLaunch?(self.autoLaunch.note||'登录后自动启动本应用。'):'正在读取开机自启状态…'),
+          ]),
+          el('button','btn',self.autoLaunch?(self.autoLaunch.openAtLogin?'已开启':'已关闭'):'—',{
+            id:'auto-launch-toggle', type:'button',
+            disabled: !self.autoLaunch || !!self.autoLaunchBusy,
+            onClick:()=>self.setAutoLaunch(!self.autoLaunch.openAtLogin),
+          }),
+        ]),
+        el('p','note',self.autoLaunchNote,{role:'status','aria-live':'polite'}),
       ], { id:"settings-page-general", role:"tabpanel", "aria-labelledby":"settings-tab-general", hidden:self.settingsTab!=="general" }),
       el("section", "settings-page", [
         el('h2','settings-section-title','外观'),
@@ -248,8 +373,22 @@
         el('p','note',self.generalPrefsNote,{role:'status','aria-live':'polite'}),
         el('p','note','此项仅保存日志偏好；上传服务是否执行需单独验收。数据导出、清理与保留管理尚未接入。'),
       ],{id:'settings-page-privacy',role:'tabpanel','aria-labelledby':'settings-tab-privacy',hidden:self.settingsTab!=='privacy'}),
-      el('section','settings-page',[el('h2','settings-section-title','个人资料'),el('div','profile-summary',[navIcon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0'),el('div',null,[el('strong',null,'本地用户'),el('p','note','无需官方账号')])]),el('p','note','昵称、头像与资料持久化接口尚未接入。')],{id:'settings-page-profile',role:'tabpanel','aria-labelledby':'settings-tab-profile',hidden:self.settingsTab!=='profile'}),
-      el('section','settings-page',[el('h2','settings-section-title','SaCode'),el('p',null,'自主开发工作台'),el('p','note','让灵感，有迹可循。'),el('p','note','当前版本信息暂不可用，更新检查尚未开放。')],{id:'settings-page-about',role:'tabpanel','aria-labelledby':'settings-tab-about',hidden:self.settingsTab!=='about'}),
+      el('section','settings-page',[
+        el('h2','settings-section-title','个人资料'),
+        el('div','profile-summary',[navIcon('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21a8 8 0 0 1 16 0'),el('div',null,[el('strong',null,self.profile?.nickname||'本地用户'),el('p','note','本机资料，不关联云账号。')])]),
+        el('form','profile-form',[
+          el('label','field-label','昵称',{for:'profile-nickname'}),
+          el('div','profile-edit-row',[
+            el('input','input',null,{id:'profile-nickname','aria-label':'个人昵称',autocomplete:'nickname',maxlength:80,value:self.profileDraft,disabled:self.profileBusy||!self.profile,
+              onInput:e=>{self.profileDraft=e.target.value;}}),
+            el('button','btn btn-primary',self.profileBusy?'保存中…':'保存昵称',{id:'save-profile',type:'submit',disabled:self.profileBusy||!self.profile||!self.profileDraft.trim()}),
+          ]),
+          el('p','note',self.profileNote,{id:'profile-note',role:self.profileError?'alert':'status','aria-live':'polite'}),
+          el('button','btn','重新读取',{id:'refresh-profile',type:'button',disabled:self.profileBusy,onClick:self.refreshProfile}),
+        ],{'aria-busy':self.profileBusy,onSubmit:e=>{e.preventDefault();void self.saveProfile();}}),
+        el('p','note','昵称保存在D盘本机用户数据目录；头像上传尚未开放。'),
+      ],{id:'settings-page-profile',role:'tabpanel','aria-labelledby':'settings-tab-profile',hidden:self.settingsTab!=='profile'}),
+      el('section','settings-page',[el('h2','settings-section-title','SaCode'),el('p',null,'自主开发工作台'),el('p','note','让灵感，有迹可循。'),...aboutRows,el('p','note','更新检查尚未开放。')],{id:'settings-page-about',role:'tabpanel','aria-labelledby':'settings-tab-about',hidden:self.settingsTab!=='about'}),
       self.modelCenter ? el("section", "settings-page", [h(self.modelCenter.Outlet, { owner: self.modelCenterOwner || { value: null } })], { id:"settings-page-model-center", role:"tabpanel", "aria-labelledby":"settings-tab-model-center", hidden:self.settingsTab!=="model-center" }) : el("section", "settings-page", [el("p","note","模型中心组件未加载")], { id:"settings-page-model-center", hidden:true }),
       el("section", "settings-page", [h(window.SaCodePlugins.Page, {
         tools: self.tools,

@@ -8,12 +8,15 @@ module.exports = async function smoke({ app, HOST, SESSION_DIR, bridge, seedIfNe
     return;
   }
   seedIfNeeded();
-  await bridge.start(SESSION_DIR);
+  await bridge.start(SESSION_DIR);  const sessionCatalog = await bridge.request("session/catalog");
+  const sessionId = sessionCatalog.entries.find(entry => entry && entry.current === true)?.id;
+  if (!sessionId) throw new Error("SMOKE FAIL 当前会话缺少身份");
+  const readEvents = cursor => bridge.request("session/subscribe", { sessionId, cursor });
   const out = [];
   let bad = 0;
   for (const m of ["initialize", "session/projection", "session/subscribe"]) {
     try {
-      out.push(`${m}=${JSON.stringify(await bridge.request(m))}`);
+      out.push(`${m}=${JSON.stringify(await bridge.request(m, m === "session/subscribe" ? { sessionId } : {}))}`);
     } catch (e) {
       bad += 1;
       out.push(`${m} 失败: ${e.message}`);
@@ -29,9 +32,9 @@ module.exports = async function smoke({ app, HOST, SESSION_DIR, bridge, seedIfNe
   // 未 flush 的写入不得被当作已提交：submit 后订阅读不到，flush 后才读到
   try {
     const s = await bridge.request("session/submit", { eventType: "assistant/message", data: "smoke pending" });
-    const before = await bridge.request("session/subscribe", { cursor: s.durable });
+    const before = await readEvents(s.durable);
     const f = await bridge.request("session/flush");
-    const after = await bridge.request("session/subscribe", { cursor: s.durable });
+    const after = await readEvents(s.durable);
     if (before.events.length !== 0 || after.events.length !== 1 || f.durable !== s.events) {
       bad += 1;
       out.push(`durability 屏障不符预期: before=${before.events.length} after=${after.events.length} durable=${f.durable}/${s.events}`);

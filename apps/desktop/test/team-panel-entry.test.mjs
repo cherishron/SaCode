@@ -17,6 +17,9 @@ function entry(api={}){
   assert.ok(begin>=0&&end>begin,'app 尚未装配团队状态与事件');
   const timers=new Map(),cleanup=[],calls=[];
   const context={ref:vue.ref,window:{Vue:{...vue,onBeforeUnmount:fn=>cleanup.push(fn)},sacode:{teamDescribe:async()=>empty(),...api}},sideOpen:vue.ref(false),sideTab:vue.ref('inspect'),pluginManagerOpen:vue.ref(false),scrollSession:vue.ref('lead'),catalog:vue.ref({entries:[{id:'lead',current:true}]}),selectedScrollId:'lead',selectSession:async id=>{calls.push(['sessionSelect',id]);context.scrollSession.value=id;context.selectedScrollId=id;},setInterval:fn=>{const id=timers.size+1;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id)};
+  context.managementPage = vue.ref('');
+  vm.runInNewContext(read('team-state.js'), context);
+  context.window.SaCodeTeamState = context.SaCodeTeamState;
   const scope=vue.effectScope();let state;
   scope.run(()=>{state=vm.runInNewContext(source.slice(begin,end)+'\n({teamSessionId,teamSnapshot,teamBusy,teamError,refreshTeam,addTeamMember,sendTeamMessage,createTeamTask,assignTeamTask,stopTeamMember,selectTeamSession})',context);});
   return{...state,context,timers,calls,async open(){context.sideOpen.value=true;context.sideTab.value='agents';await vue.nextTick();await this.flush();},async flush(){for(let i=0;i<8;i++)await Promise.resolve();},dispose(){cleanup.forEach(fn=>fn());scope.stop();}};

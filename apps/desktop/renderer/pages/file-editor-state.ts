@@ -55,7 +55,7 @@ export function createFileEditor(api:Api,changed:()=>void){
       const back=await api.read(path);
       if(readResult(back)!==wanted)throw Error('写后回读不一致，请核对磁盘文件；草稿已保留。');
       if(!disposed&&ticket===epoch){state.original=wanted;state.review=false;state.notice='已保存并核对磁盘内容。';state.saveRevision++;}
-    }catch(e){if(!disposed&&ticket===epoch)state.error=String((e as Error).message||e);}
+    }catch(e){if(!disposed&&ticket===epoch){const message=String((e as Error).message||e);state.error=message.includes('approval-not-granted')?'一次性审批未获授权，未写入。':message;}}
     finally{if(!disposed&&ticket===epoch){state.busy=false;notify();}}
   }
   function reset(){if(disposed||state.busy||dirty())return false;++epoch;Object.assign(state,{path:'',original:'',draft:'',loaded:false,review:false,error:'',notice:''});notify();return true;}

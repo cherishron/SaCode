@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
 async function runWindow(source, hidden) {
-  const base = join(here, '../.tmp-test/window-visibility');
+  const base = join(here, '../../../target/tmp/window-visibility');
   mkdirSync(base, { recursive: true });
   const dir = mkdtempSync(join(base, 'run-'));
   writeFileSync(join(dir, 'visibility.cjs'), source);
@@ -34,11 +34,15 @@ async function runWindow(source, hidden) {
       app.exit(0);
     }).catch(e => { console.error(e); app.exit(1); });
   `);
-  const env = { ...process.env };
+  const temp = join(dir, 'temp');
+  mkdirSync(temp);
+  const env = { ...process.env, TMP: temp, TEMP: temp, TMPDIR: temp };
   delete env.ELECTRON_RUN_AS_NODE;
   return await new Promise((resolve, reject) => {
+    // 代理环境沙箱初始化可能崩溃；仅显式开启测试开关时关闭，不改变生产启动策略。
+    const args = [join(dir, 'main.cjs'), '--no-sandbox', '--disable-gpu'];
     // 可指定已核验发布包的同版本 Electron 运行时，不跳过真实窗口断言。
-    const child = spawn(process.env.SACODE_ELECTRON_TEST_EXE || require('electron'), [join(dir, 'main.cjs')], { env, windowsHide: true });
+    const child = spawn(process.env.SACODE_ELECTRON_TEST_EXE || require('electron'), args, { env, windowsHide: true });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill(); reject(new Error('真实窗口验收超时')); }, 20000);
     child.stdout.on('data', data => { out += data; });

@@ -109,6 +109,30 @@ test('applySelection 切换后旧草稿保存、新草稿恢复', async () => {
   assert.equal(sessionGeneration.value, 1, 'sessionGeneration 应自增');
 });
 
+test('切换被后端拒绝时保留当前会话、草稿与选择代次，解除忙碌状态', async()=>{
+  const deps=makeDeps({draft:ref('尚未发送的草稿'),selectedScrollId:ref('old'),catalog:ref({entries:[{id:'old',current:true}]})});
+  let resets=0;
+  deps.fileEditor.reset=()=>resets++;
+  deps.api.sessionSelect=async()=>{throw Error('session-storage-unavailable');};
+  await createSessionAssembly(deps).selectSession('new');
+  assert.equal(deps.draft.value,'尚未发送的草稿');
+  assert.equal(deps.selectedScrollId.value,'old');
+  assert.equal(deps.catalog.value.entries[0].id,'old');
+  assert.equal(deps.catalogBusy.value,false);
+  assert.equal(resets,0);
+  assert.match(deps.error.value,/session-storage-unavailable/);
+});
+
+test('新建被后端拒绝时保留名称草稿与当前会话', async()=>{
+  const deps=makeDeps({newSessionTitle:ref('待创建名称'),draft:ref('当前消息'),selectedScrollId:ref('old')});
+  deps.api.sessionCreate=async()=>{throw Error('session-storage-unavailable');};
+  await createSessionAssembly(deps).createSession();
+  assert.equal(deps.newSessionTitle.value,'待创建名称');
+  assert.equal(deps.draft.value,'当前消息');
+  assert.equal(deps.selectedScrollId.value,'old');
+  assert.equal(deps.catalogBusy.value,false);
+});
+
 // 构造最小 deps，允许覆盖个别字段
 function makeDeps(overrides = {}) {
   const api = {

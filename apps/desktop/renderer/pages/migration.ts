@@ -141,7 +141,7 @@ export const Page=defineComponent({
 // --- 槽位注册 ---
 export function install(scope:ClientScope):()=>void{
   return scope.inject('model-center.tab',(child)=>{
-    child.register({name:'model-center.tab',id:'migration',order:3,label:'迁移'},
+    child.register({name:'model-center.tab',id:'migration',order:4,label:'迁移'},
       defineComponent({name:'SaCodeMigrationSlot',props:['owner'],setup:(props)=>()=>h(Page,{adapter:(props.owner as any)?.adapter})}));
   });
 }

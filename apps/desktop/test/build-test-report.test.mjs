@@ -22,6 +22,7 @@ const output = (stdout, overrides = {}) => ({
 });
 
 const cjSummary='TOTAL: 8 / PASSED: 6 / SKIPPED: 2 / ERROR: 0 / FAILED: 0';
+const cjpmRunnerSummary='Summary: TOTAL: 4\n    PASSED: 3, SKIPPED: 1, ERROR: 0\n    FAILED: 0';
 const tapSummary='# tests 3\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 1\n# todo 0';
 
 test('仓颉测试命令摘要绑定执行修订；有通过用例和跳过用例仍如实通过', () => {
@@ -30,6 +31,22 @@ test('仓颉测试命令摘要绑定执行修订；有通过用例和跳过用�
   assert.equal(result.reason,'passed-with-skips');
   assert.deepEqual([result.sessionId,result.executionId,result.taskId,result.revision],['session-1','execution-2','task-2',3]);
   assert.deepEqual([result.summary.total,result.summary.passed,result.summary.skipped],[8,6,2]);
+});
+
+test('解析本机仓颉 1.1.3 的多行最终摘要；忽略 ANSI 进度控制并采用最后一份摘要', () => {
+  const noisy='\u001b[0J\u001b7\u001b[9999E\u001b8'+
+    'TP: core, time elapsed: 5046000 ns, RESULT:\n'+
+    'Summary: TOTAL: 2\n    PASSED: 2, SKIPPED: 0, ERROR: 0\n    FAILED: 0\n'+
+    cjpmRunnerSummary+'\n--------------------------------------------------------------------------------------------------';
+  assert.deepEqual(parseTestSummary(noisy),{format:'cangjie',total:4,passed:3,skipped:1,errors:0,failed:0,cancelled:0});
+  const report=buildTestReport(snapshot(),output(noisy));
+  assert.equal(report.status,'passed');
+  assert.equal(report.reason,'passed-with-skips');
+  assert.equal(report.summary.total,4);
+  assert.equal(parseTestSummary(noisy+'\nSummary: TOTAL: 4\n    PASSED: 4'),null);
+  const failed=buildTestReport(snapshot(),output('Summary: TOTAL: 3\n    PASSED: 2, SKIPPED: 0, ERROR: 0\n    FAILED: 1'));
+  assert.equal(failed.status,'failed');
+  assert.equal(failed.reason,'test-summary-has-failures');
 });
 
 test('cjpm build 用退出事实和完整双流报告构建结果，不冒充测试摘要', () => {

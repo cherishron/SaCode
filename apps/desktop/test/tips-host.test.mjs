@@ -9,16 +9,17 @@ import {HostBridge} from '../host-bridge.cjs';
 // 真实宿主的提醒面：四个动词全部落到仓颉核心，界面不留第二份状态。
 const host=resolve(process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url)));
 
-async function boot(){
+async function boot(t){
   const root=mkdtempSync(join(tmpdir(),'sacode-tips-host-'));
   const settings=join(root,'user-settings');
   const bridge=new HostBridge(host,{...process.env,SACODE_USER_SETTINGS_DIR:settings,SACODE_PROVIDER_KEY:'',SACODE_PROVIDER_BASE_URL:''});
+  t.after(async()=>{await bridge.stop();rmSync(root,{recursive:true,force:true});});
   await bridge.start(root);
   return {bridge,root,settings};
 }
 
-test('宿主声明并使用提醒动词，隐藏开关跨进程留存',async()=>{
-  const {bridge,root,settings}=await boot();
+test('宿主声明并使用提醒动词，隐藏开关跨进程留存',async(t)=>{
+  const {bridge,root,settings}=await boot(t);
   try{
     const init=await bridge.request('initialize');
     for(const verb of ['tips/get','tips/startup','tips/after-reply','tips/set-hidden']){
@@ -58,11 +59,11 @@ test('宿主声明并使用提醒动词，隐藏开关跨进程留存',async()=>
     if(existsSync(sessionLog)){
       assert.ok(!readFileSync(sessionLog,'utf8').includes('tips/'),'提醒不得写进会话日志');
     }
-  } finally { rmSync(root,{recursive:true,force:true}); }
+  } finally { await bridge.stop(); rmSync(root,{recursive:true,force:true}); }
 });
 
-test('提醒参数守空：缺 hidden 直接回结构化错误',async()=>{
-  const {bridge,root}=await boot();
+test('提醒参数守空：缺 hidden 直接回结构化错误',async(t)=>{
+  const {bridge,root}=await boot(t);
   try{
     await assert.rejects(()=>bridge.request('tips/set-hidden',{accessibility:false}),/bad-tips-params/);
     // 参数被拒后状态不得半改：仍然可读，且隐藏态没被这次失败请求动过。

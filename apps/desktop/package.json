@@ -24,17 +24,24 @@
       "output": "dist/electron"
     },
     "asar": true,
+    "afterPack": "./after-pack.cjs",
     "files": [
       "main.cjs",
       "stdio-guard.cjs",
       "window-visibility.cjs",
       "preload.cjs",
-      "host-bridge.cjs",
       "knowledge-ipc.cjs",
       "automation-ipc.cjs",
+      "host-bridge.cjs",
       "execution-history-ipc.cjs",
+      "customs-ipc.cjs",
+      "execution-ipc.cjs",
+      "lsp-ipc.cjs",
+      "web-settings-ipc.cjs",
       "acp-ipc.cjs",
       "page-tool-bridge.cjs",
+      "models-ipc.cjs",
+      "plugins-ipc.cjs",
       "team-ipc.cjs",
       "team-adapter.cjs",
       "worktree-ipc.cjs",
@@ -42,6 +49,7 @@
       "models-save.cjs",
       "model-credential-ipc.cjs",
       "customs-guard.cjs",
+      "plugins-guard.cjs",
       "paths.cjs",
       "data-paths.cjs",
       "layout-smoke.cjs",
@@ -49,9 +57,7 @@
       "frame-smoke.cjs",
       "test-support/**",
       "package.json",
-      "renderer/**",
-      "plugins-guard.cjs",
-      "web-settings-ipc.cjs"
+      "renderer/**"
     ],
     "extraResources": [
       {
@@ -67,6 +73,17 @@
       ],
       "signExecutable": false
     },
+    "linux": {
+      "icon": "renderer/assets/sacode-icon.png",
+      "target": ["AppImage", "deb"],
+      "category": "Development",
+      "artifactName": "SaCode-${version}-linux-${arch}.${ext}"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "SaCode-${version}-mac-${arch}.${ext}"
+    },
     "nsis": {
       "oneClick": true,
       "perMachine": false,
@@ -74,24 +91,6 @@
     },
     "portable": {
       "artifactName": "sacode-portable.exe"
-    },
-    "afterPack": "./after-pack.cjs",
-    "linux": {
-      "icon": "renderer/assets/sacode-icon.png",
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Development",
-      "artifactName": "SaCode-${version}-linux-${arch}.${ext}"
-    },
-    "mac": {
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "category": "public.app-category.developer-tools",
-      "artifactName": "SaCode-${version}-mac-${arch}.${ext}"
     }
   },
   "devDependencies": {

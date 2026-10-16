@@ -3,10 +3,29 @@ function count(value) {
 }
 
 function parseCangjie(text) {
-  const pattern = /^\s*TOTAL:\s*(\d+)\s*\/\s*PASSED:\s*(\d+)\s*\/\s*SKIPPED:\s*(\d+)\s*\/\s*ERROR:\s*(\d+)\s*\/\s*FAILED:\s*(\d+)\s*$/gm;
-  const matches = Array.from(text.matchAll(pattern));
-  if (matches.length !== 1) return null;
-  const values = matches[0].slice(1).map(Number);
+  // cjpm 1.1.3 的 unittest runner 输出多行 Summary；私有验收日志也有
+  // 一行五计数格式。去掉终端控制码后，只信最后一个 TOTAL 标记，避免
+  // 复用日志里的旧摘要，或在最终摘要损坏时仍报先前的绿灯。
+  const clean = text
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b[78]/g, '')
+    .replace(/\r/g, '');
+  const markers = Array.from(clean.matchAll(/TOTAL:\s*\d+/g));
+  if (markers.length === 0) return null;
+  const lastMarker = markers[markers.length - 1].index + markers[markers.length - 1][0].indexOf('TOTAL:');
+
+  const candidates = [];
+  const compact = /^\s*TOTAL:\s*(\d+)\s*\/\s*PASSED:\s*(\d+)\s*\/\s*SKIPPED:\s*(\d+)\s*\/\s*ERROR:\s*(\d+)\s*\/\s*FAILED:\s*(\d+)\s*$/gm;
+  for (const match of clean.matchAll(compact)) {
+    candidates.push({index: match.index + match[0].indexOf('TOTAL:'), values: match.slice(1)});
+  }
+  const runner = /^[ \t]*Summary:[ \t]*TOTAL:\s*(\d+)\s*\n[ \t]*PASSED:\s*(\d+)\s*,\s*SKIPPED:\s*(\d+)\s*,\s*ERROR:\s*(\d+)\s*\n[ \t]*FAILED:\s*(\d+)[ \t]*$/gm;
+  for (const match of clean.matchAll(runner)) {
+    candidates.push({index: match.index + match[0].indexOf('TOTAL:'), values: match.slice(1)});
+  }
+  const latest = candidates.filter(candidate => candidate.index === lastMarker);
+  if (latest.length !== 1) return null;
+  const values = latest[0].values.map(Number);
   const [total, passed, skipped, errors, failed] = values;
   if (!values.every(count) || total !== passed + skipped + errors + failed) return null;
   return {format: 'cangjie', total, passed, skipped, errors, failed, cancelled: 0};

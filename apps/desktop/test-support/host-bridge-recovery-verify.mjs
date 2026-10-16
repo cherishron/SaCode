@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {fixtureHostEnv} from './fixture-env.mjs';
 const require=createRequire(import.meta.url),{HostBridge}=require('../host-bridge.cjs');
 assert.ok(process.env.SACODE_HOST&&existsSync(process.env.SACODE_HOST),'必须显式指定 Host');
-const host=resolve(process.env.SACODE_HOST),root=mkdtempSync(resolve('apps/desktop/.tmp-test/bridge-recovery-'));
+const host=resolve(process.env.SACODE_HOST),root=mkdtempSync(resolve('target/tmp/bridge-recovery-'));
 const bridge=new HostBridge(host,fixtureHostEnv(root,{PATH:join(process.env.SystemRoot,'System32'),TMP:root,TEMP:root}));
 const facts={root,host,passed:false};
 try{

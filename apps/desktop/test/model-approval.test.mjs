@@ -13,12 +13,33 @@ test('参数缺失损坏与工单冲突均拒绝',()=>{for(const patch of [{appr
 test('允许和拒绝都只回答原票，不重复调用工具',async()=>{for(const decision of ['allowed-once','denied']){const calls=[];const result=await answer({approvalAnswer:async(...args)=>{calls.push(args);return {accepted:true};},toolCall:()=>{throw Error('禁止重复执行');}},selectProposal([request],'s1',true),decision,()=>true);assert.equal(result.accepted,true);assert.deepEqual(calls,[[1,decision]]);}});
 test('停止或切换前不发送应答',async()=>{let calls=0;assert.deepEqual(await answer({approvalAnswer:()=>calls++},request,'allowed-once',()=>false),{stale:true});assert.equal(calls,0);});
 test('切换后的迟到应答不应用',async()=>{let active=true,resolve;const result=answer({approvalAnswer:()=>new Promise(r=>resolve=r)},request,'allowed-once',()=>active);active=false;resolve({accepted:true});assert.deepEqual(await result,{stale:true});});
-const app=readFileSync(new URL('../renderer/app.js',import.meta.url),'utf8');
+const approvalSource=readFileSync(new URL('../renderer/tool-approval-state.js',import.meta.url),'utf8');
+const sendSource=readFileSync(new URL('../renderer/send-queue-state.js',import.meta.url),'utf8');
+const pollSource=readFileSync(new URL('../renderer/turn-poll-state.js',import.meta.url),'utf8');
+function bindApproval(ctx) {
+  vm.runInNewContext(approvalSource,ctx);
+  Object.assign(ctx,ctx.SaCodeToolApproval.createToolApprovalAssembly({
+    api:ctx.window.sacode, fileEditor:ctx.fileEditor, turn:ctx.turn, approval:ctx.approval,
+    error:ctx.error, outcome:ctx.outcome, outcomeKind:ctx.outcomeKind, cleanErr:ctx.cleanErr,
+    getSessionGeneration:()=>ctx.sessionGeneration,getPollGeneration:()=>ctx.pollGeneration,
+    modelApprovalsSuppressed:{get value(){return ctx.modelApprovalsSuppressed;}},
+    selectedScrollId:{get value(){return ctx.selectedScrollId;}},
+    modelTurnRequestId:{get value(){return ctx.modelTurnRequestId;}},
+  }));
+}
+function bindSend(ctx) {
+  vm.runInNewContext(sendSource,ctx);
+  Object.assign(ctx,ctx.SaCodeSendQueue.createSendQueueAssembly({
+    api:ctx.window.sacode,approval:ctx.approval,error:ctx.error,
+    getSessionGeneration:()=>ctx.sessionGeneration,getPollGeneration:()=>ctx.pollGeneration,
+    modelApprovalsSuppressed:{get value(){return ctx.modelApprovalsSuppressed;},set value(v){ctx.modelApprovalsSuppressed=v;}},
+  }));
+}
 function rendererContext(api){return {window:{sacode:api,SaCodeModelApproval:{takeRequests,selectProposal,answer}},fileEditor:{state:{}},sessionGeneration:0,pollGeneration:1,modelApprovalsSuppressed:false,modelTurnRequestId:'7',selectedScrollId:'s1',approval:{value:selectProposal([request],'s1',true)},turn:{value:{running:true}},outcomeKind:{value:''},outcome:{value:''},cleanErr:e=>e.message,callTool:()=>{throw Error('重复工具执行');}};}
-test('实际 renderer 模型应答分支不进入手动工具调用',async()=>{for(const decision of ['allowed-once','denied']){const calls=[],ctx=rendererContext({approvalAnswer:async(id,d)=>{calls.push([id,d]);return {accepted:true};}});const start=app.indexOf('    async function answerTool('),end=app.indexOf('    async function callTool(',start);vm.runInNewContext(app.slice(start,end),ctx);await ctx.answerTool(decision);assert.deepEqual(calls,[[1,decision]]);assert.equal(ctx.approval.value,null);}});
-test('实际 renderer 应答在会话切换后丢弃失败回执',async()=>{let resolve;const ctx=rendererContext({approvalAnswer:()=>new Promise(r=>resolve=r)});const start=app.indexOf('    async function answerTool('),end=app.indexOf('    async function callTool(',start);vm.runInNewContext(app.slice(start,end),ctx);const pending=ctx.answerTool('allowed-once');ctx.sessionGeneration++;resolve({accepted:false,state:'expired'});await pending;assert.equal(ctx.outcome.value,'');});
-test('实际轮询在停止/新轮次后不消费迟到提案',async()=>{let poll,callback;const ctx=rendererContext({turnPoll:()=>new Promise(r=>poll=r)});ctx.approval.value=null;ctx.pollTimer=null;ctx.setInterval=fn=>{callback=fn;return 1;};ctx.clearInterval=()=>{};const start=app.indexOf('    function stopPolling()'),end=app.indexOf('    const turnStartFailure',start);vm.runInNewContext(app.slice(start,end),ctx);ctx.startPolling();const pending=callback();ctx.stopPolling();poll({running:true,turnRequestId:'7',frames:[],approvalRequests:[request]});await pending;assert.equal(ctx.approval.value,null);});
+test('实际 renderer 模型应答分支不进入手动工具调用',async()=>{for(const decision of ['allowed-once','denied']){const calls=[],ctx=rendererContext({approvalAnswer:async(id,d)=>{calls.push([id,d]);return {accepted:true};}});ctx.SaCodeModelApproval=ctx.window.SaCodeModelApproval;bindApproval(ctx);await ctx.answerTool(decision);assert.deepEqual(calls,[[1,decision]]);assert.equal(ctx.approval.value,null);}});
+test('实际 renderer 应答在会话切换后丢弃失败回执',async()=>{let resolve;const ctx=rendererContext({approvalAnswer:()=>new Promise(r=>resolve=r)});ctx.SaCodeModelApproval=ctx.window.SaCodeModelApproval;bindApproval(ctx);const pending=ctx.answerTool('allowed-once');ctx.sessionGeneration++;resolve({accepted:false,state:'expired'});await pending;assert.equal(ctx.outcome.value,'');});
+test('实际轮询在停止/新轮次后不消费迟到提案',async()=>{let poll,callback;const ctx=rendererContext({turnPoll:()=>new Promise(r=>poll=r)});ctx.approval.value=null;ctx.pollTimer=null;ctx.setInterval=fn=>{callback=fn;return 1;};ctx.clearInterval=()=>{};vm.runInNewContext(pollSource,ctx);const controller=ctx.SaCodeTurnPoll.createTurnPoll({poll:()=>ctx.window.sacode.turnPoll(),getGeneration:()=>ctx.sessionGeneration,getEpoch:()=>ctx.pollGeneration,invalidate:()=>ctx.pollGeneration++,getApprovalContext:()=>({suppressed:false,sessionId:'s1',requestId:'7'}),selectProposal,approval:ctx.approval,turn:ctx.turn});controller.start();const pending=callback();controller.stop();poll({running:true,turnRequestId:'7',frames:[],approvalRequests:[request]});await pending;assert.equal(ctx.approval.value,null);});
 test('同一会话的旧任务缓存通知不能进入新任务',()=>{assert.equal(selectProposal([request],'s1',true,'8'),null);assert.throws(()=>selectProposal([{...request,turnRequestId:undefined}],'s1',true,'8'),/起轮请求/);});
 test('旧 poll 不得取走新任务提前到达的通知',()=>{const fresh={...request,turnRequestId:'8',approvalId:2},other={method:'extension/event'};const bridge={notifications:[{method:'approval/asked',params:request},{method:'approval/asked',params:fresh},other]};assert.deepEqual(takeRequests(bridge,'7'),[request]);assert.deepEqual(takeRequests(bridge,'8'),[fresh]);assert.deepEqual(bridge.notifications,[other]);});
 test('成功起轮只清旧模型通知，保留本轮和其他事件',()=>{const fresh={...request,turnRequestId:'8'},other={method:'extension/event'};const bridge={notifications:[{method:'approval/asked',params:request},{method:'approval/asked',params:fresh},other]};discardPreviousRequests(bridge,'8');assert.deepEqual(bridge.notifications,[{method:'approval/asked',params:fresh},other]);});
-test('实际停止分支立即隐藏工单且不应用新轮次后的失败',async()=>{let reject;const ctx=rendererContext({turnCancel:()=>new Promise((_,r)=>reject=r)});ctx.error={value:''};const start=app.indexOf('    async function cancelTurn()'),end=app.indexOf('    const cleanErr',start);vm.runInNewContext(app.slice(start,end),ctx);const pending=ctx.cancelTurn();assert.equal(ctx.approval.value,null);assert.equal(ctx.modelApprovalsSuppressed,true);ctx.pollGeneration++;reject(Error('旧请求断连'));await pending;assert.equal(ctx.error.value,'');});
+test('实际停止分支立即隐藏工单且不应用新轮次后的失败',async()=>{let reject;const ctx=rendererContext({turnCancel:()=>new Promise((_,r)=>reject=r)});ctx.error={value:''};bindSend(ctx);const pending=ctx.cancelTurn();assert.equal(ctx.approval.value,null);assert.equal(ctx.modelApprovalsSuppressed,true);ctx.pollGeneration++;reject(Error('旧请求断连'));await pending;assert.equal(ctx.error.value,'');});

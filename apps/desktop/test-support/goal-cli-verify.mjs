@@ -6,7 +6,7 @@ import { resolve, join } from 'node:path';
 import { fixtureHostEnv } from './fixture-env.mjs';
 const exe = resolve(process.env.SACODE_CLI || '');
 assert.ok(process.env.SACODE_CLI && existsSync(exe), '必须指定本轮新 CLI');
-const evidence = mkdtempSync(resolve('apps/desktop/.tmp-test/goal-cli-proof-'));
+const evidence = mkdtempSync(resolve('target/tmp/goal-cli-proof-'));
 const results = []; let scenario;
 const server = createServer(async (req, res) => {
   try {

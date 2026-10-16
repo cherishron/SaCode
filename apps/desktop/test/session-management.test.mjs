@@ -1,7 +1,7 @@
 import { fixtureHostEnv } from '../test-support/fixture-env.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync, mkdirSync, rmdirSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
@@ -14,6 +14,59 @@ const boot=async()=>{
   const bridge=new HostBridge(host, fixtureHostEnv(dir)); await bridge.start(dir);
   return {dir,bridge};
 };
+
+test('选择目标会话被真实写者占用时拒绝，保留原选择与目标日志', async()=>{
+  const {dir,bridge}=await boot();
+  let writer;
+  try {
+    const {id}=await bridge.request('session/create',{title:'被占用的目标'});
+    const target=join(dir,id,'session.log');
+    writer=new HostBridge(host,fixtureHostEnv(dir));
+    await writer.start(join(dir,id));
+    await writer.request('session/submit',{eventType:'user/message',data:'占用者尚未保存'});
+    const original=readFileSync(target,'utf8');
+    const index=readFileSync(join(dir,'session.log'),'utf8');
+    await assert.rejects(()=>bridge.request('session/select',{sessionId:id}),e=>/already-owned/.test(e.message)&&e.data?.reason==='busy');
+    assert.equal((await bridge.request('session/catalog')).entries.find(e=>e.current).id,'current');
+    assert.equal(readFileSync(target,'utf8'),original);
+    assert.equal(readFileSync(join(dir,'session.log'),'utf8'),index);
+  } finally { if(writer)await writer.stop(); await bridge.stop(); }
+});
+
+test('索引租约位置异常是存储失败而非另一写者，恢复后可重试且原写权不丢', async()=>{
+  const {dir,bridge}=await boot();
+  const lock=join(dir,'session.log.lease');
+  try {
+    const first=(await bridge.request('session/create',{title:'原活动会话'})).id;
+    const target=(await bridge.request('session/create',{title:'切换目标'})).id;
+    await bridge.request('session/select',{sessionId:first});
+    await bridge.request('session/submit',{eventType:'user/message',data:'保留原写权'});
+    const index=readFileSync(join(dir,'session.log'),'utf8');
+    mkdirSync(lock);
+    await assert.rejects(()=>bridge.request('session/select',{sessionId:target}),e=>/session-storage-unavailable/.test(e.message)&&e.data?.reason==='persistence-failed');
+    assert.equal((await bridge.request('session/catalog')).entries.find(e=>e.current).id,first);
+    assert.equal(readFileSync(join(dir,'session.log'),'utf8'),index);
+    assert.equal(existsSync(join(dir,target,'session.log.lease')),false);
+    await bridge.request('session/submit',{eventType:'user/message',data:'失败后仍归原会话'});
+    rmdirSync(lock);
+    assert.equal((await bridge.request('session/select',{sessionId:target})).selected,true);
+    assert.match(readFileSync(join(dir,first,'session.log'),'utf8'),/失败后仍归原会话/);
+  } finally {
+    try { if(existsSync(lock)&&statSync(lock).isDirectory())rmdirSync(lock); }
+    finally { await bridge.stop(); }
+  }
+});
+
+test('新建目录写入失败使用稳定存储错误，保留原会话和落盘前缀', async()=>{
+  const {dir,bridge}=await boot();
+  const original=readFileSync(join(dir,'session.log'),'utf8');
+  try {
+    writeFileSync(join(dir,'sessions'),'不是目录');
+    await assert.rejects(()=>bridge.request('session/create',{title:'不能创建'}),e=>/session-storage-unavailable/.test(e.message)&&e.data?.reason==='persistence-failed');
+    assert.equal((await bridge.request('session/catalog')).entries.find(e=>e.current).id,'current');
+    assert.equal(readFileSync(join(dir,'session.log'),'utf8'),original);
+  } finally { await bridge.stop(); }
+});
 
 test('新建与切换隔离消息、主题、预算，结算旧写入并在重启后恢复选择', async()=>{
   const {dir,bridge}=await boot();

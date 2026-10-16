@@ -64,7 +64,7 @@ test('自定义模型 preload 十个通道逐动作逐字段，且无任意方�
 
 test('主进程守卫与宿主动词逐个对映（断言 52）', () => {
   const { api } = load();
-  const mainSrc = readFileSync(new URL('../main.cjs', import.meta.url), 'utf8');
+  const mainSrc = readFileSync(new URL('../customs-ipc.cjs', import.meta.url), 'utf8');
   const preloadSrc = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
   // preload 里本批十个通道名（按出现顺序）
   const names = ['customsDescribe', 'customsUpsert', 'customsRemove', 'bindingUpsert', 'bindingRemove',
@@ -77,7 +77,7 @@ test('主进程守卫与宿主动词逐个对映（断言 52）', () => {
       bindingUpsert: 'binding/upsert', bindingRemove: 'binding/remove', bindingReorder: 'binding/reorder',
       modelPull: 'model/pull', modelUpstreamUpsert: 'model/upstream/upsert',
       customImportNew: 'custom/import/new', customImportInto: 'custom/import/into' }[n];
-    const handleRe = new RegExp(`ipcMain\\.handle\\("sacode:${n}"[\\s\\S]*?bridge\\.request\\("${verb.replace('/', '\\/')}"`);
+    const handleRe = new RegExp(`ipcMain\\.handle\\("sacode:${n}"[\\s\\S]*?request\\("${verb.replace('/', '\\/')}"`);
     assert.ok(handleRe.test(mainSrc), `主进程缺少 sacode:${n} → ${verb} 的接线`);
   }
 });

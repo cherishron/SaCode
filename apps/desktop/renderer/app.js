@@ -42,7 +42,6 @@ const el = (tag, cls, children, extra) => {
   const node=h(tag,props,children);
   return tooltip?window.SaCodeTooltip.wrap(node,tooltip):node;
 };
-const roleName = (role) => ({ system: "系统", developer: "开发者", user: "用户", assistant: "助手", tool: "工具" }[role] || "系统");
 const verdictName = (verdict) => ({ recorded: "已计量", "over-budget": "超出预算", absent: "未收到用量", "bad-usage": "用量格式异常" }[verdict] || "未计量");
 const navIcon = (path) => h("svg", { class: "nav-symbol", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, [h("path", { d: path })]);
 
@@ -304,6 +303,8 @@ createApp({
     window.Vue.onBeforeUnmount(()=>modelCenter && modelCenter.dispose());
     const modelCenterOwner = ref(null);
     const settingsTab = ref("general");
+    const profile = ref(null), profileDraft = ref(''), profileBusy = ref(false), profileNote = ref(''), profileError = ref(false);
+    const aboutVersion = ref(null);
     const catalogOpen = ref(false), catalog = ref(null), catalogBusy = ref(false), catalogNote = ref("");
     let sessionGeneration = 0;
     let selectedScrollId = 'initial';
@@ -342,9 +343,13 @@ createApp({
       if (teamTimer === null) { void refreshTeam(); teamTimer = setInterval(refreshTeam, 3000); }
     });
     window.Vue.onBeforeUnmount(() => { teamDisposed = true; stopTeamRefresh(); });
-    // 通用设置的三个持久化偏好：值与保存都走宿主 global/settings，失败时回显真实回读值。
-    const generalPrefs = ref({ transcriptView: null, composerEnter: null, sessionLog: null });
+    // 通用设置的持久化偏好：值与保存都走宿主 global/settings，失败时回显真实回读值。
+    // defaultPermissionMode 是「之后新建会话」的初始权限档，不是当前会话的档位。
+    const generalPrefs = ref({ transcriptView: null, composerEnter: null, sessionLog: null, defaultPermissionMode: null });
     const generalPrefsBusy = ref(""), generalPrefsNote = ref("");
+    // 开机自启状态：null 表示还没读到，界面据此显示「读取中」而不是猜一个开关位置。
+    const autoLaunch = ref(null);
+    const autoLaunchBusy = ref(false), autoLaunchNote = ref("");
     // 插件清单适配器：宿主 packages 的每一项是一个已装插件；有工具行的包也作为会话预设组。
     // 全局插件列表 = 全部包；会话预设 = 有 rows 的包，每包一组。坏包只坏自己，不连坐。
     const pluginsInventoryAdapter = {
@@ -606,12 +611,25 @@ createApp({
     const settingsAssembly = window.SaCodeSettings.createSettingsAssembly({
       api: window.sacode, globalAppearance, fontBusy, fontNote, appearanceBusy, appearanceNote,
       budgetDraft, budgetNote, budgetBusy, usage, generalPrefs, generalPrefsBusy, generalPrefsNote,
+      autoLaunch, autoLaunchBusy, autoLaunchNote,
       busySendSaving, busySendNote, busySendError,
       tips, tipsHidden, tipsPressure, tipsBusy, tipsNote, tipsError, catalogError,
+      profile, profileDraft, profileBusy, profileNote, profileError,
+      aboutVersion,
       getSessionGeneration: () => sessionGeneration, cleanErr: e => cleanErr(e),
     });
     const { refreshGlobalAppearance, setFontSize, setTheme, setBusySend, refreshUsage, setBudget, refreshGeneralPrefs, setGeneralPref, showStartupTip, showContextTip, refreshTips, setTipsHidden, dismissTips } = settingsAssembly;
     void refreshGeneralPrefs();
+    const { refreshProfile, saveProfile, disposeProfile } = settingsAssembly;
+    void refreshProfile();
+    const { refreshAboutVersion } = settingsAssembly;
+    void refreshAboutVersion();
+    const { refreshAutoLaunch, setAutoLaunch } = settingsAssembly;
+    void refreshAutoLaunch();
+    const refreshProfileOnFocus = () => { void refreshProfile(); };
+    window.addEventListener('focus', refreshProfileOnFocus);
+    window.Vue.watch(() => settingsOpen.value && settingsTab.value === 'profile', open => { if (open) void refreshProfile(); });
+    window.Vue.onBeforeUnmount(() => { disposeProfile(); window.removeEventListener('focus', refreshProfileOnFocus); });
     const sessionAssembly = window.SaCodeSessionState.createSessionAssembly({
       api: window.sacode, ref,
       catalog, catalogBusy, catalogNote, catalogOpen, newSessionTitle,
@@ -624,6 +642,8 @@ createApp({
       refresh, refreshTools, refreshUsage,
       refreshWorkspace: () => workspaceAssembly.refreshWorkspace(),
       refreshWorkspaceFiles: () => workspaceAssembly.refreshWorkspaceFiles(),
+      invalidateTrace: () => workspaceAssembly.invalidateTrace(),
+      refreshTrace: (reset, sessionId) => workspaceAssembly.refreshTrace(reset, sessionId),
       refreshQueue, refreshGlobalAppearance,
       selectedCustomModel, previewFloating, detailName,
       budgetDraft, budgetNote, appearanceNote, workspaceNote,
@@ -762,6 +782,9 @@ createApp({
       teamSessionId, teamSnapshot, teamBusy, teamError, refreshTeam, addTeamMember, sendTeamMessage, createTeamTask, assignTeamTask, stopTeamMember, selectTeamSession,
       turnOutline, turnActive, turnAnchor,
       generalPrefs, generalPrefsBusy, setGeneralPref,
+      autoLaunch, autoLaunchBusy, autoLaunchNote, setAutoLaunch, refreshAutoLaunch,
+      profile, profileDraft, profileBusy, profileNote, profileError, refreshProfile, saveProfile,
+      aboutVersion, refreshAboutVersion,
       pluginsInventoryAdapter,
       pluginConfigAdapters,
       modelCenter, modelCenterOwner,
@@ -798,8 +821,12 @@ createApp({
     }
     // 「当前工作区还没有会话」的占位分组只在无检索时有意义：筛选中留空组只会制造一条点不动的树。
     if (self.workspace?.configured && !sidebarSearching && !workspaceGroups.has(self.workspace.directory)) workspaceGroups.set(self.workspace.directory, []);
+    // 会话名过长会被 ellipsis 截断，需要提示补全；但原生 title 的浮层直接盖在列表上方，
+    // 上下扫视找旧会话时它会不断弹出遮住下一条，所以走自定义提示：浮在侧栏右侧、不压列表，
+    // 再给一点延迟，快速划过时不弹。title 属性保留作降级，挂载时由 tooltip 自行摘除。
     const renderSession = item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
-      'data-sidebar-session':item.id,'aria-current':item.current?'page':null,title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>{self.pluginManagerOpen=false;self.managementPage='';self.selectSession(item.id);}});
+      'data-sidebar-session':item.id,'aria-current':item.current?'page':null,'aria-label':item.title||'未命名会话',title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>{self.pluginManagerOpen=false;self.managementPage='';self.selectSession(item.id);},
+      tooltip:{label:item.title||'未命名会话',side:'right',delayMs:400}});
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation && nativePlatform!=="win32"})]),
       el("div", "header-utilities", [
@@ -837,7 +864,8 @@ createApp({
             sidebarSearching ? el('div','workspace-folder',[
               navIcon('M3 5h7l2 3h9v12H3z'),
               el('span','workspace-label',label),
-            ],{ title:directory||'尚未绑定项目目录的会话' }) : el('button','workspace-folder'+(expanded?' tree-expanded':''),[
+            ],{ title:directory||'尚未绑定项目目录的会话',
+              tooltip:{label:directory||'尚未绑定项目目录的会话',side:'right',delayMs:400} }) : el('button','workspace-folder'+(expanded?' tree-expanded':''),[
               navIcon(expanded?'M9 5l7 7-7 7':'M5 9l7 7 7-7'),
               navIcon('M3 5h7l2 3h9v12H3z'),
               el('span','workspace-label',label),
@@ -846,6 +874,7 @@ createApp({
               'aria-label':expanded?'折叠工作区':'展开工作区',
               title:directory||'尚未绑定项目目录的会话',
               onClick:()=>{expanded?self.workspaceGroupExpanded.delete(directory):self.workspaceGroupExpanded.add(directory);},
+              tooltip:{label:directory||'尚未绑定项目目录的会话',side:'right',delayMs:400},
             }),
             expanded ? [...visible.map(renderSession),
             items.length>5 ? el('button','workspace-overflow',hidden ? `显示更多（${hidden}）` : '收起会话',{
@@ -859,7 +888,7 @@ createApp({
         ...[['knowledge','知识库','M3 4h8l1 2 1-2h8v16h-8l-1 1-1-1H3zM12 6v15'],['automation','自动化','M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l4 2'],['extensions','扩展','M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'],['connections','连接','M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2']].map(([id,label,path])=>el('button','nav-item nav-panel',[navIcon(path),el('span','nav-label',label)],{id:'open-'+id,'aria-label':id==='extensions'?'扩展管理':label,'aria-pressed':id==='extensions'?self.pluginManagerOpen:self.managementPage===id,onClick:()=>{if(id==='extensions'){self.pluginManagerOpen=!self.pluginManagerOpen;self.managementPage='';}else{self.pluginManagerOpen=false;self.managementPage=self.managementPage===id?'':id;}}})),
       ]),
       el('footer','sidebar-footer',[
-        h(window.SaCodeSlots.AccountMenu,{theme:self.globalAppearance.theme,busy:self.appearanceBusy||self.fontBusy,note:self.appearanceNote,onTheme:self.setTheme,onSettings:id=>{self.settingsTab=id;self.settingsOpen=true;}}),
+        h(window.SaCodeSlots.AccountMenu,{nickname:self.profile?.nickname||'本地用户',theme:self.globalAppearance.theme,busy:self.appearanceBusy||self.fontBusy,note:self.appearanceNote,autoLaunch:self.autoLaunch,onTheme:self.setTheme,onSettings:id=>{self.settingsTab=id;self.settingsOpen=true;},onLaunch:enabled=>self.setAutoLaunch(enabled)}),
         el('button','frame-icon sidebar-settings',[navIcon('M9 3h6l1 4 4 1v6l-4 1-1 4H9l-1-4-4-1V8l4-1 1-4z M9 11a3 3 0 1 0 6 0a3 3 0 1 0-6 0')],{
           id:'open-settings','aria-label':'SaCode 设置','aria-keyshortcuts':'Control+, Meta+,',
           tooltip:{label:'设置',side:'right',shortcutKeys:['Ctrl','+',',']},onClick:()=>{self.settingsOpen=!self.settingsOpen;}}),
@@ -867,8 +896,9 @@ createApp({
     ], { "aria-label": "工作区与会话导航" });
 
     // 分组策略用库内置的 consecutive（连续同角色合并），不自造分组器。
-    // 组标签走 prefix 槽，内容是「组内条数 × 映射角色」——两个数都能从投影数出来，
-    // 不是第二真源。autoScroll 关掉：滚动由唯一 conversation-scroll 宿主管理。
+    // 气泡不再渲染「角色 · N 条消息」组标签（2026-10-16 用户裁决）：角色由气泡的
+    // 定位与形态区分，组内条数不进阅读面积。autoScroll 关掉：滚动由唯一
+    // conversation-scroll 宿主管理。
     const msgs = [
       h(TR.BubbleProvider, { contentRendererMatches: [TEXT_MATCH] }, () => [
         h(
@@ -879,11 +909,6 @@ createApp({
             fallbackRole: "system",
             roleConfigs: FOLD.roleConfigs(),
             autoScroll: false,
-          },
-          {
-            prefix: (slot) => [
-              h("span", { class: "msg-role" }, roleName(slot.role) + " · " + (slot.messageIndexes || slot.messages || []).length + " 条消息"),
-            ],
           }
         ),
       ]),

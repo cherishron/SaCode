@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { fixtureHostEnv } from './fixture-env.mjs';
 const exe = resolve(process.env.SACODE_CLI || '');
 assert.ok(process.env.SACODE_CLI && existsSync(exe));
-const root = mkdtempSync(resolve('apps/desktop/.tmp-test/goal-cli-cancel-'));
+const root = mkdtempSync(resolve('target/tmp/goal-cli-cancel-'));
 const result = { root, requests: [] };
 const server = createServer(async (req, res) => {
   let text = ''; for await (const b of req) text += b;

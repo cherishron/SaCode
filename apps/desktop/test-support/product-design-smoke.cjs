@@ -138,7 +138,9 @@ app.whenReady().then(async()=>{
   await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
   check('头像快捷菜单向上展开且不打开命令弹窗',await js("(()=>{const r=document.querySelector('.account-popover').getBoundingClientRect(),a=document.querySelector('.account-trigger').getBoundingClientRect();return r.bottom<=a.top&&!document.querySelector('dialog[open]');})()"));
   check('昵称弹窗不重复提供设置入口，独立齿轮仍保留',await js("![...document.querySelectorAll('.account-popover > button')].some(b=>b.textContent.trim()==='设置')&&!!document.querySelector('.sidebar-footer #open-settings')"));
-  check('开机自启没有宿主接口时不可伪保存',await js("[...document.querySelectorAll('.account-popover > button')].some(b=>b.disabled&&b.textContent.includes('开机自启'))"));
+  // 开机自启已接壳层登录项接口：按钮必须是带 aria-pressed 的真实开关并给出当前状态，
+  // 不能再是「待接入」的禁用占位；读不到时允许显示「读取中」，但不能装成已开启/已关闭。
+  check('开机自启不再是待接入占位，呈现真实开关状态',await js("(()=>{const b=document.querySelector('.account-popover #account-auto-launch');return !!b&&b.hasAttribute('aria-pressed')&&!b.textContent.includes('待接入')&&/已开启|已关闭|读取中/.test(b.textContent);})()"));
   await js("document.querySelector('.account-menu-root').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
   await waitFor("!document.querySelector('.account-popover')");
   check('头像菜单 Escape 恢复触发按钮焦点',await js("document.activeElement.classList.contains('account-trigger')"));
@@ -191,7 +193,7 @@ app.whenReady().then(async()=>{
   await new Promise(r=>setTimeout(r,100));
   await js("document.querySelector('#settings-tab-model-center').click()");
   await new Promise(r=>setTimeout(r,100));
-  for(let tab=0;tab<4;tab++) {
+  for(let tab=0;tab<5;tab++) {
     await js(`document.querySelectorAll('.model-center-tabs button')[${tab}].click()`);
     await new Promise(r=>setTimeout(r,150));
     writeFileSync(join(root,'model-center-'+tab+'.png'),(await win.webContents.capturePage()).toPNG());

@@ -14,8 +14,8 @@ async function until(read,accept){
   assert.fail('团队真实执行未在截止时间内收束');
 }
 async function withProvider(run,{tool=false}={}){
-  const root=mkdtempSync(resolve(fileURLToPath(new URL('../../../target/',import.meta.url)),'sacode-team-provider-'));
-  const settings=join(root,'settings');mkdirSync(settings);
+  const root=mkdtempSync(resolve(fileURLToPath(new URL('../../../target/tmp/',import.meta.url)),'sacode-team-provider-'));
+  const settings=join(root,'settings').replaceAll('\\','/');mkdirSync(settings);
   const requests=[];
   // 测试 HTTP 端点只验证真实 SSE 传输；生产服务不得引用这个夹具。
   const server=createServer(async(req,res)=>{
@@ -36,7 +36,11 @@ async function withProvider(run,{tool=false}={}){
     server.listen(0,'127.0.0.1');await once(server,'listening');
     bridge.env.SACODE_PROVIDER_BASE_URL=`http://127.0.0.1:${server.address().port}`;
     await bridge.start(root);await run({bridge,root,requests});
-  }finally{await bridge.stop();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));rmSync(root,{recursive:true,force:true});}
+  }finally{
+    await bridge.stop();
+    server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+    rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+  }
 }
 
 test('成员消息进入真实Provider与独立持久日志，正文结束不能自动完成任务',{timeout:20000},async()=>{
@@ -82,11 +86,12 @@ test('成员认领和完成工具必须等精确人工审批，不默认allowed'
     }
     const done=await until(()=>bridge.request('team/describe',{teamSessionId}),v=>v.tasks[0].status==='completed');
     assert.equal(done.tasks[0].result,'显式工具完成');
+    await until(()=>bridge.request('team/describe',{teamSessionId}),v=>v.members.some(m=>m.id===member.memberId&&m.status==='idle'));
   },{tool:true});
 });
 
  test('真实宿主团队创建、成员会话、任务持久恢复，不用本地模拟状态',async()=>{
-  const root=mkdtempSync(resolve(fileURLToPath(new URL('../../../target/',import.meta.url)),'sacode-team-host-'));
+  const root=mkdtempSync(resolve(fileURLToPath(new URL('../../../target/tmp/',import.meta.url)),'sacode-team-host-'));
   const host=resolve(process.env.SACODE_HOST||fileURLToPath(new URL('../dist/host/bin/sacode-host.exe',import.meta.url)));
   const bridge=new HostBridge(host);
   try {
@@ -103,5 +108,5 @@ test('成员认领和完成工具必须等精确人工审批，不默认allowed'
     await bridge.stop();await bridge.start(root);
     const restored=await bridge.request('team/describe',{teamSessionId:'current'});
     assert.ok(restored.tasks.some(item=>item.id===task.taskId&&item.title==='验证任务'));
-  }finally{await bridge.stop();rmSync(root,{recursive:true,force:true});}
+  }finally{await bridge.stop();rmSync(root,{recursive:true,force:true,maxRetries:10,retryDelay:200});}
 });

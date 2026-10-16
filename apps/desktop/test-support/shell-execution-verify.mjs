@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 if(process.platform!=='win32')throw Error('此探针只验证 Windows；其他平台需独立进程与清理探针');
 const repo=resolve(dirname(fileURLToPath(import.meta.url)),'../../..');
-const root=join(repo,'apps/desktop/.tmp-test','shell-execution-'+Date.now());mkdirSync(root,{recursive:true});
+const root=join(repo,'target/tmp','shell-execution-'+Date.now());mkdirSync(root,{recursive:true});
 const sources=['core/src/shlex.cj','core/src/sandbox.cj','core/test-support/shell-execution-probe.cj'].map(p=>join(repo,p));
 const env={...process.env,TEMP:root,TMP:root};const exe=join(root,'probe.exe');
 const built=spawnSync('cjc',['-O0',...sources,'-o',exe],{cwd:repo,env,encoding:'utf8',windowsHide:true,timeout:60000});

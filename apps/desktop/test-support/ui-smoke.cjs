@@ -22,7 +22,10 @@ async function uiSmoke(context) {
     checks.push({ passed: !!ok, description: line });
     console.log(`UI ${ok ? "OK  " : "FAIL"} ${line}`);
   };
-  const js = (code) => win.webContents.executeJavaScript(code, true);
+  const js = (code) => win.webContents.executeJavaScript(code, true).catch(error => {
+    console.error('UI SCRIPT FAIL', code, error.message);
+    throw error;
+  });
   const text = async (sel) => (await js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); return e ? e.textContent : ""; })()`)) || "";
   // 旧会话预算控件已移除；下列辅助直接检查核心投影及既有状态层，不冒充页面点击。
   const usageSummary=()=>js("(()=>{const u=document.querySelector('#app')._vnode.component.proxy.usage;const verdict={recorded:'已计量','over-budget':'超出预算',absent:'未收到用量','bad-usage':'用量格式异常'}[u.verdict]||'未计量';return '用量 '+u.used+'/'+u.budget+' · '+verdict+(u.over?' · 已超档':'');})()");
@@ -31,6 +34,11 @@ async function uiSmoke(context) {
 
   const count = async (sel) => Number(await js(`document.querySelectorAll(${JSON.stringify(sel)}).length`));
   const click = async (sel) => {
+    const resourceLabels = { '#side-tab-inspect': '工具与审批', '#side-tab-guide': '使用指南', '#side-tab-preview': '文件预览', '#side-tab-trace': '会话轨迹' };
+    if (resourceLabels[sel] && !await count(sel)) {
+      await js("document.querySelector('#add-resource').click()");
+      await js(`(() => { const b=[...document.querySelectorAll('.workbench-resource-list button')].find(b=>b.textContent.trim()===${JSON.stringify(resourceLabels[sel])}); if(!b) throw Error('resource-not-found'); b.click(); return Vue.nextTick(); })()`);
+    }
     // 常规发送和目录选择先等真实加载回执；重复点击验收仍在同帧直接操作。
     if(['#send','#choose-workspace'].includes(sel) && !await waitFor(()=>js(`(() => { const e=document.querySelector(${JSON.stringify(sel)});return !!e && !e.disabled; })()`))) return false;
     return js(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.click(); return true; })()`);
@@ -83,8 +91,10 @@ async function uiSmoke(context) {
     note((await text('.turn-nav-entry .turn-nav-title')) === '问一：请按行说明导航', `导航条目按轮次首行显示标题（实际 ${(await text('.turn-nav-entry .turn-nav-title'))}）`);
 
     const hoverBox = await js("(()=>{const r=document.querySelector('.turn-nav-entry').getBoundingClientRect();return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};})()");
+    win.focus(); win.webContents.focus();
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
     win.webContents.sendInputEvent({ type: 'mouseMove', x: hoverBox.x, y: hoverBox.y });
-    await nap(80);
+    await waitFor(() => js("getComputedStyle(document.querySelector('.turn-nav-card')).display==='flex'"));
     const card = await js("(()=>{const c=document.querySelector('.turn-nav-entry').querySelector('.turn-nav-card'),s=getComputedStyle(c);return {display:s.display,title:c.querySelector('.turn-nav-card-title').textContent,text:c.querySelector('.turn-nav-card-text').textContent,meta:c.querySelector('.turn-nav-card-meta').textContent};})()");
     note(card.display === 'flex' && card.title === '问一：请按行说明导航' && card.text.includes('行8') && card.meta.indexOf('回复 1 条') === 0,
       `鼠标悬浮给出该轮完整标题、内容与回复数（探针 ${JSON.stringify({ ...card, hoverBox })}）`);
@@ -152,7 +162,7 @@ async function uiSmoke(context) {
     const expandedGroups = async () => JSON.parse(await js("JSON.stringify([...document.querySelectorAll('section.workspace-group.expanded')].map(e=>e.getAttribute('data-workspace-group')))"));
     const toggleGroups = (wantExpanded) => js(`(() => { document.querySelectorAll('section.workspace-group${wantExpanded ? ':not(.expanded)' : '.expanded'} > .workspace-folder').forEach(b=>b.click()); return Vue.nextTick(); })()`);
     const typeQuery = (q) => js(`(() => { const e=document.querySelector('#sidebar-search'); e.value=${JSON.stringify(q)}; e.dispatchEvent(new Event('input',{bubbles:true})); return Vue.nextTick(); })()`);
-    const clickStatus = (s) => js(`(() => { document.querySelector('[data-sidebar-status="${s}"]').click(); return Vue.nextTick(); })()`);
+    const clickStatus = (s) => js(`(() => { document.querySelector('[data-catalog-status="${s}"]').click(); return Vue.nextTick(); })()`);
 
     note(await js("(() => { const e=document.querySelector('#sidebar-search'); return !!e && e.type==='search' && e.getAttribute('aria-label')==='搜索会话' && !!e.getAttribute('aria-keyshortcuts'); })()"),
       '侧栏搜索是真实 input[type=search]，带中文无障碍名与快捷键声明');
@@ -174,18 +184,32 @@ async function uiSmoke(context) {
       `清空检索后分组树回来但展开状态回到用户自己的记忆（展开 ${(await expandedGroups()).length} 组）`);
     await toggleGroups(true);
     note((await rowsOf()).length === durableIds.length, '重新展开仍列出全部会话，自动展开未污染展开记忆');
-    const statusSegs = await js("JSON.stringify([...document.querySelectorAll('.sidebar-filter button')].map(b=>b.dataset.sidebarStatus))");
+    note(await js("document.querySelector('.navigation [data-catalog-status]')===null && document.querySelector('.navigation .sidebar-filter')===null"),
+      '原型首屏导航不常驻日志完整性筛选，仍保留搜索与会话树');
+    await js("document.querySelector('#open-catalog').click()");
+    await waitFor(() => js("!!document.querySelector('.catalog-dialog[open] [data-catalog-status]') && !document.querySelector('#refresh-catalog').disabled"));
+    const statusSegs = await js("JSON.stringify([...document.querySelectorAll('.catalog-dialog[open] .catalog-filter button')].map(b=>b.dataset.catalogStatus))");
     note(statusSegs === JSON.stringify(['all', 'ready', 'truncated-tail', 'replay-rejected']),
       `状态筛选段控件覆盖核心目录发出的全部状态（实际 ${statusSegs}）`);
     await clickStatus('replay-rejected');
-    note((await rowsOf()).length === 0 && (await text('.sidebar-empty')) === '无匹配会话',
-      '筛「日志回放失败」时本夹具无此类会话，报无匹配而不是凑一条');
+    note(await js("document.querySelectorAll('#catalog-list [data-session-id]').length===0 && document.querySelector('#catalog-filter-empty')?.textContent==='无匹配会话'") && (await rowsOf()).length === durableIds.length,
+      '弹窗筛「日志回放失败」显示无匹配，不隐藏首屏侧栏会话');
     await clickStatus('ready');
-    note((await rowsOf()).length === durableIds.length && await js("document.querySelector('[data-sidebar-status=\"ready\"]').getAttribute('aria-pressed')==='true'"),
-      '筛「可正常回放」保留全部会话并高亮当前段');
+    note(await js("document.querySelectorAll('#catalog-list [data-session-id]').length==="+sidebarCatalog.entries.length+" && document.querySelector('[data-catalog-status=\"ready\"]').getAttribute('aria-pressed')==='true'"),
+      '弹窗筛「可正常回放」保留可回放会话并高亮当前段');
+    await clickStatus('replay-rejected');
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await waitFor(() => js("!document.querySelector('.catalog-dialog[open]')"));
+    note((await rowsOf()).length === durableIds.length, '关闭弹窗后日志筛选不会残留影响侧栏');
+    await js("document.querySelector('#open-catalog').click()");
+    await waitFor(() => js("!!document.querySelector('.catalog-dialog[open] [data-catalog-status]') && !document.querySelector('#refresh-catalog').disabled"));
     await clickStatus('all');
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await waitFor(() => js("!document.querySelector('.catalog-dialog[open]')"));
     await typeQuery('检索命中');
-    note((await rowsOf()).length === 1, '检索词与状态筛选叠加后只留交集');
+    note((await rowsOf()).length === 1, '侧栏标题搜索不受弹窗日志筛选影响');
     // 检索中真实切两次会话：命中集必须跟着新目录重算，输入框里的查询词按「保留」这一条定案。
     const switchedIn = await selectInCatalog(seeded.id);
     note(switchedIn && (await rowsOf()).length === 1 && (await rowsOf())[0] === seeded.id
@@ -196,7 +220,7 @@ async function uiSmoke(context) {
     note(switchedBack && (await rowsOf()).length === 1 && (await rowsOf())[0] === seeded.id && curAfterSwitch === 'current',
       `切回原会话后仍只剩查询词命中的那条，没有残留旧会话的命中（回到 ${curAfterSwitch}）`);
     await typeQuery('');
-    note((await rowsOf()).length === durableIds.length, '清掉检索词后状态筛选独立生效');
+    note((await rowsOf()).length === durableIds.length, '清掉侧栏检索词后恢复全部会话');
     const kPrevented = await js("(() => { document.activeElement.blur(); const e=new KeyboardEvent('keydown',{key:'k',code:'KeyK',ctrlKey:true,bubbles:true,cancelable:true}); window.dispatchEvent(e); return Vue.nextTick().then(()=>({prevented:e.defaultPrevented,focused:document.activeElement.id})); })()");
     note(kPrevented.prevented === true && kPrevented.focused === 'sidebar-search',
       `Ctrl/⌘+K 聚焦侧栏搜索并吃掉浏览器默认行为（实际 ${JSON.stringify(kPrevented)}）`);
@@ -229,6 +253,62 @@ async function uiSmoke(context) {
   //    消息面换成 BubbleList 后按「组」计：种子是 system/developer/assistant/user 四个角色，各成一组。
   const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 4));
   note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
+
+  async function pluginManagerChecks() {
+    const source = join(SESSION_DIR, '本地插件 验收源');
+    const name = '@local/ui-plugin-evidence';
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, 'sacode.plugin.json'), JSON.stringify({ name, version: '0.1.0', kind: 'tool', entry: 'index.cjs', description: '页面安装验收' }));
+    writeFileSync(join(source, 'index.cjs'), "module.exports={name:'echo',handler:()=> 'ok'};");
+    const button = async (scope, label) => {
+      const ready = await waitFor(() => js(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});return [...(root?.querySelectorAll('button')||[])].some(n=>n.textContent.trim()===${JSON.stringify(label)}&&!n.disabled);})()`));
+      if (!ready) throw Error('插件页面按钮不可达：' + label);
+      const clicked = await js(`(()=>{const root=document.querySelector(${JSON.stringify(scope)});const node=[...(root?.querySelectorAll('button')||[])].find(n=>n.textContent.trim()===${JSON.stringify(label)}&&!n.disabled);if(!node)return false;node.click();return true;})()`);
+      if (!clicked) throw Error('插件页面按钮不可达：' + label);
+    };
+    const fill = async value => {
+      await js(`(()=>{const node=document.querySelector('.plugin-manager-install input[aria-label="包名或地址"]');if(!node)throw Error('插件输入不可达');node.value=${JSON.stringify(value)};node.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+      await nap(100);
+    };
+    await click('#open-extensions');
+    if (!await waitFor(()=>js("!!document.querySelector('[data-plugin-manager] .plugin-manager-pageHead button:not([disabled])')"))) throw Error('插件管理页未就绪');
+    await button('[data-plugin-manager]', '添加插件');
+    if (!await waitFor(()=>count('.plugin-manager-install input').then(n=>n>0))) throw Error('安装窗口未打开');
+    await fill(join(SESSION_DIR, '不存在的插件目录'));
+    await button('.plugin-manager-install', '安装');
+    note(await waitFor(()=>js("!!document.querySelector('.plugin-manager-install [role=alert]')")), '插件页面拒绝不存在的源，不伪造安装成功');
+    await fill(source);
+    await button('.plugin-manager-install', '安装');
+    note(await waitFor(()=>js("document.querySelector('.plugin-manager-install .dialog-header')?.textContent.includes('已安装')")), '插件页面真实点击完成本地安装');
+    await button('.plugin-manager-install', '关闭');
+    const card = '[data-package-name="' + name + '"]';
+    if (!await waitFor(()=>count(card).then(n=>n===1))) throw Error('安装后清单没有插件');
+    const disk = () => bridge.request('plugin/describe');
+    note((await disk()).packages.some(p=>p.name===name&&p.installed), '页面安装结果在真实宿主清单中存在');
+    for (const enabled of [false, true]) {
+      if (!await waitFor(()=>js(`!!document.querySelector(${JSON.stringify(card + ' input[role=switch]:not([disabled])')})`))) throw Error('插件开关未释放在途状态');
+      await click(card + ' input[role=switch]');
+      note(await waitFor(async()=>{const view=await disk();return view.packages.some(p=>p.name===name&&p.enabled===enabled);}), '插件页面启停真实落盘 enabled=' + enabled);
+      note(await waitFor(()=>js(`document.querySelector(${JSON.stringify(card + ' input[role=switch]')})?.checked===${enabled}`)), '插件页面消费启停后的核心回读 enabled=' + enabled);
+    }
+    await click(card + ' .plugin-manager-cardHead');
+    await button('[data-plugin-manager]', '卸载');
+    note(await waitFor(()=>js("[...document.querySelectorAll('dialog[open]')].some(n=>n.textContent.includes('确定卸载'))")), '插件卸载先显示独立确认，不立即删除');
+    await button('dialog[open]', '取消');
+    note((await disk()).packages.some(p=>p.name===name), '取消卸载保留盘上插件');
+    await button('[data-plugin-manager]', '卸载');
+    await button('dialog[open]', '卸载');
+    note(await waitFor(async()=>!(await disk()).packages.some(p=>p.name===name)), '确认卸载真实移除核心插件清单');
+    if (!await waitFor(()=>js("!!document.querySelector('[data-plugin-manager] .plugin-manager-pageHead')"))) {
+      await button('[data-plugin-manager]', '返回插件列表');
+    }
+    await button('[data-plugin-manager]', '刷新');
+    note(await waitFor(()=>count(card).then(n=>n===0)), '页面刷新后已卸载插件不再出现');
+    writeFileSync(join(SESSION_DIR, 'plugin-manager.png'), (await win.webContents.capturePage()).toPNG());
+    await click('#open-extensions');
+    if (!await waitFor(()=>count('#composer').then(n=>n===1))) throw Error('插件页退出没有恢复输入区');
+  }
+  await pluginManagerChecks();
 
   // 1b) 使用提醒条：启动时由核心给一条，正文只落在提示条里，不混进气泡投影。
   const tipSeen = await waitFor(() => count(".tips-bar").then((n) => n === 1));
@@ -271,7 +351,16 @@ async function uiSmoke(context) {
   // workspaceFiles/globalSettings*/plugins*/pageTool*——即「加了通道而 UI 侧不知道」，
   // 这条检查存在的意义正是把它报出来，所以修的是清单本身，不是断言强度）。
   const PRELOAD_API = ['projection','teamApprovalAnswer','teamDescribe','teamMemberCreate','teamMessageSend','teamMessageBroadcast','teamTaskCreate','teamTaskAssign','teamTaskClaim','teamTaskComplete','teamMemberStop','executionPropose','executionAuthorize','executionStart','executionDescribe','executionOutput','executionStop','userSend','attachmentUpload','attachmentImageRead','goalDescribe','goalCreate','goalEdit','goalPause','goalResume','goalClear','toolsList','toolCall','approvalAsk','approvalAnswer','turnStart','taskStart','ledgerStats','queueDescribe','queueEnqueue','queueUpdate','turnPoll','turnCancel','promptEnhance','promptPoll','promptCancel','usageStatus','usageSetBudget','appearanceGet','tipsGet','tipsStartup','tipsAfterReply','tipsSetHidden','globalAppearanceGet','globalAppearanceSetTheme','globalAppearanceSetFontSize','globalAppearanceSetBusySend','sessionCatalog','terminalOutput','sessionEvents','sessionCreate','sessionSelect','workspaceGet','workspaceGitStatus','workspaceGitDiff','workspaceChoose','workspaceRecent','workspaceSelectRecent','workspaceFiles','worktreeDescribe','worktreeEnter','worktreeExit','worktreeCleanup','appearanceSetTheme','globalSettingsGet','globalSettingsSet','modelsDescribe','modelsCatalog','modelsCreateInstance','modelsSaveCredential','modelsSave','modelsRemove','modelsSetDefault','modelsSort','modelsSetEnabled','modelsList','customsDescribe','customsUpsert','customsRemove','bindingUpsert','bindingRemove','bindingReorder','modelPull','modelUpstreamUpsert','customImportNew','customImportInto','pluginsDescribe','pluginsSetEnabled','pluginsSetRowEnabled','pluginsUninstall','pluginsRegistries','pluginsInspect','pluginsInstall','pluginsInstallPoll','pluginsInstallCancel','lspDefine','lspLookup','lspReferences','lspImplementation','lspCallHierarchy','lspDiagnostics','lspRename','pageToolsList','pageToolCall','approvalSetMode','approvalGetMode'];
+  PRELOAD_API.push('teamApprovalAnswer','teamDescribe','teamMemberCreate','teamMessageSend','teamMessageBroadcast','teamTaskCreate','teamTaskAssign','teamTaskClaim','teamTaskComplete','teamMemberStop','executionPropose','executionAuthorize','executionStart','executionDescribe','executionOutput','executionStop','tipsGet','tipsStartup','tipsAfterReply','tipsSetHidden','terminalOutput','sessionEvents','workspaceGitStatus','workspaceGitDiff','worktreeDescribe','worktreeEnter','worktreeExit','worktreeCleanup','modelsSort','modelsSetEnabled','lspDefine','lspLookup','lspReferences','lspImplementation','lspCallHierarchy','lspDiagnostics','lspRename','approvalSetMode','approvalGetMode');
+  PRELOAD_API.push('profileGet','profileUpdate');
+  PRELOAD_API.push('workspaceRecent','workspaceSelectRecent');
   PRELOAD_API.push('webSettingsDescribe','webSettingsApply','webSettingsSetCredential');
+  PRELOAD_API.push('appVersion');
+  PRELOAD_API.push('autoLaunchGet','autoLaunchSet');
+  PRELOAD_API.push('requestTrace');
+  // 2026-10-17 补齐滞后清单：这些通道早已在 preload.cjs 里，只是 UI 侧清单没跟上
+  // （清单滞后是登记问题，不是产品问题——本条检查存在的意义就是把滞后报出来）。
+  PRELOAD_API.push('automationList','automationSave','automationControl','knowledgeList','knowledgeImport','knowledgeReference','knowledgeSave','knowledgeRemove','acpDelegationList','acpDelegationDescribe','acpDelegationCreate','acpDelegationPoll','acpDelegationAnswer','acpDelegationCancel','acpDelegationClose','acpSettingsDescribe','acpSettingsSetEnabled','acpProviderProbe','acpDiagnosticsDescribe','acpDiagnosticsKeep','executionList','workspaceGitPushTarget');
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.sacode||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
@@ -281,6 +370,8 @@ async function uiSmoke(context) {
   // InvalidCharacterError，整次更新（含附件卡片）都不会落到 DOM，所以先单独钉住结构。
   note(await js(`!!document.querySelector('section.workspace-group[data-workspace-group]')`), '侧栏工作区分组带着 class 与目录凭证挂进 DOM');
   // 轨迹时间线同样在根渲染里：它的子节点数组曾经落到 props 位，父 div 就带着数字属性键进 patch 并抛。
+  await js("(() => { const s=document.querySelector('#app')._vnode.component.proxy; s.sideTab='trace'; return Vue.nextTick(); })()");
+  await waitFor(() => js("!!document.querySelector('.trace-timeline > .trace-event')"));
   const tlProbe = await js(`(()=>{const t=document.querySelector('.trace-timeline');return JSON.stringify({tl:!!t,kids:t?t.children.length:-1,attrs:t?t.getAttributeNames().join('|'):'-'})})()`);
   note(await js(`(()=>{const t=document.querySelector('.trace-timeline');return !!t&&t.children.length>0})()`), `会话轨迹时间线把事件落成真实子节点（探针 ${tlProbe}）`);
   // 附件入口必须是真的：字节交给宿主落盘，界面只拿得到凭证与引用，移除要真撤下卡片。
@@ -329,7 +420,8 @@ async function uiSmoke(context) {
   await turnNavChecks();
 
   // 工具详情只读取核心清单，模态关闭不执行工具或消费审批。
-  await waitFor(() => count('#detail-write').then(n => n === 1));
+  await click('#side-tab-inspect');
+  if (!await waitFor(() => js("document.querySelector('#detail-write')?.getClientRects().length > 0"))) throw Error('visible-tool-detail-entry-missing');
   const detailEvents = await text('#count-events');
   await js("document.querySelector('#detail-write').focus(); document.querySelector('#detail-write').click()");
   note(await waitFor(() => count('dialog[open]').then(n => n === 1)), "真实工具详情弹窗已打开");
@@ -350,12 +442,11 @@ async function uiSmoke(context) {
   await js("document.querySelector('#side-tab-guide').focus()");
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Home' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Home' });
-  note(await waitFor(() => js("document.activeElement.id === 'side-tab-inspect' && !document.querySelector('#side-page-inspect').hidden")), "Home 切换首个标签并同步焦点");
+  note(await waitFor(() => js("document.activeElement === document.querySelector('.workbench-tab .side-tab') && document.activeElement.getAttribute('aria-selected')==='true'")), "Home 切换首个标签并同步焦点");
   await click('#side-tab-preview');
   note((await text('#preview-empty')).includes('暂无读取记录'), "没有读取事实时显示文档预览空状态");
   await click('#side-tab-guide');
-  await click('#open-budget');
-  note(await waitFor(() => js("document.activeElement.id === 'budget-panel' && !document.querySelector('#side-page-inspect').hidden")), "预算导航恢复工具页并聚焦目标分区");
+  note(await js("!document.querySelector('#open-budget,#budget-panel')"), '右侧移除重复预算入口');
   note((await text('#count-events')) === detailEvents, "右侧页面切换未改变会话事实");
   await js("document.querySelector('#composer').focus()");
   const chord = async (keyCode,modifiers=['control']) => {
@@ -379,7 +470,7 @@ async function uiSmoke(context) {
   await js("document.querySelector('#open-settings').focus(); document.querySelector('#open-settings').click()");
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===1)), "中文 SaCode 设置窗口打开");
   note(await js("document.activeElement.id==='settings-tab-general' && document.querySelector('.settings-tabs').getAttribute('aria-orientation')==='vertical'"), "设置打开后焦点进入当前纵向分类");
-  note((await text('.language-settings'))==='语言中文' && await js("!document.querySelector('#settings-budget-panel')"), "通用设置保持中文，预算操作集中在右侧用量区");
+  note((await text('.language-settings'))==='语言中文' && await js("!document.querySelector('#settings-budget-panel')"), "通用设置保持中文，不增加独立会话预算控件");
   // 使用提醒开关是设置页里的真实一行，值取自核心三态而不是界面自持。
   note(await js("(()=>{const s=document.querySelector('.tips-settings #tips-preference');return !!s&&['','shown','hidden'].includes(s.value);})()"), "通用设置里有使用提醒开关，取值为核心三态之一");
   note(await waitFor(()=>js("document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")), "全局主题默认跟随系统");
@@ -421,19 +512,28 @@ async function uiSmoke(context) {
   await click('#theme-system');
   note(await waitFor(()=>js("document.querySelector('#font-value').textContent==='14' && document.querySelector('#theme-system').getAttribute('aria-pressed')==='true'")) && nativeTheme.themeSource==='system', "主题保存保持另一字段字号并恢复系统主题");
   await click('#settings-tab-model-center');
-  note(!(await text('#settings-page-model-center')).includes('模型管理后端尚未接入') && await count('#models-add-provider')===1, "模型页展示提供商管理并由宿主交出读写面");
+  await waitFor(() => count('[data-model-center-tab="provider-settings"]').then(n=>n===1));
+  await click('[data-model-center-tab="provider-settings"]');
+  note(await waitFor(() => js(`!!document.querySelector('#settings-page-model-center [aria-label="添加供应商"]:not([disabled])')`)), "模型页展示提供商管理并由宿主交出读写面");
   await js("document.querySelector('#settings-tab-model-center').focus()");
   const settingsFrameBefore=await js("(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return {width:r.width,height:r.height};})()");
   await chord('Down',[]);
-  const settingsKeyReady=await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden"));
+  const settingsKeyReady=await waitFor(()=>js("document.activeElement.id==='settings-tab-general' && !document.querySelector('#settings-page-general').hidden"));
   note(settingsKeyReady, "设置分类支持键盘切换与焦点同步" + (settingsKeyReady?'':await js("JSON.stringify({focus:document.activeElement.id,selected:document.querySelector('.settings-tab[aria-selected=true]').id,hidden:document.querySelector('#settings-page-plugins').hidden})")));
   note(await js(`(()=>{const r=document.querySelector('.settings-dialog').getBoundingClientRect();return Math.abs(r.width-${settingsFrameBefore.width})<1 && Math.abs(r.height-${settingsFrameBefore.height})<1;})()`), "设置分类切换不会改变面板尺寸");
   await chord('Up',[]);
   note(await waitFor(()=>js("document.activeElement.id==='settings-tab-model-center' && !document.querySelector('#settings-page-model-center').hidden")), "纵向分类向上切换同步内容");
   await chord('Home',[]);
-  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-general' && !document.querySelector('#settings-page-general').hidden")), "分类 Home 返回通用页");
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-profile' && !document.querySelector('#settings-page-profile').hidden")), "分类 Home 返回个人资料页");
   await chord('End',[]);
-  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-plugins' && !document.querySelector('#settings-page-plugins').hidden")), "分类 End 进入最后一页");
+  note(await waitFor(()=>js("document.activeElement.id==='settings-tab-about' && !document.querySelector('#settings-page-about').hidden")), "分类 End 进入最后一页");
+  // 关于页必须给真实版本读数：版本号来自壳层（app.getVersion）而不是写死的示例文本；
+  // 更新检查确实没有，界面如实写「尚未开放」，不许回到「版本信息暂不可用」的空话。
+  const aboutText = await js("[...document.querySelectorAll('#settings-page-about .note')].map(e=>e.textContent).join('|')");
+  note(/版本 \d+\.\d+\.\d+/.test(aboutText) && /Electron \d+/.test(aboutText) && /Chromium \d+/.test(aboutText)
+    && /Node \d+/.test(aboutText) && /更新检查尚未开放/.test(aboutText) && !/当前版本信息暂不可用/.test(aboutText),
+    `关于页版本读数=${JSON.stringify(aboutText)}`);
+  await click('#settings-tab-plugins');
   note(await js("(async()=>{const r=await window.sacode.toolsList();const rows=[...document.querySelectorAll('.settings-tool')];return rows.length===r.tools.length && r.tools.every(t=>rows.some(e=>e.dataset.toolName===t.name && e.textContent.includes(t.description)));})()"), "设置工具清单逐项对应核心响应");
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   note(await waitFor(()=>count('.settings-dialog[open]').then(n=>n===0)) && await js("document.activeElement.id==='open-settings'"), "关闭设置后焦点返回导航按钮");
@@ -482,10 +582,10 @@ async function uiSmoke(context) {
   bridge.request=async(method,params,...rest)=>{if(method==='session/append' && params?.eventType==='user/message'){sendRequests++;await nap(200);}return sendRequest(method,params,...rest);};
   try {
     await setDraftForSize('回执前保留的原始消息');
-    const pendingSend=await js("(()=>{document.querySelector('#send').click();document.querySelector('#send').click();return Vue.nextTick().then(()=>({locked:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),draft:document.querySelector('#composer').value,sessionLocked:document.querySelector('#sidebar-new-session').disabled,searchLocked:document.querySelector('#sidebar-search').disabled,filterLocked:[...document.querySelectorAll('.sidebar-filter button')].every(b=>b.disabled)}));})()");
+    const pendingSend=await js("(()=>{document.querySelector('#send').click();document.querySelector('#send').click();return Vue.nextTick().then(()=>({locked:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),draft:document.querySelector('#composer').value,sessionLocked:document.querySelector('#sidebar-new-session').disabled,searchLocked:document.querySelector('#sidebar-search').disabled,filterCount:document.querySelectorAll('.catalog-filter button').length,filterLocked:[...document.querySelectorAll('.catalog-filter button')].every(b=>b.disabled)}));})()");
     note(pendingSend.locked && pendingSend.busy==='true' && pendingSend.draft==='回执前保留的原始消息' && pendingSend.sessionLocked, "消息等待真实回执时保留草稿并阻止重复发送和会话切换");
     // 会话检索/筛选会改导航里「点一下就切会话」的那批控件，所以必须跟新建会话吃同一条锁。
-    note(pendingSend.searchLocked && pendingSend.filterLocked, "消息等待真实回执时侧栏搜索与状态筛选一并禁用");
+    note(pendingSend.searchLocked && pendingSend.filterCount===4 && pendingSend.filterLocked, "消息等待真实回执时侧栏搜索与弹窗日志筛选一并禁用");
     await setDraftForSize('请求期间继续编辑的新草稿');
     note(await waitFor(()=>js("document.querySelector('#messages').textContent.includes('回执前保留的原始消息') && !document.querySelector('#send').disabled && document.querySelector('#composer').value==='请求期间继续编辑的新草稿'")), "成功回执不会清空请求期间新编辑的草稿");
     note(sendRequests===1 && Number((await text('#count-events')).split(' ')[1])===beforeEvents+1, "同帧重复点击仅写入一条真实用户消息");
@@ -538,8 +638,9 @@ async function uiSmoke(context) {
     " return q('user') + '|' + q('assistant') + '|' + q('system') + '|' + q('developer'); })()"
   );
   note(placementPair === "end|start|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
-  const labelShown = await text("#messages .msg-role");
-  note(/^(系统|用户|助手|工具|开发者) · \d+ 条消息$/.test(labelShown), `组标签=${labelShown}`);
+  // 2026-10-16 用户裁决：气泡不再显示「角色 · N 条消息」组标签——断言翻转为「不存在」。
+  const roleLabels = await count("#messages .msg-role");
+  note(roleLabels === 0, `气泡组标签数=${roleLabels}（应为 0；角色只由气泡形态与定位区分）`);
   // 连续同角色必须并成一组：再发一条 user，条数进组但组数不变。
   const groupsBeforeMerge = await count("#messages .tr-bubble");
   await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("第二条 user 消息")}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
@@ -688,7 +789,7 @@ async function uiSmoke(context) {
   note(await waitFor(() => text("#approval").then((t) => t.includes("工单 #"))), "审批浮层出现且带工单号（一次性放行，无永久授权按钮）");
   const pendingApproval = await text('#approval');
   await click('#side-tab-guide');
-  note(await js("!!document.querySelector('#guide-approval') && document.querySelector('#side-tab-inspect').getAttribute('aria-label').includes('待审批')"), "指南页保留待审批提示与返回入口");
+  note(await js(`!!document.querySelector('#guide-approval') && !!document.querySelector('#side-tab-inspect .pending-dot[aria-label="待审批"]')`), "指南页保留待审批提示与返回入口");
   await click('#guide-approval');
   note(await waitFor(() => js("document.activeElement.id === 'tools-panel' && !document.querySelector('#side-page-inspect').hidden")) && (await text('#approval')) === pendingApproval, "指南往返保留原审批工单并聚焦工具分区");
   note(await click("#deny"), "已点拒绝");
@@ -722,7 +823,8 @@ async function uiSmoke(context) {
   note(!(await text("#approval")).includes("工单 #"), "点只读工具不应产生审批卡");
   await click('#side-tab-preview');
   note(await waitFor(async () => (await text('#preview-text')) === 'hello-from-renderer'), "文档预览逐字显示实际读取正文");
-  note((await text('#preview-path')) === 'sacode-tool.txt' && (await text('#preview-meta')).includes('19 字节'), "预览文件名与字节数来自会话读取记录");
+  const previewPath = await text('#preview-path'), previewMeta = await text('#preview-meta');
+  note(previewPath.split(/[\\/]/).pop() === 'sacode-tool.txt' && previewMeta.includes('19 字节'), `预览文件名与字节数来自会话读取记录（${previewPath}，${previewMeta}）`);
   note(await js("document.querySelector('#preview-empty') === null && !document.querySelector('#side-page-preview').hidden"), "成功读取后预览替换空状态");
   await js("document.querySelector('#preview-float').focus(); document.querySelector('#preview-float').click()");
   note(await waitFor(() => count('.floating-preview[open]').then(n=>n===1)) && (await text('#float-preview-text')) === (await text('#preview-text')), "浮动预览显示同一份读取快照");
@@ -845,6 +947,7 @@ async function uiSmoke(context) {
   note(await waitFor(async()=>(await text('#workspace-note')).includes('已保存')), "项目目录经核心落盘后显示已保存");
   note(workspacePickerContract && (await js("window.sacode.workspaceGet().then(w=>w.directory)")).includes('工作区 UI 项目'), "中文工作区和无预填路径的文件夹选择契约一致");
   context.chooseWorkspaceDirectory=workspacePickerBefore;
+  await click('#open-workspace');
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   note(await waitFor(()=>js("!document.querySelector('#project-picker').matches(':popover-open') && document.activeElement.id==='open-workspace'")), "项目菜单 Escape 关闭并恢复导航焦点");
   await click('#tool-write'); await waitFor(()=>count('#allow-once').then(n=>n===1)); await click('#allow-once');
@@ -858,17 +961,17 @@ async function uiSmoke(context) {
   const workspaceCatalogGate=new Promise(resolve=>{releaseWorkspaceCatalog=resolve;});
   bridge.request=async(method,params)=>{
     const result=await workspaceRequestBefore(method,params);
-    if(method==='session/catalog') {workspaceCatalogEntered=true;await workspaceCatalogGate;}
+    if(method==='workspace/recent') {workspaceCatalogEntered=true;await workspaceCatalogGate;}
     return result;
   };
   try {
     await click('#open-workspace');
-    note(await waitFor(async()=>(await text('#workspace-description')).includes('请恢复该目录')), "项目目录丢失时显示恢复提示");
-    note((await text('#workspace-directory'))===workspaceUIPath && (await text('.workspace-panel .badge'))==='目录不可用', "不可用目录保留原路径并显示错误状态");
-    note(await waitFor(async()=>workspaceCatalogEntered && await js("document.querySelector('#choose-workspace').disabled")), "工作区目录刷新未结算时暂时锁定重新选择");
+    note(await waitFor(async()=>workspaceCatalogEntered), "最近目录从真实后端读取");
     releaseWorkspaceCatalog();
+    note(await waitFor(async()=>(await text('#workspace-description')).includes('请恢复该目录')), "项目目录丢失时显示恢复提示");
+    note((await text('#workspace-directory')).includes(workspaceUIPath), "不可用目录保留原路径并显示错误状态");
     note(await waitFor(()=>js("!document.querySelector('#choose-workspace').disabled")), "目录不可用且刷新已结算时仍允许重新选择");
-    await click('.workspace-dialog .dialog-header button');
+    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   } finally { releaseWorkspaceCatalog();bridge.request=workspaceRequestBefore;require('node:fs').renameSync(movedWorkspacePath,workspaceUIPath); }
 
   // 真实新建/切换：验证来源隔离，保留各会话尚未发送的草稿。
@@ -898,6 +1001,7 @@ async function uiSmoke(context) {
   await click('#open-catalog');
   await waitFor(()=>count('#new-session-title').then(n=>n===1));
   await js("(() => {const e=document.querySelector('#new-session-title');e.value='中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
+  await waitFor(() => js("!!document.querySelector('#create-session:not([disabled])')"));
   await click('#create-session');
   note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "新建会话保存并自动打开");
   const newEntry=(await bridge.request('session/catalog')).entries.find(item=>item.current);
@@ -914,10 +1018,7 @@ async function uiSmoke(context) {
   await js("(() => {const e=document.querySelector('#composer');e.value='只属于中文验收会话';e.dispatchEvent(new Event('input',{bubbles:true}));})()");
   await click('#send');
   note(await waitFor(async()=> (await text('#messages')).includes('只属于中文验收会话')), "新会话消息从核心重新投影");
-  await js("document.querySelector('#open-catalog').click()");
-  await waitFor(()=>js("!!document.querySelector('.catalog-dialog[open] [data-select-session=\"current\"]')"));
-  await click('[data-select-session="current"]');
-  note(await waitFor(()=>js("!document.querySelector('.catalog-dialog[open]')")), "列表可切回默认会话");
+  note(await selectInCatalog('current'), "列表可切回默认会话");
   note(await js(`document.querySelector('#composer').value===${JSON.stringify(originalSessionDraft)}`), "切回后恢复原会话草稿");
   note(await waitFor(()=>js(`Math.abs(document.querySelector('#composer').getBoundingClientRect().height-${originalDraftHeight})<1`)), "切回后重新适配长草稿高度");
   note(!(await text('#messages')).includes('只属于中文验收会话'), "新会话消息不会混入原会话");
@@ -932,16 +1033,19 @@ async function uiSmoke(context) {
   // 由驱动用 SACODE_SSE_FIXTURE 指到真实那份，这一组断言在安装包里才是实跑而不是跳过。
   const enhFixturePath = process.env.SACODE_SSE_FIXTURE
     || join(__dirname, "..", "..", "..", "scripts", "sse-contract-server.cjs");
+  const enhTemp = join(SESSION_DIR, 'enhance-fixture-temp');
+  mkdirSync(enhTemp, { recursive: true });
   const enhFixture = spawn(process.execPath, [enhFixturePath], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: { ...process.env, TMP: enhTemp, TEMP: enhTemp, ELECTRON_RUN_AS_NODE: "1" },
   });
   const enhPort = await new Promise((res, rej) => {
-    let buf = "";
-    const to = setTimeout(() => rej(new Error("增强夹具启动超时")), 9000);
+    let buf = "", fixtureError = "";
+    enhFixture.stderr.on('data', d => { fixtureError += d.toString(); });
+    const to = setTimeout(() => { enhFixture.kill(); rej(new Error(`增强夹具启动超时 stdout=${buf} stderr=${fixtureError}`)); }, 15000);
     enhFixture.stdout.on("data", (d) => { buf += d.toString(); const i = buf.indexOf("\n"); if (i >= 0) { clearTimeout(to); res(buf.slice(0, i).trim()); } });
     enhFixture.on("error", (e) => { clearTimeout(to); rej(e); });
-    enhFixture.on("exit", (c, s) => { clearTimeout(to); rej(new Error(`增强夹具提前退出 code=${c} signal=${s}`)); });
+    enhFixture.on("exit", (c, s) => { clearTimeout(to); rej(new Error(`增强夹具提前退出 code=${c} signal=${s} stderr=${fixtureError}`)); });
   });
   try {
     const enhDraft = "想让队列能中途插话";
@@ -1091,6 +1195,7 @@ async function uiSmoke(context) {
   // 审批留下的可追问痕迹：谁批的、批成什么，只能从日志里的 asked/decided 回答
   note(/approval\/asked\t\d+:write/.test(log2) && /approval\/decided\t\d+:denied/.test(log2), "审批的 asked/decided 已进同一份会话日志");
 
+  await bridge.start(SESSION_DIR);
   // 使用提醒的收尾验收：界面「不再提醒」必须落到核心，两个入口一起停；重新打开立刻恢复。
   const ctxGate = await bridge.request('tips/get', { accessibility: false });
   const ctxReply = await bridge.request('tips/after-reply', { accessibility: false });
@@ -1108,6 +1213,7 @@ async function uiSmoke(context) {
   note(hadHide && dismissed && hiddenNow.hidden === true && startupWhileHidden.id === "" && startupAfterRestore.id !== "",
     `「不再提醒」写进核心后两入口一起停，重新打开立刻恢复（${JSON.stringify({ hadHide, dismissed, hidden: hiddenNow.hidden, whileHidden: startupWhileHidden.id, restored: startupAfterRestore.id })}）`);
 
+  await bridge.stop();
   // 便携启动器不保证继承 stdout；显式 --session-dir 保留完整断言报告供验收。
   writeFileSync(join(SESSION_DIR, 'ui-smoke-report.json'), JSON.stringify({
     passed: bad === 0, failed: bad, checks, packaged: app.isPackaged, version: app.getVersion(),
