@@ -92,12 +92,11 @@ public func globFiles(pattern: String, cwd: String): ArrayList<String> {
     
     // 提取基础目录和文件名模式
     let dirs = ArrayList<String>()
-    var filePattern = "*"
+    var filePattern = pattern
     var i: Int64 = 0
     while (i < parts.size) {
         let part = parts[i]
         if (part.contains("*") || part.contains("?")) {
-            filePattern = part
             break
         }
         dirs.add(part)
@@ -105,7 +104,7 @@ public func globFiles(pattern: String, cwd: String): ArrayList<String> {
     }
     // 如果所有部分都不含通配符，最后一个部分是文件名
     if (i >= Int64(parts.size)) {
-        filePattern = parts[parts.size - 1]
+        filePattern = pattern
     }
     
     // 从 cwd 开始，按 dirs 逐层进入
@@ -117,7 +116,7 @@ public func globFiles(pattern: String, cwd: String): ArrayList<String> {
     
     // 检查 baseDir 是文件还是目录
     let baseInfo = FileInfo(baseDir)
-    if (baseInfo.isRegular() && globMatchPattern(Path(baseDir).fileName, filePattern)) {
+    if (baseInfo.isRegular() && globMatchPattern(relativizePath(baseDir, cwd), filePattern)) {
         let rel = relativizePath(baseDir, cwd)
         results.add(rel)
         return results
@@ -145,9 +144,9 @@ func globRecursive(dir: String, filePattern: String, cwd: String,
             globRecursive(subDir, filePattern, cwd, results, depth + 1)
         } else {
             // 检查文件名是否匹配
-            if (globMatchPattern(name, filePattern)) {
-                let fullPath = dir + "/" + name
-                let rel = relativizePath(fullPath, cwd)
+            let fullPath = dir + "/" + name
+            let rel = relativizePath(fullPath, cwd)
+            if (globMatchPattern(rel, filePattern)) {
                 results.add(rel)
             }
         }
@@ -166,9 +165,9 @@ func joinPaths(base: String, parts: Array<String>): String {
 // 将绝对路径转为相对路径（相对于 base）
 func relativizePath(fullPath: String, base: String): String {
     let full = fullPath
-    let b = base
-    if (full.startsWith(b)) {
-        return full[b.size..full.size]
+    let b = base.trimEnd({ r => r == r'/' || r == r'\\' })
+    if (full.startsWith(b + "/") || full.startsWith(b + "\\")) {
+        return full[(b.size + 1)..full.size].replace("\\", "/")
     }
     return full
 }

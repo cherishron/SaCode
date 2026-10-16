@@ -5,8 +5,8 @@ import std.fs.*
 // 仓颉单测的临时产物唯一落位：TMP 下按需自建的私有目录。
 //
 // 为什么不再写死绝对路径（2026-10-11 实测）：
-// 1. 写死 `apps/desktop/.tmp-test/host-restore-20261009/…` 把 core 的测试产物放进
-//    桌面模块目录，既跨模块又落在 gitignore 目录里——干净检出时目录不存在，
+// 1. 写死仓内具体路径（把 core 的测试产物放进 `apps/desktop` 下的临时目录）既跨模块，
+//    又落在 gitignore 目录里——干净检出时目录不存在，
 //    `WriteLease.acquire()` 里的 `File.createTemp` 直接抛，整批用例在第一步就红。
 // 2. 写死本仓根 `target/` 依赖一个由构建器创建、并非测试自己保证的目录。
 //    我把 TMP 指向私有目录后它就不存在了，于是 `TeamRunnerFixture` 在 init 抛错，

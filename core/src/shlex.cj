@@ -100,6 +100,28 @@ class ShellCapture {
     let complete: Bool
     init(text: String, truncated: Bool, complete: Bool) { this.text = text; this.truncated = truncated; this.complete = complete }
 }
+
+// 所有命令先包装成启动动作；执行任务可让 TurnToken 把该动作与取消串行化。
+class OwnedProcessStart <: CancellationStartAction {
+    let command: String
+    let args: Array<String>
+    let workingDirectory: ?Path
+    var child: ?SubProcess = None
+    init(command: String, args: Array<String>, workingDirectory: ?Path) {
+        this.command = command
+        this.args = args
+        this.workingDirectory = workingDirectory
+    }
+    public func start(): Bool {
+        child = Some(launch(command, args, workingDirectory: workingDirectory,
+            stdIn: ProcessRedirect.Discard, stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Pipe))
+        return true
+    }
+    func take(): SubProcess {
+        return child.getOrThrow()
+    }
+}
+
 // 每路保留 64 KiB 后继续排空，避免限额导致子进程被管道反压挂住。
 func readShellBounded(pipe: InputStream, limit!: Int64 = 65536): ShellCapture {
     let kept = ArrayList<Byte>()
@@ -140,7 +162,8 @@ public class ShellExecutor {
     // 返回 None 表示执行失败（命令不存在、沙箱拒绝、管道错误）。
     public func run(command: String, args: Array<String>, cwd!: String = "",
                     timeoutMs!: Int64 = 30000, sandboxMode!: String = "workspace-write", cancelled!: () -> Bool = { => false },
-                    onStarted!: (Int64) -> Unit = { _ => }, outputLimit!: Int64 = 65536): Option<ShellResult> {
+                    onStarted!: (Int64) -> Unit = { _ => }, outputLimit!: Int64 = 65536,
+                    startToken!: ?TurnToken = None, onCreated!: (Int64) -> Unit = { _ => }): Option<ShellResult> {
         if (timeoutMs < 1 || timeoutMs > 300000 || outputLimit < 1 || outputLimit > 65536 || cancelled()) { return None }
         // 这里只验证策略名称；现有 SandboxRuntime 不提供操作系统隔离。
         let fullArgs = ArrayList<String>()
@@ -156,7 +179,8 @@ public class ShellExecutor {
         let resolvedCwd = if (cwd.size > 0) { cwd } else { workingDirectory }
         var wdOpt: Option<Path> = None
         if (resolvedCwd.size > 0) { wdOpt = Some(Path(resolvedCwd)) }
-        return runOwnedProcess(confined[0], confined[1..], wdOpt, timeoutMs, outputLimit, cancelled, onStarted)
+        return runOwnedProcess(confined[0], confined[1..], wdOpt, timeoutMs, outputLimit, cancelled, onStarted,
+            startToken: startToken, onCreated: onCreated)
     }
 
     // 执行 shell 命令字符串（经 shell 包装）。
@@ -205,12 +229,22 @@ public class ShellExecutor {
 // 包内的实际进程监督原语；不对模型或协议开放裸执行入口。
 // 调用前必须已有 enforcing argv，或是测试指定的无副作用固定命令。
 func runOwnedProcess(command: String, args: Array<String>, wdOpt: ?Path, timeoutMs: Int64,
-    outputLimit: Int64, cancelled: () -> Bool, onStarted: (Int64) -> Unit): ?ShellResult {
+    outputLimit: Int64, cancelled: () -> Bool, onStarted: (Int64) -> Unit,
+    startToken!: ?TurnToken = None, onCreated!: (Int64) -> Unit = { _ => }): ?ShellResult {
         if (timeoutMs < 1 || timeoutMs > 300000 || outputLimit < 1 || outputLimit > 65536 || cancelled()) { return None }
         try {
-            let p = launch(command, args, workingDirectory: wdOpt,
-                           stdIn: ProcessRedirect.Discard, stdOut: ProcessRedirect.Pipe,
-                           stdErr: ProcessRedirect.Pipe)
+            let launchRequest = OwnedProcessStart(command, args, wdOpt)
+            if (let Some(token) <- startToken) {
+                if (!token.runStartIfNotCancelled(launchRequest)) { return None }
+            } else {
+                launchRequest.start()
+            }
+            let p = launchRequest.take()
+            try { onCreated(p.pid) }
+            catch (e: Exception) {
+                try { p.terminate(force: true); p.wait(timeout: 3000 * Duration.millisecond) } catch (_: Exception) {}
+                throw e
+            }
             let started = MonoTime.now()
 
             // 两路读取都离开等待线程，不关闭管道不能绕过超时检查。

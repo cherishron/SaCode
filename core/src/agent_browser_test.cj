@@ -6,7 +6,7 @@ import std.unittest.*
 // 浏览器工具在 ToolRuntime 中的注册与延迟注入测试。
 
 func makeTestLog2(prefix: String): SessionLog {
-    let root = "${prefix}-ab"
+    let root = coreTestDir("${prefix}-ab")
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     return SessionLog("${root}/session.log")

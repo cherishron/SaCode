@@ -3,6 +3,36 @@ import std.fs.*
 import std.unittest.*
 import stdx.encoding.json.*
 import std.time.*
+import std.sync.*
+
+class BlockingStartAction <: CancellationStartAction {
+    let entered = AtomicBool(false)
+    let release = AtomicBool(false)
+    var calls: Int64 = 0
+    public func start(): Bool {
+        entered.store(true)
+        var attempts = 0
+        while (!release.load() && attempts < 1000) {
+            sleep(2 * Duration.millisecond)
+            attempts += 1
+        }
+        calls += 1
+        return release.load()
+    }
+}
+
+class ExecutionLaunchBarrier {
+    let entered = AtomicBool(false)
+    let release = AtomicBool(false)
+    func waitUntilReleased(): Unit {
+        entered.store(true)
+        var attempts = 0
+        while (!release.load() && attempts < 1000) {
+            sleep(2 * Duration.millisecond)
+            attempts += 1
+        }
+    }
+}
 
 func supervisorProposal(executable: String, argv: String, timeout: Int64): String {
     return "{\"workspaceRevision\":1,\"cwd\":\"${jsonEscapeText(canonicalize(".").toString())}\",\"executable\":\"${jsonEscapeText(executable)}\",\"argv\":${argv},\"timeoutMs\":${timeout},\"outputLimit\":64}"
@@ -17,6 +47,65 @@ func supervisorDefaultGateDoesNotConsumeAdmission() {
     let state = executionTestApprove(service, service.propose("task-1", "request-1", supervisorProposal("cmd", "[\"/c\",\"echo ok\"]", 1000)), ApprovalDesk(log))
     @ExpectThrows[Exception](ExecutionSupervisor(service).run(state.id, state.revision))
     @Expect(service.describe(state.id).phase, "admitted")
+    @Expect(lease.release(), true); removeIfExists(path)
+}
+
+@Test
+func cancellationAndProcessStartUseOneSerializedCommitPoint() {
+    let token = TurnToken()
+    let action = BlockingStartAction()
+    let starting = spawn { => token.runStartIfNotCancelled(action) }
+    for (_ in 0..100) {
+        if (action.entered.load()) { break }
+        sleep(2 * Duration.millisecond)
+    }
+    @Expect(action.entered.load(), true)
+    let cancellationReturned = AtomicBool(false)
+    let cancelling = spawn { => token.cancel(); cancellationReturned.store(true) }
+    sleep(20 * Duration.millisecond)
+    @Expect(cancellationReturned.load(), false)
+    action.release.store(true)
+    @Expect(starting.get(2000 * Duration.millisecond), true)
+    cancelling.get(2000 * Duration.millisecond)
+    @Expect(cancellationReturned.load(), true)
+    @Expect(token.cancelled(), true)
+    let later = BlockingStartAction()
+    @Expect(token.runStartIfNotCancelled(later), false)
+    @Expect(later.calls, Int64(0))
+}
+
+@Test
+func stopDuringStartingBeforeProcessCreationSettlesAsCancelled() {
+    let path = coreTestDir("supervisor-stop-before-process") + ".log"
+    removeIfExists(path); removeIfExists("${path}.lease", recursive: true)
+    let log = SessionLog(path); let lease = WriteLease(path); @Expect(lease.acquire(), true)
+    SessionWorkspace(log).setDirectory(".")
+    let service = ExecutionService(log, lease, "session-1", checkpoint: { => true })
+    let state = executionTestApprove(service, service.propose("task-1", "request-before-process",
+        supervisorProposal("cmd", "[\"/c\",\"echo must-not-run\"]", 1000)), ApprovalDesk(log))
+    let barrier = ExecutionLaunchBarrier()
+    let sandbox = SandboxRuntime(provider: { argv, _ =>
+        barrier.waitUntilReleased()
+        argv
+    })
+    let runner = ExecutionSupervisor(service, providerReady: { => true },
+        executor: ShellExecutor(sandboxRuntime: sandbox))
+    let run = runner.start(state.id, state.revision)
+    for (_ in 0..100) {
+        if (barrier.entered.load()) { break }
+        sleep(2 * Duration.millisecond)
+    }
+    @Expect(barrier.entered.load(), true)
+    let starting = service.describe(state.id)
+    @Expect(starting.phase, "starting")
+    let stopping = service.stop(state.id, starting.revision)
+    @Expect(stopping.phase, "stopping")
+    barrier.release.store(true)
+    let facts = run.wait(timeoutMs: 5000)
+    @Expect(facts.cancelled, true)
+    @Expect(facts.exitObserved, false)
+    @Expect(service.describe(state.id).phase, "cancelled-before-start")
+    @Expect(!service.describe(state.id).result.contains("exitCode"), true)
     @Expect(lease.release(), true); removeIfExists(path)
 }
 

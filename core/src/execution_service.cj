@@ -74,9 +74,9 @@ public class ExecutionService {
     private func validTransition(from: String, to: String): Bool {
         return (from == "awaiting-approval" && (to == "admitted" || to == "cancelled-before-start")) ||
             (from == "admitted" && (to == "admitted" || to == "starting" || to == "awaiting-approval" || to == "cancelled-before-start")) ||
-            (from == "starting" && (to == "running" || to == "stopping" || to == "unknown")) ||
+            (from == "starting" && (to == "running" || to == "stopping" || to == "cancelled-before-start" || to == "unknown")) ||
             (from == "running" && (to == "stopping" || to == "exited" || to == "unknown")) ||
-            (from == "stopping" && (to == "stopping" || to == "exited" || to == "unknown"))
+            (from == "stopping" && (to == "stopping" || to == "cancelled-before-start" || to == "exited" || to == "unknown"))
     }
     public func describe(id: String): ExecutionSnapshot {
         for (item in list()) { if (item.id == id) { return item } }
@@ -240,6 +240,19 @@ public class ExecutionService {
             let failed = transition(state, "unknown", reason)
             starts[id] = false
             return failed
+        }
+    }
+    // 只有启动动作与取消已串行化、且进程创建尚未发生时才能确认此终态。
+    public func cancelledBeforeStart(id: String, revision: Int64): ExecutionSnapshot {
+        synchronized(log.mtx) {
+            let state = expected(id, revision)
+            if ((state.phase != "starting" && state.phase != "stopping") ||
+                !starts.contains(id) || !starts[id] || !tokens.contains(id) || !tokens[id].cancelled()) {
+                throw Exception("execution-start-not-cancelled-before-process")
+            }
+            let cancelled = transition(state, "cancelled-before-start", "")
+            starts[id] = false
+            return cancelled
         }
     }
     public func supervisionLost(id: String, revision: Int64, reason: String): ExecutionSnapshot {

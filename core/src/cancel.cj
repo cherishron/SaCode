@@ -32,8 +32,15 @@ public interface Provider {
 
 // 协作式取消令牌：仓颉的线程取消不强制停止线程，只在检查点生效。
 // child() 跟随父令牌；detached() 表示「已独立发布的后台任务」，父取消不得连带杀死它。
+// 启动型副作用与取消共享同一把锁：取消先取得锁时，启动动作不得开始；
+// 启动动作先取得锁时，取消等待启动返回后再生效，调用方随后必须监督并终止该进程。
+interface CancellationStartAction {
+    func start(): Bool
+}
+
 public class TurnToken {
     let flag = AtomicBool(false)
+    let startLock = Mutex()
     let parent: Option<TurnToken>
     let linked: Bool
 
@@ -48,7 +55,18 @@ public class TurnToken {
     }
 
     public func cancel() {
-        flag.store(true)
+        startLock.lock()
+        try { flag.store(true) }
+        finally { startLock.unlock() }
+    }
+
+    // 仅包内执行监督器用于包住不可分割的进程创建调用，不包住等待或输出读取。
+    func runStartIfNotCancelled(action: CancellationStartAction): Bool {
+        startLock.lock()
+        try {
+            if (cancelled()) { return false }
+            return action.start()
+        } finally { startLock.unlock() }
     }
 
     public func cancelled(): Bool {

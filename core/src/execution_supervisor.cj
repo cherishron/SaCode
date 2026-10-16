@@ -59,12 +59,14 @@ public class ExecutionSupervisor {
         let arguments = ArrayList<String>()
         let argv = proposal.get("argv").getOrThrow().asArray()
         for (index in 0..argv.size()) { arguments.add(argv.get(index).getOrThrow().asString().getValue()) }
+        let processCreated = AtomicBool(false)
         let observedStart = AtomicBool(false)
         let result = executor.run(proposal.get("executable").getOrThrow().asString().getValue(), arguments.toArray(),
             cwd: proposal.get("cwd").getOrThrow().asString().getValue(),
             timeoutMs: proposal.get("timeoutMs").getOrThrow().asInt().getValue(),
             outputLimit: proposal.get("outputLimit").getOrThrow().asInt().getValue(),
-            cancelled: { => token.cancelled() }, onStarted: { pid =>
+            cancelled: { => token.cancelled() }, startToken: Some(token), onCreated: { _ => processCreated.store(true) },
+            onStarted: { pid =>
                 let current = service.describe(id)
                 service.startedSupervised(id, current.revision, "owned-subprocess:${id}:pid=${pid}")
                 observedStart.store(true)
@@ -84,8 +86,14 @@ public class ExecutionSupervisor {
             }
             return facts
         }
-        if (!observedStart.load()) { service.startFailed(id, current.revision, "provider-start-failed") }
-        else { service.supervisionLost(id, current.revision, "provider-observation-failed") }
+        if (!observedStart.load()) {
+            if (!processCreated.load() && token.cancelled()) {
+                service.cancelledBeforeStart(id, current.revision)
+                return ShellResult(-1, "", "", false, "cancelled-before-start", cancelled: true,
+                    outputComplete: false, exitObserved: false)
+            }
+            service.startFailed(id, current.revision, "provider-start-failed")
+        } else { service.supervisionLost(id, current.revision, "provider-observation-failed") }
         throw Exception("execution-provider-failed")
     }
 }

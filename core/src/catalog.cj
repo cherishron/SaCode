@@ -81,6 +81,14 @@ public class SessionCatalog {
     }
 
     public func create(title: String): String {
+        return create(title, "")
+    }
+
+    // 新会话默认权限：defaultMode 只在建会话时快照一次，由调用方（宿主）从通用设置里读出，
+    // 本层不关心它存哪儿。空串或 build 都不落事件——build 是 ModeController 的回落值，
+    // 显式写一条反而多一条冗余事件。必须顺着同一个 log 实例追加后再 flush，
+    // 另起一个未 load 的实例会让 flush 的「只允许追加」前缀核对失败、事件落不了盘。
+    public func create(title: String, defaultMode: String): String {
         for (b in title.toArray()) {
             if (b < 32 || b == 127) { throw Exception("bad-session-title") }
         }
@@ -117,6 +125,9 @@ public class SessionCatalog {
         if (id.size == 0) { throw Exception("session-directory-conflict") }
         let log = SessionLog("${directory}/session.log")
         log.append("session/title", name)
+        if ((defaultMode == "plan" || defaultMode == "auto" || defaultMode == "yolo") && defaultMode != "build") {
+            log.append("mode/mode", defaultMode)
+        }
         if (!log.flush()) { throw Exception("session-create-flush-failed") }
         return id
     }

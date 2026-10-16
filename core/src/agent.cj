@@ -129,6 +129,8 @@ public class ToolRuntime {
     // 浏览器工具执行器：由上层入口注入后 browser.* 工具名才可经 pipeline() 分发。
     // 声明了却未注入执行器的 browser.* 工具名照旧归一成 unknown-tool。
     var browserExecutor: Option<BrowserToolExecutor> = None
+    // slash 命令注册表：纯内存，每次启动重新注册。供 ACP（agent-loop / composer）使用。
+    public let commands: CommandRegistry
 
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
         sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
@@ -147,6 +149,7 @@ public class ToolRuntime {
         this.ptcExecutor = PtcExecutor(workingDirectory: workingDirectory, sandboxRuntime: sandboxRuntime)
         this.terminalBuffer = TerminalBuffer(log)
         this.jobStore = JobStore()
+        this.commands = CommandRegistry()
         registerBuiltinExecutors()
         if (let Some(bound) <- page) {
             for (spec in pageToolSpecs()) {
@@ -156,6 +159,9 @@ public class ToolRuntime {
                 executors.add(spec.name, { name, args => pageStep(bound, name, args) })
             }
         }
+        // 注册内置 slash 命令到 ctx.commands：每次启动都重建一份纯内存注册表。
+        // 命令本身不触发审批；新命令只需注册到 CommandRegistry，无需改动 popover。
+        registerBuiltinCommands(this.commands)
         if (let Some(bound) <- team) {
             for (spec in teamToolSpecs()) {
                 executors.add(spec.name, { name, args => teamStep(bound, name, args) })
@@ -256,6 +262,48 @@ public class ToolRuntime {
         executors.add("browser.press_key", { _, a => browserStep("press_key", a) })
         executors.add("browser.scroll", { _, a => browserStep("scroll", a) })
         executors.add("browser.evaluate", { _, a => browserStep("evaluate", a) })
+    }
+
+    // slash 命令执行入口：解析 /name args 并分发到对应执行器。
+    // 命令本身不触发审批；审批仅由命令内部工具触发。
+    // 错误反馈由调用方（ACP/composer）在 UI 附近显示，不污染会话历史。
+    public func executeSlashCommand(raw: String): Unit {
+        if (raw.size == 0 || !raw.startsWith("/")) {
+            return
+        }
+        // 简单空格分词：第一段是命令名，其余是 rawArgs
+        let parts = raw[1..].split(' ').filter { s => s.size > 0 }
+        if (parts.size == 0) {
+            return
+        }
+        let name = parts[0]
+        let rawArgs = if (parts.size > 1) { raw[(1 + name.size)..] } else { "" }
+        let result = commands.resolveWithArgs(name, rawArgs)
+        // 分发到对应执行器骨架（后续批次替换为真实实现）
+        if (name == "review") {
+            executeReview(result.args.get("target") ?? "", result.args)
+        } else if (name == "compress") {
+            executeCompress(result.args)
+        } else if (name == "init") {
+            executeInit(result.args)
+        }
+        // 未注册命令已在 resolveWithArgs 中抛异常
+    }
+
+    // review 命令执行骨架：后续批次替换为真实审查逻辑（读文件、LLM 调用、报告生成）
+    public func executeReview(target: String, args: HashMap<String, String>): Unit {
+        // TODO: 实际审查逻辑
+        recordResult("slash/review:target=${target}")
+    }
+
+    // compress 命令执行骨架：后续批次替换为真实压缩逻辑
+    public func executeCompress(args: HashMap<String, String>): Unit {
+        recordResult("slash/compress")
+    }
+
+    // init 命令执行骨架：后续批次替换为真实初始化逻辑
+    public func executeInit(args: HashMap<String, String>): Unit {
+        recordResult("slash/init")
     }
 
     // 浏览器工具派发：提取 verb（去掉 browser. 前缀），委托 BrowserToolExecutor 执行。

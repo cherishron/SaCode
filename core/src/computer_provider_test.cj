@@ -4,8 +4,10 @@ import std.fs.*
 import std.unittest.*
 import stdx.encoding.json.*
 
+// 夹具源码与工作目录都按 core 包自身位置解析：单测的 cwd 是 core/，
+// 写死绝对路径会让干净检出或换机时直接找不到文件。
 func computerFixture(): ComputerProviderClient {
-    return ComputerProviderClient("node", ["D:/Project/sa/saai/sa-code/core/test-support/computer-provider-fixture.mjs"], workingDirectory: Path("D:/Project/sa/saai/sa-code/core"))
+    return ComputerProviderClient("node", ["test-support/computer-provider-fixture.mjs"], workingDirectory: Path("."))
 }
 
 @Test

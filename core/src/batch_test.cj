@@ -6,7 +6,7 @@ import stdx.encoding.json.*
 
 // 本地格式是 P0 提案，不声称上游未公开的计划 schema 兼容。
 func batchFixture(): String {
-    let root = Directory.createTemp(Path(getVariable("TMP") ?? ".")).toString()
+    let root = Directory.createTemp(Path(coreTestRoot())).toString()
     File.writeTo("${root}/settings.json", ##"{"batch":{"model":"qwen","authType":"openai","baseUrl":"https://example.com/v1","credentialRef":"DASHSCOPE_API_KEY"},"env":{"DASHSCOPE_API_KEY":"测试凭证"}}"##.toArray())
     File.writeTo("${root}/源.txt", "中文😀\u{0000}正文".toArray())
     File.writeTo("${root}/plan.json", ##"{"task":"翻译😀","inputs":["源.txt"],"outputDir":"docs/en","maxOutputTokens":100,"maxCostUsd":2,"thinking_budget":0}"##.toArray())

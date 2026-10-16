@@ -21,7 +21,8 @@ func globMatchPatternWildcard() {
     @Expect(globMatchPattern("anything.txt", "*.txt"), true)
     @Expect(globMatchPattern("test.txt", "test.txt"), true)
     @Expect(globMatchPattern("test.txt", "test.*"), true)
-    @Expect(globMatchPattern("test.txt", "t?.txt"), true)
+    @Expect(globMatchPattern("test.txt", "t?.txt"), false)
+    @Expect(globMatchPattern("test.txt", "t???.txt"), true)
     @Expect(globMatchPattern("test.txt", "test"), false)
     @Expect(globMatchPattern("test.txt", "*.md"), false)
 }
@@ -31,7 +32,8 @@ func globMatchPatternDoubleStar() {
     // ** 匹配含 / 的任意字符
     @Expect(globMatchPattern("a/b/c.txt", "**"), true)
     @Expect(globMatchPattern("a.txt", "**"), true)
-    @Expect(globMatchPattern("a/b/c.txt", "*/c.txt"), true)
+    @Expect(globMatchPattern("a/b/c.txt", "*/c.txt"), false)
+    @Expect(globMatchPattern("a/b/c.txt", "**/c.txt"), true)
 }
 
 @Test

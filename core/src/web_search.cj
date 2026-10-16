@@ -184,6 +184,7 @@ public func webSearchRequestBody(provider: String, query: String, model!: String
         object.put("search_queries", queries)
     } else if (provider == "tinyfish") {
         // GET 参数在 searchWithProvider 里单独处理
+        return ""
     } else { throw Exception("web-provider-unknown") }
     return object.toString()
 }

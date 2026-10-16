@@ -14,6 +14,12 @@ func executionApiExactApprovalAndUnavailableStart() {
     input.put("sessionId", JsonString("current")); input.put("taskId", JsonString("task-1"))
     input.put("requestId", JsonString("request-1")); input.put("proposal", JsonString(executionTestProposal()))
     let proposed = JsonValue.fromStr(api.dispatch("execution/propose", input.toString())).asObject()
+    let providerAvailable = proposed.get("providerAvailable").getOrThrow().asBool().getValue()
+    let providerReason = proposed.get("providerReason").getOrThrow().asString().getValue()
+    @Expect(providerAvailable, providerReason.size == 0)
+    @Expect(providerReason == "" || providerReason == "platform-sandbox-unavailable" ||
+        providerReason == "bubblewrap-required" || providerReason == "unsafe-workspace" ||
+        providerReason == "workspace-unavailable" || providerReason == "sandbox-probe-failed", true)
     let id = proposed.get("executionId").getOrThrow().asString().getValue()
     @Expect(JsonValue.fromStr(api.dispatch("execution/propose", input.toString())).asObject().get("executionId").getOrThrow().asString().getValue(), id)
     let ticket = desk.askForCall("execution/start", proposed.get("approvalArguments").getOrThrow().asString().getValue())

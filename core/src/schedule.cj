@@ -1,6 +1,7 @@
 package core
 import std.collection.*
 import std.convert.*
+import stdx.encoding.json.*
 
 // 定时任务：log-only `schedule/task` 事件承载「register::<id>::<cron>」与
 // 「pause::<id>」两种变更；`fire(deliveryId, taskId)` 只命中 id 匹配且
@@ -27,6 +28,7 @@ public class ScheduleStore {
         this.log = log
         this.hookRegistry = hookRegistry
         for (event in log.snapshotEvents()) {
+            if (event.eventType == "schedule/definition-v2") { applyStructuredTask(event.data); continue }
             if (event.eventType == "schedule/fire") { applyFireEvent(event.data); continue }
             if (event.eventType != "schedule/task") {
                 continue
@@ -57,6 +59,27 @@ public class ScheduleStore {
                 }
             }
         }
+    }
+
+    // JSON 保留提示词、目录及模型元数据中的分隔符；旧 taskdef 事件继续回放。
+    private func applyStructuredTask(text: String): Unit {
+        let obj = JsonValue.fromStr(text).asObject()
+        if (obj.get("version").getOrThrow().asInt().getValue() != 1) { throw Exception("schedule-definition-version") }
+        let definition = TaskDefinition(obj.get("id").getOrThrow().asString().getValue(),
+            obj.get("cron").getOrThrow().asString().getValue(), obj.get("prompt").getOrThrow().asString().getValue(), false, 0,
+            workspaceDir: obj.get("workspace").getOrThrow().asString().getValue(),
+            sessionLogPath: obj.get("sessionLogPath").getOrThrow().asString().getValue(),
+            modelConfig: obj.get("metadata").getOrThrow().asObject().toString())
+        defineTask(definition)
+        ensureActive(definition.id)
+    }
+
+    public func registerStructuredTask(text: String): Unit {
+        // 先完整解析再追加，非法对象不会污染当前日志。
+        let probe = ScheduleStore(SessionLog(""))
+        probe.applyStructuredTask(text)
+        log.append("schedule/definition-v2", text)
+        applyStructuredTask(text)
     }
 
     // 未结算火次是恢复屏障；未知事实不得静默丢弃后重新触发。

@@ -4,7 +4,11 @@ import std.fs.*
 import std.sync.*
 import std.unittest.*
 
-// 官方 std.fs 的 createTemp 原子创建唯一目录；保留在 gitignored target 内。
+// 官方 std.fs 的 createTemp 原子创建唯一目录。
+// 落点改用 coreTestRoot()：直接在 TMP 根下散落时，实测一轮就在私有目录里积了
+// 211 个 tmpDir* 残留，其中 193 个含 .git —— Git 只读对象删不动，
+// 清理抛 `Failed to remove … Access is denied`，用例由绿转 ERROR。
+// 集中到 sacode-core-tests/ 下由私有清理脚本统一收。
 // 不递归清理 Git 只读对象，也不认领或删除其他会话创建的夹具。
 func teamWorkspaceFixture(): String {
     return Directory.createTemp(Path(coreTestRoot())).toString()

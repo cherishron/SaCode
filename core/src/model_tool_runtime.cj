@@ -58,11 +58,11 @@ public class ModelToolRuntime {
         if (let Some(_) <- computer) {
             for (spec in computerToolSpecs()) { registry.register(spec) }
         }
-        if (let Some(_) <- team) {
-            for (spec in teamToolSpecs()) { registry.register(spec) }
-        }
         if (let Some(_) <- page) {
             for (spec in pageModelToolSpecs()) { registry.register(spec) }
+        }
+        if (let Some(_) <- team) {
+            for (spec in teamToolSpecs()) { registry.register(spec) }
         }
         // 会话 worktree：入口绑定了实例才登记声明面。exit 那条 requiresApproval=true，
         // 免审批档不能替人批「挪地基 / 删目录」，审批语义在 ToolRuntime 的精确工单那一段收口。

@@ -51,12 +51,43 @@ public func platformSandbox(directory: String): SandboxRuntime {
     return SandboxRuntime()
 }
 
-// 就绪仅用同策略的固定 /usr/bin/true 探测；用户命令仍经核心工单准入。
-public func platformExecutionReady(directory: String): Bool {
+// 返回固定、脱敏的阻断原因；空串表示同策略探针通过。
+// 具体异常文本不穿过 Host 协议，避免泄露路径或底层实现细节。
+public func platformExecutionBlockReason(directory: String): String {
+    if (directory.size == 0) {
+        return "workspace-unavailable"
+    }
+    try {
+        let root = canonicalize(directory).toString()
+        if (!FileInfo(root).isDirectory()) {
+            return "workspace-unavailable"
+        }
+    } catch (_: Exception) {
+        return "workspace-unavailable"
+    }
     try {
         let args = platformSandbox(directory).confine(["/usr/bin/true"], "workspace-write")
         let result = runOwnedProcess(args[0], args[1..], None, 3000, 1024, { => false }, { _ => })
-        if (let Some(r) <- result) { return r.exitObserved && r.exitCode == 0 && r.outputComplete && r.error.size == 0 }
-    } catch (_: Exception) {}
-    return false
+        if (let Some(r) <- result) {
+            if (r.exitObserved && r.exitCode == 0 && r.outputComplete && r.error.size == 0) {
+                return ""
+            }
+        }
+    } catch (e: Exception) {
+        if (e.message == "SANDBOX_UNAVAILABLE:bubblewrap-required") {
+            return "bubblewrap-required"
+        }
+        if (e.message == "SANDBOX_UNSAFE_WORKSPACE") {
+            return "unsafe-workspace"
+        }
+        if (e.message == "SANDBOX_UNAVAILABLE" || e.message == "SANDBOX_MODE_NOT_CONFINED") {
+            return "platform-sandbox-unavailable"
+        }
+    }
+    return "sandbox-probe-failed"
+}
+
+// 就绪仅用同策略的固定命令探测；用户命令仍经核心工单准入。
+public func platformExecutionReady(directory: String): Bool {
+    return platformExecutionBlockReason(directory).size == 0
 }

@@ -198,9 +198,9 @@ public class PluginPackageView {
             boolJson("enabled", enabled) +
             // 包级 readOnlyReason 现在恒为 null：契约里它表达「宿主为何拒绝停用/移除」，
             // 而这条判断的输入是「内置不可移除」，那个事实已经由 optional 字段带出去了。
-            "\"readOnlyReason\":null" +
+            ",\"readOnlyReason\":null" +
             errorJson(error) +
-            "\"rows\":[${rowText}]}"
+            ",\"rows\":[${rowText}]}"
     }
 }
 

@@ -33,12 +33,20 @@ class TeamRunnerFixture {
     let log: SessionLog
     let lease: WriteLease
     init() {
+        // 夹具根取 coreTestRoot()：本仓没有根级 target 目录，写死绝对路径会让整套 team_runner
+        // 用例在 init 阶段就抛错，finally 不执行 → 全局跨实例认领不归还，
+        // 后续用例被误判成 team-runner-session-owned，把夹具缺陷记成并发缺陷。
+        // 落点集中到 sacode-core-tests/，不在 TMP 根散落（散落时一轮积 211 个残留）。
         dir = Directory.createTemp(Path(coreTestRoot())).toString()
         log = SessionLog("${dir}/member.log"); lease = WriteLease(log.path)
         if (!lease.acquire()) { throw Exception("fixture-lease") }
         log.append("user/message", "start"); if (!log.durableCheckpointBatched(lease)) { throw Exception("fixture-durable") }
     }
-    func cleanup(): Unit { lease.release(); removeIfExists(dir, recursive: true) }
+    // 清理失败不算用例失败：Git 只读对象可能删不动，残留留在私有 TMP 里（与 worktree_test 同口径）。
+    func cleanup(): Unit {
+        try { lease.release() } catch (_: Exception) {}
+        try { removeIfExists(dir, recursive: true) } catch (_: Exception) {}
+    }
 }
 
 func teamRunnerNoNext(_: String): Provider { throw Exception("unexpected-next-request") }

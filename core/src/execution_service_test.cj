@@ -14,6 +14,26 @@ func executionTestApprove(service: ExecutionService, state: ExecutionSnapshot, d
 }
 
 @Test
+func executionCancelBeforeProcessCreationSettlesWithoutInventingExit() {
+    let path = "${coreTestDir("execution-cancel-before-create")}.log"
+    removeIfExists(path); removeIfExists("${path}.lease", recursive: true)
+    let log = SessionLog(path); let lease = WriteLease(path)
+    @Expect(lease.acquire(), true)
+    SessionWorkspace(log).setDirectory(".")
+    let service = ExecutionService(log, lease, "session-1", checkpoint: { => true })
+    let state = executionTestApprove(service, service.propose("task-1", "request-1", executionTestProposal()), ApprovalDesk(log))
+    let token = TurnToken()
+    let starting = service.beginStart(state.id, state.revision, token: Some(token))
+    let stopping = service.stop(starting.id, starting.revision)
+    let settled = service.cancelledBeforeStart(stopping.id, stopping.revision)
+    @Expect(settled.phase, "cancelled-before-start")
+    @Expect(settled.result, "")
+    @ExpectThrows[Exception](service.startFailed(settled.id, settled.revision, "provider-start-failed"))
+    @Expect(service.recover(), Int64(0))
+    @Expect(lease.release(), true); removeIfExists(path)
+}
+
+@Test
 func executionSupervisedStartStopKeepsCancellationAndRejectsRecovery() {
     let path = "${coreTestDir("execution-supervised-start")}.log"
     removeIfExists(path); removeIfExists("${path}.lease", recursive: true)

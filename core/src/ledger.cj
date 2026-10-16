@@ -1067,7 +1067,7 @@ public class UsageLedger {
                 }
                 // 4) 维度计价与快照完整性
                 if (!refused) {
-                    if (!accounting.usage.hasReported() || ledgerSourceOf(accounting.usage) == "unknown") {
+                    if (accounting.usage.input < 0 || accounting.usage.output < 0 || ledgerSourceOf(accounting.usage) == "unknown") {
                         reason = "usage-unspecified"
                     } else if (accounting.rates.currency.size == 0) {
                         reason = "currency-unspecified"
@@ -1292,9 +1292,7 @@ public class UsageLedger {
             if (providers.size > 0) {
                 providers += ","
             }
-            providers += "{\"providerId\":\"${jsonEscapeText(kv[0])}\","
-                + "\"customModelId\":\"${jsonEscapeText(kv[1])}\","
-                + "\"currency\":\"${jsonEscapeText(kv[2])}\",\"usedMicros\":${kv[3]}}"
+            providers += "{\"providerId\":\"${jsonEscapeText(kv[0])}\"," + "\"customModelId\":\"${jsonEscapeText(kv[1])}\"," + "\"currency\":\"${jsonEscapeText(kv[2])}\",\"usedMicros\":${kv[3]}}"
         }
         var unsettled = ""
         for (id in snap.unsettledList) {

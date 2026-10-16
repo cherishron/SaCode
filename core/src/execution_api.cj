@@ -66,8 +66,9 @@ public class ExecutionApi {
         result.put("phase", JsonString(state.phase))
         result.put("result", JsonString(state.result))
         let proposal = JsonValue.fromStr(state.proposal).asObject()
-        result.put("providerAvailable",
-            JsonBool(platformExecutionReady(proposal.get("cwd").getOrThrow().asString().getValue())))
+        let providerReason = platformExecutionBlockReason(proposal.get("cwd").getOrThrow().asString().getValue())
+        result.put("providerAvailable", JsonBool(providerReason.size == 0))
+        result.put("providerReason", JsonString(providerReason))
         if (state.phase == "awaiting-approval") {
             result.put("approvalArguments", JsonString(service.approvalArguments(state.id)))
         }

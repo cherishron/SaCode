@@ -7,7 +7,7 @@ import std.unittest.*
 // 注意：类名用 BrowserToolExecutor（不是 bu_exec.cj 里的 BrowserExecutor）。
 
 func makeTestLog(prefix: String): SessionLog {
-    let root = "${prefix}-be"
+    let root = coreTestDir("${prefix}-be")
     removeIfExists(root, recursive: true)
     Directory.create(root, recursive: true)
     return SessionLog("${root}/session.log")

@@ -27,8 +27,7 @@ func wtToolsGit(root: String, args: Array<String>): String {
 // 一份最小可用的真实仓库：一个已提交的文件、一个 gitignore 的 .sacode、一个只存在于
 // 原始检出的未跟踪文件——「后续工具落在哪」靠这三样才分得出来。
 func wtToolsRepo(): String {
-    let base = getVariable("TMP") ?? (getVariable("TEMP") ?? ".")
-    let root = Directory.createTemp(Path(base)).toString()
+    let root = Directory.createTemp(Path(coreTestRoot())).toString()
     wtToolsGit(root, ["init", "-b", "main"])
     File.writeTo(Path(root).join("seed"), "shared-seed".toArray())
     File.writeTo(Path(root).join("sample.ts"), "function alpha() {\n  return 1\n}\n".toArray())
@@ -36,6 +35,14 @@ func wtToolsRepo(): String {
     wtToolsGit(root, ["add", "."])
     wtToolsGit(root, ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "worktree 工具夹具"])
     return canonicalize(root).toString()
+}
+
+// 夹具尽力清理：Git 只读对象在本机删不动，裸 removeIfExists 会抛
+// `FSException: Failed to remove … return -5: "Access is denied"`，
+// 把本该绿的用例变成 ERROR。清理失败不算用例失败（与 wtTidy / TeamRunnerFixture 同口径），
+// 残留留在私有 TMP 的 sacode-core-tests/ 下，由私有清理脚本统一收。
+func wtToolsTidy(path: String): Unit {
+    try { removeIfExists(path, recursive: true) } catch (_: Exception) {}
 }
 
 func wtToolsCall(name: String, args: String): ModelToolCall {
@@ -54,11 +61,18 @@ func wtToolsGrant(desk: ApprovalDesk, name: String, args: String): Int64 {
     return id
 }
 
+// 默认实例无 enforcing 后端；下面三条要真启动子进程的用例因此显式注入 passthrough。
+// 它只喂 echo/Set-Content 这类写单个 marker 文件的无副作用命令，仅存在于本测试文件。
+func wtToolsSandbox(): SandboxRuntime {
+    return SandboxRuntime(provider: { argv, _ => argv })
+}
+
 func wtToolsRuntime(log: SessionLog, tree: SessionWorktree, root: String,
     router!: LspRouter = LspRouters.sharedRouter()): ModelToolRuntime {
     let desk = ApprovalDesk(log)
     return ModelToolRuntime(log, false, files: true, workingDirectory: root, worktree: Some(WorktreeTools(tree)),
         desk: desk, approval: { call => wtToolsGrant(desk, call.name, call.args) },
+        sandboxRuntime: wtToolsSandbox(),
         lspRouter: router, lspSession: "wt-tools")
 }
 
@@ -185,7 +199,7 @@ func worktreeModelToolsAppearOnlyWhenSessionWorktreeIsBound() {
     var bound: Int64 = 0
     for (spec in runtime.specs()) { if (spec.name.contains("worktree")) { bound += 1 } }
     @Expect(bound, Int64(2))
-    removeIfExists(root, recursive: true)
+    wtToolsTidy(root)
 }
 
 // 用例 2：schema 与冻结契约逐字段对齐——enter 只有可选 name，exit 是 name+action 必填、
@@ -211,7 +225,7 @@ func worktreeToolSchemasMatchFrozenContractExactly() {
     @Expect(wtToolsHasAll(actions, ["keep", "remove"]), true)
     // 草稿里的 delete 不是合法取值，枚举里也不许出现
     @Expect(wtToolsJsonNames(actions).contains("delete"), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 3：审批旗标——enter 免审批，exit 整条要审批（remove 因此不可能自动获批）。
@@ -222,7 +236,7 @@ func worktreeToolApprovalFlagsMatchFrozenContract() {
     @Expect(h.runtime.registry.requiresApproval("exit_worktree"), true)
     @Expect(wtToolsSpec(h.runtime, "enter_worktree").needsApproval, false)
     @Expect(wtToolsSpec(h.runtime, "exit_worktree").needsApproval, true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 4：描述文案是模型唯一读得到的触发约束，且经注册表投影进系统提示。
@@ -241,7 +255,7 @@ func worktreeToolDescriptionsRequireExplicitUserRequest() {
     @Expect(prompt.contains("enter_worktree:"), true)
     @Expect(prompt.contains("exit_worktree:"), true)
     @Expect(prompt.contains("显式"), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 5（纪律 5）：SubagentLedger 只是账本——代理隔离没有真实执行入口，模型侧不登记、
@@ -264,7 +278,7 @@ func worktreeAgentIsolationStaysOffTheModelSurface() {
     // 账本本身不宣称任何隔离能力（它只有 spawn/settle/cancel 三态）
     let ledger = SubagentLedger(h.log)
     @Expect(ledger.count(), Int64(0))
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // ---------- 进入：会话有效目录与后续工具 ----------
@@ -297,7 +311,7 @@ func enterWorktreeThroughModelPipelineSwitchesSessionDirectory() {
     let replay = SessionLog(Path(h.root).join("session.log").toString())
     @Expect(replay.load(), true)
     @Expect(SessionWorktree(replay, fallback: h.root).active(), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 7：不给 name 时由核心生成随机名，仍然落在固定目录。
@@ -311,7 +325,7 @@ func enterWorktreeWithoutNameGeneratesBinding() {
     @Expect(generated.size <= 64, true)
     @Expect(wtToolsSlashes(wtToolsField(out.why, "directory")).contains("/.sacode/worktrees/${generated}"), true)
     @Expect(h.bound(), wtToolsField(out.why, "directory"))
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 8：glob / grep 的基准目录跟着换到 worktree——原始检出里的独有文件再也看不见。
@@ -328,7 +342,7 @@ func globAndGrepAfterEnterLookInsideTheWorktree() {
     let afterGrep = h.call("grep", "{\"pattern\":\"only-in-original-checkout\"}")
     @Expect(afterGrep.allowed, true)
     @Expect(afterGrep.why.contains("outside.txt"), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 9：write 落到 worktree，不污染原始检出。
@@ -341,7 +355,7 @@ func writeAfterEnterLandsInsideWorktreeNotOriginalCheckout() {
     @Expect(written.allowed, true)
     @Expect(exists(Path(dir).join("wt-inside.txt")), true)
     @Expect(exists(Path(h.root).join("wt-inside.txt")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 10：read 的相对路径以 worktree 为基准——原始检出的同名文件读不到。
@@ -354,7 +368,7 @@ func readAfterEnterResolvesAgainstWorktreeDirectory() {
     let missing = h.call("read", "{\"path\":\"outside.txt\"}")
     @Expect(missing.allowed, false)
     @Expect(missing.why.contains("not-found"), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 11：edit 落在 worktree 里那份同名文件，原始检出那份逐字节不动。
@@ -368,7 +382,7 @@ func editAfterEnterTouchesWorktreeCopyOnly() {
     @Expect(h.call("edit", "{\"path\":\"dual.txt\",\"old_string\":\"worktree\",\"new_string\":\"isolated\"}").allowed, true)
     @Expect(String.fromUtf8(File.readFrom(Path(dir).join("dual.txt"))), "isolated copy")
     @Expect(exists(Path(h.root).join("dual.txt")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 12：bash 的真实工作目录跟着变（命令写的相对文件落在 worktree）。
@@ -381,7 +395,7 @@ func bashAfterEnterRunsInsideWorktreeDirectory() {
     @Expect(ran.allowed, true)
     @Expect(exists(Path(dir).join("wt-bash-marker.txt")), true)
     @Expect(exists(Path(h.root).join("wt-bash-marker.txt")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 13：pwsh 同上，走的是另一条 shell 传输链，不能只验一条。
@@ -394,7 +408,7 @@ func pwshAfterEnterRunsInsideWorktreeDirectory() {
     @Expect(ran.allowed, true)
     @Expect(exists(Path(dir).join("wt-pwsh-marker.txt")), true)
     @Expect(exists(Path(h.root).join("wt-pwsh-marker.txt")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 14：run_code 的基准目录跟随——这条钉的是「执行器在构造期冻结 cwd」那个真缺陷，
@@ -408,7 +422,7 @@ func runCodeAfterEnterRunsInsideWorktreeDirectory() {
     @Expect(ran.allowed, true)
     @Expect(exists(Path(dir).join("wt-node-marker.txt")), true)
     @Expect(exists(Path(h.root).join("wt-node-marker.txt")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 15：LSP 的 workspaceRoot 取自会话有效目录，不是入口构造时那份。
@@ -430,7 +444,7 @@ func lspToolsTakeSessionDirectoryAsWorkspaceRootAfterEnter() {
     @Expect(probe.lastRequest.workspaceRoot, SessionWorkspace(h.log).effectiveDirectory())
     @Expect(probe.lastRequest.workspaceRoot == h.root, false)
     @Expect(probe.calls, Int64(2))
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 16：同一个相对名在 worktree 与原始检出是两份文件——观察键按目录隔离。
@@ -448,7 +462,7 @@ func sameRelativeNameIsSeparateFileAcrossWorktreeBoundary() {
     @Expect(outside.allowed, true)
     @Expect(String.fromUtf8(File.readFrom(Path(dir).join("dual-name.txt"))), "inside")
     @Expect(String.fromUtf8(File.readFrom(Path(h.root).join("dual-name.txt"))), "outside")
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // ---------- 退出：审批、动作与副作用 ----------
@@ -474,7 +488,7 @@ func exitWorktreeIsRefusedForEveryActionWithoutATicket() {
     @Expect(tree.active(), true)
     @Expect(exists(Path(dir)), true)
     @Expect(SessionWorkspace(log).effectiveDirectory(), dir)
-    removeIfExists(root, recursive: true)
+    wtToolsTidy(root)
 }
 
 // 用例 18：批给 keep 的那张票不能拿去放行 remove——票绑工具名也绑原始参数。
@@ -498,7 +512,7 @@ func keepTicketCannotAuthorizeRemove() {
     let keep = runtime.execute(wtToolsCall("exit_worktree", keepArgs))
     @Expect(keep.allowed, true)
     @Expect(exists(Path(dir)), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 19：动作闭集在运行期再校验一遍——即便工单绑的就是 action=delete，也不许生效。
@@ -514,7 +528,7 @@ func unknownExitActionIsRefusedEvenWithTicket() {
     @Expect(h.runtime.runtime.lastDetail.stage, "worktree-denied")
     @Expect(h.tree.active(), true)
     @Expect(exists(Path(dir)), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 20：name 必须是当前绑定的那个；批过的票也不许拿去动别的名字。
@@ -530,7 +544,7 @@ func exitWorktreeNameMismatchLeavesBindingAlone() {
     @Expect(h.tree.name(), "tools-real")
     @Expect(exists(Path(dir)), true)
     @Expect(h.bound(), dir)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 21：没有绑定就要求退出 → 明确拒绝，不伪造成功。
@@ -542,7 +556,7 @@ func exitWorktreeWithoutActiveBindingIsRefused() {
     @Expect(out.why.contains("worktree-not-active"), true)
     @Expect(h.eventDirectory(), "")
     @Expect(h.tree.active(), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 22：keep 批过之后解绑保留目录，并且后续工具的基准目录跟着回到原始检出。
@@ -562,7 +576,7 @@ func exitWorktreeKeepRestoresOriginalDirectoryForLaterTools() {
     let back = h.call("glob", "{\"pattern\":\"outside.txt\"}")
     @Expect(back.allowed, true)
     @Expect(back.why.contains("outside.txt"), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 23：remove 批过且目录干净 → 目录真被删掉。
@@ -577,7 +591,7 @@ func exitWorktreeRemoveDeletesCleanWorktree() {
     @Expect(out.why.contains("\"active\""), true)
     @Expect(exists(Path(dir)), false)
     @Expect(h.bound(), h.root)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 24：一次调用一个结算——模型侧一轮里 enter 之后紧跟 write，落在同一轮内也已经换好目录。
@@ -598,7 +612,7 @@ func modelLoopWritesInsideWorktreeInTheSameTurn() {
     @Expect(String.fromUtf8(File.readFrom(Path(dir).join("notes.txt"))), "inside same turn")
     @Expect(exists(Path(h.root).join("notes.txt")), false)
     @Expect(h.count("tool/result"), Int64(2))
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 25：坏参数一律拒，且不留下任何目录变更；结果照旧落会话日志。
@@ -629,7 +643,7 @@ func worktreeToolBadArgsLeaveNoSessionDirectoryEvent() {
     @Expect(h.tree.active(), false)
     @Expect(h.count("tool/runtime/call"), Int64(11))
     @Expect(h.count("tool/runtime/result"), Int64(11))
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 26：非法 worktree 名被核心拒绝时，工具报拒绝而不是假成功，也不改会话基准目录。
@@ -644,7 +658,7 @@ func enterWorktreeRefusesInvalidNameWithoutTouchingSession() {
     @Expect(h.eventDirectory(), "")
     @Expect(h.tree.active(), false)
     @Expect(exists(Path(h.root).join(".sacode").join("worktrees").join("escape")), false)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 27：discard_changes 是真的转下去——脏目录里 remove 先被拒，带上该旗标才删掉。
@@ -664,7 +678,7 @@ func removeWithDiscardChangesForwardsTheFlag() {
     @Expect(forced.allowed, true)
     @Expect(exists(Path(dir)), false)
     @Expect(h.bound(), h.root)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 28：guard 否决在审批之后、执行之前就把调用拦下，worktree 不接这道否决。
@@ -680,7 +694,7 @@ func guardDenialStopsWorktreeToolsBeforeTheyRun() {
     @Expect(out.why, "guard-denied")
     @Expect(tree.active(), false)
     @Expect(SessionWorkspace(log).directory(), "")
-    removeIfExists(root, recursive: true)
+    wtToolsTidy(root)
 }
 
 // 用例 29：只登记工具名、不绑参数的旧工单不能放行 remove——沿用 consumeExactForCall 的
@@ -700,7 +714,7 @@ func nameOnlyTicketCannotReleaseRemoveOfSessionWorktree() {
     @Expect(out.why, "approval-not-granted:allowed-once")
     @Expect(h.tree.active(), true)
     @Expect(exists(Path(dir)), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }
 
 // 用例 30：手工入口那条 answer 字符串（调用方自报「批过了」）不能放行退出会话 worktree。
@@ -717,5 +731,5 @@ func manualAnswerTierCannotReleaseExitWorktree() {
     @Expect(manual.lastDetail.stage, "approval-denied")
     @Expect(h.tree.active(), true)
     @Expect(exists(Path(dir)), true)
-    removeIfExists(h.root, recursive: true)
+    wtToolsTidy(h.root)
 }

@@ -444,3 +444,47 @@ func takeoverLeavesALiveHoldersLeaseUntouched() {
     clean("alive")
 }
 
+func sessionLogContains(log: SessionLog, eventType: String): Bool {
+    for (ev in log.events) {
+        if (ev.eventType == eventType) {
+            return true
+        }
+    }
+    return false
+}
+
+@Test
+func testSessionStartDispatchesHook() {
+    let p = tmpPath("hookstart")
+    clean("hookstart")
+    let log = SessionLog(p)
+    log.startSession("test-session", "source1")
+    @Expect(sessionLogContains(log, "hook/dispatch"), true)
+    @Expect(sessionLogContains(log, "hook/decision"), true)
+    @Expect(sessionLogContains(log, "session/start"), true)
+    clean("hookstart")
+}
+
+@Test
+func testSessionEndDispatchesHook() {
+    let p = tmpPath("hookend")
+    clean("hookend")
+    let log = SessionLog(p)
+    log.endSession("test-session", "normal")
+    @Expect(sessionLogContains(log, "hook/dispatch"), true)
+    @Expect(sessionLogContains(log, "hook/decision"), true)
+    @Expect(sessionLogContains(log, "session/end"), true)
+    clean("hookend")
+}
+
+@Test
+func testSessionDeleteDispatchesHook() {
+    let p = tmpPath("hookdel")
+    clean("hookdel")
+    let log = SessionLog(p)
+    log.deleteSession("test-session")
+    @Expect(sessionLogContains(log, "hook/dispatch"), true)
+    @Expect(sessionLogContains(log, "hook/decision"), true)
+    @Expect(sessionLogContains(log, "session/delete"), true)
+    clean("hookdel")
+}

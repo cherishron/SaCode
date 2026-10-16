@@ -29,9 +29,10 @@ class CatalogEntry {
 // SaCode 自带目录（去品牌化：不携带上游产品命名），条目一律 declared。
 // 目录项只是模板来源（地址、协议、初始模型列表），落库时转成一份新实例；
 // 同一目录项可反复添加，每次建一份新实例（号池的存储形态）。
-// 清单共 13 家（用户 2026-10-05 明确要求，最低交付集合）：deepseek、mimo、stepfun、
-// senseaudio、sensenova、baizhi、tencentmaas、aliyuncs、modelscope、bigmodel、
-// openrouter、nvidia、y-api。modelIds 为空表示先填密钥、点「获取可用模型」再发现。
+// 清单含用户 2026-10-05 明确的最低交付集合；后续新增只需追加 CatalogEntry，
+// 不改动 L2 发现与 L3 绑定逻辑。当前 15 家：deepseek、mimo、stepfun、senseaudio、
+// sensenova、baizhi、tencentmaas、aliyuncs、modelscope、bigmodel、openrouter、
+// nvidia、longcat、askdiandian、y-api。modelIds 为空表示先填密钥、点「获取可用模型」再发现。
 let saCodeCatalog = [
     CatalogEntry(
         "deepseek",
@@ -127,6 +128,22 @@ let saCodeCatalog = [
         "https://integrate.api.nvidia.com/v1",
         "openai-completions",
         "SA_CODE_NVIDIA_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "longcat",
+        "LongCat",
+        "https://api.longcat.chat/openai/v1",
+        "openai-completions",
+        "SA_CODE_LONGCAT_API_KEY",
+        []
+    ),
+    CatalogEntry(
+        "askdiandian",
+        "AskDiandian",
+        "https://note3-prev-api.askdiandian.com/v1",
+        "openai-completions",
+        "SA_CODE_ASKDIANDIAN_API_KEY",
         []
     ),
     CatalogEntry(
