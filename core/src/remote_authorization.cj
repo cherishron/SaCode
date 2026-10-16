@@ -66,9 +66,8 @@ public class CapabilitySpec {
 }
 
 // 设备的授权视图：由 daemon 装配层从身份模块 + 设备登记记录组合出来。
-// AuthenticationContext 只有身份（deviceId/principalId/revocationVersion），
-// 这里加"作用域"与"资源白名单"两个维度；两者都不落盘，只在单次请求的
-// 判定栈里存在。
+// AuthenticationContext 提供设备身份和显式授予的 scopes；授权视图复制该权限集合，
+// 并附加 workspace/session 资源白名单，供单次请求的判定栈使用。
 public class DeviceAuthzView {
     public let context: AuthenticationContext
     public let scopes: HashSet<String>
@@ -80,7 +79,12 @@ public class DeviceAuthzView {
                 allowedWorkspaces!: Option<HashSet<String>> = None,
                 allowedSessions!: Option<HashSet<String>> = None) {
         this.context = context
-        this.scopes = scopes
+        // 认证上下文携带设备显式授予的 scope；调用方传入的 scope 是额外约束/能力，
+        // 因此合并而不是让默认空集合把身份上的授权清掉。
+        let effectiveScopes = HashSet<String>()
+        for (scope in context.scopes) { effectiveScopes.add(scope) }
+        for (scope in scopes) { effectiveScopes.add(scope) }
+        this.scopes = effectiveScopes
         this.allowedWorkspaces = allowedWorkspaces
         this.allowedSessions = allowedSessions
     }

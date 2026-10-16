@@ -218,10 +218,8 @@ func managementHandlersDenyBeforeReadingTargetSoUnauthzCannotProbeDeviceList() {
 }
 
 @Test
-func gateDeniesManagementRpcBecauseDeviceViewsCarryNoScopesYet() {
-    // 今天这条 RPC 在真实门禁上的可达性：**只能被拒**。
-    // 钉住它是为了在「记录级 scope」那条线落地时，这条会当场变红并要求同步更新，
-    // 而不是让管理面在没人注意的情况下从 fail-closed 翻成放行。
+func gateDeniesManagementRpcWithoutGrantedScope() {
+    // 没有显式授予管理 scope 的设备必须继续被拒；授权只会来自设备记录上的明确授予。
     let m = MgmtDevices("g1")
     let authorizer = RemoteAccessAuthorizer()
     authorizer.register(CapabilitySpec(

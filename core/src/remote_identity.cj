@@ -46,12 +46,16 @@ public class EnrollmentSecret {
 public class DeviceRecord {
     public let deviceId: String
     public let principalId: String
-    public let credentialDigest: String
+    // 轮换凭据会改写这一位，所以它不能是 let（设计 §4「设备凭据轮换与撤销独立」）。
+    public var credentialDigest: String
     public let kind: String
     // 注册响应一次性交付给调用方的凭据原文；store 内部不落这个字段，
     // 只落 credentialDigest。生产路径由 TLS 客户端注册通道原样送出。
     public let credential: String
     public var revoked: Bool = false
+    // 显式授予的能力面（§4「具有显式管理权限的认证 RPC」）。默认空集=零权限：
+    // 没有任何设备天生能管设备，授权只来自本机受保护管理入口的 grantScope。
+    public var scopes = HashSet<String>()
     public init(deviceId: String, principalId: String, credentialDigest: String, kind: String, credential: String) {
         this.deviceId = deviceId
         this.principalId = principalId
@@ -82,11 +86,15 @@ public class DeviceSummary {
     public let principalId: String
     public let kind: String
     public let revoked: Bool
-    public init(deviceId!: String, principalId!: String, kind!: String, revoked!: Bool) {
+    // 桌面「已登记设备」面板要显示这台到底有没有管理能力，所以投影里必须带这一位。
+    public let scopes: HashSet<String>
+    public init(deviceId!: String, principalId!: String, kind!: String, revoked!: Bool,
+                scopes!: HashSet<String> = HashSet<String>()) {
         this.deviceId = deviceId
         this.principalId = principalId
         this.kind = kind
         this.revoked = revoked
+        this.scopes = scopes
     }
 }
 
@@ -94,10 +102,15 @@ public class AuthenticationContext {
     public let deviceId: String
     public let principalId: String
     public let revocationVersion: Int64
-    public init(deviceId: String, principalId: String, revocationVersion: Int64) {
+    // 认证时从设备记录复制出来的能力面。gate 用它构造授权视图——
+    // 在此之前视图恒为零 scope，认证 RPC 管理面在语义上根本不可达。
+    public let scopes: HashSet<String>
+    public init(deviceId: String, principalId: String, revocationVersion: Int64,
+                scopes!: HashSet<String> = HashSet<String>()) {
         this.deviceId = deviceId
         this.principalId = principalId
         this.revocationVersion = revocationVersion
+        this.scopes = scopes
     }
 }
 
@@ -275,6 +288,49 @@ public class RemoteIdentityStore {
         return hit
     }
 
+    // 显式授予能力面（§4）。三条拒绝：设备不存在、设备已撤销、scope 名为空。
+    // 已撤销的设备不能被「顺手授权」复活；空 scope 名会留下一条永远匹配不上的记录，
+    // 让审计里看起来授过而实际谁都拿不到。
+    public func grantScope(deviceId!: String, scope!: String): Bool {
+        if (scope.size == 0) { return false }
+        lock.lock()
+        var ok = false
+        if (let Some(d) <- devices.get(deviceId)) {
+            if (!d.revoked) {
+                d.scopes.add(scope)
+                ok = true
+            }
+        }
+        lock.unlock()
+        return ok
+    }
+
+    // 凭据轮换（§4「设备凭据轮换与撤销独立」）：换摘要、不动撤销版本。
+    // 不动版本是刻意的——抬版本会把这台设备的全部在途访问令牌一次性打掉，
+    // 客户端就没法在保住当前连接的前提下换一份新凭据。
+    // 已撤销的设备拒换：一把作废的设备不能靠换凭据复活。
+    public func rotateCredential(deviceId: String): DeviceCredential {
+        lock.lock()
+        if (let Some(d) <- devices.get(deviceId)) {
+            if (d.revoked) {
+                lock.unlock()
+                throw Exception("device-revoked")
+            }
+            let cred = generateCredential()
+            d.credentialDigest = cred.digest
+            lock.unlock()
+            return cred
+        }
+        lock.unlock()
+        throw Exception("device-not-found")
+    }
+
+    static func copyScopes(source: HashSet<String>): HashSet<String> {
+        let out = HashSet<String>()
+        for (k in source) { out.add(k) }
+        return out
+    }
+
     // 设备清单（给本地管理入口用）。只回投影，摘要与凭据原文都不出这一层。
     public func listDevices(): ArrayList<DeviceSummary> {
         lock.lock()
@@ -282,7 +338,7 @@ public class RemoteIdentityStore {
         for ((deviceId, d) in devices) {
             out.add(DeviceSummary(
                 deviceId: deviceId, principalId: d.principalId,
-                kind: d.kind, revoked: d.revoked))
+                kind: d.kind, revoked: d.revoked, scopes: copyScopes(d.scopes)))
         }
         lock.unlock()
         return out
@@ -306,7 +362,8 @@ public class RemoteIdentityStore {
                     lock.unlock()
                     return None
                 }
-                let ctx = AuthenticationContext(token.deviceId, device.principalId, revocationVersion)
+                let ctx = AuthenticationContext(token.deviceId, device.principalId, revocationVersion,
+                    scopes: copyScopes(device.scopes))
                 lock.unlock()
                 return Some(ctx)
             }
@@ -337,6 +394,14 @@ public class RemoteIdentityStore {
             devicesJson += ",\"credentialDigest\":\"${jsonEscape(d.credentialDigest)}\""
             devicesJson += ",\"kind\":\"${jsonEscape(d.kind)}\""
             devicesJson += ",\"revoked\":${if (d.revoked) { "true" } else { "false" }}"
+            var scopesJson = "["
+            var scopeComma = ""
+            for (scope in d.scopes) {
+                scopesJson += "${scopeComma}\"${jsonEscape(scope)}\""
+                scopeComma = ","
+            }
+            scopesJson += "]"
+            devicesJson += ",\"scopes\":${scopesJson}"
             devicesJson += "}"
             comma = ","
         }
@@ -429,14 +494,22 @@ public class RemoteIdentityStore {
                         let digest = RemoteIdentityStore.strField(o, "credentialDigest")
                         let diskRevoked = RemoteIdentityStore.boolField(o, "revoked")
                         if (deviceId.size > 0 && digest.size > 0) {
-                            if (let Some(existing) <- devices.get(deviceId)) {
-                                if (propagateRevoked && diskRevoked) { existing.revoked = true }
+                            if (let Some(scopes) <- RemoteIdentityStore.stringSetField(o, "scopes")) {
+                                if (let Some(existing) <- devices.get(deviceId)) {
+                                    if (propagateRevoked && diskRevoked) { existing.revoked = true }
+                                    // 权限只经显式授予增加；旧快照不能删除已授 scope。
+                                    for (scope in scopes) { existing.scopes.add(scope) }
+                                } else {
+                                    let record = DeviceRecord(
+                                        deviceId, RemoteIdentityStore.strField(o, "principalId"), digest,
+                                        RemoteIdentityStore.strField(o, "kind"), "")
+                                    record.revoked = diskRevoked
+                                    for (scope in scopes) { record.scopes.add(scope) }
+                                    devices.add(deviceId, record)
+                                }
                             } else {
-                                let record = DeviceRecord(
-                                    deviceId, RemoteIdentityStore.strField(o, "principalId"), digest,
-                                    RemoteIdentityStore.strField(o, "kind"), "")
-                                record.revoked = diskRevoked
-                                devices.add(deviceId, record)
+                                // scopes 缺失兼容旧 v2 快照；存在但形状错误则拒绝该快照。
+                                return -1
                             }
                         }
                     } else {
@@ -541,6 +614,28 @@ public class RemoteIdentityStore {
             return try { v.asString().getValue() } catch (_: Exception) { "" }
         }
         return ""
+    }
+
+    // 旧 v2 设备行没有 scopes 时按零权限恢复；字段存在时必须是非空字符串数组，
+    // 避免把损坏的授权快照误读成权限或静默丢弃配置。
+    static func stringSetField(obj: JsonObject, name: String): Option<HashSet<String>> {
+        let out = HashSet<String>()
+        if (let Some(node) <- obj.get(name)) {
+            var arr = JsonArray()
+            let isArr = try { arr = node.asArray(); true } catch (_: Exception) { false }
+            if (!isArr) { return None }
+            var i: Int64 = 0
+            while (i < arr.size()) {
+                if (let Some(item) <- arr.get(i)) {
+                    var scope = ""
+                    let isString = try { scope = item.asString().getValue(); true } catch (_: Exception) { false }
+                    if (!isString || scope.size == 0) { return None }
+                    out.add(scope)
+                } else { return None }
+                i += 1
+            }
+        }
+        return Some(out)
     }
 
     static func boolField(obj: JsonObject, name: String): Bool {
