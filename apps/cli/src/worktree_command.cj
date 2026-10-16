@@ -676,10 +676,19 @@ func runCliSession(args: Array<String>): Int64 {
                 }
                 listed += "${opt.flag}=${opt.value}"
             }
-            throw Exception("worktree-not-wired BLOCKED: 路径已按启动目录冻结(${listed})，但本入口还没有 --mcp-config/--json-file 后端")
+            throw Exception(
+                "worktree-not-wired BLOCKED: 路径已按启动目录冻结(${listed})，但本入口还没有 --mcp-config/--json-file 后端")
         }
         if (parsed.prompt.size == 0) {
             throw Exception("worktree-usage:缺少提示词")
+        }
+        // 显式恢复一个不存在的会话属于参数错误，先于模型配置检查给出确定反馈。
+        // 仅探测显式 ID，避免为新会话提前创建目录或日志。
+        if (parsed.sessionId.size > 0 && parsed.sessionId != "current") {
+            let requested = resolveSession(startupDir, parsed.sessionId)
+            if (!exists(requested.path)) {
+                throw Exception("worktree-usage:会话不存在 ${parsed.sessionId}")
+            }
         }
         let provider = providerConfig()
         if (provider.baseUrl.size == 0) {
@@ -695,6 +704,11 @@ func runCliSession(args: Array<String>): Int64 {
         let beforeDirectory = worktree.directory()
         var prompt = parsed.prompt
         if (parsed.hasWorktree) {
+            // 核心拒绝在活动绑定上直接切换名称；显式 --worktree 表示用户要求改绑。
+            // keep 解绑只恢复会话有效目录并保留旧目录，再由核心建立/复用目标工作树。
+            if (worktree.active()) {
+                worktree.exit("keep")
+            }
             let entered = if (parsed.byReference()) {
                 worktree.enterPullRequest(parsed.referenceValue())
             } else {

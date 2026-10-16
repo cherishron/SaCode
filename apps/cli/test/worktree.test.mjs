@@ -284,7 +284,7 @@ test('exit keep 保留目录并把有效目录还原', async () => {
     assert.ok(await existsFile(directory), 'keep 不得删目录');
     const desc = JSON.parse((await childRun(cli, ['worktree', 'describe'], cwd).done).stdout.trim());
     assert.equal(desc.active, false);
-    assert.equal(desc.originalDirectory.replace(/\\/g, '/'), cwd.replace(/\\/g, '/'));
+    assert.equal(desc.directory.replace(/\\/g, '/'), cwd.replace(/\\/g, '/'));
   });
 });
 
