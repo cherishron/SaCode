@@ -101,6 +101,7 @@ _test_out.txt
 .qoder/
 # 仓颉与验收产物
 **/target/
+**/build-script-cache/
 **/session.log
 **/b.log
 apps/cli/out/
