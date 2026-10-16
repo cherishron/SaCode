@@ -13,7 +13,7 @@ function Run([string]$exe, [string[]]$arguments) {
 }
 $version = & $cjc -v
 if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '1\.1\.3\b' -or "$version" -notmatch 'x86_64-w64-mingw32') { throw '需要仓颉1.1.3 Windows x64 SDK' }
-$dir = Join-Path $root ('apps/desktop/.tmp-test/p1-verification-' + [guid]::NewGuid().ToString('N'))
+$dir = Join-Path $root ('target/tmp/p1-verification-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $dir | Out-Null
 $imports = @('--import-path', $StdxDir, '--import-path', $dir)
 $links = @()

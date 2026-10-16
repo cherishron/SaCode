@@ -24,7 +24,7 @@ const pathKey = Object.keys(baseEnv).find(k => k.toLowerCase() === 'path') || 'P
 // 这样干净环境不需要依赖某个开发者的 Cangjie PATH 配置。
 baseEnv[pathKey] = [path.dirname(hostExe), process.env.SACODE_STDX_DLL_DIR,
   process.env.SACODE_RUNTIME_DLL_DIR, baseEnv[pathKey]].filter(Boolean).join(path.delimiter);
-const tempRoot = path.join(root, 'apps/desktop/.tmp-test/daemon-method-surface');
+const tempRoot = path.join(root, 'target/tmp/daemon-method-surface');
 await mkdir(tempRoot, { recursive: true });
 
 const delay = ms => new Promise(r => setTimeout(r, ms));

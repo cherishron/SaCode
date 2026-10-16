@@ -91,6 +91,180 @@ func fromBytes(bs: ArrayList<Byte>): String {
     return String.fromUtf8(bs.toArray())
 }
 
+func isReservedKnowledgeEventType(eventType: String): Bool {
+    return eventType == "knowledge/context" || eventType == "knowledge/context/clear" ||
+        eventType == "knowledge/retrieval"
+}
+
+func requestStringParam(body: String, key: String): String {
+    try {
+        return JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
+            .get(key).getOrThrow().asString().getValue()
+    } catch (_: Exception) {
+        return ""
+    }
+}
+
+func latestOpenKnowledgePrompt(log: SessionLog): ?SessionEvent {
+    var prompt: ?SessionEvent = None
+    for (event in log.snapshotEvents()) {
+        if (event.eventType == "turn/end" || event.eventType == "turn/cancelled") {
+            prompt = None
+        } else if (event.eventType == "user/message") {
+            prompt = Some(event)
+        }
+    }
+    return prompt
+}
+
+func readableKnowledgeStore(scope: String, workspace: String): ?KnowledgeStore {
+    try {
+        let store = KnowledgeStore.forScope(scope, workspace)
+        let snapshot = store.read()
+        if (snapshot.get("scope").getOrThrow().asString().getValue() != scope) {
+            throw Exception("knowledge-scope-mismatch")
+        }
+        return Some(store)
+    } catch (_: Exception) {
+        // 读侧缺失或损坏的知识库不应阻断自有 Agent；把范围写入检索审计。
+        getStdErr().writeln("knowledge-store-unavailable:${scope}")
+        return None
+    }
+}
+
+func knowledgeStoreRevision(store: ?KnowledgeStore): Int64 {
+    if (let Some(bound) <- store) {
+        let snapshot = bound.read()
+        return snapshot.get("revision").getOrThrow().asInt().getValue()
+    }
+    return -1
+}
+
+func clearKnowledgeContext(log: SessionLog, reason: String): Bool {
+    try {
+        log.append("knowledge/context/clear", reason)
+        return true
+    } catch (_: Exception) {
+        return false
+    }
+}
+
+func projectKnowledgeSourcesCurrent(store: ?KnowledgeStore, storeRevision: Int64,
+    retrievalJson: String): Bool {
+    try {
+        let matches = JsonValue.fromStr(retrievalJson).asObject()
+            .get("matches").getOrThrow().asArray()
+        for (value in matches.getItems()) {
+            let matchRecord = value.asObject()
+            if (matchRecord.get("scope").getOrThrow().asString().getValue() == "project") {
+                if (let Some(bound) <- store) {
+                    let id = matchRecord.get("id").getOrThrow().asString().getValue()
+                    let documentRevision = matchRecord.get("revision").getOrThrow().asInt().getValue()
+                    let sourceDigest = matchRecord.get("sourceDigest").getOrThrow().asString().getValue()
+                    // reference 同时校验知识库修订和文件来源仍然 current；再逐字段比对候选，
+                    // 避免把检索后被更新的项目资料绑定到本轮请求。
+                    let document = JsonValue.fromStr(bound.reference(id, storeRevision)).asObject()
+                        .get("document").getOrThrow().asObject()
+                    if (document.get("revision").getOrThrow().asInt().getValue() != documentRevision ||
+                        document.get("sourceDigest").getOrThrow().asString().getValue() != sourceDigest) {
+                        return false
+                    }
+                } else {
+                    return false
+                }
+            }
+        }
+        return true
+    } catch (_: Exception) {
+        // reference 报告修订冲突、来源过期或不可用时，拒绝本次上下文。
+        return false
+    }
+}
+
+func prepareKnowledgeContextForTask(log: SessionLog): Bool {
+    // 清除失败时不得继续构造请求，也不能把未知的旧上下文交给模型。
+    if (!clearKnowledgeContext(log, "task-start")) {
+        getStdErr().writeln("knowledge-context-clear-failed")
+        return false
+    }
+    if (let Some(prompt) <- latestOpenKnowledgePrompt(log)) {
+        var retrievalJson = ""
+        var contextJson = ""
+        try {
+            let workspace = sessionWorkingDirectory(log)
+            let workspaceState = SessionWorkspace(log)
+            let workspaceRevision = workspaceState.revision()
+            let userStore = readableKnowledgeStore("user", "")
+            var projectStore: ?KnowledgeStore = None
+            var projectStoreStatus = if (workspace.size == 0) { "not-configured" } else { "unavailable" }
+            if (workspace.size > 0 && workspaceState.available()) {
+                projectStore = readableKnowledgeStore("project", workspace)
+                projectStoreStatus = if (projectStore.isSome()) { "available" } else { "unavailable" }
+            }
+            let userStoreRevision = knowledgeStoreRevision(userStore)
+            let projectStoreRevision = knowledgeStoreRevision(projectStore)
+            let result = KnowledgeContextBuilder.build(prompt.data, prompt.seq, workspace,
+                workspaceRevision, userStore: userStore, projectStore: projectStore)
+            let workspaceNow = SessionWorkspace(log)
+            let snapshotStillCurrent = sessionWorkingDirectory(log) == workspace &&
+                workspaceNow.revision() == workspaceRevision &&
+                (workspace.size == 0 || workspaceNow.available()) &&
+                knowledgeStoreRevision(userStore) == userStoreRevision &&
+                knowledgeStoreRevision(projectStore) == projectStoreRevision
+            let audit = JsonValue.fromStr(result.retrievalJson).asObject()
+            audit.put("userStoreStatus", JsonString(if (userStore.isSome()) { "available" } else { "unavailable" }))
+            audit.put("userStoreRevision", JsonInt(userStoreRevision))
+            audit.put("projectStoreStatus", JsonString(projectStoreStatus))
+            audit.put("projectStoreRevision", JsonInt(projectStoreRevision))
+            let sourcesStillCurrent = snapshotStillCurrent &&
+                projectKnowledgeSourcesCurrent(projectStore, projectStoreRevision, result.retrievalJson)
+            if (!sourcesStillCurrent) {
+                // 目录或知识快照在检索期间变化时，不能把旧结果绑定到新工作区。
+                audit.put("status", JsonString("discarded-changed-snapshot"))
+                audit.put("matches", JsonArray())
+                retrievalJson = audit.toString()
+            } else {
+                let audited = KnowledgeContextResult(result.context, audit.toString(), result.matchCount)
+                if (audited.context.size > 0) { contextJson = knowledgeContextEventJson(audited) }
+                retrievalJson = audited.retrievalJson
+            }
+        } catch (_: Exception) {
+            // 检索普通失败不阻断模型任务；起轮时已经清除了任何旧上下文。
+            getStdErr().writeln("knowledge-retrieval-unavailable")
+            return true
+        }
+
+        if (contextJson.size == 0) {
+            if (retrievalJson.size > 0) {
+                try { log.append("knowledge/retrieval", retrievalJson) }
+                catch (_: Exception) { getStdErr().writeln("knowledge-retrieval-audit-unavailable") }
+            }
+            return true
+        }
+
+        try {
+            log.append("knowledge/context", contextJson)
+            log.append("knowledge/retrieval", retrievalJson)
+            return true
+        } catch (_: Exception) {
+            // 配对提交任一环节失败都清除上下文；清除失败时由调用方拒绝启动。
+            if (!clearKnowledgeContext(log, "knowledge-context-audit-failed")) {
+                getStdErr().writeln("knowledge-context-clear-failed")
+                return false
+            }
+            getStdErr().writeln("knowledge-retrieval-audit-unavailable")
+            return true
+        }
+    } else {
+        try {
+            log.append("knowledge/retrieval", "{\"version\":1,\"status\":\"skipped\",\"reason\":\"no-current-user-message\"}")
+        } catch (_: Exception) {
+            getStdErr().writeln("knowledge-retrieval-audit-unavailable")
+        }
+        return true
+    }
+}
+
 // 取 "key":"value" 的 value；value 不允许含转义引号（本端生成的报文满足此约束）。
 func jsonStr(body: String, key: String): String {
     let hay = bytesOf(body)
@@ -313,7 +487,7 @@ func forward(idText: String, spawned: Bool, frame: Option<String>) {
 // 少了后三类，桌面的 stop 就只能排在一次转调后面，取消永远追不上在途调用。
 func allowedDuringTurn(method: String): Bool {
     let turnSide = method == "turn/poll" || method == "turn/cancel" || method == "initialize"
-    let readSide = method == "session/projection" || method == "session/subscribe" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read" || method == "worktree/describe" || isTipsMethod(method) || method == "web/settings/describe"
+    let readSide = method == "session/projection" || method == "session/subscribe" || method == "session/request-trace" || method == "appearance/get" || method == "session/catalog" || method == "workspace/get" || method == "attachment/image-read" || method == "worktree/describe" || isTipsMethod(method) || method == "web/settings/describe"
     let callSide = method == "extension/host/call" || method == "extension/host/poll" || method == "extension/host/cancel"
     // 审批是人在环：流式进行中也要能发号、应答、查状态，否则「边跑边批」做不到。
     // 不再有 approval/tick——过期改由真实单调钟决定，协议面上不该存在「推进时钟」这种动作。
@@ -742,11 +916,30 @@ func globalAppearanceRequest(method: String, body: String, idText: String): Unit
     }
 }
 
-// 通用设置：transcriptView / composerEnter / sessionLog 持久化到 user settings 目录的文本文件。
+// 新会话默认权限的落盘文件与读取：会话创建时按这里的值给新会话定档。
+// 读不到、解析不出或值不在四档内一律回落 build —— 宁可保守，不能靠一个写坏的默认档悄悄放宽授权。
+func generalSettingsDefaultPermission(): String {
+    let path = "${canonicalize(".")}/general-settings.txt"
+    var value = "build"
+    if (exists(path)) {
+        let lines = String.fromUtf8(File.readFrom(path)).split("\n")
+        var i = 0
+        while (i < lines.size) {
+            let line = lines[i]
+            if (line.contains("defaultPermissionMode=")) { value = line.split("defaultPermissionMode=")[1] }
+            i += 1
+        }
+    }
+    if (value != "plan" && value != "build" && value != "auto" && value != "yolo") { value = "build" }
+    return value
+}
+
+// 通用设置：transcriptView / composerEnter / sessionLog / defaultPermissionMode 持久化到 user settings 目录的文本文件。
 func globalSettingsRequest(method: String, body: String, idText: String): Unit {
     var transcriptView = "default"
     var composerEnter = "send"
     var sessionLog = "off"
+    var defaultPermissionMode = "build"
     try {
         let request = JsonValue.fromStr(body).asObject()
         if (let Some(value) <- request.get("method")) {
@@ -764,6 +957,9 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
                 } else if (method == "global/settings/set-session-log") {
                     if (let Some(field) <- params.get("sessionLog")) { sessionLog = field.asString().getValue() }
                     if (sessionLog != "on" && sessionLog != "off") { throw Exception("bad-session-log") }
+                } else if (method == "global/settings/set-default-permission") {
+                    if (let Some(field) <- params.get("defaultPermissionMode")) { defaultPermissionMode = field.asString().getValue() }
+                    if (defaultPermissionMode != "plan" && defaultPermissionMode != "build" && defaultPermissionMode != "auto" && defaultPermissionMode != "yolo") { throw Exception("bad-default-permission-mode") }
                 }
             } else { throw Exception("bad-settings-request") }
         }
@@ -777,6 +973,7 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
     var tv = "default"
     var ce = "send"
     var sl = "off"
+    var dpm = "build"
     if (exists(path.toString())) {
         let content = String.fromUtf8(File.readFrom(path.toString()))
         let lines = content.split("\n")
@@ -786,9 +983,12 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
             if (line.contains("transcriptView=")) { tv = line.split("transcriptView=")[1] }
             else if (line.contains("composerEnter=")) { ce = line.split("composerEnter=")[1] }
             else if (line.contains("sessionLog=")) { sl = line.split("sessionLog=")[1] }
+            else if (line.contains("defaultPermissionMode=")) { dpm = line.split("defaultPermissionMode=")[1] }
             i += 1
         }
     }
+    // 落盘值被手改坏时不能顺延成未知的档位：一律回落到最保守的 build。
+    if (dpm != "plan" && dpm != "build" && dpm != "auto" && dpm != "yolo") { dpm = "build" }
     var changed = false
     if (method == "global/settings/set-transcript-view") {
         if (tv != transcriptView) { tv = transcriptView; changed = true }
@@ -796,19 +996,21 @@ func globalSettingsRequest(method: String, body: String, idText: String): Unit {
         if (ce != composerEnter) { ce = composerEnter; changed = true }
     } else if (method == "global/settings/set-session-log") {
         if (sl != sessionLog) { sl = sessionLog; changed = true }
+    } else if (method == "global/settings/set-default-permission") {
+        if (dpm != defaultPermissionMode) { dpm = defaultPermissionMode; changed = true }
     }
     // 写回文件
     if (changed) {
         let parent = path.parent
         if (!exists(parent.toString())) { Directory.create(parent.toString(), recursive: true) }
-        let data = "transcriptView=${tv}\ncomposerEnter=${ce}\nsessionLog=${sl}\n"
+        let data = "transcriptView=${tv}\ncomposerEnter=${ce}\nsessionLog=${sl}\ndefaultPermissionMode=${dpm}\n"
         File.writeTo(path.toString(), data.toArray())
     }
     let writeResult = if (method == "global/settings/get") { "" } else {
         let flag = if (changed) { "true" } else { "false" }
         ",\"saved\":true,\"changed\":${flag}"
     }
-    emit(okFrame(idText, "{\"transcriptView\":\"${jsonEscapeText(tv)}\",\"composerEnter\":\"${jsonEscapeText(ce)}\",\"sessionLog\":\"${jsonEscapeText(sl)}\",\"scope\":\"user\"${writeResult}}"))
+    emit(okFrame(idText, "{\"transcriptView\":\"${jsonEscapeText(tv)}\",\"composerEnter\":\"${jsonEscapeText(ce)}\",\"sessionLog\":\"${jsonEscapeText(sl)}\",\"defaultPermissionMode\":\"${jsonEscapeText(dpm)}\",\"scope\":\"user\"${writeResult}}"))
 }
 
 class HostRuntime {
@@ -1004,7 +1206,7 @@ class HostRuntime {
             profileSurfaceRequest(method, body, idText)
             return true
         }
-        if (method == "global/settings/get" || method == "global/settings/set-transcript-view" || method == "global/settings/set-composer-enter" || method == "global/settings/set-session-log") {
+        if (method == "global/settings/get" || method == "global/settings/set-transcript-view" || method == "global/settings/set-composer-enter" || method == "global/settings/set-session-log" || method == "global/settings/set-default-permission") {
             try {
                 globalSettingsRequest(method, body, idText)
             } catch (e: Exception) {
@@ -1024,7 +1226,7 @@ class HostRuntime {
     }
 
     func handleRpc6(method: String, idText: String): Bool {
-        if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {
+        if (workspaceFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "session/request-trace" && method != "appearance/get" && method != "usage/status" && method != "workspace/get") {
             emit(errFrame(idText, -32003, "workspace-failed-restart-required")); return true
         }
         return false
@@ -1039,7 +1241,7 @@ class HostRuntime {
     }
 
     func handleRpc8(method: String, idText: String): Bool {
-        if (selectionFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "appearance/get" && method != "usage/status") {
+        if (selectionFault && method != "initialize" && method != "session/projection" && method != "session/catalog" && method != "session/request-trace" && method != "appearance/get" && method != "usage/status") {
             emit(errFrame(idText, -32003, "selection-failed-restart-required"))
             return true
         }
@@ -1080,7 +1282,7 @@ class HostRuntime {
 
     func handleRpc12(method: String, idText: String): Bool {
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"automation/list\",\"automation/save\",\"automation/control\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"automation/list\",\"automation/save\",\"automation/control\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"global/settings/set-default-permission\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/request-trace\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             return true
         }
         return false
@@ -1240,6 +1442,10 @@ class HostRuntime {
 
     func handleRpc17(method: String, body: String, idText: String): Bool {
         if (method == "session/append") {
+            if (isReservedKnowledgeEventType(requestStringParam(body, "eventType"))) {
+                emit(errFrame(idText, -32602, "reserved-session-event-type"))
+                return true
+            }
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
                     emit(sessionLeaseError(idText, lease))
@@ -1303,6 +1509,10 @@ class HostRuntime {
 
     func handleRpc18(method: String, body: String, idText: String): Bool {
         if (method == "session/submit") {
+            if (isReservedKnowledgeEventType(requestStringParam(body, "eventType"))) {
+                emit(errFrame(idText, -32602, "reserved-session-event-type"))
+                return true
+            }
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) {
                     emit(sessionLeaseError(idText, lease))
@@ -1361,9 +1571,25 @@ class HostRuntime {
 
     func handleRpc21(method: String, body: String, idText: String): Bool {
         if (method == "session/subscribe") {
-            let fresh = SessionLog(p)
+            let requestedSession = jsonStr(body, "sessionId")
+            if (requestedSession.size == 0) {
+                emit(errFrame(idText, -32602, "session-id-required"))
+                return true
+            }
+            if (requestedSession != activeId) {
+                emit(errFrame(idText, -32026, "session-subscribe-session-changed"))
+                return true
+            }
+            let selectedPath = p
+            let fresh = SessionLog(selectedPath)
             if (!fresh.load()) {
                 emit(errFrame(idText, -32002, "replay-rejected"))
+                return true
+            }
+            // session/subscribe 是同步读，但仍在读完与响应前复核绑定，避免未来异步化
+            // 或迟到请求把切换前的会话事实交给当前会话消费者。
+            if (requestedSession != activeId || selectedPath != p) {
+                emit(errFrame(idText, -32026, "session-subscribe-session-changed"))
                 return true
             }
             var cursor = jsonNum(body, "cursor")
@@ -1380,7 +1606,12 @@ class HostRuntime {
             for (ev in fresh.snapshotEvents()) {
                 if (ev.seq >= cursor) {
                     if (Int64(picked.size) < limit) {
-                        picked.add("{\"seq\":${ev.seq},\"type\":\"${jsonEscapeText(ev.eventType)}\"}")
+                        let retrievalData = if (ev.eventType == "knowledge/retrieval") {
+                            ",\"data\":\"${jsonEscapeText(ev.data)}\""
+                        } else {
+                            ""
+                        }
+                        picked.add("{\"seq\":${ev.seq},\"type\":\"${jsonEscapeText(ev.eventType)}\"${retrievalData}}")
                         next = ev.seq + 1
                     } else {
                         more = true
@@ -1395,7 +1626,39 @@ class HostRuntime {
                 arr += picked[i2]
             }
             arr += "]"
-            emit(okFrame(idText, "{\"events\":${arr},\"nextCursor\":${next},\"durable\":${fresh.durableCount()},\"more\":${more}}"))
+            if (requestedSession != activeId || selectedPath != p) {
+                emit(errFrame(idText, -32026, "session-subscribe-session-changed"))
+                return true
+            }
+            emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(requestedSession)}\",\"events\":${arr},\"nextCursor\":${next},\"durable\":${fresh.durableCount()},\"more\":${more}}"))
+            return true
+        }
+        if (method == "session/request-trace") {
+            // 模型调用日志的全局聚合面：解析任意会话（不只是活动会话），读取其日志后用
+            // 核心已落地的 requestTraceProjection 回放成调用清单。trace 逻辑留在 core，不复制。
+            let requestedSession = jsonStr(body, "sessionId")
+            if (requestedSession.size == 0) {
+                emit(errFrame(idText, -32602, "session-id-required"))
+                return true
+            }
+            var beforeSeq = jsonNum(body, "beforeSeq")
+            if (beforeSeq <= 0) { beforeSeq = -1 }   // 缺省或 0 都视为「最新尾页」
+            var limit = jsonNum(body, "limit")
+            if (limit <= 0 || limit > 50) { limit = 50 }
+            var path = ""
+            try {
+                path = catalog.pathFor(requestedSession)
+            } catch (e: Exception) {
+                emit(errFrame(idText, -32602, e.message))
+                return true
+            }
+            let traceLog = SessionLog(path)
+            if (!traceLog.load()) {
+                emit(errFrame(idText, -32002, "replay-rejected"))
+                return true
+            }
+            let projection = requestTraceProjection(traceLog.snapshotEvents().toArray(), beforeSeq: beforeSeq, limit: limit)
+            emit(okFrame(idText, projection))
             return true
         }
         return false
@@ -1956,6 +2219,16 @@ class HostRuntime {
                 }
             }
             }
+            if (method == "task/start" && baseUrl.size > 0) {
+                if (!prepareKnowledgeContextForTask(shared)) {
+                    if (let Some(bound) <- turnComputer) { bound.close() }
+                    turnComputer = None
+                    // 清理事实无法写入时不 flush 不释放租约，避免将可能仍有效的旧上下文
+                    // 持久化给下一位持有者；同一 Host 可在后续 task/start 重试清理。
+                    emit(errFrame(idText, -32003, "knowledge-context-clear-failed"))
+                    return true
+                }
+            }
             let limitN = jsonNum(body, "limit")
             let limit = if (limitN < 0) { Int64(2) } else { limitN }
             turnEpoch += 1
@@ -2001,17 +2274,24 @@ class HostRuntime {
                     }
                     providerKind = "real"
                 } catch (e: Exception) {
+                    var knowledgeCleanupSucceeded = true
+                    if (method == "task/start" && baseUrl.size > 0) {
+                        knowledgeCleanupSucceeded = clearKnowledgeContext(shared, "task-start-failed")
+                    }
                     if (let Some(bound) <- turnComputer) { bound.close() }
                     turnComputer = None
                     // 构造失败（连接拒绝、HTTP 错误等）：不留半开的 turn，
                     // 先落盘已积攒的写入再归还租约，与 over-budget 路径同一兜底。
-                    if (leaseHeld) {
+                    if (leaseHeld && knowledgeCleanupSucceeded) {
                         if (shared.flush()) {
                             leaseHeld = false
                             lease.release()
                         }
                     }
-                    if (e.message == "model-image-not-supported") {
+                    if (!knowledgeCleanupSucceeded) {
+                        getStdErr().writeln("knowledge-context-clear-failed")
+                        emit(errFrame(idText, -32003, "knowledge-context-clear-failed"))
+                    } else if (e.message == "model-image-not-supported") {
                         emit(errFrame(idText, -32016, e.message))
                     } else {
                         emit(errFrame(idText, -32015, "provider-init-failed:${e.message}"))
@@ -2463,7 +2743,10 @@ class HostRuntime {
     func handleRpc46(method: String, body: String, idText: String): Bool {
         if (method == "session/create") {
             try {
-                let id = catalog.create(jsonStr(body, "title"))
+                // 新会话默认权限只在此处套用一次：之后该会话的档位由用户在权限菜单里自己切，
+                // 改默认值不会回头改写已存在的会话（「只作用于新会话」的完整含义）。
+                // 团队子会话走 create(title) 不带默认档，其权限归团队配置，不能被用户默认档顺带放宽。
+                let id = catalog.create(jsonStr(body, "title"), generalSettingsDefaultPermission())
                 emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(id)}\",\"saved\":true}"))
             } catch (e: Exception) {
                 if (e.message == "bad-session-title") {

@@ -236,7 +236,8 @@ class HostProxy {
             }
             // 只有「无 id 的真实通知」才上 bus；应答与坏帧都不进，避免把回放当直播。
             notifyCount.fetchAdd(1)
-            events.publish(method, params.toString())
+            // 与 team_host_bridge.cj 对齐：method 经 jsonEscapeText，避免 method 含 " 时撕开 SSE 帧（H-14）。
+            events.publish(jsonEscapeText(method), params.toString())
         } catch (e: Exception) {
             rejectFrame("宿主帧不可解析：${e.message}")
         }

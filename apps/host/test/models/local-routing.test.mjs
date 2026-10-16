@@ -56,7 +56,7 @@ async function withFixture(run, status = 200, mode = '') {
     res.end('data: [DONE]\n\n');
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const base = join(root, 'apps/desktop/.tmp-test/host-model-verification');
+  const base = join(root, 'target/tmp/host-model-verification');
   mkdirSync(base, { recursive: true });
   const dir = mkdtempSync(join(base, 'run-')); const settings = join(dir, 'settings'); mkdirSync(settings);
   // 白名单环境：不把当前会话真实提供方配置传入子进程。

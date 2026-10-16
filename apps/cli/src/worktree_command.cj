@@ -491,7 +491,7 @@ func resolveSession(catalogRoot: String, sessionId: String): ResolvedSession {
 func acquireLease(session: ResolvedSession): WriteLease {
     let owned = WriteLease(session.path)
     if (!owned.takeoverIfStale()) {
-        throw Exception(if (owned.held()) { "already-owned" } else { "lease-acquire-failed:${owned.acquisitionFailure()}" })
+        throw Exception(if (owned.held()) { "already-owned" } else { "lease-acquire-failed" })
     }
     return owned
 }

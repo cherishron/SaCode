@@ -16,7 +16,7 @@ test('真实 Windows Host 通过随包 TZif 保存 Asia/Shanghai 自动化配置
   timeout: 90000,
   skip: !canRun,
 }, async () => {
-  const root = join(repository, 'apps', 'desktop', '.tmp-test', `automation-timezone-host-${process.pid}-${Date.now()}`);
+  const root = join(repository, 'target', 'tmp', `automation-timezone-host-${process.pid}-${Date.now()}`);
   const settings = join(root, 'test-user-settings');
   const workspace = join(root, 'workspace');
   mkdirSync(settings, { recursive: true });

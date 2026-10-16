@@ -15,7 +15,7 @@ const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH'
 env[pathKey] = ['C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx', 'D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative', env[pathKey]].join(path.delimiter);
 
 async function withDaemon(run, host = hostExe, providerEnv = {}) {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-team-daemon-'));
+  const cwd = await mkdtemp(path.join(root, 'target', 'tmp', 'sacode-team-daemon-'));
   const proc = spawn(daemonExe, ['--port', '0'], {cwd, env:{...env, ...providerEnv, SACODE_USER_SETTINGS_DIR:path.join(cwd,'settings'), SACODE_HOST:host}, stdio:['ignore', 'pipe', 'pipe']});
   let out = '', err = '';
   let shutdown;
