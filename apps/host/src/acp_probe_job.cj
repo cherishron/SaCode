@@ -11,11 +11,13 @@ class HostAcpProbe {
     var settled = true
     var token: ?TurnToken = None
     var worker: ?Future<Unit> = None
+    var peer = ""
 
-    func start(workspace: String, rpcId: String,
-        record!: (AcpProviderReadiness, TurnToken) -> Bool = { _, _ => false }) {
+    func start(workspace: String, rpcId: String, peerId!: String = "opencode",
+        record!: (AcpProviderReadiness, TurnToken) -> Bool = {_, _ => false}) {
         mtx.lock()
         try {
+            acpProviderEvent("acp/diagnostic", peerId)
             if (!accepting) {
                 throw Exception("acp-probe-shutting-down")
             }
@@ -29,15 +31,20 @@ class HostAcpProbe {
             token = Some(cancellation)
             running = true
             settled = false
+            peer = peerId
             let state = this
             worker = Some(spawn {
                 => try {
-                    let result = probeConfiguredOpenCode(workspace, cancellation)
+                    let result = if (peerId == "codebuddy") {
+                        probeConfiguredCodeBuddy(workspace, cancellation)
+                    } else {
+                        probeConfiguredOpenCode(workspace, cancellation)
+                    }
                     state.mtx.lock()
                     state.settled = !result.evidence.contains("probe-process-exit-unconfirmed")
                     state.mtx.unlock()
                     let saved = record(result, cancellation)
-                    emit(okFrame(rpcId, openCodeReadinessJson(result, diagnosticSaved: Some(saved))))
+                    emit(okFrame(rpcId, acpReadinessJson(peerId, result, diagnosticSaved: Some(saved))))
                 } catch (_: Exception) {
                     try {
                         emit(errFrame(rpcId, -32027, "acp-probe-result-unconfirmed"))
@@ -52,9 +59,12 @@ class HostAcpProbe {
             mtx.unlock()
         }
     }
-    func cancel() {
+    func cancel(peerId!: String = "") {
         mtx.lock()
         try {
+            if (peerId.size > 0 && peerId != peer) {
+                return
+            }
             if (let Some(current) <- token) {
                 current.cancel()
             }

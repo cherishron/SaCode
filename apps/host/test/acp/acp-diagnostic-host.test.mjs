@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
 test('真实Host和CLI恢复同一诊断决定，读取与保留不启动OpenCode或模型任务',{timeout:30000},async t=>{
  assert.ok(process.env.SACODE_HOST);assert.ok(process.env.SACODE_CLI);
  const root=mkdtempSync(join(tmpdir(),'sacode-acp-journal-')),methods=join(root,'methods');

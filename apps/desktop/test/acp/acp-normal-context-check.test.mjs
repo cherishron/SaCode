@@ -5,7 +5,7 @@ import {join,dirname,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
-const {verifyPackage,runNormalContextCheck}=createRequire(import.meta.url)('../../../docs/qa/acp-normal-context-check.cjs');
+const {verifyPackage,runNormalContextCheck}=createRequire(import.meta.url)('../../../../docs/qa/acp-normal-context-check.cjs');
 function candidate(){
  const root=mkdtempSync(join(tmpdir(),'sacode-normal-package-'));
  const names=['runtime/sacode-host.exe','runtime/sacode.exe','apps/desktop/host-bridge.cjs','apps/desktop/paths.cjs','docs/qa/acp-normal-context-check.cjs'];

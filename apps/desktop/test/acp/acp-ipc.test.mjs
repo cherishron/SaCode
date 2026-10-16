@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-const {registerAcpIpc}=createRequire(import.meta.url)('../acp-ipc.cjs');
+const {registerAcpIpc}=createRequire(import.meta.url)('../../acp-ipc.cjs');
 test('ACP读取只有两个固定动作且逐字段校验身份',async()=>{
   const handlers=new Map(),calls=[];
   registerAcpIpc({handle:(id,fn)=>handlers.set(id,fn)},async(...args)=>{calls.push(args);return {version:1};});
@@ -61,7 +61,7 @@ test('ACP运行操作逐字段校验，审批保留五字段且禁止启动向�
 });
 
 test('ACP握手与收束使用独立有界窗口，页面不能设置超时',async()=>{
- const {acpRequestTimeout}=await import('../acp-ipc.cjs');
+ const {acpRequestTimeout}=await import('../../acp-ipc.cjs');
  assert.equal(acpRequestTimeout('acp/provider/probe'),30000);assert.equal(acpRequestTimeout('acp/delegation/create'),60000);
  assert.equal(acpRequestTimeout('acp/delegation/close'),15000);assert.equal(acpRequestTimeout('acp/delegation/poll'),5000);
 });

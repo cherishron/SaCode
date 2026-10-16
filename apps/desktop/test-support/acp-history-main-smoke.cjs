@@ -3,7 +3,7 @@ const {writeFileSync,readFileSync}=require('node:fs');
 const {join}=require('node:path');
 module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LOG,seedIfNeeded,createWindow}) {
   seedIfNeeded();
-  const admission={schema:1,id:'delegation-1',sessionId:'current',taskId:'task-1',requestId:'request-1',peerId:'协议夹具',workspace:SESSION_DIR,taskDigest:'a'.repeat(64),revision:1,phase:'initializing'};
+  const admission={schema:1,id:'delegation-1',sessionId:'current',taskId:'task-1',requestId:'request-1',peerId:'opencode',workspace:SESSION_DIR,taskDigest:'a'.repeat(64),revision:1,phase:'initializing'};
   const started={schema:1,delegationId:'delegation-1',sessionId:'current',taskId:'task-1',requestId:'request-1',protocolSessionId:'fixture-session',protocolRequestId:3,revision:3,phase:'running',detail:'intent-before-send'};
   const ended={...started,revision:4,phase:'completed',detail:'prompt-stop:end_turn'};
   const field=text=>text.replaceAll('\\','\\\\').replaceAll('\t','\\t').replaceAll('\n','\\n').replaceAll('\r','\\r');
@@ -19,7 +19,7 @@ module.exports=async function acpHistorySmoke({app,bridge,SESSION_DIR,SESSION_LO
     await js("(()=>{const button=[...document.querySelectorAll('.workbench-resource-list button')].find(b=>b.textContent.trim()==='智能体团队');if(!button)throw Error('agents-resource-missing');button.focus();button.click();})()");
     await wait("!!document.querySelector('#side-page-agents [data-acp-delegation=\"delegation-1\"]')?.getClientRects().length");
     const text=await js("document.querySelector('.acp-history').textContent");
-    if(!text.includes('协议夹具')||!text.includes('已结束')||!text.includes('prompt-stop:end_turn'))throw Error('acp-page-facts-mismatch');
+    if(!text.includes('opencode')||!text.includes('已结束')||!text.includes('prompt-stop:end_turn'))throw Error('acp-page-facts-mismatch');
     const wrongRejected=await js("window.sacode.acpDelegationList('other').then(()=>false,e=>e.message.includes('acp-session-changed'))");
     if(!wrongRejected)throw Error('acp-page-session-guard-missing');
     if(!before.equals(readFileSync(SESSION_LOG)))throw Error('acp-history-read-mutated-log');

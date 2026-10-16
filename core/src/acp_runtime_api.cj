@@ -10,10 +10,19 @@ public class AcpRuntimeApi {
     let desk: ApprovalDesk
     let lease: WriteLease
     let workspace: String
+    public let peerId: String
+    let sessionSettings: ?AcpSessionSettings
     let tasks = HashMap<String, AcpLiveTask>()
     let mtx = Mutex()
     var accepting = true
-    public init(service: AcpDelegationService, desk: ApprovalDesk, lease: WriteLease, workspace: String) {
+    public init(service: AcpDelegationService, desk: ApprovalDesk, lease: WriteLease, workspace: String,
+        peerId!: String = "opencode", sessionSettings!: ?AcpSessionSettings = None) {
+        acpProviderEvent("acp/settings", peerId)
+        if (let Some(settings) <- sessionSettings) {
+            if (settings.peerId != peerId || !settings.belongsTo(desk.log.path)) {
+                throw Exception("not-authorized:acp-settings-owner-changed")
+            }
+        }
         if (workspace.size == 0 || service.journal.isNone() || service.journal.getOrThrow().log.path != desk.log.path ||
             !lease.protects(desk.log.path)) {
             throw Exception("not-authorized:acp-runtime-owner")
@@ -22,6 +31,11 @@ public class AcpRuntimeApi {
         this.desk = desk
         this.lease = lease
         this.workspace = workspace
+        this.peerId = peerId
+        this.sessionSettings = sessionSettings
+    }
+    public func updateProviderEnabled(enabled: Bool, revision: Int64): String {
+        return sessionSettings.getOrThrow().setEnabled(enabled, revision)
     }
     public static func handles(method: String): Bool {
         return method == "acp/delegation/create" || method == "acp/delegation/poll" || method == "acp/delegation/answer" ||
@@ -117,6 +131,10 @@ public class AcpRuntimeApi {
             if (taskId.size == 0 || taskId.size > 256 || requestId.size == 0 || requestId.size > 256 || peer.size == 0 ||
                 peer.size > 256 || text.size == 0 || text.size > 65536) {
                 throw Exception("invalid-input:acp-task")
+            }
+            // 请求提供方必须与可信装配身份一致，拒绝前不创建委派或启动进程。
+            if (peer != peerId) {
+                throw Exception("not-authorized:acp-provider-changed")
             }
             mtx.lock()
             try {

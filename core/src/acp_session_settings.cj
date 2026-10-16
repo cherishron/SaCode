@@ -8,12 +8,16 @@ public class AcpSessionSettings {
     public let effective = AcpSettingsService()
     let log: SessionLog
     let lease: WriteLease
+    public let peerId: String
+    let settingsEvent: String
     let mtx = Mutex()
-    public init(log: SessionLog, lease: WriteLease) {
+    public init(log: SessionLog, lease: WriteLease, peerId!: String = "opencode") {
         this.log = log
         this.lease = lease
+        this.peerId = peerId
+        this.settingsEvent = acpProviderEvent("acp/settings", peerId)
         for (event in log.snapshotEvents()) {
-            if (event.eventType != "acp/settings") {
+            if (event.eventType != settingsEvent) {
                 continue
             }
             let record = JsonValue.fromStr(event.data).asObject()
@@ -35,6 +39,7 @@ public class AcpSessionSettings {
         result.put("revision", JsonInt(snapshot.revision))
         result.put("source", JsonString(snapshot.source));
         result.put("scope", JsonString("project-session"))
+        result.put("peerId", JsonString(peerId))
         return result.toString()
     }
     public func setEnabled(value: Bool, expectedRevision: Int64): String {
@@ -50,7 +55,7 @@ public class AcpSessionSettings {
             let record = JsonObject();
             record.put("enabled", JsonBool(value));
             record.put("revision", JsonInt(previous.revision + 1))
-            log.append("acp/settings", record.toString())
+            log.append(settingsEvent, record.toString())
             if (!log.durableCheckpoint(lease)) {
                 log.freezeAfterDurableFailure();
                 throw Exception("persistence-failed:acp-settings")

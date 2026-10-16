@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {fileURLToPath} from 'node:url';
 import vm from 'node:vm';
-const output=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/acp-live.ts',import.meta.url))],bundle:true,write:false,format:'cjs',logLevel:'silent'});
+const output=await build({entryPoints:[fileURLToPath(new URL('../../renderer/pages/acp-live.ts',import.meta.url))],bundle:true,write:false,format:'cjs',logLevel:'silent'});
 const module={exports:{}};vm.runInNewContext(output.outputFiles[0].text,{module,exports:module.exports});
 const {AcpSessionController,checkedAcpLive}=module.exports;
 const view=()=>({version:1,source:'owned-live-process',delegation:{sessionId:'s1',delegationId:'d1',taskId:'t1',requestId:'r1',peerId:'opencode',phase:'running',revision:4,result:''},permissions:[{approvalId:7,toolCallId:'write',argumentsJson:'{"path":"a"}',allowOnceOption:'once',denyOnceOption:'deny',policyAllowsGrant:true,state:'pending',approvalState:'pending',reason:''}],updates:[],workerFinished:false,serverAlive:true,serverExitObserved:false,workerError:''});
@@ -14,6 +14,14 @@ test('绑定和恢复不启动任务，迟到创建不更新另一会话',async(
   const task=controller.create('t1','r1','read');controller.bind('s2',true);resolve(view());await task;
   assert.equal(published.length,0);assert.deepEqual(calls,[['s1','t1','r1','opencode','read']]);
   controller.bind('s1',false);await assert.rejects(controller.create('t1','r1','read'),/未激活/);
+});
+test('切提供方后的迟到创建不发布，错误提供方查询回执拒绝',async()=>{
+  let resolve;const published=[],calls=[];
+  const controller=new AcpSessionController({acpDelegationCreate:(...args)=>{calls.push(args);return new Promise(done=>resolve=done);},acpDelegationPoll:async()=>view()},v=>published.push(v));
+  controller.bind('s1',true,'opencode');const pending=controller.create('t1','r1','read');
+  controller.bind('s1',true,'codebuddy');resolve(view());await pending;
+  assert.equal(published.length,0);await assert.rejects(controller.refresh('d1'),/无效/);
+  assert.equal(calls[0][3],'opencode');assert.throws(()=>controller.bind('s1',true,'shell'),/未注册/);
 });
 test('控制使用精确委派与修订，审批只能选本提案一次性选项',async()=>{
   const calls=[],published=[];
@@ -39,7 +47,7 @@ test('缺Host入口、伪造回执及未确认审批都不能显示成功',async
   for(const patch of [{source:'durable-history'},{permissions:[{approvalId:7}]},{updates:[1]},{serverAlive:'true'}])assert.throws(()=>checkedAcpLive({...view(),...patch},'s1'),/无效/);
 });
 
-const panelOutput=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/acp-history.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue'],logLevel:'silent'});
+const panelOutput=await build({entryPoints:[fileURLToPath(new URL('../../renderer/pages/acp-history.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue'],logLevel:'silent'});
 function panel(api){
   const m={exports:{}},hooks=[];
   const vue={defineComponent:v=>v,ref:value=>({value}),watch:(_get,callback,options)=>{hooks.push(callback);if(options?.immediate)callback();},onBeforeUnmount:()=>{},h:(type,props,children)=>({type,props:props||{},children})};
@@ -59,6 +67,9 @@ test('真实面板创建、审批和取消控件消费运行接口，历史读�
   f.find('button','检查 OpenCode 提供方').props.onClick();await f.flush();
   f.find('textarea').props.onInput({target:{value:'检查项目'}});f.find('form').props.onSubmit({preventDefault(){}});await f.flush();
   assert.deepEqual(calls[0],['create','s1','2','1','opencode','检查项目']);
+  const selector=f.find('select');assert.equal(selector.props.disabled,true);
+  selector.props.onChange({target:{value:'codebuddy'}});
+  assert.equal(f.find('select').props.value,'opencode');
   f.find('button','仅允许这一次').props.onClick();await f.flush();assert.deepEqual(calls[1],['answer','s1','d1',7,'allowed-once','once']);
   f.find('button','请求取消').props.onClick();await f.flush();assert.deepEqual(calls[2],['cancel','s1','d1',4]);
 });
@@ -124,6 +135,19 @@ test('恢复历史诊断只供回看，保留决定不启动任务且切会话�
  f.find('button','暂不修复／保留现状').props.onClick();await f.flush();assert.equal(keeps,1);assert.equal(starts,0);
  f.props.sessionId='s2';f.hooks[0]();await f.flush();reply({...history,record:{...history.record,decision:'kept',revision:2}});await f.flush();
  assert.equal(f.find('strong','已保留现状'),undefined);assert.equal(starts,0);
+});
+
+test('CodeBuddy 控制明确传身份，错误提供方诊断不进入面板',async()=>{
+  const calls=[];
+  const f=panel({acpSettingsDescribe:async(...args)=>{calls.push(['settings',...args]);return{enabled:true,revision:1,source:'project',scope:'project-session',peerId:args[1]||'opencode'};},
+    acpDiagnosticsDescribe:async(...args)=>{calls.push(['diagnostics',...args]);return{version:1,sessionId:'s1',peerId:'opencode',source:'durable-history',scopeCurrent:false,record:null};},
+    acpProviderProbe:async(...args)=>{calls.push(['probe',...args]);return{peerId:'codebuddy',environment:'installed-usable',protocolReady:true,verdict:'measured',protocolVersion:1,evidence:'fixture',modelTaskTested:false};}});
+  await f.flush();f.find('select').props.onChange({target:{value:'codebuddy'}});f.hooks[0]();await f.flush();
+  assert.ok(calls.some(c=>c[0]==='settings'&&c[2]==='codebuddy'));
+  assert.ok(calls.some(c=>c[0]==='diagnostics'&&c[2]==='codebuddy'));
+  assert.ok(JSON.stringify(f.nodes()).includes('历史诊断读取失败'));
+  f.find('button','检查 CodeBuddy CLI 提供方').props.onClick();await f.flush();
+  assert.deepEqual(calls.find(c=>c[0]==='probe'),['probe','s1','codebuddy']);
 });
 
 test('程序发现失败显示安装或实例问题，不要求登录也不关闭开关',async()=>{

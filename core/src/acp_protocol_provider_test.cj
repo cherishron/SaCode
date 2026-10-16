@@ -6,6 +6,19 @@ import std.unittest.*
 import stdx.encoding.json.*
 
 @Test
+func acpProtocolProviderKeepsStandardErrorCodeWithoutEchoingErrorBody() {
+    let f = AcpTaskFixture("end_turn")
+    try {
+        let program = "require('node:readline').createInterface({input:process.stdin}).on('line',s=>{const q=JSON.parse(s);const frame=q.method==='initialize'?{jsonrpc:'2.0',id:q.id,result:{protocolVersion:1,agentCapabilities:{}}}:{jsonrpc:'2.0',id:q.id,error:{code:-32603,message:'secret-config-body'}};console.log(JSON.stringify(frame));});"
+        let provider = AcpProtocolProvider("fixture-peer", "node", ["-e", program], authentication: {=> true})
+        let report = provider.probe(f.root)
+        @Expect(report.evidence, "protocol-session-new-rpc-error:-32603:no-task")
+        @Expect(report.authenticated, false)
+        @Expect(report.verdict, "blocked")
+    } finally { f.close() }
+}
+
+@Test
 func acpProtocolProviderRequiresVerifiedAuthenticationBeforeSpawn() {
     let f = AcpTaskFixture("end_turn")
     try {

@@ -60,6 +60,61 @@ func acpRuntimeApiRejectsForeignSessionAndExecutableArguments() {
 }
 
 @Test
+func acpRuntimeApiRejectsDifferentProviderBeforeCreatingTask() {
+    let f = AcpTaskFixture("end_turn", program: acpLiveProgram())
+    try {
+        let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root)
+        @ExpectThrows[Exception](api.dispatch("acp/delegation/create", "{\"sessionId\":\"s1\",\"taskId\":\"task\",\"requestId\":\"request\",\"peerId\":\"codebuddy\",\"taskText\":\"fixture task\"}"))
+        @Expect(api.quiescent(), true)
+        @Expect(exists(Path(f.root).join("artifact.txt")), false)
+        @Expect(exists(Path(f.root).join("prompt-count")), false)
+        @Expect(api.shutdown(), true)
+    } finally { f.close() }
+}
+
+@Test
+func acpRuntimeCodeBuddyFixtureUsesOriginalPermissionAndSettlesWithoutRealModel() {
+    let f = AcpTaskFixture("end_turn", program: acpLiveProgram(), peerId: "codebuddy")
+    try {
+        let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root, peerId: "codebuddy")
+        api.dispatch("acp/delegation/create", "{\"sessionId\":\"s1\",\"taskId\":\"task\",\"requestId\":\"request\",\"peerId\":\"codebuddy\",\"taskText\":\"fixture task\"}")
+        let id = acpRuntimePending(api)
+        @Expect(exists(Path(f.root).join("artifact.txt")), false)
+        api.dispatch("acp/delegation/answer", "{\"sessionId\":\"s1\",\"delegationId\":\"delegation-1\",\"approvalId\":${id},\"decision\":\"allowed-once\",\"optionId\":\"once\"}")
+        for (_ in 0..1000) {
+            if (f.service.describe("delegation-1").phase == "completed") { break }
+            sleep(2 * Duration.millisecond)
+        }
+        @Expect(f.service.describe("delegation-1").peerId, "codebuddy")
+        @Expect(f.service.describe("delegation-1").phase, "completed")
+        @Expect(String.fromUtf8(File.readFrom(Path(f.root).join("artifact.txt"))), "approved")
+        @Expect(api.shutdown(), true)
+    } finally { f.close() }
+}
+
+@Test
+func acpRuntimeCodeBuddyFixtureCancelRejectsLateGrantAndObservesExit() {
+    let f = AcpTaskFixture("end_turn", program: acpLiveProgram(), peerId: "codebuddy")
+    try {
+        let api = AcpRuntimeApi(f.service, ApprovalDesk(f.log), f.lease, f.root, peerId: "codebuddy")
+        api.dispatch("acp/delegation/create", "{\"sessionId\":\"s1\",\"taskId\":\"task\",\"requestId\":\"request\",\"peerId\":\"codebuddy\",\"taskText\":\"fixture task\"}")
+        let id = acpRuntimePending(api)
+        let revision = f.service.describe("delegation-1").revision
+        api.dispatch("acp/delegation/cancel", "{\"sessionId\":\"s1\",\"delegationId\":\"delegation-1\",\"revision\":${revision}}")
+        for (_ in 0..1000) {
+            if (f.service.describe("delegation-1").phase == "cancelled") { break }
+            sleep(2 * Duration.millisecond)
+        }
+        @Expect(f.service.describe("delegation-1").phase, "cancelled")
+        let answer = JsonValue.fromStr(api.dispatch("acp/delegation/answer", "{\"sessionId\":\"s1\",\"delegationId\":\"delegation-1\",\"approvalId\":${id},\"decision\":\"allowed-once\",\"optionId\":\"once\"}")).asObject()
+        @Expect(answer.get("state").getOrThrow().asString().getValue(), "not-sent")
+        @Expect(exists(Path(f.root).join("artifact.txt")), false)
+        @Expect(api.shutdown(), true)
+        @Expect(f.process.exitObserved(), true)
+    } finally { f.close() }
+}
+
+@Test
 func acpRuntimeApiCancellationUsesExpectedRevision() {
     let f = AcpTaskFixture("end_turn", program: acpLiveProgram())
     try {

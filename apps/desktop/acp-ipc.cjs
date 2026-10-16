@@ -4,6 +4,11 @@ const identity = value => typeof value === 'string' && !!value.trim() &&
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const taskText = value => typeof value === 'string' && !!value.trim() &&
   Buffer.byteLength(value, 'utf8') <= 65536 && !value.includes('\0');
+const peerCount = args => args && Object.hasOwn(args,'peerId') ? 1 : 0;
+function peerArguments(args) {
+  if (Object.hasOwn(args,'peerId') && !['opencode','codebuddy'].includes(args.peerId)) throw Error('bad-acp-arguments');
+  return args.peerId==='codebuddy' ? {peerId:'codebuddy'} : {};
+}
 function registerAcpIpc(ipcMain, request) {
   for (const [name, method, fields] of [
     ['acpDelegationList', 'acp/delegation/list', ['sessionId']],
@@ -13,22 +18,24 @@ function registerAcpIpc(ipcMain, request) {
     ['acpDiagnosticsDescribe', 'acp/diagnostics/describe', ['sessionId']],
   ]) {
     ipcMain.handle('sacode:' + name, async (_event, args) => {
-      if (!args || Object.keys(args).length !== fields.length || fields.some(key =>
+      const scoped = method==='acp/settings/describe'||method==='acp/provider/probe'||method==='acp/diagnostics/describe';
+      if (!args || Array.isArray(args) || Object.keys(args).length !== fields.length + (scoped?peerCount(args):0) || fields.some(key =>
         !Object.hasOwn(args, key) || typeof args[key] !== 'string' || !args[key].trim() ||
         Buffer.byteLength(args[key], 'utf8') > 256 || /[\u0000-\u001f\u007f]/.test(args[key]))) throw Error('bad-acp-arguments');
-      return request(method, args);
+      if(!scoped)return request(method,args);
+      return request(method,{sessionId:args.sessionId,...peerArguments(args)});
     });
   }
   ipcMain.handle('sacode:acpSettingsSetEnabled', async (_event,args)=>{
-    if(!args||Array.isArray(args)||Object.keys(args).length!==3||!Object.hasOwn(args,'sessionId')||!identity(args.sessionId)||!Object.hasOwn(args,'enabled')||
+    if(!args||Array.isArray(args)||Object.keys(args).length!==3+peerCount(args)||!Object.hasOwn(args,'sessionId')||!identity(args.sessionId)||!Object.hasOwn(args,'enabled')||
       typeof args.enabled!=='boolean'||!Object.hasOwn(args,'revision')||!Number.isSafeInteger(args.revision)||args.revision<0)
       throw Error('bad-acp-arguments');
-    return request('acp/settings/set-enabled',{sessionId:args.sessionId,enabled:args.enabled,revision:args.revision});
+    return request('acp/settings/set-enabled',{sessionId:args.sessionId,enabled:args.enabled,revision:args.revision,...peerArguments(args)});
   });
   ipcMain.handle('sacode:acpDiagnosticsKeep', async (_event,args)=>{
-    if(!args||Array.isArray(args)||Object.keys(args).length!==3||!['sessionId','diagnosticId','revision'].every(key=>Object.hasOwn(args,key))||!identity(args.sessionId)||
+    if(!args||Array.isArray(args)||Object.keys(args).length!==3+peerCount(args)||!['sessionId','diagnosticId','revision'].every(key=>Object.hasOwn(args,key))||!identity(args.sessionId)||
       typeof args.diagnosticId!=='string'||!/^acp-[0-9a-f]{32}$/.test(args.diagnosticId)||!positive(args.revision))throw Error('bad-acp-arguments');
-    return request('acp/diagnostics/keep',{sessionId:args.sessionId,diagnosticId:args.diagnosticId,revision:args.revision});
+    return request('acp/diagnostics/keep',{sessionId:args.sessionId,diagnosticId:args.diagnosticId,revision:args.revision,...peerArguments(args)});
   });
   for (const [name, method, schema] of [
     ['acpDelegationCreate', 'create', {sessionId:identity, taskId:identity, requestId:identity, peerId:identity, taskText}],

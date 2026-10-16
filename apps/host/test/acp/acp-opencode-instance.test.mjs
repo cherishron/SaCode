@@ -2,8 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readdirSync} from 'node:fs';
 import {createRequire} from 'node:module';
-import {openCodeInstanceFixture} from '../test-support/opencode-instance-fixture.mjs';
-const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+import {openCodeInstanceFixture} from '../../../desktop/test-support/opencode-instance-fixture.mjs';
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
 const options={timeout:60000,skip:process.platform!=='win32'||!process.env.SACODE_ACP_OPENCODE_TEST_EXECUTABLE};
 function checked(report){
  assert.equal(report.protocolReady,true);assert.equal(report.modelTaskTested,false);assert.equal(report.diagnosticSaved,true);

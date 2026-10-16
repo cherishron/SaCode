@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
-const result=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/acp-diagnostics.ts',import.meta.url))],bundle:true,format:'cjs',write:false,external:['vue'],logLevel:'silent'});
+const result=await build({entryPoints:[fileURLToPath(new URL('../../renderer/pages/acp-diagnostics.ts',import.meta.url))],bundle:true,format:'cjs',write:false,external:['vue'],logLevel:'silent'});
 const m={exports:{}};vm.runInNewContext(result.outputFiles[0].text,{module:m,exports:m.exports,require:()=>({h:(type,props,children)=>({type,props,children})})});
 const {readAcpDiagnostics,renderAcpDiagnostics}=m.exports;
 const value=()=>({version:1,diagnosticId:'acp-'+'a'.repeat(32),workspace:'workspace',executable:'trusted-executable',agentName:'OpenCode',agentVersion:'2.fixture',sessionModel:'name-contains-free',sessionMode:'build',source:'acp-observation',configSources:'unknown',processIdentity:'unknown',primaryAgent:'unknown',price:'unknown',pluginModels:'unknown',network:'not-tested',modelTask:'not-tested'});

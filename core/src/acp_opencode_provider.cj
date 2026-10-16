@@ -92,8 +92,13 @@ public func probeConfiguredOpenCode(workspace: String, token: TurnToken,
 }
 
 public func openCodeReadinessJson(report: AcpProviderReadiness, diagnosticSaved!: ?Bool = None): String {
+    return acpReadinessJson("opencode", report, diagnosticSaved: diagnosticSaved)
+}
+
+public func acpReadinessJson(peerId: String, report: AcpProviderReadiness, diagnosticSaved!: ?Bool = None): String {
+    acpProviderEvent("acp/diagnostic", peerId)
     let result = JsonObject()
-    result.put("peerId", JsonString("opencode"));
+    result.put("peerId", JsonString(peerId));
     result.put("environment", JsonString(report.environment))
     result.put("protocolReady",
         JsonBool(report.environment == "installed-usable" && report.verdict == "measured" && report.protocolVersion == 1));

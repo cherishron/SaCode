@@ -16,14 +16,33 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
         if (params.get("sessionId").getOrThrow().asString().getValue() != host.activeId) {
             throw Exception("not-authorized:acp-session-changed")
         }
+        if (handleCodeBuddyAcpControl(host, method, params, idText)) {
+            return true
+        }
         if (method == "acp/diagnostics/describe" || method == "acp/diagnostics/keep") {
             let reading = method == "acp/diagnostics/describe"
-            if (params.size() != (if (reading) { 1 } else { 3 })) { throw Exception("invalid-input:acp-diagnostic") }
-            if (!reading) { ensureAcpJournalWriter(host) }
-            let source = if (reading) { SessionLog(host.p) } else { host.shared }
-            if (reading && !source.load()) { throw Exception("replay-rejected") }
+            if (params.size() != (if (reading) {
+                1
+            } else {
+                3
+            })) {
+                throw Exception("invalid-input:acp-diagnostic")
+            }
+            if (!reading) {
+                ensureAcpJournalWriter(host)
+            }
+            let source = if (reading) {
+                SessionLog(host.p)
+            } else {
+                host.shared
+            }
+            if (reading && !source.load()) {
+                throw Exception("replay-rejected")
+            }
             let journal = AcpDiagnosticJournal(source, host.lease, host.activeId, sessionWorkingDirectory(source))
-            emit(okFrame(idText, if (reading) { journal.describe() } else {
+            emit(okFrame(idText, if (reading) {
+                journal.describe()
+            } else {
                 journal.keep(params.get("diagnosticId").getOrThrow().asString().getValue(),
                     params.get("revision").getOrThrow().asInt().getValue())
             }))
@@ -63,8 +82,9 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
             }
             let journal = AcpDiagnosticJournal(host.shared, host.lease, host.activeId, workspace)
             let scope = journal.scopeRevision()
-            host.acpProbe.start(workspace, idText,
-                record: { result, token => journal.recordIfCurrent(result, scope, token) })
+            host
+                .acpProbe
+                .start(workspace, idText, record: {result, token => journal.recordIfCurrent(result, scope, token)})
             return true
         }
         if (method == "acp/settings/set-enabled" || method == "acp/delegation/create") {
@@ -98,29 +118,59 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
                     throw Exception("invalid-input:acp-settings")
                 }
                 let enabled = params.get("enabled").getOrThrow().asBool().getValue()
-                let result = settings.setEnabled(enabled, params.get("revision").getOrThrow().asInt().getValue())
+                let revision = params.get("revision").getOrThrow().asInt().getValue()
+                var result = ""
+                if (let Some(runtime) <- host.acpRuntime) {
+                    if (runtime.peerId == "opencode") {
+                        result = runtime.updateProviderEnabled(enabled, revision)
+                    }
+                }
+                if (result.size == 0) {
+                    result = settings.setEnabled(enabled, revision)
+                }
                 if (!enabled) {
-                    host.acpProbe.cancel()
+                    host.acpProbe.cancel(peerId: "opencode")
                 }
                 emit(okFrame(idText, result))
                 return true
             }
-            if (!settings.effective.describe("project").enabled) {
+            let chosenPeer = params.get("peerId").getOrThrow().asString().getValue()
+            acpProviderEvent("acp/settings", chosenPeer)
+            let chosenSettings = if (chosenPeer == "opencode") {
+                settings
+            } else {
+                AcpSessionSettings(host.shared, host.lease, peerId: "codebuddy")
+            }
+            if (!chosenSettings.effective.describe("project").enabled) {
                 throw Exception("provider-unavailable:acp-disabled")
             }
-            if (params.get("peerId").getOrThrow().asString().getValue() != "opencode") {
-                throw Exception("provider-unavailable:acp-provider-not-registered")
+            if (let Some(previous) <- host.acpRuntime) {
+                if (previous.peerId != chosenPeer) {
+                    if (!previous.quiescent()) {
+                        throw Exception("acp-provider-tasks-in-flight")
+                    }
+                    if (!previous.shutdown()) {
+                        throw Exception("acp-shutdown-unconfirmed")
+                    }
+                    host.acpRuntime = None
+                }
             }
             if (host.acpRuntime.isNone()) {
                 let providers = AcpProviders()
-                providers.register("builtin/opencode", OpenCodeAcpProvider(hostOpenCodeExecutable()))
+                if (chosenPeer == "opencode") {
+                    providers.register("builtin/opencode", OpenCodeAcpProvider(hostOpenCodeExecutable()))
+                } else {
+                    providers.register("builtin/codebuddy", CodeBuddyAcpProvider(configuredCodeBuddyExecutable()))
+                }
                 let workspace = sessionWorkingDirectory(host.shared)
                 if (workspace.size == 0) {
                     throw Exception("workspace-not-selected")
                 }
-                let service = providers.service("opencode", workspace, settings.effective, host.shared, host.lease,
+                let service = providers.service(chosenPeer, workspace, chosenSettings.effective, host.shared, host.lease,
                     host.activeId, settingsScope: "project")
-                host.acpRuntime = Some(AcpRuntimeApi(service, host.approvalDesk, host.lease, workspace))
+                host.acpRuntime = Some(
+                    AcpRuntimeApi(service, host.approvalDesk, host.lease, workspace, peerId: chosenPeer,
+                        sessionSettings: Some(chosenSettings)))
             }
         }
         if (host.acpRuntime.isNone()) {
@@ -138,14 +188,21 @@ func handleAcpRuntimeRpc(host: HostRuntime, method: String, body: String, idText
 }
 
 func ensureAcpJournalWriter(host: HostRuntime): Unit {
-    if (host.leaseHeld) { return }
-    if (!host.lease.takeoverIfStale()) { throw Exception("already-owned") }
+    if (host.leaseHeld) {
+        return
+    }
+    if (!host.lease.takeoverIfStale()) {
+        throw Exception("already-owned")
+    }
     if (!loadForWrite(host.shared, host.meter)) {
-        host.lease.release(); throw Exception("replay-rejected")
+        host.lease.release();
+        throw Exception("replay-rejected")
     }
     host.leaseHeld = true
     if (let Some(previous) <- host.acpRuntime) {
-        if (!previous.quiescent() || !previous.shutdown()) { throw Exception("acp-shutdown-unconfirmed") }
+        if (!previous.quiescent() || !previous.shutdown()) {
+            throw Exception("acp-shutdown-unconfirmed")
+        }
         host.acpRuntime = None
     }
     host.acpSettings = None

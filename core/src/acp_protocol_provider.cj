@@ -100,6 +100,13 @@ public class AcpProtocolProvider <: AcpProvider {
             if (e.message == "provider-unavailable:acp-rpc-error:-32000") {
                 return observation.report("installed-auth-missing", false, "blocked", 1, "acp-auth-required:no-task")
             }
+            // 只返回标准协议错误码，不泄露提供方原始错误正文或配置。
+            for (errorCode in [-32700, -32600, -32601, -32602, -32603]) {
+                if (e.message == "provider-unavailable:acp-rpc-error:${errorCode}") {
+                    return observation.report("probe-failed-unknown", false, "blocked", version,
+                        "protocol-${stage}-rpc-error:${errorCode}:no-task")
+                }
+            }
             var diagnostic = ""
             try {
                 diagnostic = process.diagnostics()

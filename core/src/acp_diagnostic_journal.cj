@@ -8,16 +8,22 @@ public class AcpDiagnosticJournal {
     let lease: WriteLease
     let sessionId: String
     let workspace: String
-    public init(log: SessionLog, lease: WriteLease, sessionId: String, workspace: String) {
+    public let peerId: String
+    let diagnosticEvent: String
+    let settingsEvent: String
+    public init(log: SessionLog, lease: WriteLease, sessionId: String, workspace: String, peerId!: String = "opencode") {
         this.log = log
         this.lease = lease
         this.sessionId = sessionId
         this.workspace = workspace
+        this.peerId = peerId
+        this.diagnosticEvent = acpProviderEvent("acp/diagnostic", peerId)
+        this.settingsEvent = acpProviderEvent("acp/settings", peerId)
     }
     public func scopeRevision(): Int64 {
         var revision: Int64 = 0
         for (event in log.snapshotEvents()) {
-            if (event.eventType == "workspace/directory" || event.eventType == "acp/settings") {
+            if (event.eventType == "workspace/directory" || event.eventType == settingsEvent) {
                 revision = event.seq + 1
             }
         }
@@ -27,7 +33,7 @@ public class AcpDiagnosticJournal {
         var latest = JsonObject()
         var revision: Int64 = 0
         for (event in log.snapshotEvents()) {
-            if (event.eventType != "acp/diagnostic") {
+            if (event.eventType != diagnosticEvent) {
                 continue
             }
             let record = JsonValue.fromStr(event.data).asObject()
@@ -42,7 +48,7 @@ public class AcpDiagnosticJournal {
             }
             let report = record.get("report").getOrThrow().asObject()
             if (report.get("modelTaskTested").getOrThrow().asBool().getValue() ||
-                report.get("peerId").getOrThrow().asString().getValue() != "opencode" ||
+                report.get("peerId").getOrThrow().asString().getValue() != peerId ||
                 record.get("scopeRevision").getOrThrow().asInt().getValue() < 0 ||
                 record.get("diagnosticId").getOrThrow().asString().getValue() !=
                 report
@@ -78,6 +84,7 @@ public class AcpDiagnosticJournal {
         let value = JsonObject()
         value.put("version", JsonInt(1));
         value.put("sessionId", JsonString(sessionId))
+        value.put("peerId", JsonString(peerId))
         value.put("source", JsonString("durable-history"));
         value.put("scopeCurrent", JsonBool(currentScope(record)))
         if (record.size() == 0) {
@@ -105,7 +112,7 @@ public class AcpDiagnosticJournal {
         if (!lease.protects(log.path) || log.isDurableFrozen()) {
             throw Exception("not-authorized:acp-diagnostic-owner")
         }
-        log.append("acp/diagnostic", record.toString())
+        log.append(diagnosticEvent, record.toString())
         if (!log.durableCheckpoint(lease)) {
             log.freezeAfterDurableFailure();
             throw Exception("persistence-failed:acp-diagnostic")
@@ -130,7 +137,7 @@ public class AcpDiagnosticJournal {
             record.put("revision", JsonInt(revision))
             record.put("scopeRevision", JsonInt(scope));
             record.put("decision", JsonString("pending"))
-            record.put("report", JsonValue.fromStr(openCodeReadinessJson(report)))
+            record.put("report", JsonValue.fromStr(acpReadinessJson(peerId, report)))
             return persist(record)
         }
     }

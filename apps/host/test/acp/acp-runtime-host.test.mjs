@@ -4,7 +4,7 @@ import {mkdtempSync,existsSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
-const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
 
 test('真实Host声明五个ACP动作，未装配时明确拒绝而非空成功',{timeout:30000},async t=>{
   assert.ok(process.env.SACODE_HOST,'需要本批源码构建的Host');

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
-const output=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/acp-instance-metadata.ts',import.meta.url))],bundle:true,format:'cjs',write:false,external:['vue'],logLevel:'silent'});
+const output=await build({entryPoints:[fileURLToPath(new URL('../../renderer/pages/acp-instance-metadata.ts',import.meta.url))],bundle:true,format:'cjs',write:false,external:['vue'],logLevel:'silent'});
 const m={exports:{}};vm.runInNewContext(output.outputFiles[0].text,{module:m,exports:m.exports,require:()=>({h:(type,props,children)=>({type,props,children})})});
 const {readAcpInstanceMetadata,renderAcpInstanceMetadata}=m.exports;
 function fixture(){return {version:1,source:'opencode-v2-plugin',binding:'request-and-acp-session',directory:'fixture',sessionId:'s1',providerVersion:'2.0.28',providerPid:17,osUser:'fixture-user',capturedAt:100,

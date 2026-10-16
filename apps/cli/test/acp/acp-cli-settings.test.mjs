@@ -5,7 +5,7 @@ import {join,delimiter,dirname,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
-const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
 function environment(){
   const env={...process.env};
   for(const key of Object.keys(env))if(/cangjie|stdx/i.test(key))delete env[key];

@@ -4,7 +4,7 @@ import {mkdtempSync,writeFileSync,readFileSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createRequire} from 'node:module';
-const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function waitFile(path){for(let i=0;i<500;i++){if(existsSync(path))return;await pause(20);}throw Error('fixture-not-started');}
 function alive(pid){try{process.kill(pid,0);return true;}catch(error){if(error.code==='ESRCH')return false;throw error;}}
