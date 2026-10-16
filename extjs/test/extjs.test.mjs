@@ -61,7 +61,7 @@ test("重名加载被拒绝且先注册的描述不被覆盖", async () => {
 test("坏扩展进不了注册表，已注册工具不受影响", async () => {
   const h = new ExtHost();
   await h.load(ECHO);
-  await assert.rejects(() => h.load(BROKEN), /broken-extension/);
+  await assert.rejects(() => h.load(BROKEN), /load-error: cannot load extension module/);
   assert.deepEqual(h.list(), ["example.echo"]);
 });
 
@@ -114,8 +114,9 @@ test("list 是快照，改它不影响注册表", async () => {
 });
 
 // 协议层：独立 Node 进程 + NDJSON，证明宿主不依赖 Electron 也能被两端复用
-test("server.cjs 走 NDJSON JSON-RPC 往返并支持 dispose", async () => {
+test("server.cjs 走 NDJSON JSON-RPC 往返并支持 dispose", async (t) => {
   const p = spawn(process.execPath, [jj(ROOT, "server.cjs")], { stdio: ["pipe", "pipe", "pipe"] });
+  t.after(() => { p.stdin.end(); if (p.exitCode === null && p.signalCode === null) p.kill(); });
   const lines = [];
   const waiters = [];
   p.stdout.on("data", (d) => {
@@ -142,7 +143,15 @@ test("server.cjs 走 NDJSON JSON-RPC 往返并支持 dispose", async () => {
   assert.equal(init.result.protocolVersion, "0.1");
   assert.ok(init.result.capabilities.includes("extension/load"));
 
-  send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: ECHO } });
+  // 协议面不允许调用方指定宿主根之外的模块；测试不能为跑通而绕开白名单。
+  for (const unsafe of [ECHO, "../example/echo.cjs"]) {
+    send({ jsonrpc: "2.0", id: 100, method: "extension/load", params: { path: unsafe } });
+    const refused = await next();
+    assert.equal(refused.error.code, -32602);
+    assert.equal(refused.error.message, "invalid-extension-path");
+  }
+
+  send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: "example/echo.cjs" } });
   assert.equal((await next()).result.ok, true);
 
   send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.echo", args: { text: "over-stdio" } } });
@@ -170,7 +179,7 @@ test("extension/cancel 按 callId 结算在途调用，只回一帧且迟到结�
     const init = await c.next();
     assert.ok(init.result.capabilities.includes("extension/cancel"), "能力表须声明可取消");
 
-    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: "example/delayed.cjs" } });
     assert.equal((await c.next()).result.ok, true);
 
     c.send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.delayed", args: { text: "never" }, callId: 77 } });
@@ -203,7 +212,7 @@ test("取消不存在或已结算的 callId 明确回 false，二次取消不重
   try {
     c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
     await c.next();
-    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: "example/delayed.cjs" } });
     await c.next();
 
     c.send({ jsonrpc: "2.0", id: 3, method: "extension/cancel", params: { callId: 999 } });
@@ -237,7 +246,7 @@ test("重复的在途 callId 被明确拒绝，不与第一笔混账", async () 
   try {
     c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
     await c.next();
-    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: DELAYED } });
+    c.send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: "example/delayed.cjs" } });
     await c.next();
     c.send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.delayed", args: { text: "a" }, callId: 50 } });
     c.send({ jsonrpc: "2.0", id: 4, method: "extension/call", params: { name: "example.delayed", args: { text: "b" }, callId: 50 } });
@@ -288,7 +297,7 @@ test("host/shutdown 先应答、再结算在途调用、最后干净退出", asy
   const init = await next();
   assert.ok(init.result.capabilities.includes("host/shutdown"), "能力表须声明优雅退出");
 
-  send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: SLOW } });
+  send({ jsonrpc: "2.0", id: 2, method: "extension/load", params: { path: "example/slow.cjs" } });
   assert.equal((await next()).result.ok, true);
   // 永不 resolve 的 handler：这一条请求按约定不会有应答，只能由 shutdown 结算
   send({ jsonrpc: "2.0", id: 3, method: "extension/call", params: { name: "example.slow", args: {} } });

@@ -18,7 +18,7 @@ class ExtHost {
     let mod;
     const abs = jabs(modulePath) ? modulePath : jresolve(__dirname, modulePath);
     try { mod = require(abs); }
-    catch (e) { throw new Error(`load-error: ${e.message}`); }
+    catch (e) { throw new Error("load-error: cannot load extension module"); }
     if (!mod || typeof mod.name !== "string" || !mod.name.trim() || typeof mod.handler !== "function") {
       throw new Error("load-error: extension must export {name, description, params, handler}");
     }

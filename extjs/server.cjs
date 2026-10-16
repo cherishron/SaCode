@@ -1,16 +1,41 @@
 // 扩展宿主的 stdio 服务面：NDJSON JSON-RPC 2.0，stdout 只走协议，诊断走 stderr。
 "use strict";
 const { ExtHost } = require("./host.cjs");
+const { isAbsolute: jabs } = require("node:path");
 
 const host = new ExtHost();
 const out = process.stdout;
 const CAPABILITIES = ["extension/load", "extension/list", "extension/call", "extension/cancel", "extension/dispose", "host/shutdown"];
+
+// NDJSON 单帧上限：与同仓 provider.mjs 的 MAX_FRAME_BYTES 对齐，防止异常/恶意 stdin
+// 发送超长无换行帧把 Node 撑爆 OOM。
+const MAX_FRAME_BYTES = 256 * 1024;
 
 function send(obj) {
   out.write(JSON.stringify(obj) + "\n");
 }
 function replyError(id, code, message) {
   send({ jsonrpc: "2.0", id, error: { code, message } });
+}
+
+// JSON-RPC 2.0 入站结构校验：缺 jsonrpc/method、或 id 类型非法（对象/数组）都拒，
+// 避免 null 输入在 dispatch 里 TypeError 并在 catch 二次访问 req.id 造成 unhandled rejection。
+function isValidRequest(req) {
+  if (!req || typeof req !== "object" || Array.isArray(req)) return false;
+  if (req.jsonrpc !== "2.0") return false;
+  if (typeof req.method !== "string") return false;
+  const id = req.id;
+  if (id !== undefined && id !== null && typeof id !== "number" && typeof id !== "string") return false;
+  return true;
+}
+
+// 扩展加载路径白名单：只允许 __dirname 子目录下的相对路径，拒绝绝对路径与 `..` 越界，
+// 否则 `host.load` 的 require() 会执行宿主目录外的任意 .cjs/.js（见 H-4）。
+function isSafeExtensionPath(p) {
+  if (typeof p !== "string" || p.length === 0) return false;
+  if (jabs(p)) return false;
+  if (p.includes("..")) return false;
+  return true;
 }
 
 async function dispatch(req) {
@@ -25,6 +50,9 @@ async function dispatch(req) {
     case "extension/list":
       return send({ jsonrpc: "2.0", id, result: { names: host.list() } });
     case "extension/load": {
+      if (!isSafeExtensionPath(req.params && req.params.path)) {
+        return replyError(id, -32602, "invalid-extension-path");
+      }
       const ok = await host.load(req.params.path);
       return send({ jsonrpc: "2.0", id, result: { ok, names: host.list() } });
     }
@@ -49,7 +77,7 @@ async function dispatch(req) {
     case "host/shutdown":
       // 先应答再结算：父进程要拿到确认才去等退出；在途调用的 -32002 应答随后写出。
       send({ jsonrpc: "2.0", id, result: { ok: true, inflight: host.pendingCount() } });
-      shutdown();
+      safeShutdown();
       return;
     default:
       return replyError(id, -32601, `method-not-found: ${req.method}`);
@@ -60,11 +88,21 @@ let buf = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (d) => {
   buf += d;
+  // 缓冲总量超上限：丢弃已缓冲内容并回报错误，避免 OOM（H-5）。
+  if (buf.length > MAX_FRAME_BYTES) {
+    buf = "";
+    replyError(null, -32700, "frame-too-large");
+    return;
+  }
   let i;
   while ((i = buf.indexOf("\n")) >= 0) {
     const line = buf.slice(0, i).trim();
     buf = buf.slice(i + 1);
     if (!line) continue;
+    if (line.length > MAX_FRAME_BYTES) {
+      replyError(null, -32700, "frame-too-large");
+      continue;
+    }
     let req;
     try {
       req = JSON.parse(line);
@@ -72,7 +110,12 @@ process.stdin.on("data", (d) => {
       replyError(null, -32700, `parse-error: ${e.message}`);
       continue;
     }
-    dispatch(req).catch((e) => replyError(req.id, -32020, e.message));
+    // 结构校验：非法请求回 -32600，不让坏帧进 dispatch（M-15）。
+    if (!isValidRequest(req)) {
+      replyError(req && req.id !== undefined ? req.id : null, -32600, "invalid-request");
+      continue;
+    }
+    dispatch(req).catch((e) => replyError(req && req.id !== undefined ? req.id : null, -32020, "internal-error"));
   }
 });
 
@@ -88,7 +131,12 @@ async function shutdown() {
   if (pending > 0) process.stderr.write(`settled-inflight=${pending}\n`);
   out.end(() => process.exit(0));
 }
-process.stdin.on("end", shutdown);
+// 三处触发点（host/shutdown 应答后、stdin end、stdin close）统一走这里，
+// 保证 shutdown() 的异常被捕获，不会变成 unhandled rejection 污染 stdout（M-17）。
+function safeShutdown() {
+  shutdown().catch((e) => process.stderr.write(`shutdown-error: ${e.message}\n`));
+}
+process.stdin.on("end", safeShutdown);
 process.stdin.on("close", () => {
-  if (!process.stdin.readable) shutdown();
+  if (!process.stdin.readable) safeShutdown();
 });
