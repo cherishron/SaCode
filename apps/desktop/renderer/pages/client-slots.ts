@@ -15,6 +15,7 @@ export {GitWorkbench} from './git-workbench';
 export {ReviewPage} from './review-page';
 export {TerminalOutput} from './terminal-output';
 export {BuildTestPage} from './build-test-page';
+export {ArtifactsPage} from './artifacts-page';
 export {TeamPanel} from './team-panel';
 export {AcpHistoryPanel} from './acp-history';
 import * as providerSettings from './provider-settings';
