@@ -8,7 +8,7 @@
 //   - proposed               锚点以「拟新增」开头
 //   - anchor-broken          锚点文件缺失，或方法字面量在锚点文件内扫不到
 //
-// 输出：console 上打 TALLY 与每档明细；JSON 结果写到 `.tmp-test/` 目录（未入库）。
+// 输出：console 上打 TALLY 与每档明细；JSON 结果写到 `target/tmp/` 目录（未入库）。
 //
 // 用法：`node scripts/check_contract_anchor_audit.cjs`
 // 不依赖除 Node 标准库外的任何东西。
@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = process.cwd();
-const OUT_DIR = path.join(ROOT, 'apps/desktop/.tmp-test');
+const OUT_DIR = path.join(ROOT, 'target/tmp');
 const CONTRACT = 'docs/plans/remote-capability-contract.json';
 
 if (!fs.existsSync(path.join(ROOT, CONTRACT))) {

@@ -254,7 +254,7 @@ for (const [index, step] of selected.entries()) {
   if (!passed && !outcome.skipped) {
     try {
       const bundle = persistFailureBundle(
-        join(root, "apps", "desktop", ".tmp-test"),
+        join(root, "target", "tmp"),
         { key: step.key, code: outcome.code, summary: outcome.summary, raw: outcome.raw || "" },
       );
       console.error(`完整日志已保留：${bundle.logPath}`);

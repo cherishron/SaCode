@@ -92,7 +92,7 @@ function cangjieCounts(text) {
 // 每个模块在**固定提交副本**里、用独立 --target-dir 编译：不碰共享的 core/target/release
 // （并发会话共用会互锁，AGENTS.md 记 2026-10-12 两次 cjc 卡死），日志留在主仓 target/ 便于复核。
 async function buildMember(wt, label, dir) {
-  const logDir = path.join(root, 'apps/desktop/.tmp-test', 'sacode-verify-build');
+  const logDir = path.join(root, 'target/tmp', 'sacode-verify-build');
   mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, `${label}.log`);
   // 每个成员独立 target，单成员产物均叫 main，不能相互覆盖。
@@ -117,7 +117,7 @@ async function recordCangjieBuilds(gitSha) {
     });
     return;
   }
-  const temporary = path.join(root, 'apps/desktop/.tmp-test');
+  const temporary = path.join(root, 'target/tmp');
   mkdirSync(temporary, { recursive: true });
   const copy = mkdtempSync(path.join(temporary, 'sacode-verify-build-copy-'));
   const wt = path.join(copy, 'head');
@@ -193,7 +193,7 @@ async function main() {
   }
 
   // ── 2. 固定提交隔离副本：不含未入库源码，且在副本里跑纯源码套件 ─────────
-  const copy = mkdtempSync(path.join(root, 'apps/desktop/.tmp-test', 'sacode-verify-copy-'));
+  const copy = mkdtempSync(path.join(root, 'target/tmp', 'sacode-verify-copy-'));
   const wt = path.join(copy, 'head');
   let copyStatus = 'FAIL';
   let copyDetail = '';

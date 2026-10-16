@@ -119,7 +119,7 @@ if (process.argv.includes('--self-test')) {
   process.exit(runSelfTest());
 }
 
-const work = mkdtempSync(path.join(root, 'target', 'sacode-install-state-'));
+const work = mkdtempSync(path.join(root, 'target', 'tmp', 'sacode-install-state-'));
 const tarballs = path.join(work, 'tarballs');
 const installDir = path.join(work, 'install');
 readdirSync(work); // 目录确实建起来了

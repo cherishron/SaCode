@@ -104,16 +104,18 @@ _test_out.txt
 **/session.log
 **/b.log
 apps/cli/out/
-
-dualtest/
+# 仓颉 stdx 二进制依赖（由 scripts/setup-stdx.mjs 软链/复制到仓库内，H-15 解耦，不入库）
+.deps/
+# SSH TOFU 已知主机目录（core/src/ssh_exec.cj 新建，含已知主机指纹，不入库）
+.sacode-ssh/
 
 # npm 平台包内二进制、依赖与扩展宿主副本（均由 scripts/pack-cli.mjs 从 extjs/ 生成，
 # 入库就会与真源码 extjs/ 变成两份）
 npm/sacode-cli-*/bin/
 npm/sacode-cli-*/extjs/
+npm/sacode-cli-*/build-manifest.json
 protocol-bridge-dbg/
 apps/desktop/dist/
-dualtest/
 .superpowers/
 apps/desktop/renderer/vendor/
 
@@ -121,15 +123,5 @@ apps/desktop/renderer/vendor/
 apps/desktop/.tinyvue-*/
 apps/desktop/.tinyrobot-*/
 
-# 桌面 model-pages 用例的一次性运行目录（Electron user-data：GPU/leveldb/缓存，
-# 实测 44 个未忽略文件，下一轮 git add -A 会把二进制缓存吞进基线）
-apps/desktop/.tmp-test/
-
 # 桌面运行数据含用户会话和凭据，不入库。
 apps/desktop/data/
-
-# 多平台生成依赖和载荷，不包含 npm 主包源码。
-.deps/
-npm/sacode-cli-*/bin/
-npm/sacode-cli-*/extjs/
-npm/sacode-cli-*/build-manifest.json

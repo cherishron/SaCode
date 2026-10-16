@@ -31,7 +31,7 @@ execFileSync(target.startsWith('ohos-') ? process.env.OHOS_AR || process.env.AR 
 console.log(`原生静态薄层：${out}`);
 if (process.argv.includes('--verify')) {
   if (target.startsWith('ohos-')) throw new Error('OHOS 交叉产物不能在 Linux 冒充运行验证');
-  const base = join(root, 'apps/desktop/.tmp-test/native-verification'); mkdirSync(base, { recursive: true });
+  const base = join(root, 'target/tmp/native-verification'); mkdirSync(base, { recursive: true });
   const temporary = mkdtempSync(join(base, spec[1] + '-'));
   try {
     const exe = join(temporary, 'verify');

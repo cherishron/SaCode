@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { hostExePath, hostRuntimeEnv, hostEnvWithCaBundle } = require('../apps/desktop/paths.cjs');
 const { configureDataPaths } = require('../apps/desktop/data-paths.cjs');
 const root = fileURLToPath(new URL('..', import.meta.url));
-const tmp = join(root, 'apps/desktop/.tmp-test/platform-verifier');
+const tmp = join(root, 'target/tmp/platform-verifier');
 mkdirSync(tmp, { recursive: true });
 let count = 0;
 const fixture = mkdtempSync(join(tmp, 'runtime-libraries-'));

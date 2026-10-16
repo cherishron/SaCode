@@ -29,6 +29,13 @@ export const UNWIRED_GATES = [
     file: "check_verb_checklist_cover.cjs",
     reason: "对账 dsh-capability-matrix 的 ◐ 清单与 verb 清单，归属矩阵/能力面那条线（2026-10-06 工作区读数 RESULT: FAIL、rc=1，漏 core/extensions/system-prompt，且矩阵文件当时有未落库改动）。接线要先由该主责把矩阵与清单对上，A 不在别人的红态上按接线键。",
   },
+  {
+    file: "check_artifact_placement.cjs",
+    reason:
+      "2026-10-16 随统一临时根迁移（旧桌面临时根收敛为 target/tmp）同批上线，已自证且当前基线为绿。" +
+      "暂不进 GATE_SCRIPTS：接线要动 verify-all.mjs 的步骤表，而本批工作树里还有多份未提交在途改动，" +
+      "避免在别人的在途窗口上按接线键；下一批验收把它作为独立小步接入，跑通一轮全绿读数后移出本表。",
+  },
 ];
 
 export function verdict(code, out) {

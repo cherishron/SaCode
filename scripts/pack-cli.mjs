@@ -17,8 +17,8 @@ if (!process.argv.includes('--no-build')) execFileSync(process.execPath, ['scrip
 const version = JSON.parse(readFileSync('npm/sacode-cli/package.json', 'utf8')).version;
 const pkg = join(root, 'npm', `sacode-cli-${spec.target}`);
 const bin = join(pkg, 'bin');
-const inputMap = JSON.parse(readFileSync(join(root, 'apps/desktop/.tmp-test/platform-build', spec.target, 'binaries.json'), 'utf8'));
-const buildRecord = JSON.parse(readFileSync(join(root, 'apps/desktop/.tmp-test/platform-build', spec.target, 'build.json'), 'utf8'));
+const inputMap = JSON.parse(readFileSync(join(root, 'target/tmp/platform-build', spec.target, 'binaries.json'), 'utf8'));
+const buildRecord = JSON.parse(readFileSync(join(root, 'target/tmp/platform-build', spec.target, 'build.json'), 'utf8'));
 if (buildRecord.target !== spec.target || buildRecord.results.some(r => r.exit !== 0)) throw new Error('本轮构建记录与打包目标不匹配');
 for (const file of Object.values(inputMap)) if (!existsSync(file)) throw new Error(`缺本轮产物 ${file}`);
 rmSync(bin, { recursive: true, force: true });
@@ -43,7 +43,7 @@ if (spec.os === 'win32') {
   }
   if (!count) throw new Error('未收集到目标动态库');
   // Linux OpenSSL 可由系统提供，作为显式安装前提；CI 在剥离 SDK 的 smoke 中检查。
-  cpSync('extjs', join(pkg, 'extjs'), { recursive: true, filter: src => !/[/\\](?:node_modules|test|\.tmp-test)(?:[/\\]|$)/.test(src) });
+  cpSync('extjs', join(pkg, 'extjs'), { recursive: true, filter: src => !/[/\\](?:node_modules|test|target)(?:[/\\]|$)/.test(src) });
 }
 const roles = spec.os === 'ohos' ? [['apps/cli', 'sacode']] : [['apps/cli', 'sacode'], ['apps/host', 'sacode-host'], ['apps/daemon', 'sacode-daemon']];
 for (const [member, name] of roles) {

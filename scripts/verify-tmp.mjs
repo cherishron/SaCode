@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 export function createPrivateTmpDir(root) {
-  const base = join(root, "target");
+  const base = join(root, "target", "tmp");
   mkdirSync(base, { recursive: true });
   const dir = mkdtempSync(join(base, "sacode-verify-tmp-"));
   // TMP/TEMP/TMPDIR 三个都给：仓颉运行时与 libuv 各看不同的键，少一个就还有步骤落在共享目录里。

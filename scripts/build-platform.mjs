@@ -11,7 +11,7 @@ if (!process.env.SACODE_STDX_LIB_DIR && spec.os !== 'win32') {
   const resolved = join(root, '.deps/stdx', `resolved-${spec.target}.json`);
   if (existsSync(resolved)) process.env.SACODE_STDX_LIB_DIR = JSON.parse(readFileSync(resolved, 'utf8')).directory;
 }
-const report = join(root, 'apps/desktop/.tmp-test/platform-build', spec.target);
+const report = join(root, 'target/tmp/platform-build', spec.target);
 mkdirSync(report, { recursive: true });
 const version = execFileSync('cjc', ['-v'], { encoding: 'utf8' });
 if (!/1\.1\.3\b/.test(version)) throw new Error('本批要求仓颉 1.1.3，不能混用 SDK');

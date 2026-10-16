@@ -10,6 +10,7 @@ import { assertStaticRendererBundle } from './renderer-bundle-guard.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DESKTOP = resolve(__dirname, '..', 'apps', 'desktop');
+const REPO = resolve(__dirname, '..');
 const PKG = '@opentiny/next-sdk/core';
 const OUT_JS = join(DESKTOP, 'renderer', 'vendor', 'next-sdk.iife.js');
 let TMP_DIR;
@@ -30,8 +31,8 @@ try {
 }
 
 // 1. 临时入口放在隔离目录，依赖仍按 desktop 解析；不在源码目录遗留夹具。
-mkdirSync(join(DESKTOP, '.tmp-test'), { recursive: true });
-TMP_DIR = mkdtempSync(join(DESKTOP, '.tmp-test', 'pack-next-sdk-'));
+mkdirSync(join(REPO, 'target', 'tmp'), { recursive: true });
+TMP_DIR = mkdtempSync(join(REPO, 'target', 'tmp', 'pack-next-sdk-'));
 const shim = join(TMP_DIR, 'vue-global.cjs');
 writeFileSync(shim, "module.exports = globalThis.Vue;\n");
 const entry = join(TMP_DIR, 'entry.js');
@@ -52,6 +53,7 @@ try {
     minify: true,
     treeShaking: true,
     absWorkingDir: DESKTOP,
+    nodePaths: [join(DESKTOP, 'node_modules')],
     alias: { vue: shim },
     metafile: true,
     plugins: [{

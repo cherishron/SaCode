@@ -11,7 +11,7 @@ const root = join(__dirname, "..");
 const DOC = "docs/plans/w00-path-ownership-and-isolation-2026-10-06.md";
 
 const MEMBERS = ["A", "B", "C", "D", "E", "F", "G", "H", "I"];
-const PACKAGES = ["W00", "W10", "W20", "W30", "W40", "W50", "W60", "W70", "W80", "W90"];
+const PACKAGES = ["W00", "W10", "W20", "W30", "W40", "W50", "W60", "W70", "W80", "W90", "KB-02"];
 const TYPES = ["file", "dir"];
 // 计划里点名的公共入口：这些路径的主责必须是 A
 const PUBLIC_ENTRIES = [

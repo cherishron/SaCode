@@ -38,7 +38,7 @@ export function prepareZoneinfo(destination, archive = TZDATA_ARCHIVE) {
   const digest = createHash('sha256').update(readFileSync(archivePath)).digest('hex');
   if (digest !== TZDATA_SHA256) throw new Error(`tzdata-${TZDATA_VERSION} SHA256 不匹配`);
 
-  const scratchRoot = join(root, 'apps', 'desktop', '.tmp-test');
+  const scratchRoot = join(root, 'target', 'tmp');
   mkdirSync(scratchRoot, { recursive: true });
   const scratch = mkdtempSync(join(scratchRoot, `tzdata-${TZDATA_VERSION}-`));
   try {

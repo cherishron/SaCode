@@ -8,7 +8,7 @@ import { selectedPlatform } from './platform.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const spec = selectedPlatform();
 if (spec.os === 'ohos') throw new Error('不在宿主机运行 OHOS 交叉产物');
-const base = join(root, 'apps/desktop/.tmp-test/npm-install'); mkdirSync(base, { recursive: true });
+const base = join(root, 'target/tmp/npm-install'); mkdirSync(base, { recursive: true });
 const dir = mkdtempSync(join(base, spec.target + '-'));
 const npm = (args, cwd) => process.platform === 'win32'
   ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd', ...args], { cwd, encoding: 'utf8' })

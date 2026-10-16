@@ -1,6 +1,6 @@
 // 实际打包入口验收：独立数据目录，检查可见窗口与真实渲染控件，不读取用户数据。
-import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -10,12 +10,22 @@ const root = mkdtempSync(join(tmpdir(), 'sacode-normal-startup-'));
 mkdirSync(join(root, 'user-data'));
 const env = { ...process.env, SACODE_USER_SETTINGS_DIR: join(root, 'settings') };
 delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(resolve(exe), ['--inspect=0', `--user-data-dir=${join(root, 'user-data')}`, `--session-dir=${join(root, 'session')}`], { env, windowsHide: true });
+const child = spawn(resolve(exe), ['--inspect=0', '--startup-check', `--user-data-dir=${join(root, 'user-data')}`, `--session-dir=${join(root, 'session')}`], { env, windowsHide: true });
 let stderr = '', ws, counter = 0, validated = false;
 process.exitCode = 1;
 const pending = new Map();
-const timer = setTimeout(() => { console.error('STARTUP_FAIL 启动验收超时'); child.kill(); process.exitCode = 1; }, 30000);
-child.on('error', error => { clearTimeout(timer); console.error(error); process.exitCode = 1; });
+function terminateChildTree() {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    const stopped = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true });
+    if (stopped.status !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
+  } else {
+    child.kill('SIGTERM');
+  }
+}
+const timer = setTimeout(() => { console.error('STARTUP_FAIL 启动验收超时'); terminateChildTree(); process.exitCode = 1; }, 30000);
+let closeTimer;
+child.on('error', error => { clearTimeout(timer); clearTimeout(closeTimer); console.error(error); process.exitCode = 1; });
 child.stderr.on('data', async data => {
   stderr += data;
   const url = stderr.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
@@ -23,12 +33,19 @@ child.stderr.on('data', async data => {
   ws = new WebSocket(url);
   ws.onmessage = event => {
     const message = JSON.parse(event.data);
-    if (pending.has(message.id)) { pending.get(message.id)(message); pending.delete(message.id); }
+    if (pending.has(message.id)) { const resolve = pending.get(message.id); pending.delete(message.id); resolve(message); }
   };
   const evaluate = (expression, awaitPromise = false) => new Promise(resolveResult => {
     const id = ++counter;
-    pending.set(id, resolveResult);
-    ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } }));
+    const requestTimer = setTimeout(() => { pending.delete(id); resolveResult(null); }, 5000);
+    pending.set(id, message => { clearTimeout(requestTimer); resolveResult(message); });
+    try {
+      ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } }));
+    } catch {
+      clearTimeout(requestTimer);
+      pending.delete(id);
+      resolveResult(null);
+    }
   });
   ws.onopen = async () => {
     try {
@@ -53,14 +70,25 @@ child.stderr.on('data', async data => {
       console.error('STARTUP_FAIL ' + error.message);
       process.exitCode = 1;
     } finally {
-      clearTimeout(timer);
       await evaluate("process.mainModule.require('electron').app.quit()");
       ws.close();
+      closeTimer = setTimeout(() => {
+        console.error('STARTUP_FAIL 关闭验收超时');
+        terminateChildTree();
+        process.exitCode = 1;
+      }, 20000);
     }
   };
 });
 child.on('exit', code => {
   clearTimeout(timer);
+  clearTimeout(closeTimer);
   ws?.close();
-  if (code !== 0 || !validated) { console.error('STARTUP_FAIL 主进程 rc=' + code + ' validated=' + validated); process.exitCode = 1; }
+  if (code !== 0 || !validated) {
+    console.error('STARTUP_FAIL 主进程 rc=' + code + ' validated=' + validated);
+    console.error('STARTUP_EVIDENCE ' + root);
+    process.exitCode = 1;
+  } else {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

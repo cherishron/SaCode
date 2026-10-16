@@ -106,7 +106,7 @@ jobs:
         with:
           name: logs-${{ matrix.target }}-${{ github.sha }}
           path: |
-            apps/desktop/.tmp-test/platform-build/${{ matrix.target }}/build.json
-            apps/desktop/.tmp-test/platform-build/${{ matrix.target }}/binaries.json
+            target/tmp/platform-build/${{ matrix.target }}/build.json
+            target/tmp/platform-build/${{ matrix.target }}/binaries.json
           if-no-files-found: warn
           include-hidden-files: true
