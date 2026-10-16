@@ -37,8 +37,8 @@ async function run(settings, args, extra = {}) {
   assert.equal(result.signal, null, result.stderr);
   return {
     ...result,
-    tipLines: stderr.split('\n').filter(line => line.startsWith('tip\t')),
-    tips: stderr.split('\n').filter(line => line.startsWith('tip\t')).length,
+    tipLines: result.stderr.split('\n').filter(line => line.startsWith('tip\t')),
+    tips: result.stderr.split('\n').filter(line => line.startsWith('tip\t')).length,
   };
 }
 
