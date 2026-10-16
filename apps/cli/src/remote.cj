@@ -309,27 +309,40 @@ func remoteEnterParams(sessionId: String, worktreeRef: Option<WorktreeRef>): Str
 
 func tryParseRemoteParams(raw: String): String {
     let parsed = JsonValue.fromStr(raw)
-    if (!(match (parsed.kind()) { case JsObject | JsArray => true; case _ => false })) {
+    if (!(match (parsed.kind()) {
+        case JsObject | JsArray => true;
+        case _ => false
+    })) {
         throw Exception("remote-usage:参数必须是 JSON 对象或数组")
     }
     return parsed.toString()
 }
 
 func remoteSendRequests(port: Int64, requests: ArrayList<RemoteRequest>): Int64 {
-    let client = ClientBuilder().noProxy().autoRedirect(false)
-        .readTimeout(30 * Duration.second).writeTimeout(10 * Duration.second).build()
-    try {
-        let url = "http://127.0.0.1:${port}"
-        var sent: Int64 = 0
-        for (request in requests) {
-            sent += 1
-            let envelope = JsonObject()
-            envelope.put("jsonrpc", JsonString("2.0"))
-            envelope.put("id", JsonInt(sent))
-            envelope.put("method", JsonString(request.method))
-            envelope.put("params", JsonValue.fromStr(request.params))
-            let http = HttpRequestBuilder().post().url("${url}/rpc")
-                .header("Content-Type", "application/json").body(envelope.toString()).build()
+    let url = "http://127.0.0.1:${port}"
+    var sent: Int64 = 0
+    for (request in requests) {
+        sent += 1
+        let envelope = JsonObject()
+        envelope.put("jsonrpc", JsonString("2.0"))
+        envelope.put("id", JsonInt(sent))
+        envelope.put("method", JsonString(request.method))
+        envelope.put("params", JsonValue.fromStr(request.params))
+        let http = HttpRequestBuilder()
+            .post()
+            .url("${url}/rpc")
+            .header("Content-Type", "application/json")
+            .body(envelope.toString())
+            .build()
+        // 一条逻辑请求独占一个 Client。关闭 response 后不把实现相关的连接复用
+        // 状态带到下一条 RPC，尤其是 worktree 进入后紧接着提交或查询的组合。
+        let client = ClientBuilder()
+            .noProxy()
+            .autoRedirect(false)
+            .readTimeout(30 * Duration.second)
+            .writeTimeout(10 * Duration.second)
+            .build()
+        try {
             let resp = client.send(http)
             try {
                 if (resp.status < 200 || resp.status >= 300) {
@@ -340,10 +353,14 @@ func remoteSendRequests(port: Int64, requests: ArrayList<RemoteRequest>): Int64 
                     // 前一笔没过就不再发后面的：失败之后继续推请求会掩盖第一处真因。
                     return code
                 }
-            } finally { resp.close() }
+            } finally {
+                resp.close()
+            }
+        } finally {
+            client.close()
         }
-        return 0
-    } finally { client.close() }
+    }
+    return 0
 }
 
 func runRemote(args: Array<String>): Int64 {
