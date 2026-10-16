@@ -11,7 +11,7 @@ test('迟到读取不能覆盖保存结果，同帧双击只发一次 CAS',async
 test('编辑从最新投影取修订，拒绝后保留原正文并允许重试',async()=>{const f=fixture();let expected;const s=f.createGoalSurface({describe:async()=>goal(7),edit:async(rev)=>{expected=rev;throw Error('stale-goal-revision');}},()=>{});await s.refresh();assert.equal(await s.mutate('edit','新正文'),false);assert.equal(expected,7);assert.equal(s.state.goal.objective,'验证前端');assert.match(s.state.error,/stale/);assert.equal(s.state.busy,false);});
 test('卸载后迟到响应不更新，也不再提交变更',async()=>{const f=fixture(),read=deferred();let notices=0;const s=f.createGoalSurface({describe:()=>read.promise},()=>notices++);const pending=s.refresh();s.dispose();read.resolve(goal());await pending;assert.equal(s.state.goal,null);assert.equal(notices,0);assert.equal(await s.mutate('create','新目标'),false);});
 test('空白目标在调用前拒绝',async()=>{const f=fixture();let calls=0;const s=f.createGoalSurface({create:async()=>{calls++;return goal();}},()=>{});assert.equal(await s.mutate('create',' \n '),false);assert.equal(calls,0);assert.match(s.state.error,/正文/);});
-test('真实组件呈现状态、累计数和暂停/编辑/删除，明确自动驱动未接',async()=>{const f=fixture();const render=f.GoalBar.setup({adapter:{describe:async()=>goal()}});f.mounts[0]();for(let i=0;i<12;i++)await Promise.resolve();const tree=render();const text=JSON.stringify(tree);for(const label of ['验证前端','2 轮 · 9 秒','暂停','编辑','删除','自动跨轮执行尚未接通'])assert.ok(text.includes(label));assert.ok(!text.includes('完成目标'));f.unmounts[0]();});
+test('真实组件呈现状态、累计数和暂停/编辑/删除，明确自动驱动未接',async()=>{const f=fixture();const render=f.GoalBar.setup({adapter:{describe:async()=>goal()}});f.mounts[0]();for(let i=0;i<12;i++)await Promise.resolve();const tree=render();const text=JSON.stringify(tree);for(const label of ['验证前端','2 轮 · 运行时长 9 秒','暂停','编辑','删除','自动跨轮执行尚未接通'])assert.ok(text.includes(label));assert.ok(!text.includes('完成目标'));f.unmounts[0]();});
 
 test('目标编辑支持 Enter 保存、Shift+Enter 换行，IME 与长按不误提交',async()=>{
   const f=fixture();let saves=0;
@@ -29,5 +29,17 @@ test('目标编辑支持 Enter 保存、Shift+Enter 换行，IME 与长按不误
   assert.equal(saves,1,'同帧按键保存只提交一次 CAS');
   for(let i=0;i<12;i++)await Promise.resolve();
   assert.equal(render().children.some(v=>v?.type==='form'),false);
+  f.unmounts[0]();
+});
+test('目标正文默认紧凑显示，点击可展开并收起完整内容',async()=>{
+  const f=fixture();const render=f.GoalBar.setup({adapter:{describe:async()=>goal()}});
+  f.mounts[0]();for(let i=0;i<12;i++)await Promise.resolve();
+  const summary=()=>render().children[0].children.find(v=>v.props?.class==='goal-summary');
+  assert.equal(summary().props['aria-expanded'],false);
+  assert.equal(summary().props.title,'验证前端');
+  assert.equal(render().children.some(v=>v?.props?.class==='goal-objective'),false);
+  summary().props.onClick();assert.equal(summary().props['aria-expanded'],true);
+  assert.equal(render().children.find(v=>v?.props?.class==='goal-objective').children,'验证前端');
+  summary().props.onClick();assert.equal(summary().props['aria-expanded'],false);
   f.unmounts[0]();
 });
