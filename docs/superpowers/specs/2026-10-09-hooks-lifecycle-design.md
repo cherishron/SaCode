@@ -1,5 +1,7 @@
 # SaCode Hooks 生命周期事件系统设计（2026-10-09）
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-09-hooks-lifecycle-implementation.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 ## 1. 概述
 
 ### 1.1 目标

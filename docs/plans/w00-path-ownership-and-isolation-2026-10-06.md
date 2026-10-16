@@ -1,5 +1,7 @@
 # W00 步骤 5：路径所有权表与隔离工作安排（2026-10-06，A）
 
+> **进度对账（2026-10-09 整理）**：本文档为历史路径所有权登记/契约，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+
 判据：`node scripts/check_path_ownership.cjs` → `GATE: PASS (n checks, fail=0)`；反证 `--selftest` → `SELFTEST: PASS`。本表是**唯一真源**，门禁直接解析本文件的表体，不另抄一份。
 
 ## 1. 路径所有权表（单写入者）
@@ -61,6 +63,17 @@
 | A | W40 | file | docs/plans/lsp-l1-entry-wiring-2026-10-07.md |
 | A | W90 | file | apps/desktop/host-bridge.cjs |
 | E | W40 | file | core/src/ptc_exec.cj |
+| A | W40 | file | core/src/appcontainer_win.cj |
+| A | W40 | file | core/src/appcontainer_win_test.cj |
+| A | KB-02 | file | core/src/knowledge_context.cj |
+| A | KB-02 | file | core/src/knowledge_context_test.cj |
+| A | KB-02 | file | core/src/model_request.cj |
+| A | KB-02 | file | core/src/model_request_test.cj |
+| A | KB-02 | file | apps/host/test/knowledge/knowledge-context-host.test.mjs |
+| A | KB-02 | file | apps/desktop/renderer/side-panels.js |
+| A | KB-02 | file | apps/desktop/renderer/workspace-state.js |
+| A | KB-02 | file | apps/desktop/renderer/session-state.js |
+| A | KB-02 | file | apps/desktop/test/side-panels.test.mjs |
 | E | W40 | file | core/src/shlex.cj |
 | E | W40 | file | core/src/shlex_test.cj |
 | F | W50 | file | core/src/goal_runner.cj |
@@ -124,6 +137,8 @@
 | G | W60 | file | apps/desktop/renderer/pages/git-workbench-state.ts |
 | G | W60 | file | apps/desktop/test/git-workbench.test.mjs |
 | A | W60 | file | apps/desktop/test/bridge.test.mjs |
+| A | W90 | file | apps/desktop/test/frame-escape.test.mjs |
+| A | W90 | file | apps/desktop/test-support/protocol-smoke.cjs |
 
 ## 2. 归属规则（表没写完的那部分，按规则裁定而不是临时协商）
 
@@ -248,3 +263,9 @@ A/W90 新增自有 scripts/pack-windows-execution.mjs、docs/evidence/windows-ex
 2026-10-08 Codex 新增准入内存缺口责任：core/src/sha256.cj（提取原有压缩轮函数，原向量语义保持）、新增 sha256_file.cj / sha256_file_test.cj；execution_sandbox.cj 仅替换文件摘要读取。修改前 sha256.cj 无工作区差异。
 
 2026-10-09 Codex 准入安全补项：WindowsJobExecutor.matchesPolicy、windows_job_broker.cs 只新增可写工作区与只读工具目录不得嵌套的判断；新增 execution_sandbox_test.cj 单用例。原生代码本轮修改前核对现有清单哈希，不改其他会话源文件。
+
+2026-10-17 Codex/W40 本轮独占新增 `core/native/windows_process.h`、`core/native/windows_process.c`、`scripts/verify-windows-process.c`、`scripts/build-windows-process.mjs`：Windows AppContainer 原生创建/管道/Job 事实薄层及独立实测。尚不修改 `shlex.cj`、`execution_supervisor.cj` 或公共产品门禁；后续装配另登记精确增量。不覆盖其他会话修改、不提交他方文件。
+
+2026-10-17 Codex/W40 后续独占新增 `core/src/windows_process_adapter.cj`、`core/test-support/windows_process_adapter_test.cj`，负责内部 DLL ABI/句柄、profile 生命周期、管道和启动取消屏障适配；实际集成测试需显式 DLL 与 Medium 测试环境，用定向 CJC 编译，不混入无需该组件的默认单测发现；只读现有 shlex/cancel 契约，不改公共执行器或门禁。
+
+同批独占新增 `scripts/verify-windows-process-adapter.ps1`：显式当前 core 产物 + DLL + 中性导出根的定向测试入口；记录最后 Summary、退出码和指纹，不安装、不调 ACL、不删除运行证据。

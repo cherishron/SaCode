@@ -1,5 +1,7 @@
 # 4 种审批模式设计规格（Plan/Build/Auto/Yolo）
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-09-approval-modes.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 - 状态：v0.1，供架构评审；尚未开始实现。
 - 日期：2026-10-09。
 - 范围：把现有 `PermissionPresets`（2 个粗预设）与 `PlanModeController`（plan 开关）合并为统一的 4 模式控制器（plan/build/auto/yolo），引入 `PermissionPolicy` 策略层，按模式决定放行/拒绝/走审批工单；CLI 用 `--mode` 参数，桌面启用 `permission-menu.ts` 的 4 按钮 + Shift+Tab 循环。

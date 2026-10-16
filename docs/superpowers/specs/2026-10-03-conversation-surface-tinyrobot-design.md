@@ -1,5 +1,7 @@
 # 对话面升级：TinyRobot 消息组件接入设计
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-03-conversation-surface-tinyrobot.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 - 日期：2026-10-03
 - 目标矩阵行：`conversation`（当前 ◐，本批冲 ✔）
 - 关联验收口径：`docs/plans/plan-deepseek-harness-replication.md` §6.1.3（按上游一等公民面复刻桌面 UI）

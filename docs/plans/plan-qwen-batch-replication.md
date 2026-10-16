@@ -1,5 +1,7 @@
 # Qwen Code Batch API 复刻方案草案
 
+> **进度对账（2026-10-09 整理）**：本文档为方案草案（v0.1，供评审，尚未实现），所列范围/接口为设计目标。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+
 - 状态：v0.1，供架构评审；**尚未开始实现**，不装依赖、不替换实现、不发布。
 - 本次范围：把 https://qwenlm.github.io/qwen-code-docs/zh/users/features/batch/ 的 CLI 封装层（`qwen batch` 子命令族）复刻进本仓（仓颉 `core` + `apps/cli` + `apps/desktop`）。
 - 复刻口径：**行为等价 / 架构约束等价 / 格式或协议兼容 / 插件源码兼容**四级分开验收，不把其中一种宣称为全部兼容。完整范围保留，分批交付不等于删项。

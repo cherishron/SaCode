@@ -11,7 +11,7 @@
 - core：共享业务单测，仓颉包内测试布局需核cjpm发现和internal/protected可见性，未验证前不机械移动*_test.cj。
 - 模块test/fixtures与test/support：可公开复现的合成夹具与测试工具。Electron打包内test-support目前由main与package清单引用，迁移必须同步核运行和打包，不只移动文件。
 - scripts相关构建/分发测试归scripts的测试目录；extjs保持自身测试归属。
-- 临时副本、研究仓库、二进制、日志、用户资料及探针输出留apps/desktop/.tmp-test，禁止作为测试源码整体入库。纯净可复用探针后续抽取并加超时、脱敏、路径配置，再进入对应模块测试。
+- 临时副本、研究仓库、二进制、日志、用户资料及探针输出统一留 `target/tmp/`（2026-10-16 起；旧 `apps/desktop/.tmp-test/` 已退役，见 [artifact-layout-and-retention-2026-10-16.md](artifact-layout-and-retention-2026-10-16.md)），禁止作为测试源码整体入库。纯净可复用探针后续抽取并加超时、脱敏、路径配置，再进入对应模块测试。
 
 ## 并发与现状
 

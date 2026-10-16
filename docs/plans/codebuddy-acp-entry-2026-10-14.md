@@ -8,7 +8,13 @@
 
 官方依据：[ACP协议](https://www.codebuddy.cn/docs/cli/acp)、[CLI参数](https://www.codebuddy.cn/docs/cli/cli-reference)。默认沿用本机有效配置；`CODEBUDDY_API_KEY`只是可选认证途径，不是ACP准入硬条件。实际auth_required才提示用户在CodeBuddy处理，不复制凭据。
 
-## 接线顺序
+## 2026-10-15 接管更新
+
+Codex已暂停ACP文件修改，本轮在授权范围接管。最新定向事实见[接管验证记录](../evidence/2026-10-15-codebuddy-acp-takeover.md)，下表保留2026-10-14计划快照，不再代表当前进度。
+
+当前CB01–CB04已有独立生产构建、IPC/页面测试、核心审批取消结算、真实Host假提供方在途切换/设置门控与Host/CLI独立配置真实协议证据。默认配置仓颉session/new仍-32603，Node对照成功，根因未确认；不是默认配置产品就绪。实际Electron及最小无产品探针均启动退出0x80000003，窗口验收未通过。CB05真实模型任务未授权，未发送；安装/发布/其他平台未验，不据协议成功宣称产品完成。
+
+## 接线顺序（历史快照）
 
 | 工作项 | 状态 | 完成标准 |
 | --- | --- | --- |

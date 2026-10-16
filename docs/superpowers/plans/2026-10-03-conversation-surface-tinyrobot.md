@@ -1,5 +1,7 @@
 # 对话面升级（TinyRobot 消息组件接入）实现计划
 
+> **状态（2026-10-09 整理）**：本文为实施计划/设计规格，**尚未实现或未完成验收**（对应能力在 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账中列为 P1/P2 缺口）。勿将标题中的「实现 X」误读为已交付；产品真实进度以 PRD 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把桌面渲染层的对话消息面从「按行拆文本」升级为 TinyRobot BubbleList 气泡（连续同角色分组、自定义文本渲染器接管 tool 行、长消息折叠、色值令牌桥接），并把 `--ui-smoke` 断言条数只增不减地补齐。

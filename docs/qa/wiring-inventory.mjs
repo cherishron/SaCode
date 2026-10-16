@@ -20,5 +20,5 @@ for(const line of preload.split(/\r?\n/)){
  actions.push({action,channel,rendererReferences:references,handlerCandidates,dynamicHandlerCandidates,note:'仅文本定位，不证明已装配、授权或真实提供方可用'});
 }
 const result={date:'2026-10-13',sourceHead:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),scope:'当前工作区；未提交文件也可能出现在定位结果中',actions};
-const out=join(root,'apps/desktop/.tmp-test','wiring-inventory-'+Date.now()+'.json');mkdirSync(dirname(out),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2));
+const out=join(root,'target/tmp','wiring-inventory-'+Date.now()+'.json');mkdirSync(dirname(out),{recursive:true});writeFileSync(out,JSON.stringify(result,null,2));
 console.log(JSON.stringify({output:relative(root,out),actionCount:actions.length,noRendererTextReference:actions.filter(a=>a.rendererReferences.length===0).map(a=>a.action),noHandlerTextCandidate:actions.filter(a=>!a.handlerCandidates.length&&!a.dynamicHandlerCandidates.length).map(a=>a.action)}));

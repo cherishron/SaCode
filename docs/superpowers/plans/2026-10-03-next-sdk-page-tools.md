@@ -1,5 +1,7 @@
 # DSH 桌面入口 Next SDK 页面工具接入实现计划
 
+> **状态（2026-10-09 整理）**：本文为实施计划/设计规格，**尚未实现或未完成验收**（对应能力在 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账中列为 P1/P2 缺口）。勿将标题中的「实现 X」误读为已交付；产品真实进度以 PRD 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Electron 渲染层接入 `@opentiny/next-sdk`（构建期折叠），把 4 个固定页面工具（`page.readState`/`page.clickElement`/`page.inputText`/`page.scroll`）注册进 `document.modelContext`，并经 IPC 让主进程把页面工具并入 `extension/list`、把对 `page.*` 的调用经审批工单路由到渲染层执行。

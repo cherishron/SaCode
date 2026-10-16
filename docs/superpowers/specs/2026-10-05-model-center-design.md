@@ -1,5 +1,7 @@
 # SaCode 模型中心设计（供应商 / 自定义模型 / 调度恢复 / 计量预算 / 加速 / 迁移）
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-05-model-center-b1-catalog.md`、`plans/2026-10-05-model-center-b2-scheduling.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 - 日期：2026-10-05
 - 目标：当前无需账号即可使用、用户自主管理、支持安全换机迁移，并保留后续接入用户体系边界的模型中心
 - 关联口径：`docs/plans/plan-deepseek-harness-replication.md` §2（18 条架构不变量）、§2.5（配置面）、`docs/plans/dsh-capability-matrix.md`（提供商/凭证/token-meter 相关行）

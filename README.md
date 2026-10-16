@@ -4,7 +4,7 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**。仓颉�
 
 > 目标不是完整复刻 DSH 或清零编译警告，而是完成真实开发任务。DSH 方案与矩阵保留为历史参考，不作为当前产品完成标准。
 
-产品需求见 [PRD](docs/product/PRD.md)，平台、npm 分发与 GitHub 构建要求见 [平台支持与分发](docs/product/platform-and-distribution.md)，历史证据与阅读顺序见 [文档导航](docs/README.md)。
+产品需求见 [PRD](docs/product/PRD.md) 与 [全程跟进台账](docs/product/PRD-tracking.md)，平台、npm 分发与 GitHub 构建要求见 [平台支持与分发](docs/product/platform-and-distribution.md)，接口与对接见 [接口总览](docs/interfaces/README.md) 与 [对接方案](docs/integration/README.md)，历史证据与阅读顺序见 [文档导航](docs/README.md)。
 
 ## 平台目标与当前状态
 
@@ -35,7 +35,7 @@ SaCode 采用仓颉共享核心、CLI 与桌面入口，并提供独立 daemon �
 | `npm/sacode-cli-win32-x64/` | 现有 Windows x64 平台包配置；二进制与 DLL 为生成产物，其他平台待接入 |
 | `cjpm.toml` / `cjpm.lock` | 仓颉工作区配置与依赖锁定；成员为 core、CLI、Host、daemon |
 | `scripts/` | vendor 折叠、宿主与 CLI 打包、交付检查脚本 |
-| `docs/` | 产品需求、设计方案、历史能力矩阵与实测证据 |
+| `docs/` | 产品需求、设计方案、接口/对接总览、历史能力矩阵与实测证据 |
 | `.deps/stdx/` | 本机构建所需 stdx 依赖目录，不入库，首次构建前需准备 |
 
 本仓库没有采用示例中的 `v1/v2` 归档目录，也没有三大案例项目。CLI、Host 和 daemon 是引用共享核心的独立可执行项目，不能将它们描述成已验收的应用案例。
@@ -94,7 +94,7 @@ TinyRobot 消息组件与 HTTPS/SSE provider 已有源码接入。近期工作�
 | `extjs/` | 独立 Node JS 扩展宿主（NDJSON JSON-RPC），被 core 以子进程驱动 |
 | `npm/sacode-cli`、`npm/sacode-cli-win32-x64` | npm 启动主包与现有平台包；主包 JS 入库，平台二进制生成、不入库 |
 | `scripts/pack-*.mjs` | 打包脚本（CLI / 宿主 / Vue vendor） |
-| `docs/` | `plans/`（方案与能力矩阵）、`evidence/`（实测证据与阻塞项） |
+| `docs/` | `plans/`（方案与能力矩阵）、`interfaces/`・`integration/`（接口与对接总览）、`evidence/`（实测证据与阻塞项） |
 
 ## 核心能力与模块
 
@@ -145,7 +145,7 @@ core = { path = "../../core" }
 
 ## 快速开始
 
-以下桌面与 `.exe` 示例为**当前 Windows 开发路线**；不是 Linux/macOS/OHOS 的可执行部署说明。完整生产构建须覆盖固定提交的 core、CLI、Host 与 daemon（根 workspace 的 `cjpm build` 或逐成员串行记录），并遵守编译争用限制。Linux 已验证的依赖设置见 [Linux 构建说明](docs/build-linux.md)，鸿蒙交叉步骤待工具链核实。
+以下桌面与 `.exe` 示例为**当前 Windows 开发路线**；不是 Linux/macOS/OHOS 的可执行部署说明。完整生产构建须覆盖固定提交的 core、CLI、Host 与 daemon（根 workspace 的 `cjpm build` 或逐成员串行记录），并遵守编译争用限制。Linux 已验证的依赖设置见 [多平台构建指南](docs/build-platforms.md) §2（原 `build-linux.md` 已并入），鸿蒙交叉步骤待工具链核实。
 
 ### 1. 核心（仓颉）
 
@@ -212,7 +212,7 @@ node --test
 | JS 扩展宿主 | `cd extjs && node --test` |
 
 > 桌面单测**不要**写成 `node --test test/`——本机 Node 会把目录当模块解析，导致整串失败。
-> `bridge.test.mjs` 会在仓库根创建 `dualtest/`（已 gitignore）；异常残留时先 `rm -rf dualtest` 再跑。
+> 桌面真宿主用例的一次性目录统一落 `target/tmp/`（如 `target/tmp/dualtest/`）；旧 `dualtest/` 已随临时根迁移退役，异常残留按各用例自建目录清理。
 
 ## 打包
 

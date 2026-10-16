@@ -1,5 +1,7 @@
 # 51 行 ◐ 的 verb 接入清单（供并发线落库后直接执行）
 
+> **进度对账（2026-10-09 整理）**：本文档为历史接入清单/计划，所列 ◐→✔ 状态以当时口径为准，不随后续改动自动更新。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+
 **目的**：把能力矩阵里 **51 行 ◐**（按表头名「已复刻」列机械复算）升到 ✔ 所需的**入口侧接入工作**列成清单。每条给出：目标宿主 verb / 目标 CLI 子命令 / 断言集最小形态 / 会话日志事件 / 上游契约出处。并发线把 `apps/host/src/main.cj` 与 `apps/cli/src/main.cj` 的在飞改动落库后，按本表逐条推。
 
 > **本文首版有两处凭记忆写错**：把 `session-title` / `todo` / `plan` / `goal` / `permission-presets` / `jobs` / `webhook` 当已 ✔、把不在表里的 `gateway` 当一行，漏了 `llm-streaming` / `session-query`，且把 `agent-team` / `user-questions` / `web-server` / `product-telemetry` 放错阶段。现全部按矩阵「阶段」+「已复刻」两列机械重生成。教训同用户记忆「markdown 表格读写陷阱：读表必须按表头名取列」——**凡报数与分组一律取列，不照叙述累加**。

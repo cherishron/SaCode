@@ -1,5 +1,7 @@
 # 会话级 Worktree 实施计划
 
+> **状态（2026-10-09 整理）**：本文为实施计划/设计规格，**尚未实现或未完成验收**（对应能力在 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账中列为 P1/P2 缺口）。勿将标题中的「实现 X」误读为已交付；产品真实进度以 PRD 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 按 superpowers:subagent-driven-development 或 superpowers:executing-plans 逐任务实现。步骤用 `- [ ]` 跟踪。
 
 **Goal:** 让 SaCode 用户能在 CLI 与桌面两个入口显式进入/退出 Git worktree 会话工作区，并保证删除受归属、脏文件与独有提交三重保护。

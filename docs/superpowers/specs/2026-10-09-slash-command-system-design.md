@@ -1,5 +1,7 @@
 # SaCode 斜杠命令系统设计
 
+> **状态（2026-10-09 整理）**：本文为设计规格（待实现），与 `plans/2026-10-09-slash-command-system.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 **日期**：2026-10-09
 **状态**：已评审，待实现
 **作者**：brainstorming 流程产出

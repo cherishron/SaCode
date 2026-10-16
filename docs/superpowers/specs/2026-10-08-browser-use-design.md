@@ -1,5 +1,7 @@
 # Browser Use 设计规格（接管用户已登录浏览器）
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-08-browser-use-core-foundation.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 - 状态：v0.1，供架构评审；尚未开始实现。
 - 日期：2026-10-08。
 - 范围：让 Agent 通过用户已打开、已登录的 Chrome/Edge 完成网页任务；CLI 与桌面共享同一工具管线。

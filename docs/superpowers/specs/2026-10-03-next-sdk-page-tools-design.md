@@ -1,5 +1,7 @@
 # DSH 桌面入口 Next SDK 页面工具接入设计
 
+> **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-03-next-sdk-page-tools.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
+
 ## 目标
 
 在 DSH Electron 桌面渲染层接入 `@opentiny/next-sdk`，让页面级工具（读 DOM、点击、输入、滚动）通过 `document.modelContext` 注册，经 IPC 暴露给宿主，使模型能像调用 `write`/`read` 一样调用页面工具。

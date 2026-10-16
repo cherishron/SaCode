@@ -14,7 +14,7 @@ const SRC_EXT = ['cj', 'ts', 'tsx', 'js', 'mjs', 'cjs', 'vue', 'css', 'json', 'p
 // 临时输出的判据不是「扩展名是 txt」，而是「仓根或模块根的裸转储」：
 // 实测有 o.txt / test-output.txt / .qoder-el-*.txt / core/ct3.txt / cto2.txt / build-check.txt 这类形态。
 const TEMP_NAME = /(^|\/)(?:\.?[a-z0-9_-]*(?:cto\d*|ct\d|build-check|o|test-output|output|out|dump|log|\.qoder-el-[a-z]+|\.test-out\d))\.(?:txt|log|err)$/i;
-const TEMP_DIR = /(^|\/)(?:\.tmp-test|target|dist|node_modules|dualtest|protocol-bridge-dbg)(?:\/|$)/;
+const TEMP_DIR = /(^|\/)(?:target|dist|node_modules|protocol-bridge-dbg)(?:\/|$)/;
 const TEMP_ROOT_TXT = /^[^/]+\.txt$/;
 
 function parseOwnership(text) {
@@ -88,7 +88,7 @@ function audit(root, statusText, ownershipText, ignoreText) {
       : '无根目录裸转储或 cjpm/构建日志被跟踪');
   add('temp-dir-not-staged', tempDirLeak.length ? 'FAIL' : 'OK',
     tempDirLeak.length ? `产物目录出现在未忽略的在飞条目: ${tempDirLeak.map((e) => `${e.p}[${e.xy.trim()}]`).join(', ')}`
-      : 'target/dist/node_modules/dualtest/.tmp-test 等产物目录结构上进不来');
+      : 'target/dist/node_modules 等产物目录结构上进不来');
   add('staged-worktree-drift', am.length ? 'WARN' : 'OK',
     am.length ? `暂存后工作区又改动（半批风险）: ${am.map((e) => e.p).join(', ')}` : '无 AM 形态条目');
   add('matrix-not-dirty-at-close', matrixDirty ? 'WARN' : 'OK',
@@ -134,7 +134,7 @@ const PROBES = [
   { check: 'temp-output-not-staged', expect: 'FAIL', blurb: '加一条仓根 cjpm 转储',
     status: (s) => s + '\nA  core/ct9.txt' },
   { check: 'temp-dir-not-staged', expect: 'FAIL', blurb: '加一条没被忽略的产物目录条目',
-    status: (s) => s + '\n?? apps/desktop/.tmp-test/run/user-data/db' },
+    status: (s) => s + '\n?? target/tmp/run/user-data/db' },
   { check: 'staged-worktree-drift', expect: 'WARN', blurb: '把一条改成 AM（暂存后又改）',
     status: (s) => s.replace(' M core/src/plugin_store.cj', 'AM core/src/plugin_store.cj') },
   { check: 'matrix-not-dirty-at-close', expect: 'WARN', blurb: '追加一条矩阵在飞改动（基线里矩阵是干净的）',

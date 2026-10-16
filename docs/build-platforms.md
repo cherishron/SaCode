@@ -1,6 +1,6 @@
 # 多平台构建、Linux 桌面与 OHOS CLI 复验
 
-更新时间：2026-10-14。本文对应本批源码和脚本，**不是 Linux/macOS/OHOS 已通过的声明**；目标与权限规则见 [平台要求](product/platform-and-distribution.md)。
+更新时间：2026-10-14（2026-10-16 并入原 `build-linux.md` 的 stdx 配置与 Linux 构建读数）。本文对应本批源码和脚本，**不是 Linux/macOS/OHOS 已通过的声明**；目标与权限规则见 [平台要求](product/platform-and-distribution.md)。
 
 ## 1. 本批交付与限制
 
@@ -15,6 +15,18 @@
 ## 2. Linux：先构建再启动桌面
 
 在普通用户会话中操作，不以 root 启动 Electron；具备桌面显示环境。Ubuntu/Debian 示例前提（软件安装需自行授权）：Node.js 22、仓颉 1.1.3、C 编译器/ar、unzip、OpenSSL 3、bubblewrap 及 Electron 所需系统库。AppImage 可能要求 FUSE；无 FUSE 时按 AppImage 官方方式提取后启动，不能用关闭 Chromium 沙箱作为通用解决方案。
+
+### stdx 依赖路径（手动配置）
+
+四个生产模块的 `cjpm.toml` 为 `x86_64-unknown-linux-gnu` 和 `aarch64-unknown-linux-gnu` 配置了 `path-option = ["${SACODE_STDX_LIB_DIR}"]`。`SACODE_STDX_LIB_DIR` 必须指向解压后对应架构的 **dynamic/stdx** 目录（不是下载目录、ZIP、SDK 根或上一级 dynamic 目录），确认其中有 `stdx.crypto.common.cjo` 及配套动态库；其他 stdx 包也从该目录解析，不只单独配置 crypto.common。变量需要 export，单纯 shell 局部赋值不会传给 cjpm；没有设置时不要继续构建或把缺包视作生产源代码语法问题。aarch64 使用对应架构目录，以 `cjc -v` 的 Target 为准。
+
+独立运行（不经 `cjpm run`）时补运行库搜索路径：
+
+```bash
+export LD_LIBRARY_PATH="$SACODE_STDX_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+不要以关闭证书验证或替换加密实现的方式解决依赖问题；stdx crypto/net 的系统 OpenSSL 等依赖仍需遵循该版本官方要求。
 
 从检出的仓库根执行：
 
@@ -35,7 +47,7 @@ node scripts/pack-cli.mjs --no-build
 node scripts/verify-npm-install.mjs
 ```
 
-新构建产物及绝对来源映射记录在 `apps/desktop/.tmp-test/platform-build/<target>/`；每角色独立 target，不能相互覆盖名字同为 `main` 的产物。不能用旧 `apps/host/target/.../main` 代替本批输出。
+新构建产物及绝对来源映射记录在 `target/tmp/platform-build/<target>/`；每角色独立 target，不能相互覆盖名字同为 `main` 的产物。不能用旧 `apps/host/target/.../main` 代替本批输出。
 
 ### 开发态先看真实窗口
 
@@ -140,3 +152,17 @@ Linux 分支曾在私有副本以 Windows 编译器及文档信号签名替身�
 CLI 与 Host 现共用 `scripts/runtime-libraries.mjs`：递归检查真实子目录，只复制符合动态库名称的普通文件或指向文件的软链接，展开到包内 `bin/`；文件软链接解引用后保留原别名，不遍历目录软链接，不把 README 或整个 `.so` 同名目录当载荷。CLI 继续排除 unittest 等编译/测试专用库。
 
 本机新增夹具覆盖上述目录结构、版本库名、文件软链接、排除项，以及模拟 Linux Host 打包；`node scripts/verify-platform.mjs` 为 68 项通过。这是 Windows 上的打包逻辑验证，不替代 Linux 动态加载与运行。更新源码后可直接重跑 `pack-cli --no-build`（保留已成功的本轮构建记录），再继续 npm 安装与桌面步骤。
+
+### 已登记的 Linux 构建读数（并入自原 `build-linux.md`，2026-10-16）
+
+用户在 Linux 设置上述 stdx 变量后验证，两次结果对照：
+
+| 提交 | core | cli | daemon | host |
+| --- | --- | --- | --- | --- |
+| `f0e7cb6` | 静态库通过（31 warnings） | 链接失败，缺 Windows API | `scheduler.cj:51` 语法失败 | 两次编译超时，未进入链接 |
+| `7b42013` | 通过 | 通过，产出 14 MB 二进制，`main --help` 正常 | 同上，仍失败 | 未编译，桌面端仍 Windows-only |
+| `2c56c76` | 通过 | 通过，产出约 14 MB 二进制 | 通过，旧 scheduler 文件已删除 | 未编译；Linux 桌面仍待适配与验证 |
+
+平台声明隔离修正（`e2e8bf7`）解除了 CLI 的链接失败；daemon 的失败经快照编译取证为**腐化的死代码**（零调用方、引用不存在的 `HostBridge`、使用 1.1.3 已移除的枚举 `ordinal`），处置为移除该实现与其空骨架测试，而不是凭空补全一个没有调用方的功能。**在上述实测基线上不能把项目描述为 Linux 可完成真实任务**：当时非 Windows 信号、残留租约判活、持久追加与原子替换后端未实现；2026-10-14 批次新增 POSIX 薄层、信号消费、Linux 隔离及桌面/npm 构建入口，但尚待 Linux 复验。旧取证见 [Linux 后端交接](evidence/2026-10-13-linux-executable-build-followup.md)。
+
+以上为用户提供的 Linux 实测，不是本机 Windows 交叉验证；日志未随消息提供，不自行补推。macOS 复用共享契约但按自身 ABI/加载器/权限适配，运行暂待设备；OHOS 是独立交叉目标，**本文 Linux GNU 命令不能作为鸿蒙 CLI 构建命令**，待验证入口见 §4。

@@ -1,5 +1,7 @@
 # SaCode 模型中心 B2「调度闭环」实现计划
 
+> **状态（2026-10-09 整理）**：本文为实施计划/设计规格，**尚未实现或未完成验收**（对应能力在 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账中列为 P1/P2 缺口，对应 F07）。勿将标题中的「实现 X」误读为已交付；产品真实进度以 PRD 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把「自定义模型 → 过滤链 → 选路 → 上游尝试 → 失败归类 → 冷却与低频探测 → 试恢复」这条链在仓颉 `core` 里建成唯一决策真源，并让宿主任务路径、CLI 与桌面都只经这同一套规则取路由——本批不做计量账本（B3）、不做迁移（B5）、不做 relay（B4）。
