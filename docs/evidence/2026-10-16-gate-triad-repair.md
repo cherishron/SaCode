@@ -77,3 +77,12 @@
 - `node scripts/check_host_method_surface.cjs --selftest`：**13/13 探针命中，baseline=green**。
 - `node scripts/verify-all.mjs gates`：**4/4 门禁通过**，退出码 0。
 - `node --test test/gate-verdict.test.mjs test/verify-output.test.mjs`（工作目录 `apps/desktop`）：**5/5 通过**。
+
+## 当前工作区复核（2026-10-16，HEAD `4d06d64c7f4284c8c893c5381da75f586bab9273`）
+
+为确认上述门禁没有被后续提交或工作区状态破坏，本轮在当前 HEAD 重跑：
+
+- `node scripts/verify-all.mjs gates`：退出码 **0**；责任、路径、IPC、Host 四道门禁均通过，汇总 **4/4**。每一道同时执行普通检查与 `--selftest`，变异探针与基线均通过。
+- `node --test apps/desktop/test/gate-verdict.test.mjs apps/desktop/test/verify-output.test.mjs`：**5/5 通过**，退出码 **0**。
+
+本次只复验门禁与结果解析器，**没有**运行完整 core、desktop、CLI/Host 构建、安装态或真实模型验收。工作区仍有大量未提交产品改动；这次门禁通过只说明上述四项静态门禁及其自证通过，不代表全部脏改动已完成回归，也不应把任意后续红灯归为基线噪声。
