@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -14,19 +14,25 @@ const root = path.resolve(import.meta.dirname, '../../..');
 const daemonExe = process.env.SACODE_DAEMON || path.join(root, 'apps/daemon/target/release/bin/main.exe');
 const hostExe = process.env.SACODE_HOST_EXE || path.join(root, 'apps/desktop/dist/host/bin/sacode-host.exe');
 const policyFile = path.join(root, 'docs/plans/remote-capability-contract.json');
-const baseEnv = { ...process.env };
+// 不继承真实提供方、账户设置与凭据配置。
+const baseEnv = {};
+for (const [k,v] of Object.entries(process.env)) {
+  if (['path','systemroot','windir','temp','tmp'].includes(k.toLowerCase())) baseEnv[k] = v;
+}
 const pathKey = Object.keys(baseEnv).find(k => k.toLowerCase() === 'path') || 'PATH';
-baseEnv[pathKey] = [
-  process.env.SACODE_STDX_DLL_DIR || 'C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx',
-  process.env.SACODE_RUNTIME_DLL_DIR || 'D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative',
-  baseEnv[pathKey],
-].join(path.delimiter);
+// daemon 与宿主使用同一套运行库；宿主包目录是本测试已校验存在的运行时来源，
+// 这样干净环境不需要依赖某个开发者的 Cangjie PATH 配置。
+baseEnv[pathKey] = [path.dirname(hostExe), process.env.SACODE_STDX_DLL_DIR,
+  process.env.SACODE_RUNTIME_DLL_DIR, baseEnv[pathKey]].filter(Boolean).join(path.delimiter);
+const tempRoot = path.join(root, 'apps/desktop/.tmp-test/daemon-method-surface');
+await mkdir(tempRoot, { recursive: true });
 
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 // Windows 上刚被 SIGKILL 的子进程还会短暂占着 cwd，立刻 rmdir 会 EBUSY——
 // 这条红是清理时序，不是被测面。等有界重试，绝不把「没删掉」当通过。
 async function rmBounded(dir) {
+  assert.equal(path.dirname(path.resolve(dir)), path.resolve(tempRoot), '只能清理本测试直接创建的临时目录');
   const until = Date.now() + 8000;
   for (;;) {
     try {
@@ -155,7 +161,7 @@ async function rpcCall(url, bearer, method, params, id) {
 }
 
 test('宿主本人承认的能力必须覆盖 daemon 转发白名单（不许转发宿主不认的名字）', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-host-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-host-'));
   try {
     const declared = new Set(await hostDeclaredCaps(cwd));
     const fwd = forwardedNames();
@@ -168,7 +174,7 @@ test('宿主本人承认的能力必须覆盖 daemon 转发白名单（不许转
 });
 
 test('远程 initialize 的能力面宣告新铺开的家族，且不宣告宿主未实现的方法', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-init-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-init-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
@@ -190,7 +196,7 @@ test('远程 initialize 的能力面宣告新铺开的家族，且不宣告宿�
 });
 
 test('tips/get 经 daemon 打到真实宿主并由宿主作答，不再是分派层的 -32601', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-get-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-get-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
@@ -210,7 +216,7 @@ test('tips/get 经 daemon 打到真实宿主并由宿主作答，不再是分派
 });
 
 test('带资源归属的 model/list 放行后由宿主作答；缺 workspaceId 时授权面先拒', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-model-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-model-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
@@ -227,7 +233,7 @@ test('带资源归属的 model/list 放行后由宿主作答；缺 workspaceId �
 });
 
 test('铺开转发不等于放开授权：management 权限方法可达但按 scope 拒', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-authz-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-authz-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
@@ -242,7 +248,7 @@ test('铺开转发不等于放开授权：management 权限方法可达但按 sc
 });
 
 test('session/events 是 daemon 自有面：不转发，但由补读面作答并对外宣告', async () => {
-  const cwd = await mkdtemp(path.join(root, 'target', 'sacode-surf-events-'));
+  const cwd = await mkdtemp(path.join(tempRoot, 'sacode-surf-events-'));
   const d = await bootWithHost(cwd);
   try {
     const { bearer, url } = await authedDevice(d, cwd);
