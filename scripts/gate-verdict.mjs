@@ -36,6 +36,17 @@ export const UNWIRED_GATES = [
       "暂不进 GATE_SCRIPTS：接线要动 verify-all.mjs 的步骤表，而本批工作树里还有多份未提交在途改动，" +
       "避免在别人的在途窗口上按接线键；下一批验收把它作为独立小步接入，跑通一轮全绿读数后移出本表。",
   },
+  {
+    file: "check-release-manifest.cjs",
+    reason:
+      "2026-10-17 随 modelPull 超时诊断（target/tmp/modelpull-probe-20261016/）同批上线：分发载荷闭包检查" +
+      "（ca-bundle.pem / 启动必需 DLL 五颗 / zoneinfo / computer-use 双件 / app.asar），自证 6 探针 PASS，" +
+      "对 neutral 验证包实测抓到 3 个真实缺件。不进 GATE_SCRIPTS 的原因与放置守卫不同：它是**按需守卫**——" +
+      "verify-all 默认轮没有 unpacked 产物，SKIP 语义（`MANIFEST: SKIP` rc=0，无 GATE 行）会被 verdict() 如实读成「没验完」，" +
+      "这是防呆而非缺陷。接线形态：pack-host/electron-builder 重打后、中性导出前显式跑一次" +
+      "（`node scripts/check-release-manifest.cjs --dir=<unpacked>`），判绿要求 `MANIFEST: PASS (N checks, fail=0)` + rc=0；" +
+      "若将来要进 verify-all，需先给它加「无候选即显式豁免」的登记通道，避免 SKIP 与 FAIL 不可区分。",
+  },
 ];
 
 export function verdict(code, out) {
