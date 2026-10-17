@@ -34,12 +34,15 @@ public class ExecutionSupervisor {
     let ready: () -> Bool
     let executor: ShellExecutor
     let processProvider: ?ExecutionProcessProvider
+    let onSettled: (ExecutionSnapshot) -> Unit
     public init(service: ExecutionService, providerReady!: () -> Bool = {=> false},
-        executor!: ShellExecutor = ShellExecutor(), processProvider!: ?ExecutionProcessProvider = None) {
+        executor!: ShellExecutor = ShellExecutor(), processProvider!: ?ExecutionProcessProvider = None,
+        onSettled!: (ExecutionSnapshot) -> Unit = {_ =>}) {
         this.service = service
         this.ready = providerReady
         this.executor = executor
         this.processProvider = processProvider
+        this.onSettled = onSettled
     }
     private func saveOutput(id: String, channel: String, text: String, eof: Bool, truncated: Bool): Unit {
         let bytes = text.toArray()
@@ -141,6 +144,35 @@ public class ExecutionSupervisor {
                     // stop 可在读取修订后先落库，结算必须保留其取消裁决。
                     service.finish(id, service.describe(id).revision, facts.exitCode, facts.timedOut, facts.cancelled,
                         facts.outputComplete)
+                }
+            }
+            if (facts.exitObserved && facts.outputComplete) {
+                try {
+                    onSettled(service.describe(id))
+                } catch (_: Exception) {
+                    // 进程退出事实不能被后处理失败抹掉；失败另记，同步句柄不得报完整成功。
+                    synchronized(service.log.mtx) {
+                        let marker = JsonObject();
+                        marker.put("version", JsonInt(1))
+                        marker.put("sessionId", JsonString(service.sessionId));
+                        marker.put("executionId", JsonString(id))
+                        marker.put("reason", JsonString("review-or-cleanup-failed"))
+                        if (!service.lease.protects(service.log.path)) {
+                            throw Exception("already-owned")
+                        }
+                        service.log.append("execution/settlement-failed", marker.toString())
+                        var saved = false
+                        try {
+                            saved = service.checkpoint()
+                        } catch (_: Exception) {
+                            saved = false
+                        }
+                        if (!saved || !service.lease.protects(service.log.path)) {
+                            service.persistenceFailed = true
+                            throw Exception("persistence-failed")
+                        }
+                    }
+                    throw Exception("execution-settlement-failed")
                 }
             }
             return facts

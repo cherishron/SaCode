@@ -42,6 +42,24 @@ func traceRecordsExactSentPromptRouteAndMeasuredTimingWithoutSecrets() {
 }
 
 @Test
+func traceMetadataOnlyKeepsAuditWithoutPromptOrToolDescriptions() {
+    let log = SessionLog("trace-metadata-unused.log")
+    let p = RequestTraceProvider(traceBody, "fixture", log, TurnToken(),
+        { _ => AgentChunks([Chunk("finish", "", "stop")]) }, metadataOnly: true)
+    p.next(); p.close()
+    @Expect(log.eventCount(), Int64(2))
+    let view = requestTraceProjection(log.snapshotEvents().toArray())
+    @Expect(view.contains("chosen-provider"), false)
+    @Expect(view.contains("selected"), true)
+    @Expect(view.contains("completed"), true)
+    @Expect(view.contains("保持原文"), false)
+    @Expect(view.contains("工具规则"), false)
+    @Expect(view.contains("SECRET_KEY"), false)
+    @Expect(view.contains("SECRET_IMAGE"), false)
+    @Expect(view.contains("\"prompts\":null"), true)
+}
+
+@Test
 func traceInitFailureRecordsOneSafeTerminalWithoutExceptionSecret() {
     let log = SessionLog("trace-unused.log")
     let p = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("credential=PRIVATE") })
@@ -123,4 +141,39 @@ func traceModelLoopContinuationUsesIndependentImmutableSnapshots() {
     @Expect(rows.get(1).isSome(), true); @Expect(rows.get(2).isNone(), true)
     @Expect(rows.get(0).getOrThrow().asObject().get("toolCalls").getOrThrow().asArray().get(0).isSome(), true)
     @Expect(rows.get(1).getOrThrow().asObject().get("output").getOrThrow().asString().getValue(), "完成")
+}
+
+@Test
+func traceClassifiesProviderErrorWithoutLeakingRawText() {
+    let log = SessionLog("trace-classify.log")
+    // 非 200：429 → rate-limit 且带状态码；5xx → server。
+    let rateP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("http-status:429") })
+    try { rateP.next() } catch (_: Exception) {}
+    rateP.close()
+    @Expect(requestTraceProjection(log.snapshotEvents().toArray()).contains("provider-error:rate-limit:429"), true)
+    let srvP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("http-status:503") })
+    try { srvP.next() } catch (_: Exception) {}
+    srvP.close()
+    @Expect(requestTraceProjection(log.snapshotEvents().toArray()).contains("provider-error:server:503"), true)
+    // 传输层失败：拒绝握手 / 超时 → connection / timeout，不带状态码。
+    let connP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("http-request-error:connection-refused") })
+    try { connP.next() } catch (_: Exception) {}
+    connP.close()
+    @Expect(requestTraceProjection(log.snapshotEvents().toArray()).contains("provider-error:connection"), true)
+    let toP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("timeout") })
+    try { toP.next() } catch (_: Exception) {}
+    toP.close()
+    @Expect(requestTraceProjection(log.snapshotEvents().toArray()).contains("provider-error:timeout"), true)
+    // 上游错误体 / 中途断连 → server / connection。
+    let upP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("upstream-error") })
+    try { upP.next() } catch (_: Exception) {}
+    upP.close()
+    @Expect(requestTraceProjection(log.snapshotEvents().toArray()).contains("provider-error:server"), true)
+    // 任意原始文案：退回笼统 provider-error，且绝不抄出敏感片段。
+    let secretP = RequestTraceProvider(traceBody, "fixture", log, TurnToken(), { _ => throw Exception("raw-contains-SECRET_TOKEN_xyz") })
+    try { secretP.next() } catch (_: Exception) {}
+    secretP.close()
+    let secretView = requestTraceProjection(log.snapshotEvents().toArray())
+    @Expect(secretView.contains("provider-error"), true)
+    @Expect(secretView.contains("SECRET_TOKEN_xyz"), false)
 }
