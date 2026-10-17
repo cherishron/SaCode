@@ -229,13 +229,15 @@ func attBytesEq(a: Array<Byte>, b: Array<Byte>): Bool {
 
 func runJob(args: Array<String>): Int64 {
     if (args.size != 3) {
-        getStdErr().writeln("usage: sacode job <propose|authorize|start|describe|list|output|stop> <JSON参数>")
+        getStdErr().writeln("usage: sacode job <run|propose|authorize|start|describe|list|output|review-file|stop|review-prepare|review-apply|review-apply-describe|review-apply-stop> <JSON参数>")
         return 64
     }
-    let method = "execution/${args[1]}"
+    let oneShot = args[1] == "run"
+    let method = if (oneShot) { "execution/propose" } else { "execution/${args[1]}" }
     if (!ExecutionApi.handles(method)) { getStdErr().writeln("unknown-execution-method"); return 64 }
     var lease: Option<WriteLease> = None
     var failedPersistence = false
+    var capsuleOwner: ?ExecutionService = None
     try {
         let catalog = SessionCatalog(".")
         let session = catalog.selectedId()
@@ -248,6 +250,7 @@ func runJob(args: Array<String>): Int64 {
         }
         if (!log.load()) { throw Exception("replay-rejected") }
         let service = ExecutionService(log, owned, session)
+        capsuleOwner = Some(service)
         let desk = ApprovalDesk(log)
         var startProposal=""
         if(method=="execution/start") {
@@ -276,7 +279,31 @@ func runJob(args: Array<String>): Int64 {
             if (!desk.answer(ticket, "allowed-once")) { throw Exception("not-authorized") }
             obj.put("approvalId", JsonInt(ticket)); params = obj.toString()
         }
-        let api=ExecutionApi(service,desk,session)
+        let api=ExecutionApi(service,desk,session,reviewStore:Some(AttachmentStore("attachments/v1",log,AttachmentLimits.localBackend())),prepareWorkspace:oneShot)
+        if (oneShot) {
+            let prepared = JsonValue.fromStr(api.dispatch("execution/propose",params)).asObject()
+            if (!prepared.get("providerAvailable").getOrThrow().asBool().getValue()) { throw Exception("execution-provider-unverified") }
+            let id = prepared.get("executionId").getOrThrow().asString().getValue()
+            let exact = prepared.get("approvalArguments").getOrThrow().asString().getValue()
+            getStdErr().writeln("执行完整提案（含快照绑定）：${exact}")
+            getStdErr().writeln("仅批准此提案一次并立即执行？[y/N]"); getStdErr().flush()
+            if (decideAnswer(getStdIn().readln()) != "allowed-once") { throw Exception("not-authorized") }
+            let ticket = desk.askForCall("execution/start",exact)
+            if (!desk.answer(ticket,"allowed-once")) { throw Exception("not-authorized") }
+            let approval = JsonObject(); approval.put("sessionId",JsonString(session)); approval.put("executionId",JsonString(id))
+            approval.put("revision",prepared.get("revision").getOrThrow()); approval.put("proposalDigest",prepared.get("proposalDigest").getOrThrow()); approval.put("approvalId",JsonInt(ticket))
+            let admitted = JsonValue.fromStr(api.dispatch("execution/authorize",approval.toString())).asObject()
+            let start = JsonObject(); start.put("sessionId",JsonString(session)); start.put("executionId",JsonString(id)); start.put("revision",admitted.get("revision").getOrThrow())
+            let completed = api.dispatch("execution/start",start.toString())
+            println(completed)
+            if (!service.shutdownWorkspaces()) { failedPersistence = true; throw Exception("execution-workspace-unsettled") }
+            owned.release()
+            let terminal = JsonValue.fromStr(completed).asObject()
+            let facts = JsonValue.fromStr(terminal.get("result").getOrThrow().asString().getValue()).asObject()
+            if (facts.get("processSucceeded").getOrThrow().asBool().getValue()) { return 0 }
+            let exit = facts.get("exitCode").getOrThrow().asInt().getValue()
+            return if (exit > 0) { exit } else { Int64(1) }
+        }
         if(method=="execution/start") {
             let input=JsonValue.fromStr(params).asObject();let id=input.get("executionId").getOrThrow().asString().getValue()
             let read=JsonObject();read.put("sessionId",JsonString(session));read.put("executionId",JsonString(id))
@@ -296,11 +323,31 @@ func runJob(args: Array<String>): Int64 {
                 input.put("revision",admitted.get("revision").getOrThrow());params=input.toString()
             }
         }
+        if (method == "execution/review-apply") {
+            // CLI审批不跨进程复用；先展示持久提案，确认后只消费本进程新票。
+            let input = JsonValue.fromStr(params).asObject()
+            if (input.size() != 2 || input.get("sessionId").getOrThrow().asString().getValue() != session) {
+                throw Exception("bad-review-apply-arguments")
+            }
+            let status = JsonValue.fromStr(api.dispatch("execution/review-apply-describe", params)).asObject()
+            if (status.get("phase").getOrThrow().asString().getValue() == "awaiting-approval") {
+                let exact = status.get("approvalArguments").getOrThrow().asString().getValue()
+                getStdErr().writeln("写回完整提案：${exact}")
+                getStdErr().writeln("仅批准上述文件差异写回一次？[y/N]"); getStdErr().flush()
+                if (decideAnswer(getStdIn().readln()) != "allowed-once") { throw Exception("not-authorized") }
+                let ticket = desk.askForCall("execution/review-apply", exact)
+                if (!desk.answer(ticket, "allowed-once")) { throw Exception("not-authorized") }
+                input.put("approvalId", JsonInt(ticket))
+            } else { input.put("approvalId", JsonInt(1)) } // 重放状态不消费票。
+            params = input.toString()
+        }
         println(api.dispatch(method, params))
+        if (!service.shutdownWorkspaces()) { failedPersistence = true; throw Exception("execution-workspace-unsettled") }
         if (let Some(owned) <- lease) { owned.release() }
         return 0
     } catch (e: Exception) {
-        failedPersistence = e.message == "persistence-failed"
+        failedPersistence = failedPersistence || e.message == "persistence-failed"
+        if (let Some(owned) <- capsuleOwner) { if (!owned.shutdownWorkspaces()) { failedPersistence = true } }
         if (!failedPersistence) { if (let Some(owned) <- lease) { owned.release() } }
         let result = JsonObject(); result.put("error", JsonString(e.message))
         getStdErr().writeln(result.toString()); return 1

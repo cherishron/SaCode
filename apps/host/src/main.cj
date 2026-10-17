@@ -831,29 +831,6 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
             }
             return
         }
-        if (method == "model/pull") {
-            // 拉取与「测试连接」同源：真的发一次 GET /models。坏响应不 catch——
-            // 必须由外层抛出去变成帧错误，绝不能报「0 个模型」。
-            if (let Some(rev) <- revisionOrReject(body, idText)) {
-                let wanted = jsonStr(body, "providerId")
-                var baseUrl = ""
-                var reference = ""
-                for (p in registry.describe().providers) {
-                    if (p.id == wanted) {
-                        baseUrl = p.baseUrl
-                        reference = p.credentialRef
-                    }
-                }
-                if (baseUrl.size == 0) {
-                    emit(errFrame(idText, -32020, "provider-not-found"))
-                    return
-                }
-                let ids = ModelCatalog().fetch(baseUrl, resolveCredentialKey(reference))
-                registry.applyPulledModels(wanted, ids, rev)
-                emit(okFrame(idText, providerViewJson(registry.describe(), creds)))
-            }
-            return
-        }
         if (method == "model/upstream/upsert") {
             if (let Some(rev) <- revisionOrReject(body, idText)) {
                 registry.addUpstreamModel(jsonStr(body, "providerId"), jsonStr(body, "modelId"), rev)
@@ -1046,7 +1023,10 @@ class HostRuntime {
     var acpRuntime: ?AcpRuntimeApi = None
     var acpSettings: ?AcpSessionSettings = None
     let acpProbe = HostAcpProbe()
+    let modelPulls = HostModelPulls()
     var executionService: Option<ExecutionService> = None
+    let reviewRuns = ArrayList<ReviewApplyRun>()
+    var reviewSettled = true
     let executionRuns = ArrayList<ExecutionRun>()
     var executionSettled = true
     // token 计量与预算：账只认会话日志重算出来的那份，内存计数不是第二真源，
@@ -1115,11 +1095,18 @@ class HostRuntime {
     }
 
     func handleRpc1(method: String, body: String, idText: String): Bool {
+        if (method == "model/pull") {
+            if (turnBusy) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
+            modelPulls.start(body, idText)
+            return true
+        }
         if (method == "model/registry/create-instance") {
+            if (modelPulls.busy()) { emit(errFrame(idText, -32020, "model-pull-in-flight")); return true }
             if (turnBusy) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
             providerCatalogInstanceRequest(body, idText); return true
         }
         if (method == "model/registry/save-credential") {
+            if (modelPulls.busy()) { emit(errFrame(idText, -32020, "model-pull-in-flight")); return true }
             if (turnBusy) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
             providerCredentialRequest(body, idText)
             return true
@@ -1127,6 +1114,7 @@ class HostRuntime {
         if (method == "model/registry/describe" || method == "model/registry/catalog" || method == "model/registry/update" || method == "model/registry/remove" || method == "model/registry/set-default" || method == "model/registry/add-catalog" || method == "model/registry/sort" || method == "model/registry/set-enabled" || method == "credential/describe" || method == "credential/set" || method == "credential/unset" || method == "model/list" || method == "custom/describe" || method == "custom/upsert" || method == "custom/remove" || method == "binding/upsert" || method == "binding/remove" || method == "binding/reorder" || method == "model/pull" || method == "model/upstream/upsert" || method == "custom/import/new" || method == "custom/import/into") {
             // 在途轮次里只放行读面：改提供商或换凭据不该打断正在流式返回的这一轮
             let configReadSide = method == "model/registry/describe" || method == "model/registry/catalog" || method == "credential/describe" || method == "custom/describe"
+            if (modelPulls.busy() && !configReadSide) { emit(errFrame(idText, -32020, "model-pull-in-flight")); return true }
             if (turnBusy && !configReadSide) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
             providerSurfaceRequest(method, body, idText)
             return true
@@ -1282,7 +1270,7 @@ class HostRuntime {
 
     func handleRpc12(method: String, idText: String): Bool {
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"automation/list\",\"automation/save\",\"automation/control\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"global/settings/set-default-permission\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/request-trace\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"model/pull/describe\",\"model/pull/cancel\",\"automation/list\",\"automation/save\",\"automation/control\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"global/settings/set-default-permission\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/request-trace\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/review-file\",\"execution/review-prepare\",\"execution/review-apply\",\"execution/review-apply-describe\",\"execution/review-apply-stop\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             return true
         }
         return false
@@ -1312,7 +1300,7 @@ class HostRuntime {
                     }
                     let service = if (leaseHeld) { executionService ?? ExecutionService(source, lease, activeId) }
                         else { ExecutionService(source, lease, activeId) }
-                    emit(okFrame(idText, ExecutionApi(service, approvalDesk, activeId).dispatch(method, params.toString())))
+                    emit(okFrame(idText, ExecutionApi(service, approvalDesk, activeId, reviewStore: Some(AttachmentStore(attDir, source, AttachmentLimits.localBackend()))).dispatch(method, params.toString())))
                 } else {
                     if (!leaseHeld) {
                         if (!lease.takeoverIfStale()) { throw Exception("already-owned") }
@@ -1325,9 +1313,12 @@ class HostRuntime {
                         executionService = Some(service)
                         service.recover()
                     }
-                    let response = ExecutionApi(executionService.getOrThrow(), approvalDesk, activeId).dispatch(method, params.toString(),
-                        asynchronous: method == "execution/start", onStarted: { run => executionRuns.add(run) })
+                    let response = ExecutionApi(executionService.getOrThrow(), approvalDesk, activeId,
+                        reviewStore: Some(AttachmentStore(attDir, shared, AttachmentLimits.localBackend()))).dispatch(method, params.toString(),
+                        asynchronous: method == "execution/start" || method == "execution/review-apply",
+                        onStarted: { run => executionRuns.add(run) }, onReviewStarted: { run => reviewRuns.add(run) })
                     if (executionRuns.size > 0) { executionSettled = false }
+                    if (reviewRuns.size > 0) { reviewSettled = false }
                     emit(okFrame(idText, response))
                 }
             } catch (e: Exception) { emit(errFrame(idText, -32026, e.message)) }
@@ -2252,12 +2243,14 @@ class HostRuntime {
                     let initialRequest = if (centered) { "" } else { modelRequestJson(model, firstLog.snapshotEvents().toArray(), tools: toolSpecs, attachStore: turnAtt, supportsImages: imageCapability) }
                     let first: () -> Provider = { => DeferredProvider({ =>
                         if (centered) { routing.open(firstLog, tk, turnAtt, frozenTools) }
-                        else { RealSseProvider(baseUrl, turnKey, initialRequest, tk) }
+                        else { RequestTraceProvider(initialRequest, "direct", firstLog, tk,
+                            { body => RealSseProvider(baseUrl, turnKey, body, tk) }, metadataOnly: true) }
                     }, tk) }
                     let turnLog = shared
                     let continuation: (String) -> Provider = { request =>
                         if (centered) { routing.open(turnLog, tk, turnAtt, frozenTools) }
-                        else { RealSseProvider(baseUrl, turnKey, request, tk) }
+                        else { RequestTraceProvider(request, "direct", turnLog, tk,
+                            { body => RealSseProvider(baseUrl, turnKey, body, tk) }, metadataOnly: true) }
                     }
                     turnGoal = None
                     if (goalStart) {
@@ -3233,6 +3226,10 @@ class HostRuntime {
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
         try {
+        if (method == "model/pull/describe" || method == "model/pull/cancel") {
+            modelPulls.control(method, body, idText)
+            continue
+        }
         if (let Some(bound) <- acpRuntime) {
             if (!bound.quiescent() && !acpSafeWhileOwned(method)) {
                 emit(errFrame(idText, -32027, "acp-in-flight-or-unsettled")); continue
@@ -3259,9 +3256,14 @@ class HostRuntime {
                 executionRuns.clear()
             }
         }
+        if (reviewRuns.size > 0 && reviewRuns[0].settled()) {
+            try { reviewRuns[0].wait(); reviewSettled = true }
+            catch (e: Exception) { reviewSettled = false; getStdErr().writeln("review-settlement-failed: ${e.message}") }
+            reviewRuns.clear()
+        }
         // 活动执行只开放只读查询与精确停止；不能切换日志或并行开启其他副作用。
-        if (executionRuns.size > 0 || !executionSettled) {
-            let safe = method == "initialize" || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || method == "execution/stop" ||
+        if (executionRuns.size > 0 || !executionSettled || reviewRuns.size > 0 || !reviewSettled) {
+            let safe = method == "initialize" || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || method == "execution/stop" || method == "execution/review-apply-stop" ||
                 method == "session/projection" || method == "session/subscribe" || method == "session/catalog" ||
                 method == "workspace/get" || method == "appearance/get" || method == "usage/status" ||
                 method == "goal/describe" || method == "model/get" || method == "model/registry/describe" ||
@@ -3276,7 +3278,7 @@ class HostRuntime {
                 }
             }
         }
-        if (shared.isDurableFrozen() && method != "initialize" && method != "turn/poll" && method != "turn/cancel" && method != "acp/delegation/cancel" && method != "acp/delegation/close") {
+        if (shared.isDurableFrozen() && method != "execution/review-apply-stop" && method != "initialize" && method != "turn/poll" && method != "turn/cancel" && method != "acp/delegation/cancel" && method != "acp/delegation/close") {
             emit(errFrame(idText, -32026, "session-durable-frozen"))
             continue
         }
@@ -3368,11 +3370,24 @@ class HostRuntime {
         }
     }
     // stdin EOF 不释放活任务租约；先停止当前进程拥有的执行，再确认退出事实。
+    let modelPullSettled = modelPulls.shutdown()
+    if (!modelPullSettled) {
+        getStdErr().writeln("host-exit-model-pull-unsettled")
+    }
     if (executionRuns.size > 0) {
             let run = executionRuns[0]
         try { run.cancel() } catch (e: Exception) { getStdErr().writeln("host-exit-execution-stop: ${e.message}") }
         try { let result = run.wait(timeoutMs: 5000); executionSettled = result.exitObserved && result.outputComplete }
         catch (e: Exception) { executionSettled = false; getStdErr().writeln("host-exit-execution-unsettled: ${e.message}; lease retained") }
+    }
+    if (reviewRuns.size > 0) {
+        reviewRuns[0].cancel()
+        try { reviewRuns[0].wait(timeoutMs: 5000); reviewSettled = true }
+        catch (e: Exception) { reviewSettled = false; getStdErr().writeln("host-exit-review-unsettled: ${e.message}; lease retained") }
+    }
+    if (!reviewSettled) { executionSettled = false }
+    if (let Some(owned) <- executionService) {
+        if (!owned.shutdownWorkspaces()) { executionSettled = false; getStdErr().writeln("host-exit-workspace-unsettled: lease retained") }
     }
     teamSchedulerToken.cancel()
     if (!teamRuntime.shutdown(timeoutMs: 1000)) { getStdErr().writeln("host-exit-team-unsettled: leases retained") }
@@ -3442,7 +3457,7 @@ class HostRuntime {
             getStdErr().writeln("host-exit-with-unflushed-writes: lease retained")
         }
     }
-    return 0
+    return if (modelPullSettled) { 0 } else { 1 }
     }
 }
 

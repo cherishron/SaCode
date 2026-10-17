@@ -78,6 +78,23 @@ class WindowsPrivateWorkspace {
             gate.unlock()
         }
     }
+    // 只能用于已确认退出且产物已导出的私有副本；不接收外部路径或修改源项目。
+    func disposeContents(): Unit {
+        gate.lock()
+        try {
+            if (closed) {
+                throw Exception("windows-workspace-closed")
+            }
+            let dispose = CFunc<(CPointer<Unit>) -> UInt32>(
+                windowsRequiredExport(library.module, "sacode_windows_workspace_dispose_contents"))
+            let error = unsafe { dispose(owned) }
+            if (error != 0) {
+                throw Exception("windows-workspace-dispose:${error}")
+            }
+        } finally {
+            gate.unlock()
+        }
+    }
     // 仅允许导出并清空内容后的空目录撤销；失败保留全部所有权以供独立清理后重试。
     func close(): Unit {
         gate.lock()

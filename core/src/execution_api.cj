@@ -7,18 +7,28 @@ public class ExecutionApi {
     let service: ExecutionService
     let desk: ApprovalDesk
     let sessionId: String
-    public init(service: ExecutionService, desk: ApprovalDesk, sessionId: String) {
+    let workspaceRoot: String
+    let prepareWorkspace: Bool
+    let reviewStore: ?AttachmentStore
+    public init(service: ExecutionService, desk: ApprovalDesk, sessionId: String, reviewStore!: ?AttachmentStore = None,
+        workspaceRoot!: String = "", prepareWorkspace!: Bool = true) {
         this.service = service
         this.desk = desk
         this.sessionId = sessionId
+        this.reviewStore = reviewStore
+        this.workspaceRoot = workspaceRoot
+        this.prepareWorkspace = prepareWorkspace
     }
     public static func handles(method: String): Bool {
         return method == "execution/propose" || method == "execution/authorize" || method == "execution/start" ||
             method == "execution/describe" || method == "execution/output" || method == "execution/stop" || method ==
-            "execution/list"
+            "execution/list" || method == "execution/review-file" || method == "execution/review-prepare" || method ==
+            "execution/review-apply" || method == "execution/review-apply-describe" || method ==
+            "execution/review-apply-stop"
     }
     public static func readOnly(method: String): Bool {
-        return method == "execution/describe" || method == "execution/output" || method == "execution/list"
+        return method == "execution/describe" || method == "execution/output" || method == "execution/list" || method ==
+            "execution/review-file" || method == "execution/review-apply-describe"
     }
     private func listJson(cursor: Int64, limit: Int64): String {
         if (cursor < -1 || limit < 1 || limit > 16) {
@@ -65,8 +75,15 @@ public class ExecutionApi {
         result.put("revision", JsonInt(state.revision));
         result.put("phase", JsonString(state.phase))
         result.put("result", JsonString(state.result))
+        result.put("workspaceSnapshot", JsonString(service.workspaceSnapshot(state.id)))
+        result.put("review", JsonString(service.review(state.id)))
         let proposal = JsonValue.fromStr(state.proposal).asObject()
-        let providerReason = platformExecutionBlockReason(proposal.get("cwd").getOrThrow().asString().getValue())
+        var providerReason = platformExecutionBlockReason(proposal.get("cwd").getOrThrow().asString().getValue())
+        synchronized(service.log.mtx) {
+            if (service.workspaceCapsules.contains(state.id) && service.workspaceCapsules[state.id].ready()) {
+                providerReason = ""
+            }
+        }
         result.put("providerAvailable", JsonBool(providerReason.size == 0))
         result.put("providerReason", JsonString(providerReason))
         if (state.phase == "awaiting-approval") {
@@ -75,11 +92,21 @@ public class ExecutionApi {
         return result.toString()
     }
     public func dispatch(method: String, params: String, asynchronous!: Bool = false,
-        onStarted!: (ExecutionRun) -> Unit = {_ =>}): String {
+        onStarted!: (ExecutionRun) -> Unit = {_ =>}, onReviewStarted!: (ReviewApplyRun) -> Unit = {_ =>}): String {
         if (!ExecutionApi.handles(method)) {
             throw Exception("unknown-execution-method")
         }
+        if (method == "execution/review-prepare" || method == "execution/review-apply" || method ==
+            "execution/review-apply-describe" || method == "execution/review-apply-stop") {
+            if (let Some(store) <- reviewStore) {
+                return ExecutionReviewApi(service, store, desk, sessionId).dispatch(method, params,
+                    asynchronous: asynchronous, onStarted: onReviewStarted)
+            }
+            throw Exception("workspace-review-store-unavailable")
+        }
         let obj = JsonValue.fromStr(params).asObject()
+        var path = ""
+        var side = ""
         var id = ""
         var revision = Int64(0)
         var cursor = Int64(-1)
@@ -113,6 +140,16 @@ public class ExecutionApi {
                 if (method == "execution/describe") {
                     if (obj.size() != 2) {
                         throw Exception("shape")
+                    }
+                } else if (method == "execution/review-file") {
+                    if (obj.size() != 5) {
+                        throw Exception("shape")
+                    }
+                    revision = obj.get("revision").getOrThrow().asInt().getValue()
+                    path = obj.get("path").getOrThrow().asString().getValue()
+                    side = obj.get("side").getOrThrow().asString().getValue()
+                    if (revision < 1 || path.size < 1 || path.size > 4096 || (side != "before" && side != "after")) {
+                        throw Exception("review")
                     }
                 } else if (method == "execution/output") {
                     if (obj.size() != 4) {
@@ -151,10 +188,22 @@ public class ExecutionApi {
             return listJson(cursor, limit)
         }
         if (method == "execution/propose") {
+            if (prepareWorkspace) {
+                if (let Some(prepared) <- prepareExecutionWorkspace(service, reviewStore, workspaceRoot, task, request,
+                    proposal)) {
+                    return stateJson(prepared)
+                }
+            }
             return stateJson(service.propose(task, request, proposal))
         }
         if (method == "execution/describe") {
             return stateJson(service.describe(id))
+        }
+        if (method == "execution/review-file") {
+            if (let Some(store) <- reviewStore) {
+                return executionReviewFile(service, store, sessionId, id, revision, path, side)
+            }
+            throw Exception("workspace-review-store-unavailable")
         }
         if (method == "execution/output") {
             return service.output(id, cursor, limit)
@@ -166,13 +215,46 @@ public class ExecutionApi {
             return stateJson(service.authorize(id, revision, approvalId, desk))
         }
         if (method == "execution/stop") {
-            return stateJson(service.stop(id, revision))
+            let stopped = service.stop(id, revision)
+            if (stopped.phase == "cancelled-before-start") {
+                let owned = synchronized(service.log.mtx) {
+                    service.workspaceCapsules.get(id)
+                }
+                if (let Some(capsule) <- owned) {
+                    if (!capsule.shutdown()) {
+                        throw Exception("execution-workspace-unsettled")
+                    }
+                }
+            }
+            return stateJson(stopped)
+        }
+        let capsule = synchronized(service.log.mtx) {
+            service.workspaceCapsules.get(id)
+        }
+        if (let Some(owned) <- capsule) {
+            let run = owned.start(revision)
+            if (asynchronous) {
+                onStarted(run);
+                return stateJson(run.starting)
+            }
+            run.wait();
+            return stateJson(service.describe(id))
+        }
+        if (service.workspaceSnapshot(id).size > 0) {
+            throw Exception("execution-workspace-unavailable")
         }
         // 就绪来自本平台固定命令探测，不接受 RPC 自报的 providerAvailable。
         let state = service.describe(id)
         let directory = JsonValue.fromStr(state.proposal).asObject().get("cwd").getOrThrow().asString().getValue()
-        let supervisor = ExecutionSupervisor(service, providerReady: {=> platformExecutionReady(directory)},
-            executor: ShellExecutor(workingDirectory: directory, sandboxRuntime: platformSandbox(directory)))
+        // Windows 强制隔离为显式选择加入；默认保持 fail-closed，不创建 AppContainer 执行提供方。
+        let enforcing = windowsExecutionEnforcingAvailable(directory)
+        var processProvider: ?ExecutionProcessProvider = None
+        if (enforcing) {
+            processProvider = windowsEnforcingProcessProvider(state.proposal, directory)
+        }
+        let supervisor = ExecutionSupervisor(service, providerReady: {=> platformExecutionReady(directory) || enforcing},
+            executor: ShellExecutor(workingDirectory: directory, sandboxRuntime: platformSandbox(directory)),
+            processProvider: processProvider)
         if (asynchronous) {
             let run = supervisor.start(id, revision)
             onStarted(run)

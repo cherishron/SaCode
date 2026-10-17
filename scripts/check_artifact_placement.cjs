@@ -37,15 +37,19 @@ const ROOT_FILES = new Set([
 //   files 为数组：按允许集核对；files 为 null：只拦产物后缀（供入口文件持续新增的模块用）。
 const CJPM_FILES = ["cjpm.lock", "cjpm.toml"];
 const RESIDUE_RE = /\.(log|lease|tmp|bak)$/i;
+// build.cj 是 cjpm stagePostBuild 钩子源码（可维护）；build-script-cache/ 是 cjpm 编译
+// 该钩子的缓存；target/ 是 cjpm 单成员构建产物。三者均为 issue #725 自研绕过（2026-10-17）
+// 落地的固定构建形态，登记入允许集——但 build-script-cache/ 与 target/ 仍由 .gitignore 覆盖。
+const CJPM_BUILD_FILES = [...CJPM_FILES, "build.cj"];
 const MODULES = [
   { path: "apps", dirs: ["cli", "daemon", "desktop", "host", "mobile"], files: [] },
   { path: "core", dirs: ["native", "src", "target", "test-support"], files: CJPM_FILES },
-  { path: "apps/cli", dirs: ["src", "test"], files: CJPM_FILES },
-  { path: "apps/daemon", dirs: ["src", "test"], files: CJPM_FILES },
-  { path: "apps/host", dirs: ["src", "test"], files: CJPM_FILES },
+  { path: "apps/cli", dirs: ["build-script-cache", "src", "target", "test"], files: CJPM_BUILD_FILES },
+  { path: "apps/daemon", dirs: ["build-script-cache", "src", "target", "test"], files: CJPM_BUILD_FILES },
+  { path: "apps/host", dirs: ["build-script-cache", "src", "target", "test"], files: CJPM_BUILD_FILES },
   {
     path: "apps/desktop",
-    dirs: ["data", "dist", "import-adapters", "node_modules", "renderer", "scan-adapters", "test", "test-support"],
+    dirs: ["data", "dist", "import-adapters", "node_modules", "renderer", "scan-adapters", "target", "test", "test-support"],
     files: null,
   },
   { path: "apps/mobile", dirs: ["kotlin", "kotlin-test"], files: [] },

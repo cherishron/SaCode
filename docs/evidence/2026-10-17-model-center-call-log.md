@@ -57,3 +57,7 @@
 ## 7. 交付可见性
 
 当前 `D:\tmp\SaCode-latest`（10-16 构建）**不含**本轮改动；用户运行实例需重新构建 / 中性导出后才可见，且 `model-call-log.ts` 等新 TS 须 `npm run vendor` 重打包进 `client-slots.iife.js`。
+
+## 8. 补记（同日 08:1x）：§5 已知限制已修复（方案 A）
+
+§5「目录扫描序无时间序、可能漏最活跃者」的限制**当天闭环**，采用**渲染层-contained 方案 A**（不改 core/host、免 cjpm 重编）：`model-center-adapter.ts` 的 `'model-call-log'.describe()` 先对每个会话做一次轻量 `requestTrace(id,-1,1)` 取该会话最近一次调用时间 `lastCall`，按 `lastCall` 降序取前 K=30 个会话，再对这 K 个拉全量 `requestTrace(id,-1,50)` 合并取前 N=200。代价＝N 次轻调用；收益＝跨大量会话稳定覆盖最活跃的 K 个。测试新增「35 会话、目录序≠活跃序、断言最活跃末位 s34 被覆盖 / 最惰性 s0 被丢弃」，`model-center.test.mjs` **16/16 PASS**，`npm run vendor` 已重打包（bundle 含新逻辑）。

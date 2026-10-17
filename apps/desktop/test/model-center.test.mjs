@@ -86,6 +86,27 @@ test('模型调用日志适配器跨会话聚合、按时序倒序、并补全�
   assert.equal(view.scanned,3);
 });
 
+test('模型调用日志按 last-active 覆盖最活跃会话（目录序≠活跃序，>K 时丢最惰性）',async()=>{
+  const {createModelCenterAdapters}=await run(await bundle('model-center-adapter.ts'));
+  const entries=[];
+  for(let i=0;i<35;i++){entries.push({id:'s'+i,title:'会话'+i});}
+  const api={
+    sessionCatalog:async()=>({entries}),
+    requestTrace:async(sessionId)=>{
+      const n=Number(sessionId.slice(1));      // s0->0 … s34->34，活跃度随序号递增
+      const t=n*10+1;
+      return {requests:[{request:{time:t,header:{config:{provider:'p',model:'m'}}},end:{state:'completed',durationMs:1,ttftMs:1,usageTokens:'{}'},output:'o'}]};
+    },
+  };
+  const view=await createModelCenterAdapters(api)['model-call-log'].describe();
+  assert.equal(view.scanned,30,'限流取前 K=30');
+  assert.equal(view.total,35);
+  assert.ok(view.calls.some(c=>c.sessionId==='s34'),'最活跃的末位会话 s34 必须被覆盖（旧 first-30 会漏）');
+  assert.ok(!view.calls.some(c=>c.sessionId==='s0'),'最惰性的 s0 必须被丢弃');
+  assert.equal(view.calls[0].sessionId,'s34','首位＝最活跃');
+  assert.equal(view.calls[0].request.time,341);
+});
+
 test('供应商新增表单提交自定义标记及用户填写的模型目录',async()=>{
   const result=await build({entryPoints:[join(pages,'provider-settings.ts')],bundle:true,write:false,format:'cjs',external:['vue']});
   const mounted=[];

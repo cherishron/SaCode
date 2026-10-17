@@ -1,3 +1,4 @@
+import {TaskReview} from './task-review';
 import {defineComponent,h,ref,watch,type PropType} from 'vue';
 import {FileEditor,createFileEditor} from './file-editor';
 import {GitWorkbench} from './git-workbench';
@@ -13,6 +14,9 @@ export const ReviewPage=defineComponent({
     directory:String,
     configured:Boolean,
     active:Boolean,
+    executionDescribe:Function,
+    executionReviewFile:Function,
+    writebackApi:Object,
     status:{type:Function as PropType<()=>Promise<GitReply>>,required:true},
     diff:{type:Function as PropType<(path:string,scope:string)=>Promise<GitReply>>,required:true},
   },
@@ -26,7 +30,8 @@ export const ReviewPage=defineComponent({
     });
     return()=>h('section',{class:'side-section file-editor review-page','aria-label':'差异审查'},[
       h('h2',{},'差异审查'),
-      h('p',{class:'note'},'分别查看未保存的编辑器草稿，以及当前会话工作区的 Git 索引和工作区差异。Git 查询只读；当前尚未将文件变化归属到具体 Agent 任务。'),
+      h('p',{class:'note'},'分别查看未保存的编辑器草稿，以及当前会话工作区的 Git 索引和工作区差异。Git 查询只读；未登记到任务清单的 Git 变化不归属为某个任务产物。'),
+      h(TaskReview,{sessionId:props.sessionId,active:props.active,describe:props.executionDescribe,readFile:props.executionReviewFile,writebackApi:props.writebackApi}),
       h(FileEditor,{editor:props.editor,revision:props.revision,diffOnly:true}),
       h(GitWorkbench,{
         key:'review-git:'+props.sessionId+':'+(props.directory||''),

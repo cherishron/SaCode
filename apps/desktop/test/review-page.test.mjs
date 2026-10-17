@@ -20,8 +20,8 @@ test('差异审查组合真实草稿和当前会话 Git 数据，并保留范围
   const render=ReviewPage.setup({editor,revision:3,sessionId:'s1',directory:'D:/work',configured:true,active:true,status,diff},{emit:(...args)=>emitted.push(args)});
   const root=render();
   assert.equal(root.type,'section');
-  assert.match(root.children[1].children,/尚未将文件变化归属到具体 Agent 任务/);
-  const editorNode=root.children[2],gitNode=root.children[3];
+  assert.match(root.children[1].children,/未登记到任务清单的 Git 变化/);
+  const editorNode=root.children.find(n=>n.props?.editor===editor),gitNode=root.children.find(n=>n.props?.status===status);
   assert.equal(editorNode.props.editor,editor);
   assert.equal(editorNode.props.revision,3);
   assert.equal(editorNode.props.diffOnly,true);
@@ -44,15 +44,15 @@ test('仅在编辑器写后回读确认成功时通知 Git 差异页刷新',asyn
   const scope=vue.effectScope();
   const render=scope.run(()=>ReviewPage.setup(props,{emit:()=>{}}));
   try{
-    assert.equal(render().children[3].props.refreshSignal,0);
+    assert.equal(render().children.find(n=>n.props?.status===props.status).props.refreshSignal,0);
     editor.state.saveRevision=1;props.revision++;
     await vue.nextTick();
-    assert.equal(render().children[3].props.refreshSignal,1);
+    assert.equal(render().children.find(n=>n.props?.status===props.status).props.refreshSignal,1);
     props.revision++;
     await vue.nextTick();
-    assert.equal(render().children[3].props.refreshSignal,1);
+    assert.equal(render().children.find(n=>n.props?.status===props.status).props.refreshSignal,1);
     editor.state.saveRevision=2;props.revision++;
     await vue.nextTick();
-    assert.equal(render().children[3].props.refreshSignal,2);
+    assert.equal(render().children.find(n=>n.props?.status===props.status).props.refreshSignal,2);
   }finally{scope.stop();}
 });

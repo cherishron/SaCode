@@ -31,11 +31,23 @@ public class ExecutionService {
     let permits = HashMap<String, Bool>()
     let starts = HashMap<String, Bool>()
     let tokens = HashMap<String, TurnToken>()
+    let workspaceCapsules = HashMap<String, ExecutionWorkspaceCapsule>()
+    let reviewApplyTokens = HashMap<String, TurnToken>()
     var persistenceFailed = false
     public init(log: SessionLog, lease: WriteLease, sessionId: String,
         checkpoint!: () -> Bool = { => log.durableCheckpoint(lease) }) {
         if (sessionId.trimAscii().size == 0) { throw Exception("bad-session-id") }
         this.log = log; this.lease = lease; this.sessionId = sessionId; this.checkpoint = checkpoint
+    }
+    public func shutdownWorkspaces(): Bool {
+        let owned = synchronized(log.mtx) {
+            let list = ArrayList<ExecutionWorkspaceCapsule>()
+            for ((_, capsule) in workspaceCapsules) { list.add(capsule) }
+            list
+        }
+        var settled = true
+        for (capsule in owned) { if (!capsule.shutdown()) { settled = false } }
+        return settled
     }
     public func list(): ArrayList<ExecutionSnapshot> {
         synchronized(log.mtx) { return listLocked() }
@@ -155,9 +167,71 @@ public class ExecutionService {
                 taskId, requestId, proposal, Int64(1), "awaiting-approval", ""))
         }
     }
+    // 快照事实沿用同一会话日志；无快照的现有提案保持原审批字节。
+    public func workspaceSnapshot(id: String): String {
+        synchronized(log.mtx) {
+            let state = describe(id)
+            var snapshot = ""
+            for (event in log.snapshotEvents()) {
+                if (event.eventType != "execution/workspace-snapshot") { continue }
+                let receipt = JsonValue.fromStr(event.data).asObject()
+                if (receipt.get("executionId").getOrThrow().asString().getValue() != id) { continue }
+                let proposal = JsonValue.fromStr(state.proposal).asObject()
+                if (receipt.get("version").getOrThrow().asInt().getValue() != 1 ||
+                    receipt.get("proposalDigest").getOrThrow().asString().getValue() != state.digest ||
+                    receipt.get("sessionId").getOrThrow().asString().getValue() != sessionId ||
+                    receipt.get("taskId").getOrThrow().asString().getValue() != state.taskId ||
+                    receipt.get("requestId").getOrThrow().asString().getValue() != state.requestId ||
+                    (receipt.get("executionDirectory").getOrThrow().asString().getValue().toAsciiLower() !=
+                        proposal.get("cwd").getOrThrow().asString().getValue().toAsciiLower() &&
+                     receipt.get("sourceDirectory").getOrThrow().asString().getValue().toAsciiLower() !=
+                        proposal.get("cwd").getOrThrow().asString().getValue().toAsciiLower()) ||
+                    receipt.get("workspaceRevision").getOrThrow().asInt().getValue() !=
+                        proposal.get("workspaceRevision").getOrThrow().asInt().getValue() ||
+                    (snapshot.size > 0 && snapshot != event.data)) {
+                    throw Exception("workspace-snapshot-binding-conflict")
+                }
+                snapshot = event.data
+            }
+            return snapshot
+        }
+    }
+    // 审查清单引用既有内容对象，读取不执行命令或写回文件。
+    public func review(id: String): String {
+        synchronized(log.mtx) {
+            let state = describe(id)
+            var value = ""
+            for (event in log.snapshotEvents()) {
+                if (event.eventType != "execution/review") { continue }
+                let obj = JsonValue.fromStr(event.data).asObject()
+                if (obj.get("executionId").getOrThrow().asString().getValue() != id) { continue }
+                let snapshot = JsonValue.fromStr(workspaceSnapshot(id)).asObject()
+                if (state.phase != "exited" || obj.get("version").getOrThrow().asInt().getValue() != 1 ||
+                    obj.get("executionRevision").getOrThrow().asInt().getValue() != state.revision ||
+                    obj.get("proposalDigest").getOrThrow().asString().getValue() != state.digest ||
+                    obj.get("sessionId").getOrThrow().asString().getValue() != sessionId ||
+                    obj.get("taskId").getOrThrow().asString().getValue() != state.taskId ||
+                    obj.get("requestId").getOrThrow().asString().getValue() != state.requestId ||
+                    obj.get("manifestDigest").getOrThrow().asString().getValue() != snapshot.get("manifestDigest").getOrThrow().asString().getValue() ||
+                    obj.get("sourceDirectory").getOrThrow().asString().getValue() != snapshot.get("sourceDirectory").getOrThrow().asString().getValue() ||
+                    (value.size > 0 && value != event.data)) { throw Exception("workspace-review-binding-conflict") }
+                if (let Some(identity) <- snapshot.get("sourceIdentity")) {
+                    if (obj.get("sourceIdentity").getOrThrow().asString().getValue() != identity.asString().getValue()) { throw Exception("workspace-review-binding-conflict") }
+                }
+                value = event.data
+            }
+            return value
+        }
+    }
     public func approvalArguments(id: String): String {
-        let state = describe(id)
-        return "${sessionId}:${state.id}:${state.digest}:${state.proposal}"
+        synchronized(log.mtx) {
+            let state = describe(id)
+            let snapshot = workspaceSnapshot(id)
+            let base = "${sessionId}:${state.id}:${state.digest}:${state.proposal}"
+            return if (snapshot.size == 0) { base } else {
+                base + ":workspace-snapshot:" + sha256Hex(snapshot.toArray())
+            }
+        }
     }
     public func authorize(id: String, revision: Int64, approvalId: Int64, desk: ApprovalDesk): ExecutionSnapshot {
         // 审批锁与日志锁不交叉持有，避免 answer/reap 的反向锁顺序。
@@ -167,6 +241,7 @@ public class ExecutionService {
         }
         synchronized(log.mtx) {
             let state = expected(id, revision)
+            if (approvalArguments(id) != arguments) { throw Exception("not-authorized") }
             if (state.phase != "awaiting-approval" && state.phase != "admitted") { throw Exception("illegal-execution-transition") }
             checkWorkspace(state.proposal)
             let admitted = transition(state, "admitted", "approval:${approvalId}")
