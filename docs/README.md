@@ -36,6 +36,10 @@
 
 ### 最新已登记的平台读数与当前主线
 
+- 2026-10-18：[R2关闭重开持久性](evidence/2026-10-18-r2-cold-restart-persistence.md)取得实际双Host进程证据：获批edit→正常退出→同目录新进程只读RPC回放，40事件/8消息、plan与工作区/追踪一致，日志字节不变、未重放任务；1/1。只验证协议Host，本地合成模型/外部Node单测，完整GUI及真实LongCat仍待验。
+
+- 2026-10-18：[用户指定R2中性包三路径协议验收](evidence/2026-10-18-r2-three-path-protocol.md)：mock 3/3，allowed真改且外部测试过，denied/cancelled文件不变，三个Host自然退出0。真实LongCat因进程未注入凭据尚未开始；不另出候选，不把协议mock或外部代跑测试称产品完整交付。
+
 - 2026-10-18：[模型拉取结果未知核对](evidence/2026-10-18-model-pull-unknown-verification.md)补强持续提示、禁重复及查询失败分列；即使目录已更新也不据此报本次成功。状态/页面18/18、定向63/63、默认沙箱Electron真实核对1/1；无安装包替换，D22仍部分修复。
 
 - 2026-10-18：[桌面模型拉取查询与取消](evidence/2026-10-18-model-pull-desktop-lifecycle.md)接入供应商页：先持有操作ID再发起，未知不重发，取消与收束分开。定向58/58、桥接2/2、中性默认沙箱Electron/Host集成2/2；IPC149/149。未提交/未正式打包/未验安装态，跨renderer重启恢复未实现，D22保持部分修复。
