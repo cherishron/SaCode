@@ -50,7 +50,7 @@
 | [`automation-product-wiring-2026-10-15.md`](automation-product-wiring-2026-10-15.md) | F13 自动化接线实施边界 |
 | [`codebuddy-acp-entry-2026-10-14.md`](codebuddy-acp-entry-2026-10-14.md) | CodeBuddy CLI ACP 产品接线 |
 | [`opencode-acp-diagnostics-repair-2026-10-14.md`](opencode-acp-diagnostics-repair-2026-10-14.md) | OpenCode ACP：用户控制、诊断与后台修复 |
-| [`product-closure-goal-2026-10-15.md`](product-closure-goal-2026-10-15.md) | 主页面·工作台资源·真实开发任务闭环目标 |
+| [`product-closure-goal-2026-10-15.md`](product-closure-goal-2026-10-15.md) | **当前先读 §0（10-18 用户确认）**：先交付一条真实任务，同源固定候选包→用户复验再扩能力；原多页面范围保留历史，当前状态由PRD台账交付卡维护 |
 | [`sacode-sidebar-session-brief-2026-10-08.md`](sacode-sidebar-session-brief-2026-10-08.md) | 侧边会话历史开发简报 |
 | [`verb-wiring-checklist-2026-10-04.md`](verb-wiring-checklist-2026-10-04.md) | 51 行 ◐ verb 接入清单 |
 

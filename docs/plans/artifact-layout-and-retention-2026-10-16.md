@@ -145,6 +145,10 @@
 - **模式**：默认严格（违规即 rc=1）；不设 WARN 模式——上线时基线已绿，宽松模式没有存在理由。判绿硬格式与既有门禁一致（`GATE: PASS (N checks, fail=0)` + `SELFTEST: PASS (probes=N, missed=0, baseline=green)`，rc=0）。
 - **自证**：10 条探针（每条规则各 1-2 条注入 + 1 条反向探针证明新合法形态不误伤），`missed=0, baseline=green`。
 - **接线状态**：登记于 `scripts/gate-verdict.mjs` 的 `UNWIRED_GATES`（本批不与 verify-all 步骤表同批改动；下一批独立小步接入）。
+- **打包完整性守卫（2026-10-17）**：新增 `scripts/check-release-manifest.cjs`——检查 electron-builder unpacked 目录的运行闭包：`ca-bundle.pem`、Windows 启动必需 DLL 五颗（boundscheck/runtime/winpthread/libcrypto/libssl）、`zoneinfo/Asia/Shanghai`、`computer-use/provider.mjs + node.exe`、`app.asar`。自证 6 探针 PASS、基线绿；对 neutral 验证包实测抓到 3 个真实缺件（ca-bundle/computer-use 双件），与 modelPull 诊断一致。**按需守卫**：无候选时 `MANIFEST: SKIP` rc=0（不进 verify-all 默认轮，避免 SKIP 与 FAIL 不可区分）；接线形态＝pack-host/electron-builder 重打后、中性导出前显式跑一次。
+
+- **允许集适配（2026-10-17）**：issue #725 自研绕过落地后，三个仓颉模块（`apps/cli`、`apps/host`、`apps/daemon`）的一级稳定出现 `build.cj`（cjpm stagePostBuild 钩子源码，已跟踪）、`build-script-cache/`（cjpm 编译该钩子的缓存，`.gitignore` 已覆盖）、`target/`（单成员构建产物，`**/target/` 全局忽略）；`apps/desktop` 一级出现 `target/`。守卫 R2 允许集同批登记这三项——它们是构建工具链的固定副产物而非散件。`core/core/`（cjpm workspace 副作用，只含 `target`）未登记，作为违规产物删除。适配后守卫 `GATE: FAIL (1 check)`，唯一剩余红项为 `outputs/`（codex 报告落仓根，处置待拍板）。
+  - **`outputs/` 裁决与执行（2026-10-17，用户拍板方案②）**：运行报告不落仓根。既有 10 个 HTML 报告已整体搬到 `target/tmp/codex-outputs-20261017/`（可丢根，随 `target/tmp` 清理策略走），`outputs/` 目录删除、**不登记、不加 gitignore**——若再被写入，守卫 R1 会重新转红作可见标记。`docs/product/PRD-tracking.md` 3 处、`docs/evidence/README.md` 1 处、`docs/evidence/MEMORY.md` 1 处的报告路径引用已同步指向新位置；`docs/evidence/` 里 3 处对"守卫曾红"的历史状态描述保留原文不改。**后续约定（需转告 codex）**：运行期报告一律落 `target/tmp/<用途>-<日期>/`；结论性内容按文档同步规则蒸馏为 `docs/evidence/*.md` 后由台账引用，台账不引用可丢根下的文件作长期证据。
 
 ### 6.5 治理文档落位
 

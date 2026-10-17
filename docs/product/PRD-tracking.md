@@ -5,6 +5,58 @@
 - 上级索引：[product/README.md](README.md)｜需求与验收口径权威：[PRD.md](PRD.md)
 - 定位：本文件是 F01–F21「推进到哪一步」的**唯一实时跟进入口**。只登记现状与证据，不改需求、不宣布验收通过、不计算整体完成率；口径冲突时以 PRD.md 为准。
 
+## 当前交付卡（2026-10-18 用户确认）
+
+**当前结论：尚未交付一个经用户完整走通的同源版本。** 下方局部测试、私有候选和历史通过读数不能替代该结论。所有 IDE / AI 会话按 [交付主线 §0](../plans/product-closure-goal-2026-10-15.md#0-当前执行顺序先交付一个走通版本2026-10-18-用户确认) 跟进，项目规则见根 `AGENTS.md`。
+
+| 项 | 当前登记 |
+|---|---|
+| 唯一近期目标 | 正常双击 → 配置供应商/选择模型 → 打开小项目 → AI 读取并提出修改 → 用户审批 → 实际修改/真实差异 → 关闭重开后记录和文件正确；若承诺构建/测试，须在产品中真实执行成功 |
+| 当前阶段 | 阶段2进行中（2026-10-18）：本会话按用户指令冻结 `SC-20261018-R1` 源码与依赖，随后同源构建；尚未生成可供用户复验的新入口 |
+| 交付主责 | 本次 OpenCode 会话负责 `SC-20261018-R1` 的快照、同源构建与候选验证；既有codex/workbuddy实现保留，不代提交，不让并发改动混入已冻结候选；其他会话不要另出“最新包” |
+| 候选源码/依赖/运行库 | `SC-20261018-R1`，来源HEAD `5c22a36`+冻结时工作区，快照/哈希将落 `target/tmp/delivery-SC-20261018-R1/`；本机runtime SHA256 `8b1d0783…`为已知非官方修正版、来源未明：只用于本机验收候选，阻止对外发布，不据此宣称普通用户分发达标 |
+| 对外测试入口 | 尚未登记本轮唯一入口；用户已有旧包不自动升级为新候选，私有探针/中性副本不作为多个可选用户版本 |
+| 当前主阻塞 | 正在固定统一输入，尚未取得该候选完整应用真实任务证据；非官方runtime仍为正式分发阻塞，不能以本机通过解除 |
+| 下一步 | 完成快照与输入哈希 → 独立构建Host/CLI/daemon与桌面资源 → 同源完整候选 → 默认安全启动与本地合成预验 → 用户授权真实模型任务并亲手复验；不读取用户真实凭据、不主动发送收费请求 |
+| 暂缓与安全边界 | 无关功能扩展/重构先入待办；F01–F21与平台范围不删；不关闭沙箱、不丢授权/取消/结算/恢复，不让用户补构建环境 |
+| 汇报约定 | 当前阶段/候选身份、主阻塞、当次动作、下一步验收；“单测/接口/页面通过”≠“版本交付”，未过用户完整复验不报“闭环/收官” |
+
+维护时更新此卡的当前值，保留后文带日期的历史证据；提交/安装/收费请求/发布仍须独立授权。此卡不计算完成率，也不代替逐域缺陷台账。
+
+## A3 追踪修复在途（2026-10-17 14:28）
+
+- 用户确认默认双击旧候选可打开；只读确认其主进程父进程为Explorer，当前命令令牌也是Medium。人工启动通过不等于自动化GPU或运行时沙箱验收通过；保留所有沙箱设置。
+- 生产直连与模型路由漏接RequestTraceProvider，现已接线并增加metadataOnly模式，避免新增提示正文和工具描述快照。私有Host跳过复制钩子的源码构建成功；正常post-build读取DLL失败，完整构建链未通过。前端模型中心16/16通过；新增核心测试未执行。
+- 新Host真实LongCat复验：read/edit已执行，第三次上游请求失败，任务interrupted=true，因此允许/拒绝/取消完整回归未通过。冷启动调用RPC已返回3条，completed/completed/failed，prompts均null，Host退出0；证据D:/tmp/sacode-trace-live-20261017-1425/results.json。
+- 旧桌面候选未替换，页面真实记录可见性未验，A3仍进行中。新增报告位于target/tmp/codex-outputs-20261017/调用追踪接线进展-20261017.html（运行报告，正式结论待蒸馏为 evidence）。
+
+## 真实远端任务验收补记（2026-10-17 13:19）
+
+- 使用用户授权的临时 LongCat-2.5-Preview 接口，HTTP 200；密钥仅进程环境注入，未改正式模型配置。
+- A3 中性候选包 Host 的真实 `task/start`：允许一次精确编辑、拒绝编辑、等待审批时取消 **3/3 通过**；允许路径实际 read/edit 后语法检查与加法单测通过（测试由外部驱动执行）；拒绝/取消文件不变；三条路径待结算工具为0，正常退出0且非强杀，冷启动回放分别63/59/40事件。原始证据 `D:/tmp/sacode-longcat-acceptance-20261017-1313/results.json`，报告 `../../target/tmp/codex-outputs-20261017/LongCat真实任务验收-20261017.html`（运行报告，待蒸馏为 evidence）。
+- **新增验收缺口**：三条真实任务冷启动 `session/request-trace` 返回 requests=[]，原始日志没有 request/* 事件；不能据页面/RPC接线或单测通过宣称真实调用日志已可用。A3保持进行中，需追踪生产任务的请求追踪落盘链。
+- 本次不代表Windows enforcing沙箱、图形窗口或当前并发工作区全量同源构建验收；D10与相关图形缺陷保持未闭合。
+
+## A3 同中性位置对照追加（2026-10-17 14:00）
+
+- 已将官方 Electron 33.4.11 dist 内容导出到新 Medium 目录 `D:/tmp/sacode-gpu-control-20261017-02`，独立复制候选 app.asar/Host。同一 electron.exe（SHA256 `1925f358e7f0e9675a5ac4198fb076613f0db318da56d388799a97be74a5b19c`）、同 cwd 下，应用 UI smoke 与真正外部最小入口均 GPU `0xC0000005` → 主进程 `0x80000003`。最小入口取得 ready=true，但页面 ERR_FAILED，未取得 preload 的 process.sandboxed 回执。
+- 首次 neutral-minimal 试跑被新副本 app.asar 自动加载覆盖，不作为最小入口证据；随后仅临时移开新副本 app.asar 并 finally 恢复，获得真正最小入口结果。原候选和运行库未改，未关闭任何沙箱。全部清除三项 Node 注入变量。
+- 精确本地时间 13:59:50–14:01:00 的 Application 1000/1001 只读查询返回 NoMatchingEventsFound，非权限拒绝；新中性目录无 dmp。未取得故障模块，不能归因驱动/ACL。说明复现不需要模型中心业务，但环境与图形栈仍未区分。
+- 真实调用记录页面仍未验，A3 未修复、继续进行中。报告在原路径追加事实，正确今日记忆已追加 `.workbuddy/memory/2026-10-17.md`；上轮误追加的既有 `docs/evidence/MEMORY.md` 未删除。
+
+## A3 图形阻塞复验（2026-10-17 13:52）
+
+- 保留 `sandbox:true`，清除子进程环境中的三项 Node 注入变量，对既有中性候选分别运行 `--disable-gpu`、`--use-angle=warp`、`--use-angle=swiftshader` 的模型中心 UI smoke，三组均因 GPU 子进程 `0xC0000005` 后主进程 `0x80000003` 失败。后端切换尚不能解决阻塞，不能归因特定驱动或 ACL。
+- 本地 Electron 最小窗口探针（`disableHardwareAcceleration()`、无业务/Host/preload、沙箱开启）退出 `0xC0000005`，未产生加载成功回执；该探针运行在仓内，与中性候选不构成同路径单变量对照。
+- 未修改产品启动策略，未改 ACL/安全设置，未添加关闭沙箱参数，未停止其他会话进程。真实调用日志页面仍未验收，不转入 request 追踪链修复。检查报告见 `target/tmp/codex-outputs-20261017/A3-GPU复验-20261017-1352.html`；原始私有日志在 `target/tmp/gpu-controlled-20261017-01/`。A3 继续进行中。
+
+## A3 最新交付进展（2026-10-17 13:00）
+
+- 调用日志桌面候选包已重打并中性导出至 `D:/tmp/SaCode-call-log-20261017-1251`；795 文件、352517730 字节，内容校验及 Medium 完整性通过。包内调用日志 bundle 与本轮生成文件一致，Host 含 `session/request-trace`，runtime SHA256 前缀 `8b1d0783`。
+- 模型中心单测 **16/16**、预加载契约 **5/5** 通过；清除父进程 Node 注入并以 `--disable-gpu` 运行，中性包协议 **SMOKE PASS**（未关闭沙箱）。
+- 默认图形启动及软件渲染参数下的模型中心窗口复验仍被 GPU 子进程崩溃阻断（退出 `0x80000003`）；**A3 页面可见性未验，保持进行中**。D10/D18/D19、D05/D13 与 D4 中性窗口对照不据此闭合；未生成安装器、未安装、未发布。
+- 仓内 bridge 全量试跑出现目录写入权限、租约及回放失败，本次已停止，不得引用为全量通过；以上 5/5 仅预加载筛选用例。
+
 ## 0. 怎么读（状态口径）
 
 | 状态 | 含义 |
@@ -22,6 +74,10 @@
 
 ## 1. F01–F21 逐域跟进
 
+2026-10-18第2项F07/D22补强：[未知态持续展示与核对](../evidence/2026-10-18-model-pull-unknown-verification.md)已在工作区实施，状态/页面18/18、扩大63/63、默认沙箱真实Electron未知路径1/1。核对失败与原操作结果/已收束事实分列，目录涨修订/刷新失败恢复不解锁，页签重挂保留；仅精确关联终态可解除保护。跨renderer重启、人工核对未知解除策略及安装态仍待完成，D22不闭合。
+
+2026-10-18 F07/D22桌面增量：供应商页已接发送前ID持有、精确查询/可见取消、未知状态保护及页签重挂载保留；58/58、实际IPC集合2/2、中性默认沙箱Electron/Host集成2/2，IPC149条（[新证据](../evidence/2026-10-18-model-pull-desktop-lifecycle.md)）。这是下表F07的后续事实，旧Host批次读数保留；跨renderer重启恢复、人工核对未知及正式安装态仍未完成，不升级F07整体状态。
+
 | 域 | 状态 | 已完成事实（含证据） | 未完成 / 缺口 |
 |---|---|---|---|
 | **F01** 项目与会话 | 已接通 | 项目/会话树、新建/切换/命名/归档、草稿按会话保留（桌面）；会话持久化与并发修复：专项 13/13 通过，全 core 会话/执行集成 58 条 57 PASS、1 ERROR（[session-persistence-repair-2026-10-13.md](../evidence/session-persistence-repair-2026-10-13.md)） | 该 1 ERROR 为真实子进程启动缺沙箱后端（见缺陷 D14）；归档不假删在途任务未见专项验收；修复后未重建 Host/CLI/daemon/Electron |
@@ -30,8 +86,8 @@
 | **F04** 持续目标 | 已接通 | preload 6 个 goal 动词（describe/create/edit/pause/resume/clear，对应创建/修改/暂停/继续/结束）；RPC 面已接线（[host-capabilities.json](../plans/host-capabilities.json) 记录 `goal/` 6 条） | 预算强约束、暂停/继续边界、跨轮证据核验的针对性验收未见 |
 | **F05** 输入快捷能力 | 部分完成 | 文件/技能/MCP/知识引用与 @ / 斜杠菜单代码存在；知识引用链已随 F11 接通（[knowledge-management-wiring](../evidence/2026-10-15-knowledge-management-wiring.md)） | review/compress/init 无完整执行接线；clear 仅清前端投影（10-09 审计 P1）；失效引用不静默发送待验收 |
 | **F06** 上下文与用量 | 已接通（部分修复） | 容量/占用/累计用量与事后提示存在；零预算拒绝有证据；**请求侧预算已应用（D02 已闭合：超限不派发、`max_tokens` 较小值入请求、零预留）** | 压缩仍仅记录（D03）；精确 tokenizer 未支持（字节守卫）、图片请求明确拒绝；「预算未知如实显示」未验收 |
-| **F07** 模型中心 | 已接通 | Host 模型中心可用：凭据、发现、路由 RPC 面；真实 HTTP 结算与健康冷却有证据（[self-core-verification](../evidence/2026-10-15-self-core-verification.md) 收口表 1）；**模型调用日志页（2026-10-17）：`session/request-trace` RPC 接通核心既有 `requestTraceProjection`，渲染层 `model-call-log` 适配器全局聚合回放各会话最近调用、tab 落在供应商之后**（[证据](../evidence/2026-10-17-model-center-call-log.md)；宿主编译/渲染单测 15/15/IPC 门禁 5/5 全 PASS） | CLI 环境配置不与模型中心同源（D06）；变更发送对象的独立授权验收未见 |
-| **F08** 代码、预览与 Git | 已接通（部分） | 编辑器恢复、Git 状态解析/迟到保护通过；新构建 Host 真实 Git 只读用例 16/16；安全 Git 目标查询（`46623c4`）、编辑保存后刷新差异（`4d06d64`）、执行审查与 Git 授权操作接入（`f0f3634`：stage/commit/push 提案＋路径/上游安全校验，拒绝强推与自动设 upstream）（[product-closure-goal](../plans/product-closure-goal-2026-10-15.md) 10-16 复验） | 写操作以“提案＋执行授权”链接入（页面级）；真实写执行（push 拒绝/失败不显示已提交）待验收（设计见 [git-write-integration](../plans/2026-10-12-git-write-integration.md)）；默认 `dist` Host 仍旧载荷，重打包后需重跑真实用例 |
+| **F07** 模型中心 | 已接通 | Host模型中心凭据、发现、路由及真实HTTP结算/健康冷却见[既有证据](../evidence/2026-10-15-self-core-verification.md)；调用日志RPC和页面适配见[10-17记录](../evidence/2026-10-17-model-center-call-log.md)，不代替生产记录完整落盘与窗口验收。**D22部分修复**：桌面30秒等待、超时未知、不重发；Host新增默认20秒总预算、精确operationId查询/取消、提交前取消禁止迟到写入。核心16/16、真实Host与兼容集成16/16、桌面定向44/44；[本轮证据](../evidence/2026-10-17-model-pull-host-lifecycle.md)，[前轮历史](../evidence/2026-10-17-model-pull-timeout-followup.md)保留 | CLI装配不同源（D06）；变更发送对象的独立授权待验；D22未闭合：不可中断系统调用资源收束、提交故障/结果容量回收、桌面ID持有和查询/取消页面、同源正式打包及安装态；模型页面4组渲染失败待独立基线复核 |
+| **F08** 代码、预览与 Git | 已接通（部分） | 编辑器恢复、Git 状态解析/迟到保护通过；新构建 Host 真实 Git 只读用例 16/16；安全 Git 目标查询（`46623c4`）、编辑保存后刷新差异（`4d06d64`）、执行审查与 Git 授权操作接入（`f0f3634`：stage/commit/push 提案＋路径/上游安全校验，拒绝强推与自动设 upstream）（[product-closure-goal](../plans/product-closure-goal-2026-10-15.md) 10-16 复验） ；2026-10-17任务差异有限写回：核心41/41、组件与真实Host/CLI17项，通过实际增删改和独立审批（[证据](../evidence/2026-10-17-review-apply-product-entries.md)） | 写操作以“提案＋执行授权”链接入（页面级）；真实写执行（push 拒绝/失败不显示已提交）待验收（设计见 [git-write-integration](../plans/2026-10-12-git-write-integration.md)）；默认 `dist` Host 仍旧载荷，重打包后需重跑真实用例 ；默认快照执行、完整Electron/安装态及Host在途停止仍待验 |
 | **F09** 终端与验证 | 已接通（部分） | BuildTestPage 接线：tests 资源开放、报告判定含退出事实/EOF/计数一致（[build-test-page](../evidence/2026-10-15-build-test-page-and-cjpm-retry.md)） | 无真实 Host 构建/命令执行/桌面端到端验收（当前只证明页面与判定逻辑）；PTY resize/中断/退出码验收未见 |
 | **F10** ACP 协作 | 已接通（部分） | OpenCode 诊断修复（[10-14](../evidence/2026-10-14-acp-opencode-readiness.md)）；委派面板与精确审批操作（`7e34b68`/`be03bda`）、持久委派记录双入口与工作台（`c3d1ce3`）；CodeBuddy 独立配置 initialize/sessionNew/持久诊断通过、Node 默认 hy3 成功、假提供方链路（[takeover](../evidence/2026-10-15-codebuddy-acp-takeover.md)） | 默认用户配置原生 session/new -32603（D09）；Electron 正常模式不可启动（D10）阻塞真实窗口验收；真实 session/prompt 未授权 |
 | **F11** 知识、记忆与个人记录 | 部分接通，继续验收 | core KnowledgeStore + Host 5 RPC + CLI 5 命令 + 页面接通（`50d7e50`）＋Electron bridge（`97ddad1`）。2026-10-17 当前工作区重编：核心 5/5、CLI 跨轮集成 1/1、Host 自动检索 1/1、Host 管理/显式引用 2/2、Electron 页面 1/1；验证来源失效、无正文审计，并更正页面模型发送说明（[当前页面与 Host 复验](../evidence/2026-10-15-knowledge-management-wiring.md)、[核心/CLI §11](../evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md)） | 未提交快照；Electron 为隔离夹具，完整桌面外壳/默认安全启动、损坏日志回放、安装态、源码/符号索引与检索效果对照未验；记忆/速记/批注未收口 |
@@ -82,12 +138,13 @@
 | **D10** | Electron 默认安全启动 `0x80000003`（STATUS_BREAKPOINT）：正常模式 smoke 与最小脚本均无诊断输出 | **根因已定位（2026-10-16 复核）：构建产物继承仓库根 Low Mandatory Level 标签（可继承 OI/CI）→ 主进程低完整性 → 沙箱创建匿名窗口站被拒（Win32 5）→ STATUS_BREAKPOINT**；Low 标签只在本仓库根（上级目录/用户目录均无）；修复路径＝交付位置中性导出（`scripts/export-windows-artifact.mjs`，10-08 同字节产物 SMOKE PASS，本轮中性副本**默认沙箱与 `--no-sandbox` 均全链路 SMOKE PASS**）。（前轮排除项保留：缺 `S-1-15-2-2` RX ACE 解释已排除并复原、WER/Code Integrity 无事件。）**未完成**：重打包、交付流程固化、真实双击通道复验（agent 通道取证含 GPU 崩溃噪音，最终验收以真实双击为准）；`--no-sandbox` 仍仅作诊断、不得作默认。阻塞：桌面验收、ACP 真实窗口、安装态 | [三问题排查](../evidence/2026-10-16-windows-startup-three-issues-diagnosis.md) §2、[low-integrity 10-08](../evidence/windows-low-integrity-delivery-fix-2026-10-08.md)、[stage2](../evidence/2026-10-15-codebuddy-acp-stage2.md) 第 4 轮 |
 | **D18** | NSIS 安装器临时文件错误：`Error writing temporary file. Make sure your temp folder is valid.`（用户截图 10-11） | **根因已定位（2026-10-16 探针实证）：安装器继承 Low 标签 → 启动器解压自身到默认 `%TEMP%`（Medium）被 MIC no-write-up 拒绝**；最小 NSIS 探针三格对照（中性成功 / 仓库内失败 / 中性写 Low 目录成功）。修复路径＝重打安装器 + 中性导出 + 双击复验；当前无安装器产物 | [三问题排查](../evidence/2026-10-16-windows-startup-three-issues-diagnosis.md) §4、[takeover](../evidence/2026-10-11-takeover-regression-and-plugin-delivery.md) §9.9–9.13 |
 | **D19** | 分发载荷 runtime DLL 未同步修正版：`npm/sacode-cli-win32-x64/bin`（`ca65f2b8…`）与 `dist/electron/project-picker-final-20261012` 宿主（`ca65f2b8…`）仍带哨兵误读旧版（`ReadWinModuleAtInit`）；10-16 win-unpacked 候选宿主已是修正版（`8b1d0783…`）并通过 Host smoke | 重打 npm 平台包（`scripts/pack-cli-windows.mjs` 工作区已修复并经 A/B 验证，见 §3 证据）后同步替换；**重打前不得对外分发 CLI 包与 dist 目录版** | [三问题排查](../evidence/2026-10-16-windows-startup-three-issues-diagnosis.md) §3 |
+| **D22** | 模型发现走桥5秒误超时、后台迟到写入；初轮曾用全局revision猜成功（该判据已撤回） | **部分修复、未闭合（2026-10-18未知核对增量）**：Host20秒网络预算、提交前取消禁止迟到写库沿10-17实测；桌面先持有ID再拉取，精确查询/可见取消；查询失败与原操作/已收束事实分列，目录涨修订不解锁，unknown/提交未知/未收束持续提示且不重发。最新定向63/63、集合桥接2/2、中性默认沙箱Electron/Host2/2，IPC149/149。**未完成**：跨renderer重启持久恢复、未知人工核对后的解除策略、DNS不可中断收束、提交磁盘故障/结果容量回收、同源正式重打包及完整应用安装态；四组旧页面只读文案断言失败保留 | [初轮历史](../evidence/2026-10-17-model-pull-timeout-fix.md)、[复核](../evidence/2026-10-17-model-pull-timeout-followup.md)、[Host](../evidence/2026-10-17-model-pull-host-lifecycle.md)、[桌面](../evidence/2026-10-18-model-pull-desktop-lifecycle.md)、[未知核对新证据](../evidence/2026-10-18-model-pull-unknown-verification.md)与[契约](../interfaces/model-pull-lifecycle-2026-10-17.md) |
 
 ### 2.2 P2（未闭合）
 
 | 编号 | 现象 | 现状 | 证据 |
 |---|---|---|---|
-| **D11** | `host-capabilities.json` 与 Host 不同步：文件 120 条，Host 工作区 169 条声明（HEAD 158 条） | 需同步或改为生成式；knowledge/automation/profile/web-settings/workspace-recent 等域在文件内缺失 | [gate-triad-repair](../evidence/2026-10-16-gate-triad-repair.md)、[host-capabilities.json](../plans/host-capabilities.json) |
+| **D11** | `host-capabilities.json` 与 Host 不同步：文件 120 条，Host 工作区 169 条声明（HEAD 158 条） | **已闭合（2026-10-17）**：文件重写为 171 条，与 `apps/host/src/main.cj` 的 `initialize` 能力声明对齐；knowledge/automation/profile/web-settings/workspace-recent 等域已补齐。daemon 代理名单同批补 `approval/get-mode`、`approval/set-mode` 以维持「契约∩能力」三向一致；`remote-capability-contract.test.mjs` 15/15 仍绿。建议后续改为生成式（从 `initialize` 声明导出）防漂移 | [gate-triad-repair](../evidence/2026-10-16-gate-triad-repair.md)、[host-capabilities.json](../plans/host-capabilities.json) |
 | **D12** | CLI 包装探针缺 MinGW 运行库（`libgcc_s_seh-1.dll`、`libstdc++-6.dll`）退出 1 | 未借旧 npm 包 DLL，未安装；CLI 安装态待验 | [product-closure-goal](../plans/product-closure-goal-2026-10-15.md) 10-16 段 |
 | **D13** | 原执行页面测试 8/9：真实 Host 夹具缺 runtime/stdx 运行路径 | **原执行页待复验**。2026-10-17 知识库 CLI 夹具已按既有运行路径约定修复；当前源码重编后 CLI 跨轮集成 1/1、核心检索 5/5 通过。先前两份旧 CLI 产物的 goal/save 差异本轮未复现，不能据此认定 D20/D21 为当前逻辑缺陷，也不能用知识库测试替代本行原执行页验收。历史环境及失败记录保留，见证据 §6/§11 | [专项复验](../evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md)；[产品主链](../plans/product-closure-goal-2026-10-15.md) |
 | **D14** | 全 core 执行集成 1 ERROR：真实子进程启动失败 `execution-provider-failed`（缺沙箱后端） | **仍未解除**。2026-10-17 身份专项 5/5；新增 AppContainer/双流/Job 原生组件 35 项实测通过，含恢复前停止和后代收束。包内仓颉适配及共享 ShellResult 转换已实测，含创建回执失败不恢复线程、取消、超时和输出排空（[记录](../evidence/2026-10-17-windows-process-collector.md)）；共享核心显式装配已通过真实任务审批/执行/停止/持久回放（[13/13](../evidence/2026-10-17-windows-execution-supervisor-integration.md)）；Host/CLI 默认装配、工作区 ACL、网络/逃逸反向验证及打包尚未完成，产品继续拒绝；不代表完整执行成功 | [原失败](../evidence/session-persistence-repair-2026-10-13.md)、[身份](../evidence/2026-10-17-appcontainer-minimal-environment.md)、[原生进程组件](../evidence/2026-10-17-windows-owned-process-provider.md) |
@@ -104,6 +161,8 @@
 
 ## 3. 平台与交付快照（2026-10-16）
 
+2026-10-17 F07/D22后续补记：Host模型发现总预算/取消/操作ID关联已在Windows x64私有源码快照构建并定向验证（核心16/16、真实协议与兼容集成16/16，见[D22证据](../evidence/2026-10-17-model-pull-host-lifecycle.md)）。此为F07行的增量事实，不升级整个F07状态；旧桌面包未替换，桌面操作ID生成/查询/取消、页面未知态核对和安装态仍待接。系统DNS阻塞可能保持settled=false，不能宣称强制线程回收。
+
 | 平台 | 构建 | 运行 / 真实任务 | 安装 / 分发 | 说明 |
 |---|---|---|---|---|
 | Windows | core/CLI/Host/daemon 4/4 构建 rc=0（私有 target） | Host 协议 smoke 仅 `--no-sandbox` 通过；桌面默认启动被 D10 阻塞（根因已定位＝Low 标签继承，修复＝中性导出＋双击复验） | 桌面候选 win-unpacked 已生成（719/719 文件一致；宿主已带修正 DLL）；D18 安装器待重打、D19 npm 包/dist 载荷待换修正 DLL；安装态未验 | 主线平台 |
@@ -117,12 +176,12 @@
 
 | 项 | 当前读数 | 基线 / 时点 | 重测方式 |
 |---|---|---|---|
-| 桌面 IPC 顶层 key | **142**（10-17 增 `appVersion` 关于页版本读数、`autoLaunchGet`/`autoLaunchSet` 开机自启、`requestTrace` 模型调用日志；门禁 5/5 通过） | 10-17 工作区 | `grep -cE '^  [A-Za-z0-9_]+:' apps/desktop/preload.cjs`；`node scripts/check_ipc_surface_parity.cjs` |
-| Host 能力声明（工作区） | **169** = 164 字面路由 + 5 目标路由 | 10-16 门禁 PASS | `node scripts/check_host_method_surface.cjs` |
-| Host 能力声明（HEAD 冻结） | **158** | 同上 | 同上 |
-| `host-capabilities.json` | 120（已过期，见 D11） | 10-16 | 与上两行对账后同步 |
+| 桌面 IPC 顶层 key | **149**（10-18模型拉取新增modelPullDescribe/Cancel；集合门禁8/8、实际注册集合测试2/2） | 10-18工作区；不是已提交/安装态通过 | `grep -cE '^  [A-Za-z0-9_]+:' apps/desktop/preload.cjs`；`node scripts/check_ipc_surface_parity.cjs` |
+| Host 能力声明（工作区） | **178** = 173 字面路由 + 5 目标路由（含拉取查询/取消） | 10-17 本轮门禁11项通过、自证13条通过 | `node scripts/check_host_method_surface.cjs` |
+| Host 能力声明（HEAD 冻结） | **171**（`5c22a36`） | 10-17 本轮重测；不等于工作区功能已提交 | 同上 |
+| `host-capabilities.json` | **178**，与当前 `main.cj` 声明双向零差 | 10-17 本轮重测 | 改 Host 分派需同批更新 |
 | `remote-capability-contract.json` | 119 | 10-16 | `node scripts/check_contract_anchor_audit.cjs` |
-| 当前 HEAD | `7a249a1c`（2026-10-16 11:45:32） | — | `git log -1` |
+| 当前 HEAD | `5c22a36`（本轮工作区未提交） | 10-17复核；文首旧基线仍为建账历史 | `git log -1` |
 
 ## 5. 更新规则（与 AGENTS.md「文档同步规则」配套，强制）
 
@@ -134,7 +193,39 @@
 6. 本文件的建立与每次更新，须同批登记 [product/README.md](README.md) 与 [docs/README.md](../README.md) 维护记录。
 
 
+2026-10-17 EX-01/D14 必要切片：[Windows 进程完整提案绑定](../evidence/2026-10-17-windows-process-proposal-binding.md)固定 executable/cwd/argv/timeoutMs/outputLimit，先核对再创建；新增反向测试，构建及运行结果以该证据的本轮登记为准。非空私有工作区安全回收及失败所有权保留仍缺生产原语，默认 Host/CLI 不接入，EX-01/D14 保持未完成。
+
 2026-10-17 EX-01/D14 增量：[私有任务目录组件](../evidence/2026-10-17-windows-private-workspace-scope.md)47 项实际文件访问/拒绝/独立清理通过，父 DACL 保持不变；尚未接入仓颉工作区快照、受保护子树排除及差异合入，不能解除 D14 或默认执行门禁。
 
 
 2026-10-17 后续装配：[仓颉私有 cwd 真实任务](../evidence/2026-10-17-cangjie-private-workspace-task.md)新增 WindowsPrivateWorkspace 生命周期与同一共享审批/执行链的私有文件读写，当前定向 16/16。生产树快照、排除清单、源修订与差异导出/合入仍未完成；D14 和默认执行门禁保持未解除。
+
+2026-10-17 EX-01/D14 后续：[工作区快照与变更导出](../evidence/2026-10-17-windows-workspace-snapshot.md)当前定向 23/23，通过实际私有任务增删改、来源变更拒绝、硬链接/junction/越界拒绝及同日志审批前绑定。摘要的产品审批展示、整树终态约束、F08 合入和默认 Host/CLI 装配仍待完成，D14 不解除；一次 5 秒超时原因未定位。
+
+2026-10-17 EX-01/REVIEW-01：[快照终态导出](../evidence/2026-10-17-workspace-snapshot-settlement.md)已消费共享日志的 exited/退出观察/输出完整及快照绑定事实；真实任务与磁盘重放断言在 23/23 中通过。审批展示、启动复核及 F08/CAS 接线待实施，默认门禁不开放。
+
+2026-10-17 EX-01/REVIEW-01：[快照审批与启动复核](../evidence/2026-10-17-workspace-snapshot-approval.md)新增精确票绑定回执摘要、任务投影及页面范围展示；实际来源更新后拒绝恢复线程。核心集成 24/24，页面状态/渲染 13/13；完整桌面/Host 快照生命周期和 F08/CAS 仍待接线，门禁保持关闭。
+
+2026-10-17 REVIEW-01/产物：[任务差异登记与真实 Host 消费](../evidence/2026-10-17-task-review-persistence-host.md)复用 AttachmentStore 保存前后文件对象，同日志 execution/review 登记身份；核心 24/24、页面 16/16、当前 Host 真实历史投影及页面渲染通过。正文预览、F08/CAS 写回、Host 快照执行生命周期和完整桌面仍待完成，默认门禁关闭。
+
+2026-10-17 F08/REVIEW-01：[任务正文预览](../evidence/2026-10-17-task-review-body-preview.md)新增有限 execution/review-file，Host/CLI/IPC/页面读取登记的前后内容对象；核心24/24、页面19/19、桥接3/3及真实Host/CLI通过。写回审批/CAS与默认Host快照执行未开放。
+
+2026-10-17 F08写回前置：[单文件条件写](../evidence/2026-10-17-review-file-compare-exchange.md)新增独占句柄核对旧字节的内部创建/替换/删除原语，真实DLL定向28/28。尚非多文件或断电原子合入；审批/持久意图/部分成功与未知结算及产品写回未接，门禁关闭。
+
+2026-10-17 F08：[写回审批与持久意图](../evidence/2026-10-17-review-apply-journal.md)核心复用同一日志/lease/精确一次票/取消令牌，写前屏障与逐文件结算、部分成功及未知不重放，真实DLL定向36/36。公共写回动作、hunk及完整桌面仍未接，不升级产品完成状态。
+
+2026-10-17 F08：[目录身份与固定原生库装配](../evidence/2026-10-17-review-directory-identity.md)完成核心保护，真实DLL定向39/39、零跳过。拒绝同路径目录实体替换；旧记录保留只读。公共异步写回、双入口与桌面操作仍待接通，不升级产品完成状态。
+
+2026-10-17 F08：[异步写回与停止边界](../evidence/2026-10-17-review-apply-async.md)核心40/40通过；提交中查询/停止及时返回，后续文件不再写入，重复启动拒绝。公共双入口和页面仍待接通，默认门禁关闭。
+
+2026-10-17 F08：[双入口及页面实际写回](../evidence/2026-10-17-review-apply-product-entries.md)有限prepare/apply/describe/stop及页面独立确认已接；核心41/41、页面24/24、桥接4/4、真实组件→IPC→Host及CLI17项通过，合成项目实际增删改。Host176/IPC147；完整Electron/安装态、默认快照执行及在途Host停止仍待验，不解除D14与整体目标。
+
+2026-10-17 EX-01/F08：[原工作区与私有执行目录映射](../evidence/2026-10-17-snapshot-logical-workspace.md)真实定向42/42、页面27/27。会话目录/修订与原文件不变，仅私有副本改变并登记差异；默认Host/CLI生命周期尚未装配，D14及整体目标保持未完成。并发源码边界见证据。
+
+2026-10-17 EX-01：[私有副本有界清理](../evidence/2026-10-17-private-workspace-disposal.md)新增仅消费自有根句柄的内容清理，真实定向45/45。嵌套清理、占用后重试及链接拒绝/外部哨兵保护通过；默认Host/CLI资源生命周期尚未装配，D14与整体目标保持未完成。格式后复编边界见证据。
+
+2026-10-17 EX-01/F08：[自动审查与资源收束](../evidence/2026-10-17-execution-snapshot-settlement.md)共享监督器可信结束阶段47/47，差异持久化后才删除副本/释放profile和库；失败保留真实退出事实，晚期释放可在同进程重试。默认Host/CLI准备所有权尚未接通，D14与整体目标未解除。
+
+2026-10-18 F08/EX-01：[私有执行生命周期与真实双入口](../evidence/2026-10-18-execution-capsule-entries.md)：核心定向50/50、真实状态层→IPC→Host及CLI 13项、桌面定向14/14；同进程准备/独立审批/执行/审查/写回及EOF取消收束已实测。未提交增量；项目与会话数据重合、完整Electron/安装态及隔离专项仍待验，整体功能不升级完成。
+
+2026-10-18 F08/EX-01：[项目与会话数据同目录](../evidence/2026-10-18-colocated-execution-metadata.md)：按真实日志/租约/附件路径排除元数据，保留用户同名文件；新产物同目录与分离布局真实Host/CLI各13项通过。核心52项首轮51通过1清理错误，修正夹具后完整52/52通过、零跳过/错误/失败；不升级整体完成状态。
