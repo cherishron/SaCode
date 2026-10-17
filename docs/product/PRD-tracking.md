@@ -39,6 +39,13 @@
 - 透明：pack-host 步骤系统显示 `Sandbox bypassed (escalation-approved)`，该命令在无沙箱隔离下执行（非本会话主动请求提权），特此记录。
 - 状态：**未交付 / 候选待验**。未安装、未发布、未 push。
 
+## 2026-10-18 02:20 A3 根因分类：本机环境，非代码缺陷
+
+- 最小 Electron 探针对照（`D:/tmp/electron-min-20261018/app`，400x300 空窗口、已 `disableHardwareAcceleration()`、无 SaCode 业务/Host/preload）：**RC=139 段错误，输出 0 字节**，窗口未创建。历史亦有 `electron.exe.25104.dmp`。
+- 结论：**任何 Electron 应用在本机均崩溃**，A3 与 SaCode 代码无关，属本机 Electron 运行时/图形栈环境问题。SaCode 侧表现为 GPU 子进程 `0xC0000005` → 主进程 `0x80000003`（故障偏移 `0x68cf3db` 稳定，故障模块为 SaCode.exe 自身，属 Electron 检测 GPU 不可用后的既定 abort）。
+- 排除项：候选包图形库齐全（libEGL/libGLESv2/vk_swiftshader/vulkan-1/d3dcompiler_47），非缺件；GPU 子进程无独立 WER 证据，故不能归因具体驱动或 DLL。
+- 影响：**本机不能完成 GUI 验收**（双击/窗口路径）。未关沙箱、未降防护。GUI 路径需换环境（非本机/非沙箱机器）或先修复本机图形栈；协议层 PASS 不受此限。
+
 ## A3 追踪修复在途（2026-10-17 14:28）
 
 - 用户确认默认双击旧候选可打开；只读确认其主进程父进程为Explorer，当前命令令牌也是Medium。人工启动通过不等于自动化GPU或运行时沙箱验收通过；保留所有沙箱设置。
