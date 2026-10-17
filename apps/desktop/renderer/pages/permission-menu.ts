@@ -49,7 +49,7 @@ export const PermissionMenu=defineComponent({setup(){
   onMounted(()=>{document.addEventListener('pointerdown',outside);document.addEventListener('keydown',keydown);void load();});
   onBeforeUnmount(()=>{disposed=true;++serial;document.removeEventListener('pointerdown',outside);document.removeEventListener('keydown',keydown);});
   return()=>h('div',{ref:root,class:'permission-menu-root',onKeydown:(e:KeyboardEvent)=>{if(e.key==='Escape'&&open.value){e.stopPropagation();open.value=false;nextTick(()=>root.value?.querySelector<HTMLButtonElement>('.permission-trigger')?.focus());}}},[
-    h('button',{class:'permission-trigger',type:'button','aria-label':'权限模式，当前'+(current.value||'未确认'),'aria-expanded':open.value,'aria-controls':'permission-options',onClick:()=>{open.value=!open.value;if(open.value)nextTick(()=>root.value?.querySelector<HTMLElement>('.permission-popover')?.focus());}},[
+    h('button',{class:'permission-trigger',type:'button','aria-label':'权限模式，当前'+(current.value||'未确认'),'aria-expanded':open.value,'aria-controls':'permission-options',onClick:()=>{open.value=!open.value;if(open.value){if(current.value===null&&!busy.value)void load();nextTick(()=>root.value?.querySelector<HTMLElement>('.permission-popover')?.focus());}}},[
       h('span',{},'工具审批'),h('svg',{width:12,height:12,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':1.5,'aria-hidden':'true'},h('path',{d:'m6 9 6 6 6-6'})),
     ]),
     open.value?h('section',{id:'permission-options',class:'permission-popover',tabindex:-1,'aria-label':'权限模式'},[
@@ -57,7 +57,7 @@ export const PermissionMenu=defineComponent({setup(){
       h('p',{class:'note'},'模式回读不代表持久化或权限策略已生效；工具仍以核心实际审批为准。'),
       busy.value?h('p',{class:'note',role:'status'},busy.value==='read'?'正在读取…':'正在设置并核实…'):null,
       error.value?h('p',{class:'note',role:'alert'},error.value):null,
-      ...modes.map(([name,detail])=>h('button',{type:'button',class:current.value===name?'active':'',disabled:!!busy.value||current.value===null,onClick:()=>select(name)},[h('span',{},[h('strong',{},name),h('small',{},detail)])])),
+      ...modes.map(([name,detail])=>h('button',{type:'button',class:['mode-'+name,current.value===name?'active':''].filter(Boolean).join(' '),disabled:!!busy.value||current.value===null,onClick:()=>select(name)},[h('span',{},[h('strong',{},name),h('small',{},detail)])])),
       h('button',{type:'button',disabled:!!busy.value,onClick:load},'重新读取'),
     ]):null,
   ]);
