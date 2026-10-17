@@ -161,7 +161,9 @@ app.whenReady().then(async()=>{
         modelsRemove:async()=>({...bump(providerView.revision),providers:[]}),
         modelsSort:async()=>bump(providerView.revision),
         modelsSetEnabled:async()=>bump(providerView.revision),
-        modelPull:async()=>({...bump(providerView.revision),providers:[{...provider,models:[{id:'pulled-model',name:'拉取候选',contextWindow:'',maxTokens:'',image:false}]}]}),
+        modelPull:async(_id,_revision,operationId)=>({pullOperation:{operationId,providerId:provider.id,status:'succeeded',settled:true,error:''}}),
+        modelPullDescribe:async operationId=>({operationId,providerId:provider.id,status:'succeeded',settled:true,error:''}),
+        modelPullCancel:async operationId=>({operationId,providerId:provider.id,status:'cancelled',settled:true,cancelRequested:true,error:''}),
         customsDescribe:async()=>({models:[custom],revision:'r1',writable}),
         usageStatus:async()=>({used:0,budget:0,over:false,verdict:''}),
       };
@@ -179,7 +181,7 @@ app.whenReady().then(async()=>{
       if(writable&&edit){edit.click();await settle();check('供应商编辑打开字段',!!root.querySelector('input[aria-label="显示名称"]'));}
       const cancel=[...root.querySelectorAll('button')].find(b=>b.textContent==='取消');if(cancel){cancel.click();await settle();}
       if(writable&&add){add.click();await settle();check('供应商新增表单打开',!!root.querySelector('input[aria-label="Provider ID"]')&&!!root.querySelector('input[aria-label="API 密钥"]'));}
-      if(writable){const pull=root.querySelector('button[aria-label="拉取 '+provider.name+' 模型目录"]');if(pull){pull.click();await settle();}check('供应商槽位可拉取候选',root.textContent.includes('拉取候选')||root.textContent.includes('拉取中'));}
+      if(writable){const cancelAdd=[...root.querySelectorAll('button')].find(b=>b.textContent==='取消');if(cancelAdd){cancelAdd.click();await settle();}const pull=root.querySelector('button[aria-label="拉取 '+provider.name+' 模型目录"]');if(pull){pull.click();await settle();}check('供应商槽位可拉取候选',root.textContent.includes('模型目录已拉取成功')||root.textContent.includes('拉取中'));}
       ui.unmount();assembly.dispose();await settle();
     }
     check('无 Vue 渲染异常',errors.length===0);return {checks,errors};

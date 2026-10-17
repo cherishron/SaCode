@@ -597,7 +597,7 @@ require('./models-ipc.cjs').registerModelsIpc(ipcMain, (method, args) => withHos
 require('./model-credential-ipc.cjs').registerModelCredentialIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), modelsGuard);
 
 const customsGuard = require("./customs-guard.cjs");
-require('./customs-ipc.cjs').registerCustomsIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), customsGuard, isStr);
+require('./customs-ipc.cjs').registerCustomsIpc(ipcMain, (method, args, timeoutMs) => withHost(() => bridge.request(method, args, timeoutMs)), customsGuard, isStr);
 
 const pluginsGuard = require("./plugins-guard.cjs");
 require('./plugins-ipc.cjs').registerPluginsIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)), pluginsGuard, isStr);

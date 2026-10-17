@@ -3,6 +3,7 @@
 import {defineComponent,h,ref,onMounted,onBeforeUnmount,type PropType} from 'vue';
 import type {ClientScope} from './slot-core';
 import {cloneModel,renderModelCapabilities,type ModelCapabilities} from './model-capabilities';
+import {pullActionLabel,pullBlocks,pullStateText,pullVerificationText,type PullState} from './model-pull-state';
 
 // --- 类型 ---
 export type Protocol='openai-completions'|'openai-responses'|'anthropic-messages';
@@ -17,7 +18,11 @@ export interface Adapter{
   createInstance?(catalogId:string,expectedRevision:string):Promise<void>;
   remove(id:string,expectedRevision:string):Promise<{credentialRemoval?:string}|void>;
   reorder(keys:string[],expectedRevision:string):Promise<void>;
-  pullModels(providerId:string,expectedRevision:string):Promise<void>;
+  pullModels(providerId:string,expectedRevision:string):Promise<unknown>;
+  pullSnapshot?():PullState|null;
+  subscribePull?(invalidate:()=>void):()=>void;
+  refreshPull?():Promise<unknown>;
+  cancelPull?():Promise<unknown>;
   subscribe?(invalidate:()=>void):()=>void;
 }
 
@@ -82,6 +87,8 @@ export const Page=defineComponent({
     const credentialRetry=ref<{revision:string;snapshot:string}|null>(null);
     const defaultProviderId=ref(''),defaultModel=ref('');
     const selectedCatalog=ref('');
+    const pullOperation=ref<PullState|null>(props.adapter?.pullSnapshot?.()||null);
+    let offPull:(()=>void)|undefined;
     let off:(()=>void)|undefined,generation=0,disposed=false,draftRevision='',deleteRevision='';
 
     const readReady=ref(false);
@@ -96,8 +103,8 @@ export const Page=defineComponent({
     const closeEdit=()=>{credentialRetry.value=null;editing.value=null;adding.value=false;draft.value=blank();error.value='';message.value='';};
     const startAdd=()=>{closeEdit();draftRevision=revision.value;adding.value=true;draft.value.sortOrder=providers.value.length;};
     const startEdit=(p:Provider)=>{credentialRetry.value=null;draftRevision=revision.value;editing.value=p.id;adding.value=false;draft.value={...p,models:(p.models||[]).map(cloneModel),key:''};error.value='';message.value='';};
-    const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!loading.value&&writable.value&&readReady.value;
-    const mutate=async(action:()=>Promise<void>,done:()=>void=()=>{},success:string|(()=>string)='')=>{
+    const canMutate=()=>!!props.adapter&&!disposed&&!saving.value&&!pullBlocks(pullOperation.value)&&!loading.value&&writable.value&&readReady.value;
+    const mutate=async(action:()=>Promise<unknown>,done:()=>void=()=>{},success:string|(()=>string)='')=>{
       saving.value=true;error.value='';message.value='';
       try{await action();if(disposed)return;done();const refreshed=await reload();if(!disposed)message.value=refreshed?(typeof success==='function'?success():success):'操作已成功，但目录刷新失败或被更新请求替代；请刷新核对最新配置';}
       catch(e){if(!disposed){error.value=errText(e);if((e as any)?.configurationRevision!==undefined)credentialRetry.value={revision:(e as any).configurationRevision,snapshot:JSON.stringify(draft.value)};}}
@@ -140,7 +147,21 @@ export const Page=defineComponent({
     const pull=async(p:Provider)=>{
       if(!canMutate())return;
       const id=p.id,expected=revision.value;pulling.value=id;
+      if(props.adapter?.pullSnapshot){
+        error.value='';message.value='';
+        try{await props.adapter.pullModels(id,expected);if(!disposed)await reload();}
+        catch(e){if(!disposed)error.value=errText(e);}
+        finally{if(!disposed)pulling.value=null;}
+        return;
+      }
       await mutate(()=>props.adapter!.pullModels(id,expected),()=>{},'已拉取模型目录');
+    };
+    const inspectPull=async(cancel:boolean)=>{
+      if(disposed)return;
+      try{
+        await(cancel?props.adapter?.cancelPull?.():props.adapter?.refreshPull?.());
+        if(!disposed&&pullOperation.value?.settled)await reload();
+      }catch{if(!disposed)error.value='操作状态尚未确认，请稍后查询原操作；不要重复拉取';}
     };
     const chooseDefault=async(p:Provider,model:string)=>{
       if(!canMutate()||!props.adapter?.setDefault||!p.enabled||!model||!(p.models||[]).some(m=>m.id===model))return;
@@ -153,8 +174,13 @@ export const Page=defineComponent({
       await mutate(()=>props.adapter!.createInstance!(id,expected),()=>{selectedCatalog.value='';},'供应商实例已添加，请配置密钥并核对模型目录');
     };
 
-    onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void reload();});void reload();});
-    onBeforeUnmount(()=>{disposed=true;generation++;off?.();});
+    onMounted(()=>{
+      off=props.adapter?.subscribe?.(()=>{void reload();});
+      offPull=props.adapter?.subscribePull?.(()=>{if(!disposed)pullOperation.value=props.adapter?.pullSnapshot?.()||null;});
+      pullOperation.value=props.adapter?.pullSnapshot?.()||null;
+      void reload();
+    });
+    onBeforeUnmount(()=>{disposed=true;generation++;off?.();offPull?.();});
 
     const protoLabels:Record<Protocol,string>={'openai-completions':'OpenAI Completions','openai-responses':'OpenAI Responses','anthropic-messages':'Anthropic Messages'};
 
@@ -163,21 +189,34 @@ export const Page=defineComponent({
       const unavailable='供应商管理后端不可用';
       const isEditing=editing.value!==null||adding.value;
       const d=draft.value;
+      const operation=pullOperation.value;
+      const busy=saving.value||pullBlocks(operation);
       return el('section','root',[
         el('div','header',[
           el('h2',null,'供应商管理'),
           el('p','intro','管理模型提供商及其 API 密钥。'),
           btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新供应商目录',disabled:loading.value||saving.value}),
-          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
+          btn('+ 添加供应商',startAdd,'primary',{'aria-label':'添加供应商',disabled:!readReady.value||!writable.value||loading.value||busy||isEditing}),
         ]),
         !readReady.value&&!loading.value?el('p','notice','当前目录尚未核实，修改操作已暂停。请刷新后继续。',{role:'status'}):null,
         loading.value?el('p','loading','正在加载…'):null,
         error.value?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
+        operation?el('section','notice',[
+          el('p',null,pullStateText(operation),{role:'status','aria-live':'polite'}),
+          el('p','hint',['供应商：',operation.providerId,' · 操作：',el('code','id',operation.operationId)]),
+          pullBlocks(operation)?el('p','hint','再次拉取及配置修改已暂停。请用“查询拉取结果”核对这次操作；刷新供应商目录只读取当前配置，不能证明这次拉取成功。'):null,
+          operation.status==='unknown'&&operation.error==='model-pull-operation-unknown'?el('p','hint','当前宿主没有这条操作记录，可能发生过重启或断连。请保留操作 ID 并核对配置；不要把“查不到”当成“未执行”。'):null,
+          pullVerificationText(operation)?el('p','hint',pullVerificationText(operation),{role:'status','aria-live':'polite'}):null,
+          el('div','actions',[
+            btn(operation.checking?'查询中…':'查询拉取结果',()=>void inspectPull(false),'btn',{'aria-label':'查询当前模型拉取结果',disabled:operation.checking||operation.cancelling}),
+            pullBlocks(operation)?btn(operation.cancelling?'正在请求取消…':'取消拉取',()=>void inspectPull(true),'btn',{'aria-label':'取消当前模型拉取',disabled:operation.checking||operation.cancelling||['committing','timed-out','cancelled','outcome-unknown'].includes(operation.status)}):null,
+          ]),
+        ],{'aria-label':'模型拉取状态'}):null,
         writable.value===false?el('p','notice','当前部署的设置文档为只读。',{role:'status'}):null,
         el('div','actions',[
-          el('select','ipt',[el('option',null,'选择内置供应商',{value:''}),...catalog.value.map(p=>el('option',null,p.name||p.id,{value:p.id}))],{'aria-label':'内置供应商目录',value:selectedCatalog.value,disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing||!props.adapter?.createInstance,onChange:(e:Event)=>{selectedCatalog.value=(e.target as HTMLSelectElement).value;}}),
-          btn('添加实例',()=>void createInstance(),'btn',{disabled:!selectedCatalog.value||!readReady.value||!writable.value||loading.value||saving.value||isEditing||!props.adapter?.createInstance}),
+          el('select','ipt',[el('option',null,'选择内置供应商',{value:''}),...catalog.value.map(p=>el('option',null,p.name||p.id,{value:p.id}))],{'aria-label':'内置供应商目录',value:selectedCatalog.value,disabled:!readReady.value||!writable.value||loading.value||busy||isEditing||!props.adapter?.createInstance,onChange:(e:Event)=>{selectedCatalog.value=(e.target as HTMLSelectElement).value;}}),
+          btn('添加实例',()=>void createInstance(),'btn',{disabled:!selectedCatalog.value||!readReady.value||!writable.value||loading.value||busy||isEditing||!props.adapter?.createInstance}),
         ]),
 
         // 供应商列表
@@ -195,13 +234,13 @@ export const Page=defineComponent({
             el('label','field',[el('span','lbl','默认模型'),el('select','ipt',[
               el('option',null,'选择默认模型',{value:''}),
               ...(p.models||[]).map(m=>el('option',null,m.name||m.id,{value:m.id})),
-            ],{'aria-label':'默认模型 '+(p.name||p.id),value:defaultProviderId.value===p.id?defaultModel.value:'',disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing||!p.enabled||!props.adapter?.setDefault||!(p.models||[]).length,onChange:(e:Event)=>void chooseDefault(p,(e.target as HTMLSelectElement).value)})]),
-            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
-            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
-            btn(pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!readReady.value||!writable.value||loading.value||saving.value}),
-            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||i===0}),
-            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value||i===providers.value.length-1}),
-            btn('删除',()=>{deleteRevision=revision.value;deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||saving.value}),
+            ],{'aria-label':'默认模型 '+(p.name||p.id),value:defaultProviderId.value===p.id?defaultModel.value:'',disabled:!readReady.value||!writable.value||loading.value||busy||isEditing||!p.enabled||!props.adapter?.setDefault||!(p.models||[]).length,onChange:(e:Event)=>void chooseDefault(p,(e.target as HTMLSelectElement).value)})]),
+            btn('编辑',()=>startEdit(p),'btn',{'aria-label':'编辑 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||busy||isEditing}),
+            btn(p.enabled?'禁用':'启用',()=>void toggle(p),'btn',{'aria-label':(p.enabled?'禁用':'启用')+' '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||busy}),
+            btn(operation?.providerId===p.id?pullActionLabel(operation,p.id):pulling.value===p.id?'拉取中…':'拉取模型',()=>void pull(p),'btn',{'aria-label':'拉取 '+(p.name||p.id)+' 模型目录',disabled:!readReady.value||!writable.value||loading.value||busy||isEditing}),
+            btn('↑',()=>void move(i,'up'),'icon',{'aria-label':'上移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||busy||i===0}),
+            btn('↓',()=>void move(i,'down'),'icon',{'aria-label':'下移 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||busy||i===providers.value.length-1}),
+            btn('删除',()=>{deleteRevision=revision.value;deleting.value=p;error.value='';},'danger',{'aria-label':'删除 '+(p.name||p.id),disabled:!readReady.value||!writable.value||loading.value||busy}),
           ]),
         ],{key:p.id}))),
         !providers.value.length&&!loading.value?el('p','empty','暂无供应商，点击"添加供应商"开始配置。'):null,

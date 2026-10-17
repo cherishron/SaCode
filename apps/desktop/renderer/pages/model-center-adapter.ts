@@ -1,5 +1,7 @@
 // 模型中心只转换宿主投影；配置、修订号、凭据与计量仍由共享核心持有。
+import {createModelPullState} from './model-pull-state';
 export function createModelCenterAdapters(api: any) {
+  const modelPull=createModelPullState(api);
   // Vue 响应式代理不能被 Electron structured clone；提交当前编辑的纯数据快照。
   const plain = (value: any) => JSON.parse(JSON.stringify(value));
   const customView = async () => {
@@ -95,7 +97,11 @@ export function createModelCenterAdapters(api: any) {
           revision = after.revision;
         }
       },
-      pullModels: (providerId: string, expectedRevision: number) => api.modelPull(providerId, expectedRevision),
+      pullModels: (providerId: string, expectedRevision: number) => modelPull.start(providerId, expectedRevision),
+      pullSnapshot: modelPull.snapshot,
+      subscribePull: modelPull.subscribe,
+      refreshPull: modelPull.refresh,
+      cancelPull: modelPull.cancel,
     },
     'custom-models': {
       describe: customView,
@@ -163,11 +169,22 @@ export function createModelCenterAdapters(api: any) {
       async describe() {
         const catalog = await api.sessionCatalog();
         const entries = (catalog && Array.isArray(catalog.entries)) ? catalog.entries : [];
-        // 全局聚合：限流扫描前 K 个会话，各取最近 50 条调用后合并取最近 N 条。
-        // 目录扫描序无时间序，跨大量会话时不保证覆盖最活跃者——这是 v1 的已知限制，
-        // 待目录补 last-active 时间戳后改为按时间裁剪。
+        // 全局聚合：目录扫描序无时间序，直接取前 K 个会话会漏掉最活跃者。
+        // v1 已知限制的修复（方案 A，渲染层-contained、不动 core/host）：先对每个会话做一次
+        // 轻量 requestTrace(limit=1) 取该会话最近一次调用时间 lastCall，按 lastCall 降序取前 K
+        // 个会话，再对这 K 个拉全量 trace 合并。代价＝N 次轻调用；收益＝稳定覆盖最活跃的 K 个。
         const K = 30, N = 200;
-        const slice = entries.slice(0, K);
+        const probe = await Promise.all(entries.map(async (e: any) => {
+          try {
+            const raw = await api.requestTrace(e.id, -1, 1);
+            const proj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            const reqs = (proj && proj.requests) || [];
+            const last = reqs.reduce((m: number, r: any) => Math.max(m, Number(r?.request?.time ?? 0)), 0);
+            return { e, last };
+          } catch { return { e, last: 0 }; }
+        }));
+        probe.sort((a, b) => b.last - a.last);
+        const slice = probe.slice(0, K).map(p => p.e);
         const perSession = await Promise.all(slice.map(async (e: any) => {
           try {
             const raw = await api.requestTrace(e.id, -1, 50);

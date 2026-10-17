@@ -107,3 +107,102 @@ test('守卫拒收明文槽位与越界字段', () => {
   assert.equal(b.priceInMicro, -1);
   assert.equal(b.currency, '');
 });
+
+// —— modelPull 网络超时修复（2026-10-17）的主进程 handler 行为 ——
+
+function registerWithMockRequest(handler) {
+  const handlers = {};
+  const ipcMain = { handle: (name, fn) => { handlers[name] = fn; } };
+  const { sanitizeRevision } = require('../customs-guard.cjs');
+  const isStr = (x) => typeof x === 'string';
+  require('../customs-ipc.cjs').registerCustomsIpc(ipcMain, handler, { sanitizeRevision }, isStr);
+  return handlers;
+}
+
+test('modelPull 超时不凭无关配置的修订号前进伪报成功，也不自动重发', async () => {
+  const calls = [];
+  const handlers = registerWithMockRequest(async (method, args, timeoutMs) => {
+    calls.push({ method, args, timeoutMs });
+    if (method === 'model/pull') throw new Error('timeout: model/pull');
+    if (method === 'model/registry/describe') return { revision: 6, providers: [{ id: 'step', models: [{ id: 'm-a' }] }] };
+    throw new Error('unexpected-method:' + method);
+  });
+  await assert.rejects(handlers['sacode:modelPull']({}, { providerId: 'step', expectedRevision: 5 }), /model-pull-timeout-unknown/);
+  // 网络动作单独等待，不改变其他 RPC 的默认窗口。
+  assert.equal(calls[0].method, 'model/pull');
+  assert.equal(calls[0].timeoutMs, 30000);
+  assert.equal(calls.length, 1, '不查询全局修订号冒充操作结果，也不重发拉取');
+});
+
+test('modelPull 桥超时后修订号未前进则如实报结果未知', async () => {
+  const handlers = registerWithMockRequest(async (method) => {
+    if (method === 'model/pull') throw new Error('timeout: model/pull');
+    if (method === 'model/registry/describe') return { revision: 5, providers: [] };
+  });
+  await assert.rejects(handlers['sacode:modelPull']({}, { providerId: 'step', expectedRevision: 5 }), /model-pull-timeout-unknown/);
+});
+
+test('modelPull 不吞掉其他操作或宿主返回的超时错误', async () => {
+  for (const message of ['timeout: model/registry/describe', '-32020 timeout: model/pull']) {
+    const original = new Error(message);
+    const handlers = registerWithMockRequest(async () => { throw original; });
+    await assert.rejects(handlers['sacode:modelPull']({}, { providerId: 'step', expectedRevision: 5 }), e => e === original);
+  }
+});
+
+test('modelPull 先验证输入并原样传递合法整数修订号', async () => {
+  const calls = [];
+  const handlers = registerWithMockRequest(async (method, args, timeoutMs) => {
+    calls.push({ method, args, timeoutMs });
+    return { revision: args.expectedRevision, providers: [] };
+  });
+  for (const args of [undefined, {}, { providerId: '' }, { providerId: 'step', expectedRevision: -1 }]) {
+    await assert.rejects(handlers['sacode:modelPull']({}, args), /bad-model-provider|bad-custom-revision/);
+  }
+  assert.equal(calls.length, 0);
+  const revision = Number.MAX_SAFE_INTEGER;
+  await handlers['sacode:modelPull']({}, { providerId: 'step', expectedRevision: revision });
+  assert.equal(calls[0].args.expectedRevision, revision);
+});
+
+test('customs 其他动作不继承拉取的网络等待窗口', async () => {
+  const calls = [];
+  const handlers = registerWithMockRequest(async (...args) => { calls.push(args); });
+  await handlers['sacode:customsDescribe']();
+  assert.deepEqual(calls, [['custom/describe']]);
+  const main = readFileSync(new URL('../main.cjs', import.meta.url), 'utf8');
+  assert.match(main, /registerCustomsIpc\(ipcMain,\s*\(method, args, timeoutMs\)\s*=>\s*withHost\(\(\)\s*=>\s*bridge\.request\(method, args, timeoutMs\)\)/);
+});
+
+test('modelPull 非超时错误原样抛出（不进迟到协调）', async () => {
+  const calls = [];
+  const handlers = registerWithMockRequest(async (method) => {
+    calls.push(method);
+    throw new Error('-32020 provider-not-found');
+  });
+  await assert.rejects(handlers['sacode:modelPull']({}, { providerId: 'nope', expectedRevision: 5 }), /provider-not-found/);
+  assert.equal(calls.length, 1); // 没进协调分支（否则会多一次 describe）
+});
+
+test('modelPull 正常成功返回结果且无 late 标志', async () => {
+  const handlers = registerWithMockRequest(async (method, _args, timeoutMs) => {
+    assert.equal(method, 'model/pull');
+    assert.equal(timeoutMs, 30000);
+    return { revision: 6, providers: [{ id: 'step', models: [] }] };
+  });
+  const result = await handlers['sacode:modelPull']({}, { providerId: 'step', expectedRevision: 5 });
+  assert.equal(result.late, undefined);
+  assert.equal(result.revision, 6);
+});
+
+test('预加载模型拉取身份与查询取消只走固定通道',async()=>{
+  const {api,calls}=load();
+  await api.modelPull('step',5,'pull-known');
+  await api.modelPullDescribe('pull-known');
+  await api.modelPullCancel('pull-known');
+  assert.equal(JSON.stringify(calls),JSON.stringify([
+    ['sacode:modelPull',{providerId:'step',expectedRevision:5,operationId:'pull-known'}],
+    ['sacode:modelPullDescribe',{operationId:'pull-known'}],
+    ['sacode:modelPullCancel',{operationId:'pull-known'}],
+  ]));
+});

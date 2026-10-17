@@ -1,5 +1,5 @@
 import {defineComponent,h,ref,watch,onBeforeUnmount} from 'vue';
-import {createExecutionTask,executionProviderNotice} from './execution-task-state';
+import {createExecutionTask,executionProviderNotice,executionWorkspaceSnapshot} from './execution-task-state';
 import {createExecutionHistory} from './execution-history';
 import {buildTestReport} from './build-test-report.mjs';
 export type ExecutionPreset={id:string;kind?:string;title:string;summary:string;executable:string;argv:string[];timeoutMs?:number;outputLimit?:number};
@@ -32,7 +32,7 @@ export const ExecutionTask=defineComponent({name:'SaCodeExecutionTask',props:{ac
  }catch(e){formError.value=String((e as Error).message||e);}}
  async function readAllOutput(){let pages=0;while(pages<128){const before=view.state.cursor;await view.output();pages++;if(view.state.error||!view.state.more||view.state.cursor<=before)break;}}
  const field=(title:string,value:any,update:(v:any)=>void,type='text')=>h('label',{class:'execution-field'},[h('span',{},title),h('input',{class:'input',type,value,disabled:!!view.state.busy,onInput:(e:any)=>update(type==='number'?Number(e.target.value):e.target.value)})]);
- return()=>{void revision.value;const s=view.state,t=s.task;return h('section',{class:'execution-task'},[
+ return()=>{void revision.value;const s=view.state,t=s.task,snapshot=t?executionWorkspaceSnapshot(t):null;return h('section',{class:'execution-task'},[
   h('header',{class:'row spread'},[h('h2',{},(props.preset as ExecutionPreset|null)?.title||(props.showTestReport?'构建与测试任务':'持久任务')),h('button',{class:'btn',disabled:!!s.busy,onClick:()=>view.workspace()},'读取工作区')]),
   s.workspace?h('p',{class:'note'},s.workspace.directory+' · 修订 '+s.workspace.revision):h('p',{class:'note'},'请先配置当前会话工作区。'),
   props.preset?h('section',{class:'execution-action-summary'},[h('h3',{},'独立授权提案'),h('p',{class:'note'},(props.preset as ExecutionPreset).summary),h('p',{class:'note'},'提案仅记录命令，不会执行。批准与启动是两个独立动作。'),h('pre',{tabindex:0},JSON.stringify({executable:(props.preset as ExecutionPreset).executable,argv:(props.preset as ExecutionPreset).argv},null,2))]):null,
@@ -56,6 +56,11 @@ export const ExecutionTask=defineComponent({name:'SaCodeExecutionTask',props:{ac
   t?h('article',{class:'execution-state'},[
    h('h3',{},labels[t.phase]||t.phase),h('p',{class:'note'},t.executionId+' · 修订 '+t.revision),
    h('details',{open:t.phase==='awaiting-approval'},[h('summary',{},'完整提案与审批绑定'),h('pre',{tabindex:0},t.proposal),h('p',{class:'note'},'SHA256 '+t.proposalDigest)]),
+   snapshot?h('section',{'aria-label':'私有工作区快照'},[
+    h('h4',{},'本次执行使用私有副本'),
+    h('dl',{},[h('dt',{},'原工作区'),h('dd',{},snapshot.sourceDirectory),h('dt',{},'执行目录'),h('dd',{},snapshot.executionDirectory),h('dt',{},'快照摘要'),h('dd',{},snapshot.manifestDigest),...(snapshot.toolBinding?(()=>{const tool=JSON.parse(snapshot.toolBinding);return[h('dt',{},'实际执行程序'),h('dd',{},tool.executable),h('dt',{},'程序 SHA256'),h('dd',{},tool.sha256)];})():[]),h('dt',{},'复制范围'),h('dd',{},snapshot.entryCount+' 项 · '+snapshot.byteCount+' 字节'),h('dt',{},'排除路径'),h('dd',{},snapshot.excluded.join('、')||'无')]),
+    h('p',{class:'note'},'批准仅适用于此提案及此快照；任务结果需经差异审查后另行授权写回原工作区。')
+   ]):null,
    h('div',{class:'row'},[
     h('button',{class:'btn',disabled:!!s.busy,onClick:()=>view.describe(t.executionId)},'刷新状态'),
     t.phase==='awaiting-approval'?h('button',{class:'btn',disabled:!!s.busy,onClick:()=>view.approve()},'批准此提案一次'):null,
