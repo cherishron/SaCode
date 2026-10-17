@@ -1,0 +1,277 @@
+package core
+
+import std.collection.ArrayList
+import std.fs.*
+import std.collection.HashMap
+import std.sync.Mutex
+
+// 普通 flush 兼容无参调用，但只能复用本进程真实 acquire 成功的对象，
+// 不能根据盘上 pid 自报写权。登记只保存真实 acquire 成功的实例。
+let localWriterMtx = Mutex()
+let localWriters = HashMap<String, WriteLease>()
+
+// 进程内写者登记的键必须唯一标识「同一个文件的同一份写权」，所以要先规范化目录，
+// 保留原始文件名的大小写形态。
+//
+// 大小写折叠只对 Windows 成立：该平台文件系统默认不区分大小写，不折叠就会把
+// session.log 与 SESSION.LOG 当成两个键。反过来在区分大小写的平台折叠是危险的——
+// 两个不同文件会共用一个键，随后者复用前者真实 acquire 的租约，可能把租约写到
+// 另一个文件上。不折叠的那一侧是安全侧：同一磁盘文件仍共用同一个租约文件，
+// 竞争者会在独占落位时被拒，而不是错拿别人的写权。
+@When[os == "Windows"]
+func normalizeWriterPath(path: Path): String {
+    return path.toString().toAsciiLower()
+}
+
+@When[os != "Windows"]
+func normalizeWriterPath(path: Path): String {
+    return path.toString()
+}
+
+func writerKey(path: String): String {
+    let parent = Path(path).parent.toString()
+    let directory = if (parent.size == 0) {
+        "."
+    } else {
+        parent
+    }
+    return normalizeWriterPath(canonicalize(directory).join(Path(path).fileName))
+}
+
+func localWriter(path: String): ?WriteLease {
+    return synchronized(localWriterMtx) {
+        localWriters.get(writerKey(path))
+    }
+}
+
+// 会话写者租约：同一会话同时只允许一个写者；读侧（投影/回放）不受限。
+//
+// 获取走「独占临时文件 + rename(overwrite:false)」：目标已存在时 rename 抛异常，
+// 于是不再存在 exists→writeTo 之间的竞态窗口（std.fs 没暴露 O_EXCL，而这是文档化
+// API 里唯一在 Windows 上也算原子的独占落位手段）。
+// 盘上写的是「谁的进程 + 哪一次获取」组成的归属凭据：release 只认自己那份，
+// 抢写失败的一方无权清掉持有者的租约；接管前也能从凭据里认出写者 pid。
+//
+// 崩溃持有者的接管走 takeoverIfStale()：只有盘上 pid 被 CFFI 判为「确认已死」才清重取。
+// pid 会被系统回收复用，因此两类误判都朝安全方向收敛——
+// 死者 pid 被别的活进程复用 → 判活为真 → 不接管（留着残留租约，宁可让人手工清）；
+// 持有者句柄打不开或身份无法确认 → 不接管，保留原租约；I/O 失败不冒充另一写者。
+public class WriteLease {
+    let leasePath: String
+    var token = ""
+    var staging = ""
+    var acquireFailure = ""
+
+    public init(sessionPath: String) {
+        this.leasePath = "${sessionPath}.lease"
+    }
+
+    public func held(): Bool {
+        return exists(leasePath)
+    }
+
+    public func ownerToken(): String {
+        return token
+    }
+
+    public func protects(sessionPath: String): Bool {
+        return writerKey(leasePath) == writerKey("${sessionPath}.lease") && token.size > 0 && currentOwner() == token
+    }
+
+    // 失败获取用的中转文件；成功或清理后都应为空，留给测试盯「没留垃圾」
+    public func stagingArtifact(): String {
+        return staging
+    }
+
+    // 失败只暴露稳定分类，不把系统异常、路径或凭据带进业务回执。
+    public func acquisitionFailure(): String {
+        return acquireFailure
+    }
+
+    // 盘上的归属；文件不存在或读不出都返回空串，调用方据此判「没人拿着」
+    public func currentOwner(): String {
+        try {
+            return String.fromUtf8(File.readFrom(leasePath)).trimEnd()
+        } catch (e: Exception) {
+            return ""
+        }
+    }
+
+    // 凭据形如 writer=<pid>-<临时文件名>；取不到 pid（旧格式、空文件）一律回 0，
+    // 调用方把 0 当「不认识格式」处理，绝不据此接管。
+    public func holderPid(): Int64 {
+        let owner = currentOwner().toArray()
+        let head = "writer=".toArray()
+        let hlen = Int64(owner.size)
+        let plen = Int64(head.size)
+        if (hlen <= plen) {
+            return Int64(0)
+        }
+        var k: Int64 = 0
+        while (k < plen) {
+            if (owner[k] != head[k]) {
+                return Int64(0)
+            }
+            k += 1
+        }
+        var v: Int64 = 0
+        var seen = false
+        var i = plen
+        while (i < hlen) {
+            let n = Int64(owner[i])
+            if (n >= 48 && n <= 57) {
+                v = v * 10 + (n - 48)
+                seen = true
+            } else {
+                break
+            }
+            i += 1
+        }
+        if (!seen) {
+            return Int64(0)
+        }
+        return v
+    }
+
+    // 崩溃持有者的接管入口：没被占就直接拿；被占且能确认持有者已死才清掉重拿。
+    // 除此之外一律回 false——不删别人的租约，也不假装拿到。
+    public func takeoverIfStale(probe!: (Int64) -> String = {pid => processLiveness(pid)}): Bool {
+        acquireFailure = ""
+        if (!held()) {
+            return acquire()
+        }
+        try {
+            if (!FileInfo(leasePath).isRegular()) {
+                acquireFailure = "io-failed"
+                return false
+            }
+        } catch (_: Exception) {
+            acquireFailure = "io-failed"
+            return false
+        }
+        let pid = holderPid()
+        if (pid <= 0) {
+            acquireFailure = "owner-unknown"
+            return false
+        }
+        let owner = currentOwner()
+        var state = "unknown"
+        try {
+            state = probe(pid)
+        } catch (_: Exception) {}
+        if (state != "dead") {
+            acquireFailure = if (state == "alive") {
+                "busy"
+            } else {
+                "owner-unknown"
+            }
+            return false
+        }
+        // 查询过程中归属变化时不删除新写者的凭据；完整并发接管仍需独立机制。
+        if (currentOwner() != owner) {
+            acquireFailure = "owner-unknown"
+            return false
+        }
+        try {
+            if (!removeIfExists(leasePath, recursive: false)) {
+                acquireFailure = "io-failed"
+                return false
+            }
+        } catch (e: Exception) {
+            acquireFailure = "io-failed"
+            return false
+        }
+        return acquire()
+    }
+
+    public func acquire(): Bool {
+        // 每次尝试都重新生成凭据：同一实例重试不得复用上一轮的归属
+        token = ""
+        staging = ""
+        acquireFailure = ""
+        let dir = dirOf(leasePath)
+        var publishing = false
+        try {
+            // 路径解析放在任何发布之前：失败不得出现「盘上拿到了却回 false」。
+            let key = writerKey(leasePath)
+            let tmp = File.createTemp(Path(dir))
+            let tmpPath = tmp.info.path.toString()
+            staging = tmpPath
+            let mark = "writer=${ownProcessId()}-${tmp.info.path.fileName}"
+            tmp.write(mark.toArray())
+            tmp.close()
+            publishing = true
+            nativePublishNewFile(tmpPath, leasePath)
+            // 只有落位成功才算拿到，凭据以盘上那份为准
+            token = mark
+            synchronized(localWriterMtx) {
+                localWriters[key] = this
+            }
+            staging = ""
+            return true
+        } catch (e: Exception) {
+            acquireFailure = "io-failed"
+            try {
+                if (publishing && exists(leasePath) && FileInfo(leasePath).isRegular()) {
+                    acquireFailure = "busy"
+                }
+            } catch (_: Exception) {}
+            if (staging.size > 0) {
+                try {
+                    removeIfExists(staging, recursive: false)
+                } catch (e2: Exception) {
+                    // 清理失败不改变结论：这次获取已经失败了
+                }
+                staging = ""
+            }
+            return false
+        }
+    }
+
+    // 只归还自己拿到的那份：凭据不匹配就什么都不动
+    public func release(): Bool {
+        if (token.size == 0) {
+            return false
+        }
+        if (currentOwner() != token) {
+            return false
+        }
+        try {
+            let key = writerKey(leasePath)
+            let gone = removeIfExists(leasePath, recursive: false)
+            if (gone) {
+                synchronized(localWriterMtx) {
+                    localWriters.remove(key)
+                }
+                token = ""
+            }
+            return gone
+        } catch (e: Exception) {
+            return false
+        }
+    }
+
+    // 取父目录前缀：只用字节扫描，不依赖分隔符相关的切片写法
+    private func dirOf(p: String): String {
+        let bytes = p.toArray()
+        var lastSeen: Int64 = -1
+        var i: Int64 = 0
+        while (i < Int64(bytes.size)) {
+            let n = Int64(bytes[i])
+            if (n == 47 || n == 92) {
+                lastSeen = i
+            }
+            i += 1
+        }
+        if (lastSeen < 0) {
+            return "./"
+        }
+        let out = ArrayList<Byte>()
+        var k: Int64 = 0
+        while (k <= lastSeen) {
+            out.add(bytes[k])
+            k += 1
+        }
+        return String.fromUtf8(out.toArray())
+    }
+}

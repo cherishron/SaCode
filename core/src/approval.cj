@@ -1,0 +1,288 @@
+package core
+
+import std.collection.ArrayList
+import std.sync.*
+import std.time.MonoTime
+
+// 审批的协议面：一次工具调用要经过「发号 → 应答 → 一次性消费」，
+// 而不是调用方随手带一个字符串说自己批过了。理由是可追问性——
+// 只有把 asked/decided/expired 写成事件，才答得出「谁批的、批没批、批过头没有」。
+//
+// 线程面：宿主里模型侧审批跑在 turn 线程（发号、轮询状态、消费工单），
+// 主循环同时还在应答人发起的审批——两类线程都会动 items 与日志，
+// 所以所有公开方法过同一把锁。锁只圈内存态自洽；跨进程可见仍只由
+// 日志（flush）决定，与 SessionLog 同一分工。
+//
+// 四条 fail-closed 规则：
+// 1) 认得的决定只有 `allowed-once` 与 `denied`，其余（allowed-always、空串、乱码）不改判也不成功；
+// 2) 一次性就是字面意思的一次，consume 用过即失效；
+// 3) 过期即拒：pending 和尚未消费的 allowed-once 过期自动转 expired；
+// 4) 票绑工具：consume 要同时报出「要执行的是哪个工具」，批给别的工具的票不放行。
+// 旧审批 ID 不可重用：已结算的工单不再接受第二次应答，也不产生第二条 decided。
+//
+// 时钟是真实单调钟（MonoTime 差值换算成整秒），不是可由调用方推进的刻度：
+// ttl 直接换成 deadline。逻辑刻度有过一个洞——没人 tick 就永不过期，而「谁负责 tick」
+// 又只能挂在协议面上，等于把过期权交给调用方。现在过期只由经过的时间决定。
+// 钟可注入只为测试确定性（假钟推过期判定），生产默认走单调钟，
+// 由 defaultDeskClockExpiresOnRealMonotonicTime 用真实时间钉住接线本身。
+// 用单调钟而非墙钟：系统改时不会让未结算的工单提前或无限延后过期。
+func monotonicSeconds(): () -> Int64 {
+    let base = MonoTime.now()
+    return { => (MonoTime.now() - base).toSeconds() }
+}
+
+// 从 `approval/asked` 的事件数据（`<id>:<tool>`）里剥出工单号：只认冒号前的连续数字，
+// 认不出就返回 -1 而不是猜一个——读日志是为了对账，读出一个没写过的号等于造假账。
+func approvalIdFromData(data: String): Int64 {
+    var n: Int64 = -1
+    for (c in data.toArray()) {
+        let d = Int64(c) - 48
+        if (d < 0 || d > 9) {
+            break
+        }
+        n = if (n < 0) { d } else { n * 10 + d }
+    }
+    return n
+}
+
+class ApprovalTicket {
+    let id: Int64
+    let tool: String
+    var state: String
+    let deadline: Int64
+    // 原始参数不可变；None 仅供旧入口兼容，Some 不允许按工具名绕过。
+    let arguments: Option<String>
+
+    public init(id: Int64, tool: String, deadline: Int64, arguments!: Option<String> = None) {
+        this.id = id
+        this.tool = tool
+        this.state = "pending"
+        this.deadline = deadline
+        this.arguments = arguments
+    }
+}
+
+public class ApprovalDesk {
+    let log: SessionLog
+    let items = ArrayList<ApprovalTicket>()
+    let clock: () -> Int64
+    var nextId: Int64 = 0
+    // 公开方法共用的锁：turn 线程与主循环会同时碰 items 与日志。
+    // ask() 只委托 askWithTtl()，不在外层再锁，避免自锁。
+    let mtx = Mutex()
+    public let defaultTtl: Int64 = 30
+
+    public init(log: SessionLog, clock!: () -> Int64 = monotonicSeconds()) {
+        this.log = log
+        this.clock = clock
+    }
+
+    public func ask(toolName: String): Int64 {
+        return askWithTtl(toolName, defaultTtl)
+    }
+
+    public func askWithTtl(toolName: String, ttl: Int64): Int64 {
+        return askBound(toolName, ttl, None)
+    }
+
+    // 绑定确切工具参数；保留原始字节，不把 JSON 重编码当成同一授权。
+    // 这只是进程内绑定；旧 asked 事件不保存参数，重启不会恢复放行。
+    public func askForCall(toolName: String, arguments: String, ttl!: Int64 = 30): Int64 {
+        return askBound(toolName, ttl, Some(arguments))
+    }
+
+    private func askBound(toolName: String, ttl: Int64, arguments: Option<String>): Int64 {
+        if (toolName.size == 0 || ttl <= 0) { throw Exception("invalid-approval-proposal") }
+        // 号必须从日志里已出现过的最大号往后接，不能靠进程内计数器从头数：
+        // CLI 每次 `sacode call`、桌面每次重启宿主都是新进程，计数器归零就会在日志里
+        // 再发一个 1 号，两条 `approval/asked 1:write` 让审计答不出「是哪一次批的」。
+        // 读日志而不是只读自己的内存，与 TokenMeter 每次接手日志都 rebuild 同一个理由。
+        mtx.lock()
+        var id: Int64 = 0
+        try {
+            let seen = highestAskedId()
+            if (seen > nextId) {
+                nextId = seen
+            }
+            nextId += 1
+            items.add(ApprovalTicket(nextId, toolName, clock() + ttl, arguments: arguments))
+            log.append("approval/asked", "${nextId}:${toolName}")
+            id = nextId
+        } finally {
+            mtx.unlock()
+        }
+        return id
+    }
+
+    public func stateOf(id: Int64): String {
+        mtx.lock()
+        var state = "unknown"
+        try {
+            reap()
+            if (let Some(x) <- find(id)) {
+                state = x.state
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return state
+    }
+
+    public func pendingCount(): Int64 {
+        mtx.lock()
+        var n: Int64 = 0
+        try {
+            reap()
+            for (t in items) {
+                if (t.state == "pending") {
+                    n += 1
+                }
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return n
+    }
+
+    // 切换会话时，尚待决定和已放行但未消费的工单都不能丢弃。
+    public func hasOpenTickets(): Bool {
+        mtx.lock()
+        var open = false
+        try {
+            reap()
+            for (ticket in items) {
+                if (ticket.state == "pending" || ticket.state == "allowed-once") {
+                    open = true
+                }
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return open
+    }
+
+    // 应答只认 pending：已结算（含用过、被拒、过期）的工单一律拒绝改判
+    public func answer(id: Int64, decision: String): Bool {
+        mtx.lock()
+        var accepted = false
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                if (t.state == "pending") {
+                    if (decision == "allowed-once" || decision == "denied") {
+                        t.state = decision
+                        log.append("approval/decided", "${id}:${decision}")
+                        accepted = true
+                    }
+                }
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return accepted
+    }
+
+    // 取走放行凭据：必须是「批给这一个工具」的一次性凭据，取到即作废。
+    // 工具名算进凭据本身——只认 id 的票能被挪去放行任何别的动作，而人回答的是
+    // 「这一件事可以做」，不是「这个号以后干什么都行」。
+    // 挪用不烧票：这张票对它真正批过的动作还得能放行一次，
+    // 否则一次误用就把人已给出的审批答复作废了。
+    public func consume(id: Int64, tool: String): String {
+        return consumeBound(id, tool, None)
+    }
+
+    public func consumeForCall(id: Int64, tool: String, arguments: String): String {
+        return consumeBound(id, tool, Some(arguments))
+    }
+
+    // 持久任务不得沿用只绑定工具名的旧工单。
+    public func consumeExactForCall(id: Int64, tool: String, arguments: String): String {
+        return consumeBound(id, tool, Some(arguments), exact: true)
+    }
+
+    private func consumeBound(id: Int64, tool: String, arguments: Option<String>, exact!: Bool = false): String {
+        mtx.lock()
+        var grant = ""
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                var matches = t.arguments.isNone() && !exact
+                if (let Some(expected) <- t.arguments) {
+                    if (let Some(actual) <- arguments) { matches = expected == actual }
+                }
+                if (t.tool == tool && matches && t.state == "allowed-once") {
+                    t.state = "used"
+                    grant = "allowed-once"
+                }
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return grant
+    }
+
+    // 仅用于区分拒绝原因；真正的匹配和消费仍在同一把锁内完成。
+    public func argumentsMatch(id: Int64, arguments: String): Bool {
+        mtx.lock()
+        var matches = false
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                matches = t.arguments.isNone()
+                if (let Some(expected) <- t.arguments) { matches = expected == arguments }
+            }
+        } finally { mtx.unlock() }
+        return matches
+    }
+
+    // 这张票批的是哪个工具；号不存在回空串。与 stateOf 同一类只读探查，
+    // 让调用方能把「挪用了别的工具的票」和「压根没批/已过期」写成两种拒绝原因。
+    public func toolOf(id: Int64): String {
+        mtx.lock()
+        var name = ""
+        try {
+            reap()
+            if (let Some(t) <- find(id)) {
+                name = t.tool
+            }
+        } finally {
+            mtx.unlock()
+        }
+        return name
+    }
+
+    // 日志里出现过的最大工单号；没有 asked 事件时为 0（下一张就是 1 号）。
+    private func highestAskedId(): Int64 {
+        var hi: Int64 = 0
+        for (ev in log.snapshotEvents()) {
+            if (ev.eventType == "approval/asked") {
+                let v = approvalIdFromData(ev.data)
+                if (v > hi) {
+                    hi = v
+                }
+            }
+        }
+        return hi
+    }
+
+    private func find(id: Int64): Option<ApprovalTicket> {
+        for (t in items) {
+            if (t.id == id) {
+                return Some(t)
+            }
+        }
+        return None
+    }
+
+    // 过期结算幂等：待决定或已批准未消费的票到期只落一次 expired；终态不改写。
+    // 每次读状态都先扫一遍钟——过期不依赖有没有人恰好调用了某个推进接口。
+    private func reap() {
+        let now = clock()
+        for (t in items) {
+            if ((t.state == "pending" || t.state == "allowed-once") && now >= t.deadline) {
+                t.state = "expired"
+                log.append("approval/expired", "${t.id}:${t.tool}")
+            }
+        }
+    }
+}

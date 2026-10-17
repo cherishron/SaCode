@@ -1,0 +1,19 @@
+{
+  "name": "@stand-alone/sacode-win32-x64",
+  "version": "0.2.0",
+  "license": "MulanPSL-2.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "bin",
+    "extjs",
+    "build-manifest.json"
+  ]
+}

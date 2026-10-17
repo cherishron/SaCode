@@ -1,0 +1,27 @@
+{
+  "sourceCommit": "ebda418",
+  "asarSha256": "aaf1dbe1b71774e0a3f6540080c7708805639fd09ba2c5be9fe0341793b3c4f3",
+  "sourceFiles": 102,
+  "hostFiles": 91,
+  "hostSha256": "7af9fe6d10ba297d44466b5b6ef29edc228c89fe9af09c3e0744d0bddba37d30",
+  "runtimeNodeModules": 0,
+  "artifacts": [
+    {
+      "file": "SaCode Setup 0.1.0.exe",
+      "bytes": 83088414,
+      "sha256": "d3708bd9723059e6be45bb8728dd5275e61cb2ad7559a85b05015be6bdc4860d"
+    },
+    {
+      "file": "sacode-portable.exe",
+      "bytes": 82936383,
+      "sha256": "b22d8aaf3e559ae320e76cdc8874462173706deb94c8dd4d7b92c8781a3e04de"
+    }
+  ],
+  "portableProtocol": {
+    "exitCode": 0,
+    "sdkEnvironmentFiltered": true,
+    "durableEvents": 6,
+    "lastEventType": "assistant/message"
+  },
+  "pthreadSha256": "a10833b977a83946f1b8aeb1c8cef33e3f7f86e10f7b3406d058abbb9027191e"
+}

@@ -1,0 +1,15 @@
+/* 团队事实来自宿主快照；布局和颜色复用桌面令牌。 */
+.team-panel { display:flex; flex-direction:column; gap:16px; padding:16px; min-width:0; color:var(--text); }
+.team-panel h2, .team-panel h3, .team-panel h4, .team-panel p { margin:0; overflow-wrap:anywhere; }
+.team-panel .row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.team-panel ul { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+.team-members, .team-board, .team-messages { display:grid; gap:12px; min-width:0; }
+.team-members li, .team-messages li, .team-task { display:grid; gap:8px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-s); background:var(--surface); min-width:0; }
+.team-column { display:grid; gap:8px; padding:12px; border:1px solid var(--border); border-radius:var(--radius-m); }
+.team-form, .team-field { display:grid; gap:8px; min-width:0; }
+.team-form { padding-top:12px; border-top:1px solid var(--border); }
+.team-field > span { color:var(--text-muted); font-size:var(--fs-s); }
+.team-panel .input { box-sizing:border-box; width:100%; min-width:0; }
+.team-panel textarea { min-height:80px; resize:vertical; }
+.team-panel pre { margin:0; max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-family:var(--font-code); }
+.team-panel [role="alert"] { color:var(--danger); }

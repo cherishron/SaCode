@@ -1,0 +1,26 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {fixtureHostEnv} from '../test-support/fixture-env.mjs';
+const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
+test('真实Host持久任务列表经CLI恢复；列举不写日志、不启动、不继承审批',{timeout:30000},async t=>{
+ assert.ok(process.env.SACODE_HOST);assert.ok(process.env.SACODE_CLI);
+ const root=mkdtempSync(join(tmpdir(),'sacode-execution-history-')),env=fixtureHostEnv(root);
+ const bridge=new HostBridge(process.env.SACODE_HOST,env);await bridge.start(root);t.after(()=>bridge.stop(10000));
+ const init=await bridge.request('initialize');assert.ok(init.capabilities.includes('execution/list'));
+ await bridge.request('workspace/set-directory',{sessionId:'current',directory:root});
+ const workspace=await bridge.request('workspace/get');
+ const proposal=JSON.stringify({workspaceRevision:workspace.revision,cwd:workspace.directory,executable:'never-execute-this',argv:['private-argument'],timeoutMs:1000,outputLimit:64});
+ const first=await bridge.request('execution/propose',{sessionId:'current',taskId:'task',requestId:'request',proposal});
+ await bridge.request('execution/stop',{sessionId:'current',executionId:first.executionId,revision:first.revision});
+ const before=readFileSync(join(root,'session.log'),'utf8');
+ const page=await bridge.request('execution/list',{sessionId:'current',cursor:-1,limit:16});assert.equal(page.records.length,1);assert.equal(page.records[0].phase,'cancelled-before-start');assert.equal('proposal' in page.records[0],false);
+ await assert.rejects(bridge.request('execution/list',{sessionId:'other',cursor:-1,limit:16}),/session-changed/);
+ assert.equal(readFileSync(join(root,'session.log'),'utf8'),before);assert.equal((await bridge.stop(10000)).forced,false);
+ const cli=spawnSync(process.env.SACODE_CLI,['job','list',JSON.stringify({sessionId:'current',cursor:-1,limit:16})],{cwd:root,env,encoding:'utf8',windowsHide:true,timeout:10000});
+ assert.equal(cli.status,0,cli.stderr);assert.deepEqual(JSON.parse(cli.stdout),page);assert.equal(readFileSync(join(root,'session.log'),'utf8'),before);
+});

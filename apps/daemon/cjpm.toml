@@ -1,0 +1,49 @@
+[package]
+  name = "daemon"
+  version = "0.1.0"
+  cjc-version = "1.1.3"
+  output-type = "executable"
+
+[dependencies]
+  core = { path = "../../core" }
+
+[target.x86_64-w64-mingw32]
+  [target.x86_64-w64-mingw32.bin-dependencies]
+    path-option = ["../../.deps/stdx/windows_x86_64_cjnative/dynamic/stdx"]
+
+# Linux 构建前设置 SACODE_STDX_LIB_DIR 为对应架构和 SDK 版本的 dynamic/stdx 目录。
+[target.x86_64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.aarch64-unknown-linux-gnu.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.x86_64-unknown-linux-gnu]
+  link-option = "-L../../.deps/native/linux-x64 -lsacode_platform"
+
+[target.aarch64-unknown-linux-gnu]
+  link-option = "-L../../.deps/native/linux-arm64 -lsacode_platform"
+
+[target.x86_64-apple-darwin.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.x86_64-apple-darwin]
+  link-option = "-L../../.deps/native/darwin-x64 -lsacode_platform"
+
+[target.aarch64-apple-darwin.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.aarch64-apple-darwin]
+  link-option = "-L../../.deps/native/darwin-arm64 -lsacode_platform"
+
+[target.aarch64-linux-ohos.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.aarch64-linux-ohos]
+  link-option = "-L../../.deps/native/ohos-arm64 -lsacode_platform"
+
+[target.x86_64-linux-ohos.bin-dependencies]
+  path-option = ["${SACODE_STDX_LIB_DIR}"]
+
+[target.x86_64-linux-ohos]
+  link-option = "-L../../.deps/native/ohos-x64 -lsacode_platform"

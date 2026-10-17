@@ -1,0 +1,31 @@
+// 上下文投影视图验收；不将累计预算伪装为当前上下文压力。
+module.exports=async function({win,check,waitFor,outDir}){
+  const js=code=>win.webContents.executeJavaScript(`(async()=>{${code}})()`,true);
+  await check('未接入上下文压力时真实输入区不编造用量',"({absent:!document.querySelector('.composer .context-meter-root')})");
+  await js(`const root=document.createElement('div');root.id='context-fixture';Object.assign(root.style,{position:'fixed',bottom:'55px',right:'24px',zIndex:30,transform:'translateZ(0)'});document.body.append(root);window.contextFixture={root,pressure:Vue.ref(undefined),breakdown:Vue.ref(undefined)};const f=contextFixture;f.app=Vue.createApp({setup:()=>()=>Vue.h(SaCodeContextMeter.ContextMeter,{pressure:f.pressure.value,breakdown:f.breakdown.value})});f.app.mount(root);`);
+  await check('未知容量或压力不显示上下文圆环',"({empty:!document.querySelector('#context-fixture button'),partial:SaCodeContextMeter.contextOccupancy({pressureTokens:5})===null,invalid:SaCodeContextMeter.contextOccupancy({pressureTokens:5,contextWindow:0})===null})");
+  await js(`contextFixture.pressure.value={pressureTokens:6000,projectedTokens:4500,contextWindow:10000};contextFixture.breakdown.value={systemTokens:1000,toolsTokens:500,messageTokens:3000}`);
+  await check('上下文读数优先使用投影值而非累计预算',"({label:document.querySelector('#context-fixture button').getAttribute('aria-label')==='上下文已用 45%',reading:document.querySelector('#context-fixture button').textContent==='45%',sampleFallback:SaCodeContextMeter.contextOccupancy({pressureTokens:6000,contextWindow:10000}).percent===60})");
+  await js(`document.querySelector('#context-fixture button').focus();document.querySelector('#context-fixture button').click()`);
+  await waitFor("!!document.querySelector('.context-meter-panel:popover-open')");
+  await check('上下文分项弹层使用浏览器顶层并保持视口边距',"(()=>{const p=document.querySelector('.context-meter-panel'),r=p.getBoundingClientRect();return {topLayer:p.matches(':popover-open'),bounded:r.left>=12&&r.right<=innerWidth-12&&r.top>=12&&r.bottom<=innerHeight-12,figures:p.querySelector('.context-meter-figures').textContent==='~4.5K / 10K',rows:p.querySelectorAll('.context-meter-row').length===3,total:[...p.querySelectorAll('[data-context-segment]')].reduce((sum,n)=>sum+parseFloat(n.style.width),0)>44.99&&[...p.querySelectorAll('[data-context-segment]')].reduce((sum,n)=>sum+parseFloat(n.style.width),0)<45.01};})()");
+  await js(`contextFixture.pressure.value={projectedTokens:15000,contextWindow:10000}`);
+  await check('超容量占用率封顶但保留真实 token 读数',"({percent:document.querySelector('#context-fixture button').textContent==='100%',figures:document.querySelector('.context-meter-figures').textContent==='~15K / 10K'})");
+  await js(`contextFixture.pressure.value={projectedTokens:0,contextWindow:10000};contextFixture.breakdown.value={systemTokens:0,toolsTokens:0,messageTokens:0}`);
+  await check('零占用不渲染最小宽度色条',"({zero:document.querySelector('#context-fixture button').textContent==='0%',segments:document.querySelectorAll('[data-context-segment]').length===0})");
+  await js(`contextFixture.pressure.value={pressureTokens:1234,contextWindow:10000};contextFixture.breakdown.value=undefined`);
+  await check('缺少分项时以总体占用绘制单色条',"({one:document.querySelectorAll('[data-context-segment]').length===1,noLegend:!document.querySelector('.context-meter-rows'),round:document.querySelector('#context-fixture button').textContent==='12%'})");
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))`);
+  await waitFor("!document.querySelector('.context-meter-panel:popover-open')");
+  await check('上下文 Escape 关闭并恢复触发器焦点',"({closed:!document.querySelector('.context-meter-panel:popover-open'),focus:document.activeElement===document.querySelector('#context-fixture button')})");
+  await js(`document.querySelector('#context-fixture button').click();await Vue.nextTick();document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`);
+  await waitFor("!document.querySelector('.context-meter-panel:popover-open')");
+  await check('上下文弹层外部点击关闭',"({closed:document.querySelector('#context-fixture button').getAttribute('aria-expanded')==='false'})");
+  await js(`document.querySelector('#context-fixture button').click();await Vue.nextTick();contextFixture.pressure.value={pressureTokens:1234}`);
+  await check('切换模型缺少容量时移除过期圆环与详情',"({noTrigger:!document.querySelector('#context-fixture button'),noPanel:!document.querySelector('.context-meter-panel:popover-open')})");
+  await js(`contextFixture.pressure.value={projectedTokens:4500,contextWindow:10000};contextFixture.breakdown.value={systemTokens:1000,toolsTokens:500,messageTokens:3000};await Vue.nextTick();document.querySelector('#context-fixture button').click();await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  require('node:fs').writeFileSync(require('node:path').join(outDir,'context-meter-fixture.png'),(await win.webContents.capturePage()).toPNG());
+  await check('上下文数量紧凑显示采用 K/M 单位',"({small:SaCodeContextMeter.formatTokens(999)==='999',k:SaCodeContextMeter.formatTokens(1234)==='1.2K',m:SaCodeContextMeter.formatTokens(1500000)==='1.5M'})");
+  await js(`contextFixture.app.unmount();contextFixture.root.remove();delete window.contextFixture;document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));window.dispatchEvent(new Event('resize'))`);
+  await check('上下文卸载清理顶层弹层和监听',"({removed:!document.querySelector('.context-meter-panel')})");
+};

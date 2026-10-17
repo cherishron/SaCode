@@ -1,17 +1,19 @@
-# Dependencies
-node_modules/
-.pnpm-store/
-
-# Build
-dist/
-*.tsbuildinfo
-.next/
-out/
+# Rust build output
+/target/
 
 # Environment
 .env
 .env.local
 .env.*.local
+
+# SQLite and local data
+*.db
+*.db-journal
+data/
+
+# Logs
+logs/
+*.log
 
 # IDE
 .idea/
@@ -19,31 +21,108 @@ out/
 *.swp
 *.swo
 
+# CodeBuddy workspace data (local AI/IDE memory & plans)
+.codebuddy/
+
+# Tauri updater private key (SECRET — never commit; kept in CI secrets)
+interfaces/desktop/src-tauri/updater-secret.key
+interfaces/desktop/src-tauri/updater-secret.key.pub
+
+# Tauri externalBin sidecar（由 bundle-sidecar.mjs 自动生成）
+interfaces/desktop/src-tauri/binaries/
+
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-pnpm-debug.log*
-
-# Testing
-coverage/
-.nyc_output/
-test-results/
-
-# Database
-*.db
-*.db-journal
-data/
 
 # Temp
 tmp/
 temp/
 .cache/
+.sacode/
+.arts/
+.codegraph/
+.tmp-i3-home/
+.tmp-i3-work/
+.tmp-i3-keyring/
+**/desktop-sidecar/
 
-# Misc
+
+# Windows 保留设备名误产物（>nul 重定向残留）
+nul
+
+# Backup
 *.bak
 *.backup
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# npm auth
+.npmrc
+
+# npm package generated platforms (CI builds)
+npm-package/platforms/
+
+# Node modules
+node_modules/
+# electron-builder 的一次失败输出（输出目录已改到 dist/electron，这个残留被系统句柄占住删不掉）
+apps/desktop/dist_electron/
+
+# Build / distribution output
+dist/
+dist-test/
+build/
+.monkeycode/
+interfaces/vscode/*.vsix
+interfaces/vscode/*.vsix.sha256
+npm-package/*.tgz
+
+# Temp output files (clippy/test redirects)
+clippy*.txt
+test_*.txt
+_test_out.txt
+**/vite.config.ts.timestamp-*.mjs
+
+# Media test artifacts (runtime/src/tools/media/video.rs 测试动态产物)
+*.mp4
+*.mov
+*.webm
+
+# OhMyAgent session settings (local only)
+.ohmyagent/
+
+# AI 工具本地工作区数据（结构审查 P3：gitignore 缺口）
+.workbuddy/
+.resultverify/
+.opencode/
+.codeartsdoer/
+.qoder/
+# 仓颉与验收产物
+**/target/
+**/build-script-cache/
+**/session.log
+**/b.log
+apps/cli/out/
+# 仓颉 stdx 二进制依赖（由 scripts/setup-stdx.mjs 软链/复制到仓库内，H-15 解耦，不入库）
+.deps/
+# SSH TOFU 已知主机目录（core/src/ssh_exec.cj 新建，含已知主机指纹，不入库）
+.sacode-ssh/
+
+# npm 平台包内二进制、依赖与扩展宿主副本（均由 scripts/pack-cli.mjs 从 extjs/ 生成，
+# 入库就会与真源码 extjs/ 变成两份）
+npm/sacode-cli-*/bin/
+npm/sacode-cli-*/extjs/
+npm/sacode-cli-*/build-manifest.json
+protocol-bridge-dbg/
+apps/desktop/dist/
+.superpowers/
+apps/desktop/renderer/vendor/
+
+# pack-tinyvue 的临时折叠入口（esbuild 解析要靠它待在 apps/desktop 下）
+apps/desktop/.tinyvue-*/
+apps/desktop/.tinyrobot-*/
+
+# 桌面运行数据含用户会话和凭据，不入库。
+apps/desktop/data/

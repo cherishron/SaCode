@@ -1,0 +1,54 @@
+// 子智能体设置组件验收，委派执行及真实模型授权服务仍需仓颉实现。
+module.exports=async function({win,check,waitFor,outDir}){
+  const js=code=>win.webContents.executeJavaScript(`(async()=>{${code}})()`,true);
+  await js(`document.querySelector('#open-settings').click();document.querySelector('#settings-tab-plugins').click();await Vue.nextTick();[...document.querySelectorAll('#settings-page-plugins [role=tab]')].find(e=>e.textContent==='插件配置').click();await Vue.nextTick();document.querySelector('#settings-page-plugins [data-config-namespace=subagent] .plugin-config-cardHead').click()`);
+  await check('子智能体产品配置入口',"({target:!!document.querySelector('#settings-page-plugins [data-config-namespace=subagent]'),unconnected:document.querySelector('#settings-page-plugins .subagent-form').textContent.includes('接口尚未接入'),noFakeValues:!document.querySelector('#settings-page-plugins .subagent-form input')})");
+  await js(`document.querySelector('.settings-close').click();const root=document.createElement('div');root.id='subagent-fixture';root.className='settings-dialog';Object.assign(root.style,{position:'fixed',top:'80px',left:'300px',width:'600px',height:'auto',maxHeight:'calc(100vh - 160px)',overflow:'auto',padding:'24px',display:'block',zIndex:20,background:'var(--panel-surface)'});document.body.append(root);
+    window.subFixture={root,limits:{revision:'l1',writable:true,maxDepth:{text:'2',overridden:true},maxActiveSubagents:{text:'4',overridden:false}},selection:{revision:'s1',writable:true,enabled:false,allowedModels:[{provider:'retired',model:'old-model'}]},limitWrites:[],selectionWrites:[],catalogCalls:0};
+    const clone=value=>JSON.parse(JSON.stringify(value));
+    const adapter={async read(){return {limits:clone(subFixture.limits),selection:clone(subFixture.selection)};},async catalog(){subFixture.catalogCalls++;if(subFixture.catalogFail)throw Error('catalog');return {partial:true,candidates:[{provider:'alpha',model:'a',providerName:'提供方甲',modelName:'模型甲',available:true},{provider:'beta',model:'b',providerName:'提供方乙',modelName:'模型乙',available:true}]};},async saveLimits(patches,revision){if(revision!==subFixture.limits.revision)throw Object.assign(Error('conflict'),{code:'settings-conflict'});subFixture.limitWrites.push({patches,revision});for(const p of patches)subFixture.limits[p.key]=p.op==='unset'?{text:'3',overridden:false}:{text:String(p.value),overridden:true};subFixture.limits.revision+='x';return clone(subFixture.limits);},async saveSelection(enabled,routes,revision){if(subFixture.selectionFail)throw Error('selection');if(revision!==subFixture.selection.revision)throw Object.assign(Error('conflict'),{code:'settings-conflict'});subFixture.selectionWrites.push({enabled,routes:clone(routes),revision});subFixture.selection={...subFixture.selection,enabled,allowedModels:clone(routes),revision:revision+'x'};return clone(subFixture.selection);},subscribe(invalidate){subFixture.invalidate=invalidate;return()=>subFixture.off=true;}};
+    subFixture.app=Vue.createApp(SaCodeSubagent.Card,{adapter});subFixture.app.mount(root);
+    subFixture.input=(label,text)=>{const e=root.querySelector('input[aria-label="'+label+'"]');e.value=text;e.dispatchEvent(new Event('input',{bubbles:true}));};
+  `);
+  await waitFor("!!document.querySelector('#subagent-fixture input[aria-label=\"最大递归层级\"]')");
+  await check('子智能体授权关闭保留模型且不查询目录',"({off:!document.querySelector('#subagent-fixture [role=switch]').checked,noCatalog:subFixture.catalogCalls===0,retained:subFixture.selection.allowedModels.length===1,help:document.querySelector('#subagent-fixture').textContent.includes('主 Agent 不计入')})");
+  for(const [label,value] of [['最大递归层级','-0'],['最大递归层级','1.5'],['子智能体并发上限','0']]){
+    await js(`subFixture.input(${JSON.stringify(label)},${JSON.stringify(value)})`);
+    await check('子智能体限制拒绝 '+value+' '+label,`({invalid:document.querySelector('#subagent-fixture input[aria-label=${JSON.stringify(label)}]').getAttribute('aria-invalid')==='true',blocked:document.querySelector('#subagent-fixture .subagent-save').disabled})`);
+  }
+  await js(`subFixture.input('最大递归层级','0');subFixture.input('子智能体并发上限','8');await Vue.nextTick();document.querySelector('#subagent-fixture .subagent-save').click()`);
+  await waitFor("subFixture.limitWrites.length===1");
+  await check('限制保存允许深度零并独立修订',"({depth:subFixture.limitWrites[0].patches.find(p=>p.key==='maxDepth').value===0,capacity:subFixture.limitWrites[0].patches.find(p=>p.key==='maxActiveSubagents').value===8,revision:subFixture.limitWrites[0].revision==='l1',noModelsWrite:subFixture.selectionWrites.length===0})");
+  await js(`subFixture.catalogFail=true;document.querySelector('#subagent-fixture [role=switch]').click()`);
+  await waitFor("document.querySelector('#subagent-fixture').textContent.includes('无法加载模型')");
+  await js(`subFixture.catalogFail=false;[...document.querySelectorAll('#subagent-fixture button')].find(e=>e.textContent==='重试').click()`);
+  await waitFor("!!document.querySelector('#subagent-fixture input[aria-label=\"alpha/a\"]')");
+  await check('子智能体模型目录重试与失效选择保留',"({retried:subFixture.catalogCalls===2,partial:document.querySelector('#subagent-fixture').textContent.includes('部分模型提供方'),retired:document.querySelector('#subagent-fixture input[aria-label=\"retired/old-model\"]').checked,unavailable:document.querySelector('#subagent-fixture').textContent.includes('已保存但当前不可用')})");
+  await js(`document.querySelector('#subagent-fixture input[aria-label="retired/old-model"]').click()`);
+  await check('启用授权时空选择禁止保存',"({required:document.querySelector('#subagent-fixture').textContent.includes('至少选择一个模型'),blocked:document.querySelector('#subagent-fixture .subagent-save').disabled,undoAvailable:!!document.querySelector('#subagent-fixture input[aria-label=\"retired/old-model\"]')})");
+  await js(`document.querySelector('#subagent-fixture input[aria-label="alpha/a"]').click();document.querySelector('#subagent-fixture [role=switch]').click();await Vue.nextTick();document.querySelector('#subagent-fixture .subagent-save').click()`);
+  await waitFor("subFixture.selectionWrites.length===1");
+  await check('关闭授权仍保存所选精确路由',"({disabled:subFixture.selectionWrites[0].enabled===false,oneRoute:subFixture.selectionWrites[0].routes.length===1,route:subFixture.selectionWrites[0].routes[0].provider==='alpha'&&subFixture.selectionWrites[0].routes[0].model==='a',revision:subFixture.selectionWrites[0].revision==='s1'})");
+  await js(`document.querySelector('#subagent-fixture [role=switch]').click();subFixture.selection.revision='external';subFixture.invalidate()`);
+  await waitFor("document.querySelector('#subagent-fixture').textContent.includes('设置已在其他位置更新')");
+  await check('授权版本变化保留草稿并阻止覆盖',"({draft:document.querySelector('#subagent-fixture [role=switch]').checked,blocked:document.querySelector('#subagent-fixture .subagent-save').disabled,noWrite:subFixture.selectionWrites.length===1})");
+  await js(`[...document.querySelectorAll('#subagent-fixture button')].find(e=>e.textContent==='放弃修改并重新读取').click()`);
+  await waitFor("!document.querySelector('#subagent-fixture [role=switch]').checked");
+  await js(`document.querySelector('#subagent-fixture [role=switch]').click();subFixture.selection.enabled=true;subFixture.selection.revision='same-values-new-revision';subFixture.invalidate()`);
+  await waitFor("document.querySelector('#subagent-fixture .subagent-save').disabled");
+  await check('其他入口保存同值消除授权草稿冲突',"({enabled:document.querySelector('#subagent-fixture [role=switch]').checked,noConflict:!document.querySelector('#subagent-fixture').textContent.includes('设置已在其他位置更新'),noWrite:subFixture.selectionWrites.length===1})");
+  await js(`subFixture.input('最大递归层级','1');document.querySelector('#subagent-fixture input[aria-label="beta/b"]').click();subFixture.selectionFail=true;await Vue.nextTick();document.querySelector('#subagent-fixture .subagent-save').click()`);
+  await waitFor("document.querySelector('#subagent-fixture').textContent.includes('本部署没有接受')");
+  await check('两配置域部分保存失败保留未提交授权',"({limitsSaved:subFixture.limitWrites.length===2&&subFixture.limits.maxDepth.text==='1',modelsUnwritten:subFixture.selectionWrites.length===1,draftRetained:document.querySelector('#subagent-fixture input[aria-label=\"beta/b\"]').checked,retryAllowed:!document.querySelector('#subagent-fixture .subagent-save').disabled})");
+  await js(`subFixture.selectionFail=false;document.querySelector('#subagent-fixture .subagent-save').click()`);
+  await waitFor("subFixture.selectionWrites.length===2");
+  await check('部分失败重试只提交剩余配置域',"({limitsNotRepeated:subFixture.limitWrites.length===2,selectionRevision:subFixture.selectionWrites[1].revision==='same-values-new-revision',modelsSaved:subFixture.selectionWrites[1].routes.some(r=>r.provider==='beta'&&r.model==='b'),clean:document.querySelector('#subagent-fixture .subagent-save').disabled})");
+  await js(`subFixture.limits.writable=false;subFixture.selection.writable=false;subFixture.invalidate()`);
+  await waitFor("document.querySelector('#subagent-fixture [role=switch]').disabled");
+  await check('子智能体两配置域只读',"({limits:[...document.querySelectorAll('#subagent-fixture .subagent-input')].every(e=>e.disabled),selection:document.querySelector('#subagent-fixture [role=switch]').disabled})");
+  await js(`await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+  require('node:fs').writeFileSync(require('node:path').join(outDir,'subagent-fixture.png'),(await win.webContents.capturePage()).toPNG());
+  await js(`subFixture.app.unmount()`);
+  await check('子智能体表单卸载回收订阅',"({released:subFixture.off===true})");
+  await js(`subFixture.root.remove();delete window.subFixture`);
+};

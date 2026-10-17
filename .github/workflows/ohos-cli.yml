@@ -1,0 +1,33 @@
+name: OHOS CLI 交叉构建
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ohos:
+    # 配套仓颉 OHOS SDK/native SDK 尚无核定的自动安装入口，使用显式配置的 Linux runner。
+    runs-on: [self-hosted, linux, ohos-sdk]
+    timeout-minutes: 45
+    env:
+      SACODE_TARGET: ohos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 配套 SDK 检查和交叉构建
+        shell: bash
+        run: |
+          test -n "$CANGJIE_HOME"
+          test -n "$OHOS_CC"
+          test -n "$OHOS_SYSROOT"
+          test -n "$SACODE_RUNTIME_LIB_DIR"
+          source "$CANGJIE_HOME/envsetup.sh"
+          node scripts/setup-stdx.mjs
+          node scripts/build-platform.mjs
+          node scripts/package-platform.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sacode-ohos-arm64-build-only-${{ github.sha }}
+          path: apps/desktop/dist/releases/ohos-arm64/
+          if-no-files-found: error

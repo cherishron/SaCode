@@ -1,0 +1,228 @@
+package core
+import std.collection.*
+
+// 冻结配置schema的默认值与限额；这里只解析typed policy，不启动重连。
+// 原始JSON的未知字段/字段类型校验及实际连接故障预算由后续provider接入。
+public class McpReconnectPolicy {
+    public let enabled: Bool
+    public let initialDelayMs: Float64
+    public let maxDelayMs: Float64
+    public let maxAttempts: Int64
+
+    public init(enabled!: Bool = true, initialDelayMs!: Float64 = 500.0,
+        maxDelayMs!: Float64 = 30000.0, maxAttempts!: Float64 = 10.0) {
+        // 正数区间判断同时拒绝NaN和Infinity；毫秒上限来自冻结timeout工具。
+        if (!(initialDelayMs > 0.0 && initialDelayMs <= 2147483647.0)) {
+            throw Exception("mcp-reconnect-initial-delay")
+        }
+        if (!(maxDelayMs > 0.0 && maxDelayMs <= 2147483647.0)) {
+            throw Exception("mcp-reconnect-max-delay")
+        }
+        if (initialDelayMs > maxDelayMs) { throw Exception("mcp-reconnect-delay-order") }
+        // Number.MAX_SAFE_INTEGER与配置schema一致；先限范围再做Int64转换。
+        if (!(maxAttempts >= 1.0 && maxAttempts <= 9007199254740991.0)) {
+            throw Exception("mcp-reconnect-attempts")
+        }
+        let attempts = Int64(maxAttempts)
+        if (Float64(attempts) != maxAttempts) { throw Exception("mcp-reconnect-attempts") }
+        this.enabled = enabled
+        this.initialDelayMs = initialDelayMs
+        this.maxDelayMs = maxDelayMs
+        this.maxAttempts = attempts
+    }
+
+    // 第一次retry的序号是1。达到上限即返回，避免巨大序号导致算术溢出或空转。
+    public func delayForAttempt(attempt: Int64): Float64 {
+        if (attempt < 1) { throw Exception("mcp-reconnect-attempt-index") }
+        var delay = initialDelayMs
+        var n: Int64 = 1
+        while (n < attempt) {
+            if (delay >= maxDelayMs / 2.0) { return maxDelayMs }
+            delay *= 2.0
+            n += 1
+        }
+        return delay
+    }
+}
+
+// 冻结McpResourceRequest的三种请求形态，构造入口避免read夹带cursor。
+// 这里只编码方法参数：服务器选择、scope校验、取消及实际传输由provider承接。
+public class McpResourceRequest {
+    public let method: String
+    public let cursor: Option<String>
+    public let uri: Option<String>
+
+    private init(method: String, cursor: Option<String>, uri: Option<String>) {
+        this.method = method
+        this.cursor = cursor
+        this.uri = uri
+    }
+
+    public static func list(cursor!: Option<String> = None): McpResourceRequest {
+        return McpResourceRequest("resources/list", cursor, None)
+    }
+
+    public static func templates(cursor!: Option<String> = None): McpResourceRequest {
+        return McpResourceRequest("resources/templates/list", cursor, None)
+    }
+
+    public static func read(uri: String): McpResourceRequest {
+        return McpResourceRequest("resources/read", None, Some(uri))
+    }
+
+    public func paramsJson(): String {
+        if (let Some(value) <- uri) {
+            return "{\"uri\":\"${jsonEscapeText(value)}\"}"
+        }
+        if (let Some(value) <- cursor) {
+            return "{\"cursor\":\"${jsonEscapeText(value)}\"}"
+        }
+        return "{}"
+    }
+}
+
+// 冻结 tools.ts 的公开命名契约；调用时必须另存 rawName，不能逆解析此名字。
+// 纯函数只做命名，不代表服务器、工具Schema或连接已经准入。
+public func mcpPublicToolName(serverName: String, rawName: String): String {
+    let joined = "mcp__${serverName}__${rawName}"
+    let input = joined.toArray()
+    let output = ArrayList<Byte>()
+    var i: Int64 = 0
+    var changed = false
+    while (i < Int64(input.size)) {
+        let b = Int64(input[i])
+        if ((b >= 65 && b <= 90) || (b >= 97 && b <= 122) ||
+            (b >= 48 && b <= 57) || b == 45 || b == 95) {
+            output.add(input[i])
+            i += 1
+        } else {
+            output.add(95)
+            changed = true
+            // 上游正则没有u标志：BMP之外的码点按两个UTF-16单元替换。
+            if (b >= 240) {
+                output.add(95)
+                i += 4
+            } else if (b >= 224) {
+                i += 3
+            } else if (b >= 192) {
+                i += 2
+            } else {
+                i += 1
+            }
+        }
+    }
+    let normalized = String.fromUtf8(output.toArray())
+    if (!changed && normalized.size <= 64) { return normalized }
+    let identity = ArrayList<Byte>()
+    for (b in serverName.toArray()) { identity.add(b) }
+    identity.add(0)
+    for (b in rawName.toArray()) { identity.add(b) }
+    let hash = sha256Hex(identity.toArray())
+    let prefixSize = if (normalized.size > 51) { 51 } else { normalized.size }
+    return "${normalized[0..prefixSize]}_${hash[0..12]}"
+}
+
+// 历史注册标记，保留旧日志兼容；不等同冻结上游的真实MCP连接插件。
+// MCP 服务器注册表：log-only `mcp/server` 事件承载 `register::<name>::<transport>`
+// 与 `deregister::<name>`；`list()` 返回当前 active 名称；`isRegistered(name)` 查
+// 单条。重名 register 走 noop（已在则不重复落事件）。
+//
+// 本切片假设 name/transport 不含 `::`；未来放开需换长度前缀编码。
+
+class McpEntry {
+    let name: String
+    var active: Bool
+    init(name: String, active: Bool) {
+        this.name = name
+        this.active = active
+    }
+}
+
+public class McpRegistry {
+    let log: SessionLog
+    let entries = ArrayList<McpEntry>()
+
+    public init(log: SessionLog) {
+        this.log = log
+        for (event in log.snapshotEvents()) {
+            if (event.eventType != "mcp/server") {
+                continue
+            }
+            let body = event.data
+            if (body.startsWith("register::")) {
+                let rest = body[10..body.size]
+                let idx = rest.indexOf("::") ?? Int64(-1)
+                let name = if (idx < 0) { rest } else { rest[0..idx] }
+                ensureActive(name)
+            } else if (body.startsWith("deregister::")) {
+                let name = body[12..body.size]
+                let i = indexOf(name)
+                if (i >= 0) {
+                    entries[i].active = false
+                }
+            }
+        }
+    }
+
+    public func register(name: String, transport: String): Unit {
+        if (name.size == 0) {
+            throw Exception("mcp-empty-name")
+        }
+        if (transport.size == 0) {
+            throw Exception("mcp-empty-transport")
+        }
+        let i = indexOf(name)
+        if (i >= 0 && entries[i].active) {
+            return
+        }
+        log.append("mcp/server", "register::${name}::${transport}")
+        ensureActive(name)
+    }
+
+    public func deregister(name: String): Unit {
+        let i = indexOf(name)
+        if (i < 0 || !entries[i].active) {
+            return
+        }
+        log.append("mcp/server", "deregister::${name}")
+        entries[i].active = false
+    }
+
+    public func isRegistered(name: String): Bool {
+        let i = indexOf(name)
+        if (i < 0) {
+            return false
+        }
+        return entries[i].active
+    }
+
+    public func list(): ArrayList<String> {
+        let out = ArrayList<String>()
+        for (e in entries) {
+            if (e.active) {
+                out.add(e.name)
+            }
+        }
+        return out
+    }
+
+    private func indexOf(name: String): Int64 {
+        var i: Int64 = 0
+        while (i < Int64(entries.size)) {
+            if (entries[i].name == name) {
+                return i
+            }
+            i = i + 1
+        }
+        return Int64(-1)
+    }
+
+    private func ensureActive(name: String): Unit {
+        let i = indexOf(name)
+        if (i >= 0) {
+            entries[i].active = true
+        } else {
+            entries.add(McpEntry(name, true))
+        }
+    }
+}
