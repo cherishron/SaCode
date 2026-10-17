@@ -1,1 +1,2 @@
 - [Qwen Code /review 命令差距核验](qwen-code-review-gap-2026-10-09.md) — 上游 17 项能力，SaCode 0 项实现
+- 2026-10-17 13:52，任务34：中性候选清除 Node 注入环境后，disable-gpu / ANGLE WARP / ANGLE SwiftShader 三组模型中心 UI smoke 均 GPU 0xC0000005 → 主进程 0x80000003；保留沙箱，无安全设置变更。最小仓内 Electron 窗口也退出 0xC0000005，但不是同路径对照。未修复、未验证真实日志可见，报告 target/tmp/codex-outputs-20261017/A3-GPU复验-20261017-1352.html，原始日志 target/tmp/gpu-controlled-20261017-01/。

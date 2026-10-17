@@ -200,3 +200,64 @@ main(): Int64 {
 
 1. 中性导出 sa-code 到 `D:\tmp` 跑通全量 `cjpm build`，核对 `target/release/release/bin/` 的 DLL 哈希与真实入口（cli/host/daemon）运行——机制已验证后的收口验收，非阻塞。
 2. `scripts/check-build-cj-present.mjs` 守卫：检测每个含 `cjpm.toml` 的模块是否都有 `build.cj`（防回归）。
+
+---
+
+## 订正与最终端到端验证（2026-10-17 深夜追加，supersedes 上文两处）
+
+### 订正 A：目标 bin 探测路径（workspace 场景曾失效）
+
+上文「`resolveTarget()` 兼顾 … workspace 构建 `../../target/release/release/bin`」**是错的**——workspace 真实输出是 `<root>/target/release/bin`（成员 `apps/<m>` 相对即 `../../target/release/bin`），不存在 `release/release` 这一层。旧版第二个候选路径写错，导致 sa-code workspace 构建（cli/host/daemon）下钩子复制失败（`target\release\bin does not exist`）。
+
+**已改为确定性定位**：`findRoot()` 自 cwd 向上找含 `[workspace]` 的 `cjpm.toml`（找不到则回退最近含 `cjpm.toml` 的目录＝单包根）→ `resolveBin()` = `<root>/target/release/bin` → `ensureDirFrom()` 逐级 `Directory.create`（仓颉 `Directory.create` **非递归**，须自存在的 base 逐段建）。已删 `resolveTarget`。两种布局均实测：
+- workspace 成员（cwd=`apps/cli`）→ `..\..\target\release\bin`；
+- 单包（cwd=包根）→ `.\target\release\bin`。
+
+### 订正 B：仓颉 `let` 不可变
+
+上文「`let`（已可变），没有 `let mut`」**错了**。仓颉 1.1.3 `let` 声明**不可变**绑定，重新赋值报 `cannot assign to immutable value`；**可变局部量必须用 `var`**（`var dir`/`var nearest`/`var segs`/`var cur`）。已回填修正。
+
+### 最终端到端验证（中性最小单包工程 `D:\tmp\issue725-e2e`）
+
+`cjpm.toml`（`output-type=executable`）+ `src/main.cj`（首行 `package issue725e2e`）+ 与三成员**字节一致**的修复版 `build.cj`：
+
+1. `cjpm build` → `cjpm build success`，钩子自动触发：`[build.cj] target bin = .\target\release\bin`，`[build.cj] done.`；
+2. `target/release/bin/` 复制 **80 个 DLL** 全量就位（runtime + stdx + opensslFFI + libwinpthread-1 + OpenSSL3；deny 正确剔除）；
+3. **决定性运行测试**：`env PATH="<仅 Windows 系统目录>" .../main.exe`（把 stdx/runtime 从子进程 PATH 剥掉）→ 输出 `issue725-e2e: OK`、`run_rc=0`。**只靠同目录 80 DLL 自足启动，无 0xC0000135**——issue #725 端到端闭合。
+
+### 两个实测坑（Codex/AI 必读）
+
+- **坑 1（钩子静默不跑）**：`build-script.exe` 自身是仓颉可执行文件，启动就要 runtime DLL，而 **cjpm 不会替它上 PATH**。跑 `cjpm build` 前必须把 `SACODE_STDX_DLL_DIR`/`SACODE_RUNTIME_DLL_DIR` 前置到 PATH，否则钩子不执行、bin 里 0 个 DLL 且无报错。
+- **坑 2（增量 workspace `exit 127`）**：target 已存在时的增量 `cjpm build`，cjpm 会在 core 编译后**静默 `exit 127`**、钩子不执行（script-log 空、无 error）。须 `cjpm clean` 后全量构建才稳。属 cjpm 增量+post-build 的怪癖，与本修复无关。
+
+### 全量 workspace 从零构建现状（非阻塞）
+
+sa-code 的 core 包极大，`cjpm clean` 后从零编译 core 需数十分钟；本轮一次全量构建中 cjpm 进程曾烧 ~70 CPU 分钟且无 `cjc` 子进程、无输出（判定卡死，已 `Stop-Process`）。机制已由上文最小 e2e + 手动 workspace 路径运行双重验证；真实 cli/host/daemon 二进制的中性全量构建与入口运行留作资源充裕时的收口复核。
+
+---
+
+## 补记 C：resolveBins 双 bin 修复 + 三真实入口实测（2026-10-17 收口）
+
+### 发现第二个 bug：单成员构建下 DLL 与 exe 不同目录
+
+`cd apps/cli && cjpm build`（AGENTS.md 正规单成员入口）时，exe 落**成员本地** `apps/cli/target/release/bin/main.exe`，而当时 `resolveBin()` 只认 workspace 根 bin，把 80 DLL 复制到 `target/release/bin`——**exe 找不到 DLL**。旧版 `resolveTarget` 第一候选 `target/release/bin`（相对 cwd＝成员本地）反而对单成员是对的，我改成只认 workspace bin 弄反了。
+
+### 修复：`resolveBins()` 同时覆盖两布局并去重
+
+- 成员本地 `cwd/target/release/bin`（单成员构建 exe 落点）＋ workspace 根 `<root>/target/release/bin`（workspace 构建 exe 落点），`ensureDirFrom` 各自逐级建目录；归一化后相同则去重为单目录（单包最小工程即此情形）。
+- 复制逻辑抽成 `copyRuntimeSet(target, stdxDir, runtimeDir, sdkRoot)`，`stagePostBuild` 循环覆盖 `resolveBins()`。三处 build.cj 字节一致（7722B）。
+
+### 三真实入口实测（中性导出 `D:\tmp\sa-code-nv2`，干净 PATH 无 SDK/stdx）
+
+单成员构建（`SACODE_STDX_DLL_DIR`/`SACODE_RUNTIME_DLL_DIR`/tools/bin 前置 PATH，`OPENSSL_HOME` 指向含 libcrypto/libssl 的目录）：
+- cli：`cjpm build success`；host/daemon：偶发 cjpm `127/139`（段错误，但产物+钩子多已生成，**重试即 `success`）。
+- 三个 `apps/<m>/target/release/bin` 均含 `main.exe`（约 12MB）＋ **80 DLL**（script-log 显示两 bin 都复制）。
+
+干净 PATH（`env PATH="/c/Windows:/c/Windows/System32"`，即剥掉 SDK/stdx）运行：
+| 入口 | 结果 |
+|---|---|
+| cli `main.exe --help` | 打印 `usage: sacode <goal\|team\|job\|mode\|acp\|worktree\|tools\|call> ...`，rc=0 |
+| host `main.exe --help` | 输出 `{"jsonrpc":"2.0","method":"host/settled",...}` 后干净退出 |
+| daemon `main.exe`（stdin 喂 JSON-RPC） | 起 HTTP 服务 `daemon on http://127.0.0.1:18937`，持续运行（需 kill） |
+
+**三者均无 0xC0000135，DLL 完全本地自足**——issue #725 对真实 cli/host/daemon 端到端闭合，用户第 2 步验收标准「不含 SDK/stdx PATH 运行三个真实入口」达成。

@@ -627,20 +627,28 @@ public class ProviderRegistry {
     // 是两件事，后者必须在到达这里之前就抛掉。合并结果与原状相同 = 没发生，
     // 不落事件：否则用户每拉一次就白涨一次 revision，还撞一次别人的冲突提示。
     public func applyPulledModels(providerId: String, ids: Array<String>, expectedRevision: Int64): Unit {
-        reload()
-        guardRevision(expectedRevision)
-        let rec = find(providerId)
-        if (rec.id.size == 0) {
-            throw Exception("settings-rejected")
+        let lease = WriteLease(file)
+        if (!lease.acquire()) {
+            throw Exception("provider-settings-busy")
         }
-        let merged = mergePulledIds(rec.models, ids)
-        if (Int64(merged.size) > 128) {
-            throw Exception("settings-rejected")
+        try {
+            reload()
+            guardRevision(expectedRevision)
+            let rec = find(providerId)
+            if (rec.id.size == 0) {
+                throw Exception("settings-rejected")
+            }
+            let merged = mergePulledIds(rec.models, ids)
+            if (Int64(merged.size) > 128) {
+                throw Exception("settings-rejected")
+            }
+            if (Int64(merged.size) == Int64(rec.models.size)) {
+                return
+            }
+            commit("provider/upsert", rec.withModels(merged).toJson())
+        } finally {
+            lease.release()
         }
-        if (Int64(merged.size) == Int64(rec.models.size)) {
-            return
-        }
-        commit("provider/upsert", rec.withModels(merged).toJson())
     }
 
     // 手动添加上游模型：有些供应商没有列表接口或返回不全，拉取通道替代不了它。

@@ -1,5 +1,7 @@
 package core
 
+import std.env.getVariable
+
 @When[os == "Windows"]
 import std.fs.*
 @When[os == "Windows"]
@@ -10,6 +12,8 @@ import std.sync.*
 import std.time.MonoTime
 @When[os == "Windows"]
 import std.collection.ArrayList
+@When[os == "Windows"]
+import stdx.encoding.json.*
 
 // CreateProcessW 命令行的逐参数编码；不把参数拼成另一条 shell 脚本。
 @When[os == "Windows"]
@@ -52,16 +56,30 @@ class WindowsExecutionProcessProvider <: ExecutionProcessProvider {
     let environment: Array<UInt16>
     let executable: String
     let directory: String
+    let arguments: Array<String>
+    let timeoutMs: Int64
+    let outputLimit: Int64
+    let beforeResume: () -> Unit
     let gate = Mutex()
     var used = false
     var retained: ?WindowsNativeProcess = None
-    init(library: WindowsProcessLibrary, profile: WindowsOwnedProfile, environment: Array<UInt16>, executable: String,
-        directory: String) {
+    init(library: WindowsProcessLibrary, profile: WindowsOwnedProfile, environment: Array<UInt16>, proposal: String,
+        beforeResume!: () -> Unit = {=>}) {
+        let approved = JsonValue.fromStr(proposal).asObject()
+        let argv = approved.get("argv").getOrThrow().asArray()
+        let arguments = ArrayList<String>()
+        for (index in 0..argv.size()) {
+            arguments.add(argv.get(index).getOrThrow().asString().getValue())
+        }
         this.library = library
         this.profile = profile
         this.environment = environment
-        this.executable = executable
-        this.directory = directory
+        this.executable = approved.get("executable").getOrThrow().asString().getValue()
+        this.directory = approved.get("cwd").getOrThrow().asString().getValue()
+        this.arguments = arguments.toArray()
+        this.timeoutMs = approved.get("timeoutMs").getOrThrow().asInt().getValue()
+        this.outputLimit = approved.get("outputLimit").getOrThrow().asInt().getValue()
+        this.beforeResume = beforeResume
     }
     public func execute(request: ExecutionProcessRequest): ?ShellResult {
         gate.lock()
@@ -73,8 +91,14 @@ class WindowsExecutionProcessProvider <: ExecutionProcessProvider {
         } finally {
             gate.unlock()
         }
-        if (request.executable != executable || request.directory != directory) {
+        if (request.executable != executable || request.directory != directory || request.timeoutMs != timeoutMs ||
+            request.outputLimit != outputLimit || request.arguments.size != arguments.size) {
             throw Exception("windows-process-proposal-mismatch")
+        }
+        for (index in 0..arguments.size) {
+            if (request.arguments[index] != arguments[index]) {
+                throw Exception("windows-process-proposal-mismatch")
+            }
         }
         if (request.token.cancelled()) {
             return None
@@ -100,8 +124,19 @@ class WindowsExecutionProcessProvider <: ExecutionProcessProvider {
                 throw Exception("windows-process-create:${creation.error}")
             }
             return Some(
-                collectWindowsProcess(retained.getOrThrow(), request.token, request.timeoutMs, request.outputLimit,
-                    request.onCreated, request.onStarted))
+                collectWindowsProcess(
+                    retained.getOrThrow(),
+                    request.token,
+                    request.timeoutMs,
+                    request.outputLimit,
+                    {
+                        pid =>
+                            request.onCreated(pid);
+                            beforeResume()
+                    },
+                    request.onStarted
+                )
+            )
         } finally {
             cleanup()
         }
@@ -674,4 +709,68 @@ class WindowsNativeProcess {
             gate.unlock()
         }
     }
+}
+
+// 跨平台入口：默认 false（fail-closed）。仅当显式选择加入 Windows 强制隔离，
+// 且原生薄层 DLL 存在时才放行——不主动开启 AppContainer 执行提供方。
+@When[os == "Windows"]
+public func windowsExecutionEnforcingAvailable(directory: String): Bool {
+    if (directory.size == 0) {
+        return false
+    }
+    if (let Some(value) <- getVariable("SACODE_WINDOWS_ENFORCING")) {
+        let normalized = value.toAsciiLower().trimAscii()
+        if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on") {
+            if (let Some(_) <- windowsProcessLibraryPath()) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+@When[os != "Windows"]
+public func windowsExecutionEnforcingAvailable(directory: String): Bool {
+    return false
+}
+
+// 原生薄层 DLL 路径：优先 SACODE_WINDOWS_PROCESS_DLL，缺省不猜测运行时路径。
+@When[os == "Windows"]
+public func windowsProcessLibraryPath(): ?String {
+    if (let Some(explicit) <- getVariable("SACODE_WINDOWS_PROCESS_DLL")) {
+        if (explicit.size > 0 && FileInfo(explicit).isRegular()) {
+            return Some(explicit)
+        }
+    }
+    return None
+}
+
+@When[os != "Windows"]
+public func windowsProcessLibraryPath(): ?String {
+    return None
+}
+
+// 仅在 Windows 强制隔离开启时构造提供方；任一原生资源不可用则退回 None，
+// 由监督器维持普通 shell 兜底。构造即创建 AppContainer 配置，属显式选择加入的副作用。
+@When[os == "Windows"]
+public func windowsEnforcingProcessProvider(proposal: String, directory: String): ?ExecutionProcessProvider {
+    if (!windowsExecutionEnforcingAvailable(directory)) {
+        return None
+    }
+    if (let Some(dll) <- windowsProcessLibraryPath()) {
+        try {
+            let library = WindowsProcessLibrary(dll)
+            let profile = WindowsOwnedProfile()
+            let environment = acProbeEnvironment(getVariable("LOCALAPPDATA").getOrThrow(), getVariable("SystemRoot").getOrThrow())
+            return Some(WindowsExecutionProcessProvider(library, profile, environment, proposal))
+        } catch (_: Exception) {
+            return None
+        }
+    }
+    return None
+}
+
+@When[os != "Windows"]
+public func windowsEnforcingProcessProvider(proposal: String, directory: String): ?ExecutionProcessProvider {
+    return None
 }

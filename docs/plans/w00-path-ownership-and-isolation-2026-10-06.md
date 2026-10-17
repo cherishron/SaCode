@@ -279,3 +279,48 @@ A/W90 新增自有 scripts/pack-windows-execution.mjs、docs/evidence/windows-ex
 2026-10-17 Codex/W40 新增自有 core/src/windows_workspace_adapter.cj，复用 WindowsProcessLibrary/profile 所有权，接原生私有目录有限调用；原 windows_process_adapter.cj 仅补库 retain 引用。test-support 与 verify 脚本增加仓颉真实私有 cwd 的共享任务验证；不改原工作区 ACL 或自动合入。
 
 同批新增 scripts/cleanup-windows-workspace-fixture.mjs，仅独立删除显式夹具私有根下 input.txt/result.txt 两个普通单链接文件；拒绝重解析、不递归、不接受模型输入。
+
+2026-10-17 Codex/W40 认领新增 core/native/windows_tree.h/.c 与 core/src/windows_workspace_snapshot.cj：按真实句柄固定源/目标父链、拒绝重解析和多硬链接读取，核心限定排除清单/深度/大小，生成源摘要与只读变更清单。build-windows-process.mjs 追加编译源；不向 Host/模型开放、不得自动合入原项目。
+
+同批独占新增 scripts/create-windows-snapshot-link-fixture.mjs，仅本轮 TEMP 的已命名源夹具创建固定 hardlink/junction；清理夹具扩展为固定文件/目录名单及固定深度空目录，不扫描、无通用递归删除。
+2026-10-17 Codex/W40 继续认领 execution_service.cj、execution_api.cj 的快照审批摘要绑定与只读投影，及 renderer/pages/execution-task{,-state}.ts 与 test/execution-task.test.mjs 的审批展示/响应守卫；修改前这些文件无工作区差异。只新增快照存在时的契约，不开放默认执行后端，不覆盖其他会话文件。
+
+同批新增 apps/desktop/test/snapshot-approval-ui.test.mjs，仅验证执行页面消费真实投影形状的展示及无自动启动副作用。
+2026-10-17 Codex/W40 继续在自有 windows_workspace_snapshot.cj 接入 AttachmentStore 内容寻址对象和 execution/review 同日志清单；不新增文件存储系统。认领 renderer/pages/task-review.ts、review-page.ts、renderer/app.js 的单一 ReviewPage 参数接线，以及 test/task-review.test.mjs、review-page.test.mjs 的只读消费验证。修改前 app.js/review-page.ts/review-page.test.mjs 无他方工作区差异；只改任务审查接线，既有 Git/编辑器行为保留。
+
+同批新增自有 apps/desktop/test-support/verify-task-review-host.mjs：只消费本轮真实执行日志与对象，以当前 Host 和页面组件做历史只读联验，不伪造任务状态、不开模型/网络请求、不改用户配置。
+2026-10-17 Codex/W40 认领新增 core/src/execution_review.cj、renderer/pages/task-review-preview.ts，以及 execution/review-file 的 Host/CLI/有限 IPC/preload/bridge/ui-smoke 同步。main.cj、CLI main、preload、execution-ipc、bridge、ui-smoke 修改前无他方工作区差异；host-capabilities.json 保留他方已同步的 171 项，仅插入新读动词。check_host_method_surface.cjs 的冻结 HEAD 分母从旧169更新为实测171，不拿工作区172替代HEAD；仍检查全量能力集合。
+
+同批新增自有 test/task-review-preview.test.mjs 与 test-support/verify-task-review-cli.mjs，前者覆盖正文身份/字节/IPC拒绝，后者只执行真实CLI只读用户命令；新增接口合同 execution-review-preview-2026-10-17.md。
+2026-10-17 Codex/W40 继续认领自有 windows_tree.h/.c 与 windows_workspace_snapshot.cj，新增有限单文件 compare_exchange 原语及仓颉适配：独占句柄核对旧字节，区分未改变与可能改变后的未知；不将其宣称为断电原子替换或多文件事务，尚无公共写回入口。测试只改自有合成夹具，不写产品真实项目。
+2026-10-17 Codex/W40 认领新增 core/src/execution_review_apply.cj，以及 execution_service.cj 的同进程取消令牌表、cancel.cj 的单文件提交边界注释（修改前 cancel.cj 无他方差异）。写回意图/结果继续落同一 SessionLog，复用 WriteLease/ApprovalDesk/TurnToken；暂不新增公共写回入口。
+
+2026-10-17 Codex/W40 认领新增 core/src/review_platform.cj 与自有 windows_tree/windows_workspace_snapshot/execution_review_apply 的目录身份增量；测试新增目录替换及固定模块定位两例。保留并发会话在 windows_process_adapter.cj 和同一测试文件中的提案字段校验增量，不代其认领或回退。
+
+2026-10-17 Codex/W40 继续自有 execution_review_apply.cj 异步start/stop装配，cancel.cj 增包内非阻塞写回停止请求，不更改cancel既有等待契约；同一测试文件新增异步提交中查询/停止/重复启动拒绝用例，目标分母40。公共RPC尚未开放。
+
+2026-10-17 Codex/W40 认领新增 core/src/execution_review_api.cj；接ExecutionApi四个有限写回动作及Host/CLI当前自有执行分支，保持他方model_routing/request_trace与build.cj改动。Host认领活动写回句柄收束和同一执行写侧AttachmentStore装配。
+
+2026-10-17 Codex/W40 认领新增 renderer/pages/review-writeback-state.ts、review-writeback.ts，沿用自有task-review/review-page/app.js单一props接线；新增test/review-writeback.test.mjs、review-apply-ipc.test.mjs和test-support/verify-review-apply-entries.mjs。真实写回仅针对本会话定向测试生成且字节匹配的target/tmp合成项目，不改真实用户项目。
+
+同批verify-windows-process-adapter新增共享ExecutionApi写回合同用例，目标分母41；验证脚本登记新增execution_review_api源码指纹。公共契约仅四动作，不增加任意文件写通道。
+
+2026-10-17 Codex/W40 认领新增 core/src/windows_snapshot_provider.cj，修正自有workspace快照接线的逻辑cwd与物理cwd映射：保留会话原工作区，只在可信提供方依据持久快照切换物理目录。execution_service/windows_workspace_snapshot仅扩展绑定判据，保留旧物理cwd快照回放；默认入口仍待完整生命周期装配。
+
+15:03并发会话在windows_process_adapter/execution_api新增显式enforcing分支。本线不认领或回退该实现；仅将其中有后续赋值的processProvider局部let改var修复当前共享编译。该分支的环境库路径、资源所有权及快照集成尚未由本线验收，不能混入本批逻辑cwd映射完成结论。
+
+本轮新增desktop/test/snapshot-mapping.test.mjs并修正自有execution-task-state.ts快照消费口径：源cwd与执行目录可分离，但逻辑映射必须有源目录身份，审查也须同实体。新增真实私有进程映射用例，目标分母42，禁止暂时改SessionWorkspace来迁就测试。
+
+2026-10-17 Codex/W40 继续认领自有core/native/windows_workspace.c/.h与windows_workspace_adapter.cj，新增仅消费本对象私有根句柄的有界内容清理，供真实执行生命周期收束；不接受调用方路径、不改ACL、不删除原工作区。失败可部分清理但不得假报完成。
+
+本批新增scripts/create-windows-workspace-disposal-fixture.mjs，仅在本轮私有目录及其唯一哨兵中构造junction/硬链接与固定清理；不提供通用删除。仓颉测试新增正常嵌套清理、文件占用拒绝后重试、链接拒绝与外部哨兵保护三例，分母45。
+
+2026-10-17 Codex/W40 认领新增core/src/windows_snapshot_settlement.cj及execution_supervisor.cj的可信onSettled钩子：真实退出/输出完整并持久结束后保存审查，再清理私有资源；失败保留退出事实并另记settlement-failed。不提供RPC回调或另建任务队列。
+
+2026-10-17 Codex/W40 认领新增execution_workspace.cj、windows_execution_capsule.cj；接ExecutionService胶囊所有权与ExecutionApi准备/开始，固定库路径及本地探针、同一快照审批，不允许RPC传入根或提供方。默认入口/CLI退出接线和运行验证尚在实施。
+
+2026-10-18 Codex/W40补登记自有apps/desktop/test-support/verify-execution-capsule-entries.mjs、CLI job run退出码与Host EOF胶囊/写回收束接线；新证据execution-capsule-entries及各索引同步。公共文件中模型中心/拉取/构建钩子等他方改动不认领、不覆盖。
+
+2026-10-18 Codex/W40继续自有windows_workspace_snapshot/windows_execution_capsule、原生定向测试及专用清理夹具，修正源目录与会话数据重合的真实元数据排除边界；驱动增加--colocated。只扩展自有夹具固定名单，不清理或纳入他方实现。
+
+2026-10-18 Codex/W40认领core/src/windows_execution_tool.cj及自有capsule/snapshot/provider/执行页：为构建测试预设做启动前程序路径解析与文件摘要绑定，审批显示实际程序；不继承模型环境，不用文件名放宽报告判断。新增verify-build-test-host真实驱动。

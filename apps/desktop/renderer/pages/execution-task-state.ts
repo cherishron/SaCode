@@ -1,4 +1,33 @@
-export type ExecutionState={executionId:string;sessionId:string;taskId:string;requestId:string;proposal:string;proposalDigest:string;revision:number;phase:string;result:string;providerAvailable:boolean;providerReason:string;approvalArguments?:string};
+export type ExecutionState={executionId:string;sessionId:string;taskId:string;requestId:string;proposal:string;proposalDigest:string;revision:number;phase:string;result:string;providerAvailable:boolean;providerReason:string;approvalArguments?:string;workspaceSnapshot?:string;review?:string};
+export function executionWorkspaceSnapshot(task:ExecutionState){
+ if(task.workspaceSnapshot===undefined||task.workspaceSnapshot==='')return null;
+ if(typeof task.workspaceSnapshot!=='string'||task.workspaceSnapshot.length>1048576)throw Error('工作区快照格式无效');
+ const value=JSON.parse(task.workspaceSnapshot),proposal=JSON.parse(task.proposal);
+ const digest=(v:any)=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+ if(value.version!==1||value.executionId!==task.executionId||value.sessionId!==task.sessionId||value.taskId!==task.taskId||value.requestId!==task.requestId||value.proposalDigest!==task.proposalDigest||value.workspaceRevision!==proposal.workspaceRevision||typeof value.sourceDirectory!=='string'||!value.sourceDirectory||typeof value.executionDirectory!=='string'||(value.executionDirectory.toLowerCase()!==proposal.cwd.toLowerCase()&&(value.sourceDirectory.toLowerCase()!==proposal.cwd.toLowerCase()||typeof value.sourceIdentity!=='string'||!/^[a-f0-9]{48}$/.test(value.sourceIdentity)))||!digest(value.manifestDigest)||!Number.isSafeInteger(value.entryCount)||value.entryCount<0||value.entryCount>8192||!Number.isSafeInteger(value.byteCount)||value.byteCount<0||value.byteCount>67108864||!Array.isArray(value.excluded)||value.excluded.length>8192||value.excluded.some((p:any)=>typeof p!=='string'||!p||p.startsWith('/')||p.split('/').some((part:string)=>part==='..'||part==='')))throw Error('工作区快照身份或范围无效');
+ if(value.toolBinding!==undefined){
+  if(typeof value.toolBinding!=='string'||value.toolBinding.length>65536)throw Error('执行程序绑定无效');
+  const tool=JSON.parse(value.toolBinding);
+  if(!tool||Object.keys(tool).length!==4||tool.version!==1||tool.requested!==proposal.executable||typeof tool.executable!=='string'||!(/^[A-Za-z]:[\\/]/.test(tool.executable)||tool.executable.startsWith('\\\\'))||tool.executable.includes('\u0000')||!digest(tool.sha256))throw Error('执行程序绑定无效');
+ }
+ return value;
+}
+export function executionReview(task:ExecutionState){
+ if(task.review===undefined||task.review==='')return null;
+ if(typeof task.review!=='string'||task.review.length>16777216)throw Error('任务差异清单格式无效');
+ const value=JSON.parse(task.review),snapshot=executionWorkspaceSnapshot(task);
+ if(!snapshot||task.phase!=='exited'||value.version!==1||value.executionId!==task.executionId||value.sessionId!==task.sessionId||value.taskId!==task.taskId||value.requestId!==task.requestId||value.executionRevision!==task.revision||value.proposalDigest!==task.proposalDigest||value.manifestDigest!==snapshot.manifestDigest||value.sourceDirectory!==snapshot.sourceDirectory||(snapshot.sourceIdentity!==undefined&&value.sourceIdentity!==snapshot.sourceIdentity)||!Array.isArray(value.files)||value.files.length>8192)throw Error('任务差异清单身份无效');
+ const paths=new Set();
+ for(const row of value.files){
+  if(!row||typeof row.path!=='string'||!row.path||row.path.includes('\\')||row.path.startsWith('/')||row.path.split('/').some((p:string)=>!p||p==='..'||p==='.')||paths.has(row.path)||!['added','modified','deleted'].includes(row.kind))throw Error('任务差异路径无效');
+  paths.add(row.path);
+  for(const side of ['before','after']){
+   const missing=(side==='before'&&row.kind==='added')||(side==='after'&&row.kind==='deleted');
+   if(missing?(row[side+'Digest']!==''||row[side+'Object']!==''):(!/^[a-f0-9]{64}$/.test(row[side+'Digest'])||row[side+'Object']!=='sha256:'+row[side+'Digest']))throw Error('任务差异对象无效');
+  }
+ }
+ return value;
+}
 type Api={workspaceGet:()=>Promise<any>;executionPropose:Function;executionDescribe:Function;executionAuthorize:Function;executionStart:Function;executionStop:Function;executionOutput:Function;approvalAsk:Function;approvalAnswer:Function};
 const phases=new Set(['awaiting-approval','admitted','starting','running','stopping','exited','unknown','cancelled-before-start']);
 const providerReasons=new Set(['','platform-sandbox-unavailable','bubblewrap-required','unsafe-workspace','workspace-unavailable','sandbox-probe-failed']);
@@ -22,6 +51,10 @@ export function createExecutionTask(api:Api,session:()=>string,changed:()=>void)
   const providerReason=value.providerReason===undefined?(value.providerAvailable?'':'sandbox-probe-failed'):value.providerReason;
   if(typeof providerReason!=='string'||!providerReasons.has(providerReason)||(value.providerAvailable!==(providerReason==='')))throw Error('任务响应隔离状态无效');
   if(state.task?.executionId===value.executionId&&(value.revision<state.task.revision||value.proposal!==state.task.proposal||value.proposalDigest!==state.task.proposalDigest))throw Error('任务修订倒退或提案改变');
+  executionWorkspaceSnapshot(value);
+  executionReview(value);
+  if(state.task?.executionId===value.executionId&&state.task.workspaceSnapshot&&value.workspaceSnapshot!==state.task.workspaceSnapshot)throw Error('工作区快照绑定改变');
+  if(state.task?.executionId===value.executionId&&state.task.review&&value.review!==state.task.review)throw Error('任务差异清单改变');
   return {...value,providerReason};
  }
  async function action(name:string,work:(id:string,current:()=>boolean)=>Promise<any>,apply:(value:any,id:string)=>void){

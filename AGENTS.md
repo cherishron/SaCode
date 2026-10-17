@@ -10,6 +10,16 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用�
 - `docs/interfaces/README.md`、`docs/integration/README.md` — 各入口面接口速查（CLI/Host/桌面 IPC/daemon/ACP/LSP）与对接方案状态总览。
 需要核历史来源时再读 `docs/plans/plan-deepseek-harness-replication.md`、`docs/plans/dsh-capability-matrix.md` 与 `docs/evidence/p0-status-2026-10-02.md`，不能将其旧范围和结果当当前授权或完成状态。
 
+## 当前最高推进优先级：先交付一个走通版本（2026-10-18 用户确认）
+
+- **所有 IDE / AI 会话接手先读本节与 `docs/plans/product-closure-goal-2026-10-15.md` §0**；进度统一写 `docs/product/PRD-tracking.md` 顶部的当前交付卡。不要把各会话局部目标当成新的交付主线。
+- 当前只推进一个最小真实闭环：**正常双击 → 配置供应商与选择模型 → 打开小项目 → AI 读取并提出文件修改 → 用户审批 → 实际修改并看见真实差异 → 关闭重开后记录和修改正确**。承诺构建/测试执行时必须真实执行成功；只聊天、假模型夹具或外部驱动代跑不能冒充编程任务走通。
+- 固定顺序：**确认闭环和验收 → 固定候选源码/依赖/运行库来源 → 同源构建完整候选包 → 普通用户条件下默认安全启动与真实任务 → 用户亲手复验 → 该候选验收后再扩下一项能力**。提交、安装、收费模型请求、发布仍须各自授权；冻结源码可记录快照与哈希，不自动提交。
+- 交付前**停止无关功能扩展和顺手重构**，只修阻断此闭环的必要问题；必要的安全、取消、结算与恢复不能删减，也不为假设中的未来场景无限补机制。新需求先入待办，不自动插入当前候选。
+- **一个候选快照、一个对外测试入口、一个明确交付主责**。并发工作不混入正在验证的快照，不覆盖别人的差异；候选变更须更新标识并重验受影响链路，不拼旧 Host、新页面和不明 DLL。内部诊断副本不是让用户自行选择的多个版本。
+- 每轮只汇报：**当前阶段/候选身份、主阻塞（其他问题另列）、本轮动作、下一步验收**。单测/接口/隔离页面通过只是局部证据；用户未走通前称“未交付”或“候选待验”，不再用“本批闭环/收官”暗示版本已可用。
+- F01–F21 与全部平台目标保留，改变的是近期推进顺序，不是删除需求或放宽安全。最终用户不承担 SDK、stdx、OpenSSL 等构建环境；功能特定外部工具须提前检测说明，不以补环境、关沙箱或降低防护凑通过。
+
 ## 文档同步规则（完成功能必须同批更新）
 - **完成一个功能或闭合一个缺陷时，必须同批更新产品文档**，不允许"代码先行、文档滞后"跨批次累积：
   1. `docs/product/PRD-tracking.md` — 更新对应 Fxx 行的状态、已完成事实与剩余缺口；缺陷闭合时改状态、保留历史行，附证据路径与日期；
@@ -47,7 +57,16 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用�
 
 ## 环境
 - **Codex / 其他 AI 首次处理仓颉构建必读（2026-10-17）**：本机仓颉编程技能入口是 `C:/Users/jingg/.workbuddy/skills/cangjie-coding/SKILL.md`；`cangjie-skill` 是拆书技能，不能用于仓颉语言语法/API。跨机器先发现实际安装位置，不假定该绝对路径存在。按该技能要求批量检索 `scripts/search_docs.py`，不得凭名称猜 API；既有 stdx 配置不得未经核对就重装或清理。
-- **issue #725 自研绕过已落地并验证（2026-10-17）**：`apps/cli/build.cj`、`apps/host/build.cj`、`apps/daemon/build.cj` 已写入（与各自 `cjpm.toml` 同级），`stagePostBuild` 用 `File.readFrom`+`File.writeTo` 字节读写，按 `pack-cli-windows.mjs` 的权威运行库口径复制**完整**运行期 DLL 集到 `target/release/bin/`（成员构建）或 `../../target/release/release/bin/`（workspace 构建，`resolveTarget` 探测）：① runtime（boundscheck + libcangjie-runtime* + libcangjie-std-*，剔除 ast/unittest/testmacro/prop_test 四颗测试态）② stdx（libstdx.* 剔除 unittest/macro；含 opensslFFI 加载器）③ libwinpthread-1.dll（**启动必需**，SDK tools/bin 优先、PATH 兜底）④ OpenSSL 3（libcrypto/libssl-3-x64，OPENSSL_HOME→PATH）。**中性目录 `cjpm build` 已验证**：编译通过、自动触发、复制 80 个 DLL 全量就位（含 winpthread + openssl，deny 列表正确剔除）。**仓内受限根因＝仓库根 Low Mandatory Level 标签继承**（与 D10 同源）：cjpm 子进程继承 Low 标签后写 Medium 目标被 MIC no-write-up 拦下，中性导出（Medium）则正常。**最终验收（推荐，非阻塞）**：在中性导出目录跑通 sa-code workspace 全量 `cjpm build` 并核对产物 DLL 哈希/真实入口运行——机制已验证、置信度高；详见 `docs/evidence/2026-10-17-cjpm-build-cj-stage-post-build-hook.md`。
+- **issue #725 自研绕过已落地并三入口实测通过（2026-10-17，Codex/AI 构建仓颉必读）**：`apps/cli/build.cj`、`apps/host/build.cj`、`apps/daemon/build.cj`（与各自 `cjpm.toml` 同级，三处字节一致），`stagePostBuild` 用 `File.readFrom`+`File.writeTo` 字节读写，按 `pack-cli-windows.mjs` 权威口径复制**完整**运行期 DLL 集：① runtime（boundscheck + libcangjie-runtime* + libcangjie-std-*，剔 ast/unittest/testmacro/prop_test 四颗测试态）② stdx（libstdx.* 剔 unittest/macro；含 opensslFFI 加载器）③ libwinpthread-1.dll（**启动必需**，SDK tools/bin 优先、PATH 兜底）④ OpenSSL 3（libcrypto/libssl-3-x64，OPENSSL_HOME→PATH）。**目标 bin 定位 `resolveBins()` 同时覆盖两个布局并去重**：成员本地 `cwd/target/release/bin`（单成员构建 exe 落点）＋ workspace 根 `<root>/target/release/bin`（workspace 构建 exe 落点）；`findRoot()` 向上找含 `[workspace]` 的 `cjpm.toml`，`ensureDirFrom()` 逐级 `Directory.create`（非递归）。**旧版 `resolveTarget` 两个候选都错**（第二候选 `../../target/release/release/bin` 多一层 release；且只认 workspace bin、漏成员本地 bin），已废。
+  **正式构建入口（实测通过，Codex 用这条，勿用根 workspace 构建）**：单成员构建——`cd apps/cli && cjpm build`（host/daemon 同理）；产物 exe（`main.exe`，约 12MB）与 **80 个 DLL** 同落 `apps/<m>/target/release/bin`。跑 `cjpm build` 前**必须**前置 DLL 目录到 PATH（`build-script.exe` 自身要 runtime，cjpm 不替它上 PATH，否则钩子静默不跑、bin 里 0 个 DLL 且无报错）：
+  ```
+  export SACODE_STDX_DLL_DIR="/c/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"
+  export SACODE_RUNTIME_DLL_DIR="/d/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative"
+  export PATH="$SACODE_STDX_DLL_DIR:$SACODE_RUNTIME_DLL_DIR:/d/Program Files/HuaWei/Cangjie/tools/bin:$PATH"
+  export CJ_HOME="/d/Program Files/HuaWei/Cangjie"   # 可选 export OPENSSL_HOME=<含 libcrypto-3-x64/libssl-3-x64 的目录>（TLS/SSE 需要）
+  cd apps/cli && cjpm build
+  ```
+  **运行（剥掉 SDK/stdx PATH，DLL 本地自足）**：`env PATH="/c/Windows:/c/Windows/System32" apps/cli/target/release/bin/main.exe --help`。**三真实入口已实测**（中性导出 `D:\tmp\sa-code-nv2`，干净 PATH 无 0xC0000135）：cli 打印 `usage: sacode ...`；host 输出 JSON-RPC `host/settled` 后干净退出；daemon 起 HTTP 服务 `127.0.0.1:18937` 持续运行。**仓内受限根因＝仓库根 Low Mandatory Level 标签继承**（与 D10 同源）：cjpm 子进程继承 Low 写 Medium 目标被 MIC no-write-up 拦下，中性导出（Medium）正常。**仓颉 `let` 不可变，可变局部量用 `var`**。**已知 cjpm 坑（非本修复缺陷）**：根 `cjpm build`（workspace 全量）在 core 编译后常 `exit 127`、单成员偶发 `127/139`（段错误，但产物+钩子多已生成，**重试即好**，cli/daemon 重试均 `success`）——故用单成员构建。详见 `docs/evidence/2026-10-17-cjpm-build-cj-stage-post-build-hook.md`。
 - **权限排查安全边界**：仓内失败、中性目录成功仅是环境差异证据，不能直接归因某条 DACL 或完整性标签。`DENY(DC)` 表示拒绝删除子项，不等于拒绝读取；不得据此批量移除 SID、Everyone DENY、递归重置 ACL 或削弱沙箱。`std.fs.copy` 与字节读写在不同环境下的失败也不足以证明重载缺陷，须同环境对照。保留安全规则，优先复用已有中性导出流程并验证；需要权限调整时另行说明最小范围和依据并取得授权。
 - **仓颉技能使用要求**：编写、修改或排查 `.cj` 代码前，优先使用 [Cangjie-SIG/CangjieSkills](https://gitcode.com/Cangjie-SIG/CangjieSkills) 中与任务相关的技能。先读取实际取得的仓库 README，再按技能目录读取对应 `SKILL.md` 及其引用资料；不要仅凭技能名称猜测语法或 API。
 - 使用本地已安装副本时核对来源与版本；尚未取得技能或网络不可用时，明确记录限制，并以本机仓颉 1.1.3 SDK 文档、源码和编译探针核实，不宣称已使用未读取的技能。技能建议须与本项目的共享核心、授权、持久化及平台约束一致；示例通过不替代本项目测试。

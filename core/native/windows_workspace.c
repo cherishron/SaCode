@@ -118,6 +118,54 @@ done:
     return error;
 }
 
+/* 只能消费create返回的私有根句柄；禁止外部路径、重解析和多硬链接。
+ * 调用方先确认进程树结束、导出结果并释放树句柄。失败可以部分清理，不能报告全部完成。 */
+static int disposal_component(const wchar_t *name) {
+    size_t n=wcslen(name);if(!n||n>255||name[n-1]==L'.'||name[n-1]==L' ')return 0;
+    for(size_t i=0;i<n;++i)if(name[i]<32||wcschr(L"\\/:*?\"<>|",name[i]))return 0;
+    size_t stem=0;while(stem<n&&name[stem]!=L'.')++stem;
+    const wchar_t *devices[]={L"CON",L"PRN",L"AUX",L"NUL",L"CONIN$",L"CONOUT$",L"CLOCK$"};
+    for(size_t i=0;i<sizeof devices/sizeof *devices;++i)if(wcslen(devices[i])==stem&&!_wcsnicmp(name,devices[i],stem))return 0;
+    if(stem==4&&(!_wcsnicmp(name,L"COM",3)||!_wcsnicmp(name,L"LPT",3))&&name[3]>=L'1'&&name[3]<=L'9')return 0;
+    return 1;
+}
+static DWORD dispose_directory_contents(wchar_t *path,size_t length,uint32_t depth,uint32_t *entries) {
+    if(depth>32||length+3>=32768)return ERROR_DIRECTORY;
+    path[length]=L'\\';path[length+1]=L'*';path[length+2]=0;
+    WIN32_FIND_DATAW item;HANDLE search=FindFirstFileW(path,&item);path[length]=0;
+    if(search==INVALID_HANDLE_VALUE){DWORD e=GetLastError();return e==ERROR_FILE_NOT_FOUND?0:e;}
+    DWORD error=0;
+    do {
+        if(!wcscmp(item.cFileName,L".")||!wcscmp(item.cFileName,L".."))continue;
+        if(++*entries>8192){error=ERROR_NOT_ENOUGH_QUOTA;break;}
+        size_t n=wcslen(item.cFileName);
+        if(!disposal_component(item.cFileName)||length+n+2>=32768){error=ERROR_INVALID_NAME;break;}
+        path[length]=L'\\';memcpy(path+length+1,item.cFileName,(n+1)*sizeof(wchar_t));
+        HANDLE child=CreateFileW(path,DELETE|FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,
+            OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+        if(child==INVALID_HANDLE_VALUE){error=GetLastError();path[length]=0;break;}
+        FILE_ATTRIBUTE_TAG_INFO tag;BY_HANDLE_FILE_INFORMATION info;
+        if(!GetFileInformationByHandleEx(child,FileAttributeTagInfo,&tag,sizeof tag))error=GetLastError();
+        else if(tag.FileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)error=ERROR_REPARSE_TAG_INVALID;
+        else if(!GetFileInformationByHandle(child,&info))error=GetLastError();
+        else if(!(tag.FileAttributes&FILE_ATTRIBUTE_DIRECTORY)&&info.nNumberOfLinks!=1)error=ERROR_TOO_MANY_LINKS;
+        else if(tag.FileAttributes&FILE_ATTRIBUTE_DIRECTORY)error=dispose_directory_contents(path,length+n+1,depth+1,entries);
+        if(!error){FILE_DISPOSITION_INFO disposition={TRUE};if(!SetFileInformationByHandle(child,FileDispositionInfo,&disposition,sizeof disposition))error=GetLastError();}
+        CloseHandle(child);path[length]=0;
+        if(error)break;
+    } while(FindNextFileW(search,&item));
+    if(!error){DWORD e=GetLastError();if(e!=ERROR_NO_MORE_FILES)error=e;}
+    FindClose(search);return error;
+}
+uint32_t sacode_windows_workspace_dispose_contents(sacode_windows_workspace *scope) {
+    if(!scope||!scope->root||scope->revoked)return ERROR_INVALID_PARAMETER;
+    wchar_t *path=HeapAlloc(GetProcessHeap(),0,32768*sizeof(wchar_t));if(!path)return ERROR_NOT_ENOUGH_MEMORY;
+    DWORD length=GetFinalPathNameByHandleW(scope->root,path,32768,FILE_NAME_NORMALIZED|VOLUME_NAME_DOS),error=0;
+    if(length<7||length>=32768||wcsncmp(path,L"\\\\?\\",4)||path[5]!=L':')error=ERROR_INVALID_NAME;
+    else {uint32_t entries=0;error=dispose_directory_contents(path,length,0,&entries);}
+    HeapFree(GetProcessHeap(),0,path);return error;
+}
+
 uint32_t sacode_windows_workspace_revoke(sacode_windows_workspace *scope) {
     if (!scope || !scope->root || !scope->owner_security) return ERROR_INVALID_PARAMETER;
     if (scope->revoked) return 0;

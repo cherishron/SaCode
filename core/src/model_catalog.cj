@@ -2,6 +2,7 @@ package core
 
 import std.io.*
 import std.collection.*
+import std.sync.AtomicBool
 import stdx.net.http.*
 import stdx.encoding.json.*
 
@@ -20,15 +21,24 @@ public class ModelCatalog {
     }
 
     private static func isNullValue(v: JsonValue): Bool {
-        match (v.kind()) { case JsNull => true; case _ => false }
+        match (v.kind()) {
+            case JsNull => true;
+            case _ => false
+        }
     }
 
     private static func isObjectValue(v: JsonValue): Bool {
-        match (v.kind()) { case JsObject => true; case _ => false }
+        match (v.kind()) {
+            case JsObject => true;
+            case _ => false
+        }
     }
 
     private static func isStringValue(v: JsonValue): Bool {
-        match (v.kind()) { case JsString => true; case _ => false }
+        match (v.kind()) {
+            case JsString => true;
+            case _ => false
+        }
     }
 
     public func ids(body: String): Array<String> {
@@ -92,39 +102,98 @@ public class ModelCatalog {
 
     // 给配置面的一句话摘要：条数 + 首条 id，永不带凭据材料
     public static func summary(apiKey: String, ids: Array<String>): String {
-        let head = if (ids.size > 0) { ids[0] } else { "-" }
+        let head = if (ids.size > 0) {
+            ids[0]
+        } else {
+            "-"
+        }
         return "models=${ids.size} first=${head}"
     }
 
     // 生产通道：GET {baseUrl}/models。证书按系统 CA 校验，禁止重定向转发凭据。
-    public func fetch(baseUrl: String, apiKey: String, readTimeout!: Duration = Duration.second * 15): Array<String> {
+    public func fetch(baseUrl: String, apiKey: String, readTimeout!: Duration = Duration.second * 15,
+        control!: ?ModelCatalogRequest = None): Array<String> {
         if (apiKey.size == 0) {
             throw Exception("model-credential-unavailable")
         }
-        let client = ClientBuilder().tlsConfig(tlsClientConfigForUrl(baseUrl)).autoRedirect(false).build()
-        var body = ""
-        try {
-            let req = HttpRequestBuilder().get().url("${baseUrl}/models")
-                .header("Authorization", "Bearer ${apiKey}")
-                .readTimeout(readTimeout).build()
-            let resp = client.send(req)
-            try {
-                if (resp.status != 200) {
-                    throw Exception("http-status:${resp.status}")
+        let stopped = AtomicBool(false)
+        let monitor: ?Future<Unit> = if (control.isSome()) {
+            Some(spawn {
+                => if (let Some(request) <- control) {
+                    while (!stopped.load()) {
+                        if (request.reason().size > 0) {
+                            request.closeNetwork()
+                        }
+                        sleep(Duration.millisecond * 10)
+                    }
                 }
-                body = readBody(resp.body)
-            } finally {
-                try { resp.close() } catch (e: Exception) {}
-            }
-        } catch (e: Exception) {
-            try { client.close() } catch (e2: Exception) {}
-            if (e.message.startsWith("http-status:") || e.message == "bad-model-catalog") {
-                throw Exception(e.message)
-            }
-            throw Exception("model-catalog-request-failed")
+            })
+        } else {
+            None
         }
-        try { client.close() } catch (e: Exception) {}
-        return ids(body)
+        try {
+            if (let Some(request) <- control) {
+                request.checkpoint()
+            }
+            let builder = ClientBuilder().tlsConfig(tlsClientConfigForUrl(baseUrl)).autoRedirect(false)
+            if (let Some(request) <- control) {
+                builder.connector({address => request.connect(address)})
+            }
+            let client = builder.build()
+            if (let Some(request) <- control) {
+                request.attachClient(client)
+            }
+            var body = ""
+            try {
+                let req = HttpRequestBuilder()
+                    .get()
+                    .url("${baseUrl}/models")
+                    .header("Authorization", "Bearer ${apiKey}")
+                    .readTimeout(readTimeout)
+                    .build()
+                let resp = client.send(req)
+                try {
+                    if (let Some(request) <- control) {
+                        request.checkpoint()
+                    }
+                    if (resp.status != 200) {
+                        throw Exception("http-status:${resp.status}")
+                    }
+                    body = readBody(resp.body)
+                } finally {
+                    try {
+                        resp.close()
+                    } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                try {
+                    client.close()
+                } catch (e2: Exception) {}
+                if (let Some(request) <- control) {
+                    request.checkpoint()
+                }
+                if (e.message.startsWith("http-status:") || e.message == "bad-model-catalog") {
+                    throw Exception(e.message)
+                }
+                throw Exception("model-catalog-request-failed")
+            }
+            try {
+                client.close()
+            } catch (e: Exception) {}
+            let parsed = ids(body)
+            if (let Some(request) <- control) {
+                request.checkpoint()
+            }
+            return parsed
+        } finally {
+            stopped.store(true)
+            if (let Some(current) <- monitor) {
+                current.get()
+            }
+            if (let Some(request) <- control) {
+                request.closeNetwork()
+            }
+        }
     }
 
     private func readBody(stream: InputStream): String {

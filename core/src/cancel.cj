@@ -60,7 +60,11 @@ public class TurnToken {
         finally { startLock.unlock() }
     }
 
-    // 仅包内执行监督器用于包住不可分割的进程创建调用，不包住等待或输出读取。
+    // 写回停止请求不等待正在提交的单文件；下一文件开始前检查，当前文件仍须结算。
+    // 不改变cancel()等待启动临界区的既有契约。
+    func requestReviewStop(): Unit { flag.store(true) }
+
+    // 包内监督器用于进程创建或单文件提交边界，不包住等待、输出读取或整个批次。
     func runStartIfNotCancelled(action: CancellationStartAction): Bool {
         startLock.lock()
         try {

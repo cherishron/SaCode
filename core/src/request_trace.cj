@@ -20,6 +20,7 @@ public class RequestTraceProvider <: Provider & Resource {
     let ticks: () -> Int64
     let header: JsonObject
     let prompts: JsonArray
+    let metadataOnly: Bool
     var inner: ?Provider = None
     var requestSeq = Int64(-1)
     var started = Int64(0)
@@ -30,7 +31,8 @@ public class RequestTraceProvider <: Provider & Resource {
 
     public init(request: String, providerId: String, log: SessionLog, token: TurnToken,
         factory: (String) -> Provider, now!: () -> Int64 = { => DateTime.nowUTC().toUnixTimeStamp().toMilliseconds() },
-        ticks!: () -> Int64 = requestTraceTicks()) {
+        ticks!: () -> Int64 = requestTraceTicks(), metadataOnly!: Bool = false) {
+        this.metadataOnly = metadataOnly
         this.request = request; this.providerId = providerId; this.log = log; this.token = token
         this.factory = factory; this.now = now; this.ticks = ticks
         let body = JsonValue.fromStr(request).asObject()
@@ -41,7 +43,8 @@ public class RequestTraceProvider <: Provider & Resource {
             if (let Some(value) <- body.get(key)) { config.put(key, value) }
         }
         let snapshot = JsonObject(); snapshot.put("config", config)
-        snapshot.put("tools", body.get("tools") ?? JsonArray())
+        // 生产审计只记录白名单元数据，不复制工具描述或提示词正文。
+        if (!metadataOnly) { snapshot.put("tools", body.get("tools") ?? JsonArray()) }
         this.header = snapshot
         let recorded = JsonArray()
         let messages = body.get("messages").getOrThrow().asArray()
@@ -49,7 +52,7 @@ public class RequestTraceProvider <: Provider & Resource {
         while (let Some(value) <- messages.get(i)) {
             let message = value.asObject()
             let role = message.get("role").getOrThrow().asString().getValue()
-            if (role == "system" || role == "developer") {
+            if (!metadataOnly && (role == "system" || role == "developer")) {
                 // 当前共享请求构造器的提示是纯文本；未知结构拒绝，不能伪造为完整快照。
                 let content = message.get("content").getOrThrow().asString().getValue()
                 let prompt = JsonObject(); prompt.put("role", JsonString(role)); prompt.put("content", JsonString(content))
@@ -74,8 +77,10 @@ public class RequestTraceProvider <: Provider & Resource {
         record.put("step", JsonInt(step)); record.put("reason", JsonString(if (step == 0) { "initial" } else { "series" }))
         record.put("header", header)
         requestSeq = log.append("request/header", record.toString()).seq
-        let prompt = JsonObject(); prompt.put("requestSeq", JsonInt(requestSeq)); prompt.put("messages", prompts)
-        log.append("request/prompt", prompt.toString())
+        if (!metadataOnly) {
+            let prompt = JsonObject(); prompt.put("requestSeq", JsonInt(requestSeq)); prompt.put("messages", prompts)
+            log.append("request/prompt", prompt.toString())
+        }
     }
 
     private func finish(state: String, reason: String): Unit {
@@ -109,10 +114,15 @@ public class RequestTraceProvider <: Provider & Resource {
             finish(if (token.cancelled()) { "cancelled" } else { "interrupted" }, "eof")
             close()
             return None
-        } catch (_: Exception) {
-            finish(if (token.cancelled()) { "cancelled" } else { "failed" }, "provider-error")
+        } catch (e: Exception) {
+            // 红脱敏：只把「HTTP 状态码 + 粗类目」记入 request/end，绝不写原始异常文案。
+            // 原始异常可能含连接配置/请求片段，已在上游各层脱敏，这里再次收窄到稳定类目。
+            let classified = classifyProviderError(e.message)
+            let reason = if (classified[0] == "provider-error") { "provider-error" }
+                else if (classified[1] > 0) { "provider-error:${classified[0]}:${classified[1]}" }
+                else { "provider-error:${classified[0]}" }
+            finish(if (token.cancelled()) { "cancelled" } else { "failed" }, reason)
             close()
-            // 外部 SDK 的异常正文可能含连接配置，不能被模型循环抄进持久日志。
             throw Exception("request-provider-failed")
         }
     }
@@ -124,6 +134,50 @@ public class RequestTraceProvider <: Provider & Resource {
         if (let Some(value) <- inner) { if (let Some(resource) <- (value as Resource)) { resource.close() } }
     }
     public func isClosed(): Bool { return closed }
+}
+
+// 红脱敏错误分类：只从异常文案里识别「HTTP 状态码 + 粗类目」，绝不写出原始异常正文。
+// 异常到此已是上游各层脱敏后的稳定形态（http-status:<n> / http-request-error[:reason] / 短码），
+// 这里再次收窄到 rate-limit / server / client / connection / timeout，认不出退回笼统 provider-error。
+func classifyProviderError(message: String): (String, Int64) {
+    let raw = message.trimAscii().toAsciiLower()
+    if (raw.startsWith("http-status:")) {
+        if (let Some(status) <- parseStatusDigits(raw[12..])) {
+            let category = if (status == 429) { "rate-limit" }
+                else if (status >= 500 && status <= 599) { "server" }
+                else if (status >= 400 && status <= 499) { "client" }
+                else { "server" }
+            return (category, status)
+        }
+        return ("server", -1)
+    }
+    if (raw.startsWith("http-request-error:")) {
+        let reason = raw[19..]
+        if (reason.contains("rate") || reason.contains("ratelimit")) { return ("rate-limit", -1) }
+        if (reason.contains("timeout")) { return ("timeout", -1) }
+        if (reason.contains("connection") || reason.contains("dns") || reason.contains("tls") ||
+            reason.contains("refused") || reason.contains("reset") || reason.contains("handshake") ||
+            reason.contains("certificate")) { return ("connection", -1) }
+        return ("connection", -1)
+    }
+    if (raw == "http-request-error") { return ("connection", -1) }
+    if (raw == "timeout") { return ("timeout", -1) }
+    if (raw == "read-error") { return ("connection", -1) }
+    if (raw == "upstream-error") { return ("server", -1) }
+    if (raw == "protocol-error" || raw == "line-limit" || raw == "event-limit") { return ("provider-error", -1) }
+    return ("provider-error", -1)
+}
+
+// 仅解析十进制状态码，非数字或超长一律退回 None，绝不抛异常。
+func parseStatusDigits(text: String): Option<Int64> {
+    let bs = text.toArray()
+    if (bs.size == 0 || bs.size > 4) { return None }
+    var value: Int64 = 0
+    for (b in bs) {
+        if (b < 48 || b > 57) { return None }
+        value = value * 10 + Int64(b - 48)
+    }
+    return Some(value)
 }
 
 // 只从日志回放请求证据；没有请求头的旧历史不会获得推测出的配置或提示词。

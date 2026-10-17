@@ -3,6 +3,10 @@
 // after a successful build, copy the full Cangjie runtime DLL set into the
 // build-output bin/ so the freshly built binary is directly runnable
 // (no 0xC0000135 STATUS_DLL_NOT_FOUND at startup).
+//
+// Locates the output bin by walking up to the workspace root (cjpm.toml with
+// [workspace]) and creates target/release/bin if cjpm has not done so yet.
+// Works for both workspace members (apps/<m>) and single-package builds.
 import std.process.*
 import std.fs.*
 import std.env.*
@@ -93,24 +97,73 @@ func pathDirs(): Array<String> {
   return splitPath(getVariable("PATH")).concat(splitPath(getVariable("Path")))
 }
 
-func resolveTarget(): String {
-  let candidates = ["target/release/bin", "../../target/release/release/bin"]
-  for (c in candidates) {
-    try {
-      let _ = Directory.readFrom(c)
-      return c
-    } catch (e: Exception) { }
+// Read a file as UTF-8 text; "" on any error (also covers non-existence).
+func readText(path: String): String {
+  try {
+    return String.fromUtf8(File.readFrom(path))
+  } catch (e: Exception) {
+    return ""
   }
-  return "target/release/bin"
 }
 
-func stagePostBuild(): Int64 {
-  let stdxDir = "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"
-  let runtimeDir = "D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative"
-  let sdkRoot = "D:/Program Files/HuaWei/Cangjie"
-  let target = resolveTarget()
-  var rc = 0
+// Walk up from cwd to find the workspace root: the nearest ancestor whose
+// cjpm.toml contains "[workspace]". Falls back to the nearest cjpm.toml dir
+// (single-package build) or cwd.
+func findRoot(): String {
+  var dir = "."
+  var nearest = "."
+  for (i in 0..8) {
+    let toml = Path(dir).join("cjpm.toml").toString()
+    if (readText(toml).contains("[workspace]")) {
+      return Path(dir).normalize().toString()
+    }
+    if (!readText(toml).isEmpty()) {
+      nearest = dir
+    }
+    dir = Path(dir).join("..").toString()
+  }
+  return Path(nearest).normalize().toString()
+}
 
+// Create `base/rel` one segment at a time (Directory.create is non-recursive).
+func ensureDirFrom(base: String, rel: String): Unit {
+  var segs: Array<String> = []
+  for (seg in rel.split("/")) {
+    for (x in seg.split("\\")) {
+      if (!x.isEmpty()) { segs = segs.concat([x]) }
+    }
+  }
+  var cur = Path(base).normalize().toString()
+  for (s in segs) {
+    cur = Path(cur).join(s).toString()
+    try {
+      Directory.create(cur)
+    } catch (e: Exception) { }
+  }
+}
+
+// Resolve ALL plausible build-output bin dirs and make sure each exists.
+// Two layouts: (a) member-local `cwd/target/release/bin` — single-member build
+// `cd apps/<m> && cjpm build`, the exe lands here; (b) workspace-root bin
+// `<root>/target/release/bin` — workspace build `cjpm build` at root, all exes
+// land here. Copy to both (deduped) so the exe is always co-located with DLLs.
+func resolveBins(): Array<String> {
+  let root = findRoot()
+  let rootBin = Path(root).join("target").join("release").join("bin").toString()
+  let localBin = Path(".").join("target").join("release").join("bin").toString()
+  ensureDirFrom(root, "target/release/bin")
+  ensureDirFrom(".", "target/release/bin")
+  let rn = Path(rootBin).normalize().toString()
+  let ln = Path(localBin).normalize().toString()
+  if (ln == rn) {
+    return [rn]
+  }
+  return [ln, rn]
+}
+
+// Copy the full runtime DLL set into one target bin. Returns non-zero on failure.
+func copyRuntimeSet(target: String, stdxDir: String, runtimeDir: String, sdkRoot: String): Int64 {
+  var rc = 0
   // 1) runtime libs (boundscheck + libcangjie-runtime* + libcangjie-std-* minus DENY)
   rc = copyIfDll(runtimeDir, target, runtimePredicate)
   if (rc != 0) { return rc }
@@ -148,7 +201,20 @@ func stagePostBuild(): Int64 {
       }
     }
   }
+  return 0
+}
 
+func stagePostBuild(): Int64 {
+  let stdxDir = "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"
+  let runtimeDir = "D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative"
+  let sdkRoot = "D:/Program Files/HuaWei/Cangjie"
+  let targets = resolveBins()
+  for (target in targets) {
+    println("[build.cj] target bin = " + target)
+    let rc = copyRuntimeSet(target, stdxDir, runtimeDir, sdkRoot)
+    if (rc != 0) { return rc }
+  }
+  println("[build.cj] done.")
   return 0
 }
 

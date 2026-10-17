@@ -14,6 +14,10 @@ typedef struct sacode_windows_workspace sacode_windows_workspace;
  * close 在 revoke 成功后释放句柄并完成空目录删除；否则拒绝。 */
 SACODE_PROCESS_API uint32_t sacode_windows_workspace_create(const wchar_t *parent,
     const wchar_t *leaf, void *sid, uint32_t writable, sacode_windows_workspace **result);
+/* 仅清理此create对象的内容，不删根或修改ACL；最多8192项/深度32。
+ * 拒绝重解析、多硬链接、文件占用及路径别名；错误可能已有部分清理，须显式报告/重试。
+ * 调用方必须先确认整树停止、保存审查对象并释放所有树读句柄。 */
+SACODE_PROCESS_API uint32_t sacode_windows_workspace_dispose_contents(sacode_windows_workspace *workspace);
 SACODE_PROCESS_API uint32_t sacode_windows_workspace_revoke(sacode_windows_workspace *workspace);
 SACODE_PROCESS_API uint32_t sacode_windows_workspace_close(sacode_windows_workspace *workspace);
 #ifdef __cplusplus
