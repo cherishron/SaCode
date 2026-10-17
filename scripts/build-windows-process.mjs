@@ -9,11 +9,13 @@ if(process.platform!=='win32'||process.arch!=='x64')throw Error('Windows process
 const out=join(root,'.deps/native/win32-x64');mkdirSync(out,{recursive:true});
 const compiler=process.env.SACODE_WINDOWS_CC||'clang';
 const dll=join(out,'sacode-windows-process.dll');
-const args=['-std=c11','-O2','-Wall','-Wextra','-Werror','-fms-runtime-lib=static','-shared',join(root,'core/native/windows_process.c'),'-o',dll,'-ladvapi32'];
+const args=['-std=c11','-O2','-Wall','-Wextra','-Werror','-fms-runtime-lib=static','-shared',join(root,'core/native/windows_process.c'),join(root,'core/native/windows_workspace.c'),'-o',dll,'-ladvapi32'];
 execFileSync(compiler,args,{stdio:'inherit',windowsHide:true});
 const sha256=path=>createHash('sha256').update(readFileSync(path)).digest('hex');
 const manifest={version:1,target:'win32-x64',compiler:execFileSync(compiler,['--version'],{encoding:'utf8',windowsHide:true}).trim(),
- sourceSha256:sha256(join(root,'core/native/windows_process.c')),headerSha256:sha256(join(root,'core/native/windows_process.h')),dllSha256:sha256(dll)};
+ sourceSha256:sha256(join(root,'core/native/windows_process.c')),headerSha256:sha256(join(root,'core/native/windows_process.h')),
+ workspaceSourceSha256:sha256(join(root,'core/native/windows_workspace.c')),workspaceHeaderSha256:sha256(join(root,'core/native/windows_workspace.h')),
+ dllSha256:sha256(dll)};
 writeFileSync(join(out,'build-manifest.json'),JSON.stringify(manifest,null,2));
 console.log('Windows process thin layer: '+dll);
 if(process.argv.includes('--verify')){

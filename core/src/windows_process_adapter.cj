@@ -6,6 +6,209 @@ import std.fs.*
 import std.io.*
 @When[os == "Windows"]
 import std.sync.*
+@When[os == "Windows"]
+import std.time.MonoTime
+@When[os == "Windows"]
+import std.collection.ArrayList
+
+// CreateProcessW 命令行的逐参数编码；不把参数拼成另一条 shell 脚本。
+@When[os == "Windows"]
+func windowsProcessArgument(text: String): String {
+    if (text.contains("\u{0}")) {
+        throw Exception("windows-process-invalid-argument")
+    }
+    let output = ArrayList<Byte>()
+    output.add(34)
+    var slashes: Int64 = 0
+    for (byte in text.toArray()) {
+        if (byte == 92) {
+            slashes += 1
+            continue
+        }
+        let count = if (byte == 34) {
+            slashes * 2 + 1
+        } else {
+            slashes
+        }
+        for (_ in 0..count) {
+            output.add(92)
+        }
+        slashes = 0
+        output.add(byte)
+    }
+    for (_ in 0..slashes * 2) {
+        output.add(92)
+    }
+    output.add(34)
+    return String.fromUtf8(output.toArray())
+}
+
+// 每个已核准提案装配一个实例；外层持有 library/profile，未确认清理的句柄仍归此实例。
+// 目前只在显式集成驱动使用，默认 Host/CLI 不装配，也不授予工作区 ACL。
+@When[os == "Windows"]
+class WindowsExecutionProcessProvider <: ExecutionProcessProvider {
+    let library: WindowsProcessLibrary
+    let profile: WindowsOwnedProfile
+    let environment: Array<UInt16>
+    let executable: String
+    let directory: String
+    let gate = Mutex()
+    var used = false
+    var retained: ?WindowsNativeProcess = None
+    init(library: WindowsProcessLibrary, profile: WindowsOwnedProfile, environment: Array<UInt16>, executable: String,
+        directory: String) {
+        this.library = library
+        this.profile = profile
+        this.environment = environment
+        this.executable = executable
+        this.directory = directory
+    }
+    public func execute(request: ExecutionProcessRequest): ?ShellResult {
+        gate.lock()
+        try {
+            if (used) {
+                throw Exception("windows-process-provider-consumed")
+            }
+            used = true
+        } finally {
+            gate.unlock()
+        }
+        if (request.executable != executable || request.directory != directory) {
+            throw Exception("windows-process-proposal-mismatch")
+        }
+        if (request.token.cancelled()) {
+            return None
+        }
+        var command = windowsProcessArgument(request.executable)
+        let image = request.executable.replace("\\", "/").toAsciiLower()
+        if (image.endsWith("/cmd.exe")) {
+            // cmd /s /c 使用自己的引号规则，不接受 CRT 的反斜杠转义。
+            if (request.arguments.size != 4 || request.arguments[0] != "/d" || request.arguments[1] != "/s" ||
+                request.arguments[2] != "/c" || request.arguments[3].contains("\u{0}")) {
+                throw Exception("windows-process-unsupported-shell-arguments")
+            }
+            command += " /d /s /c \"" + request.arguments[3] + "\""
+        } else {
+            for (argument in request.arguments) {
+                command += " " + windowsProcessArgument(argument)
+            }
+        }
+        let creation = library.create(executable, command, directory, environment, profile)
+        retained = creation.process
+        try {
+            if (creation.error != 0) {
+                throw Exception("windows-process-create:${creation.error}")
+            }
+            return Some(
+                collectWindowsProcess(retained.getOrThrow(), request.token, request.timeoutMs, request.outputLimit,
+                    request.onCreated, request.onStarted))
+        } finally {
+            cleanup()
+        }
+    }
+    func cleanup(): Unit {
+        if (let Some(process) <- retained) {
+            process.stop()
+            let deadline = MonoTime.now()
+            while (process.active() != 0 && (MonoTime.now() - deadline).toMilliseconds() < 3000) {
+                sleep(10 * Duration.millisecond)
+            }
+            // close 拒绝存活树和在途读者；失败时保留句柄供显式重试。
+            process.close()
+            retained = None
+        }
+    }
+}
+
+// 将已创建的受监督进程转换为共享执行结果。调用方始终持有句柄，负责最终 close；
+// 即使停止或读取无法确认，也不能丢弃句柄后伪报成功。此处不创建授权或开放产品入口。
+@When[os == "Windows"]
+func collectWindowsProcess(process: WindowsNativeProcess, token: TurnToken, timeoutMs: Int64, outputLimit: Int64,
+    onCreated: (Int64) -> Unit, onStarted: (Int64) -> Unit): ShellResult {
+    if (timeoutMs < 1 || timeoutMs > 300000 || outputLimit < 1 || outputLimit > 65536) {
+        throw Exception("windows-process-invalid-limits")
+    }
+    let stdout = spawn {=> readShellBounded(process.pipe(1), limit: outputLimit)}
+    let stderr = spawn {=> readShellBounded(process.pipe(2), limit: outputLimit)}
+    var code: Int64 = -1
+    var observed = false
+    var timedOut = false
+    var cancelled = false
+    var failure = ""
+    try {
+        // 创建事实回执失败时不得恢复挂起线程。
+        onCreated(process.pid)
+        let resumed = process.resume(token)
+        cancelled = !resumed
+        if (resumed) {
+            onStarted(process.pid)
+        }
+        let started = MonoTime.now()
+        while (true) {
+            if (let Some(exit) <- process.poll(timeoutMs: 50)) {
+                code = Int64(exit)
+                observed = true
+            }
+            // 根进程退出并不表示后代已退出或继承的管道已关闭。
+            if (observed && process.active() == 0) {
+                break
+            }
+            cancelled = token.cancelled()
+            timedOut = !cancelled && (MonoTime.now() - started).toMilliseconds() >= timeoutMs
+            if (cancelled || timedOut) {
+                process.stop()
+                let stopping = MonoTime.now()
+                while ((MonoTime.now() - stopping).toMilliseconds() < 3000) {
+                    if (let Some(exit) <- process.poll(timeoutMs: 50)) {
+                        code = Int64(exit)
+                        observed = true
+                    }
+                    if (observed && process.active() == 0) {
+                        break
+                    }
+                    if (observed) {
+                        sleep(10 * Duration.millisecond)
+                    }
+                }
+                if (!observed || process.active() != 0) {
+                    failure = "process-termination-unconfirmed"
+                    // 根退出不足以证明整棵受监督任务结束，交给共享服务结算为 unknown。
+                    observed = false
+                }
+                break
+            }
+            if (observed) {
+                sleep(10 * Duration.millisecond)
+            }
+        }
+    } catch (e: Exception) {
+        // 不隐藏持久化回执或启动异常；停止失败由原始句柄的所有者继续处理。
+        try {
+            process.stop()
+        } catch (_: Exception) {}
+        try {
+            stdout.get(3000 * Duration.millisecond)
+        } catch (_: Exception) {}
+        try {
+            stderr.get(3000 * Duration.millisecond)
+        } catch (_: Exception) {}
+        throw e
+    }
+    var out = ShellCapture("", false, false)
+    var err = ShellCapture("", false, false)
+    try {
+        out = stdout.get(3000 * Duration.millisecond)
+    } catch (_: Exception) {}
+    try {
+        err = stderr.get(3000 * Duration.millisecond)
+    } catch (_: Exception) {}
+    let complete = out.complete && err.complete
+    if (!complete && failure.size == 0) {
+        failure = "output-incomplete"
+    }
+    return ShellResult(code, out.text, err.text, timedOut, failure, cancelled: cancelled, stdoutTruncated: out.truncated,
+        stderrTruncated: err.truncated, outputComplete: complete, exitObserved: observed)
+}
 
 @When[os == "Windows"]
 let windowsOwnedProfileSequence = AtomicInt64(0)
@@ -176,6 +379,17 @@ class WindowsProcessLibrary {
         } catch (e: Exception) {
             unsafe { FreeLibrary(loaded) };
             throw e
+        }
+    }
+    func retain(): Unit {
+        gate.lock()
+        try {
+            if (closed) {
+                throw Exception("windows-process-library-closed")
+            }
+            processes += 1
+        } finally {
+            gate.unlock()
         }
     }
     func release(): Unit {

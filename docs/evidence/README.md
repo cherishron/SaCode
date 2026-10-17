@@ -14,6 +14,11 @@
 
 | 主题 | 检索关键词 / 前缀 | 代表性文件（完整清单按目录） | 时间跨度 |
 |---|---|---|---|
+| 仓颉私有 cwd 真实任务 | `cangjie-private-workspace-task` | [本轮记录](2026-10-17-cangjie-private-workspace-task.md)：共享审批/执行链、两档文件访问、失败引用释放及独立清理，16/16；生产快照/合入未完成 | 10-17 |
+| Windows 私有任务目录 | `windows-private-workspace-scope` | [本轮记录](2026-10-17-windows-private-workspace-scope.md)：47 项真实权限/重解析拒绝/独立清理；父 DACL 不变，快照与产品装配未完成 | 10-17 |
+| Windows 共享监督装配 | `windows-execution-supervisor-integration` | [本轮记录](2026-10-17-windows-execution-supervisor-integration.md)：真实任务/审批/停止/持久回放，定向 13/13；默认产品门禁未开放 | 10-17 |
+| Windows 共享执行结果 | `windows-process-collector` | [当前记录](2026-10-17-windows-process-collector.md)：真实适配与结果转换 9/9；公共执行服务装配未完成 | 10-17 |
+| 仓颉 Windows 进程适配 | `windows-cangjie-process-adapter` | [2026-10-17-windows-cangjie-process-adapter](2026-10-17-windows-cangjie-process-adapter.md)：真实 DLL/TurnToken/双流排空/清理五组 5/5；公共执行装配仍待完成 | 10-17 |
 | Windows 原生所有权进程 | `windows-owned-process-provider` | [2026-10-17-windows-owned-process-provider](2026-10-17-windows-owned-process-provider.md)：AppContainer/管道/Job 原生薄层 35 项实测；仓颉适配与产品装配未完成 | 10-17 |
 | AppContainer 当前身份验证 | `appcontainer-minimal-environment` | [2026-10-17-appcontainer-minimal-environment](2026-10-17-appcontainer-minimal-environment.md)：原生 error 203 环境对照，仓颉真实身份 5/5；产品执行后端仍未开放 | 10-17 |
 | 桌面壳 · Electron · 打包分发 | `desktop-*`、`sacode-desktop-*`、`npm-publish*`、`package-*`、`renderer-decoupling*`、`latest-desktop-package*` | desktop-electron-blocker、official-desktop-baseline、2026-10-11-package-and-packed-verification-batchE | 10-03～10-15 |
@@ -35,3 +40,5 @@
 
 - [`MEMORY.md`](MEMORY.md) 为早期遗留的单行索引文件（仅 1 条记录），**保留不删**；完整导航以本 README 为准。
 - 本目录文件数量会持续增长（约 177 篇 md + 8 个数据文件，截至 2026-10-16）；增量文档按 §0 命名规则直接落此，并在上方主题表补充新关键词（若属于全新主题）。
+
+2026-10-17 提交前独立候选复验：[Windows 执行内部组件](2026-10-17-windows-execution-commit-candidate.md)，冷编译与 35/47/16 项通过；快照未入候选，产物守卫失败保留。

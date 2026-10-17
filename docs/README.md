@@ -60,6 +60,16 @@
 
 ## 4. 维护记录
 
+- 2026-10-17：[仓颉私有 cwd 任务](evidence/2026-10-17-cangjie-private-workspace-task.md)定向真实 DLL 16/16；尚无生产快照、受保护子树排除与 F08 合入，不开放公共门禁。
+
+- 2026-10-17：[私有任务目录](evidence/2026-10-17-windows-private-workspace-scope.md)原生范围 47 项通过，原生进程 35 与共享监督 13/13 复验；不代表真实工作区、网络或产品门禁开放。
+
+- 2026-10-17：[Windows 共享监督装配](evidence/2026-10-17-windows-execution-supervisor-integration.md)真实任务链定向 13/13；Host/CLI 默认装配与工作区隔离仍待完成。
+
+- 2026-10-17：[Windows 共享结果转换](evidence/2026-10-17-windows-process-collector.md)真实进程定向 9/9，D14 与公共执行装配仍未完成。
+
+- **2026-10-17（仓颉 Windows 进程适配）**：新增 [真实 DLL 与取消/双流/清理集成 5/5](evidence/2026-10-17-windows-cangjie-process-adapter.md)，提供可复用定向验证入口；公共执行器、ACL、打包及真实任务仍待接通。
+
 - **2026-10-17（Windows 原生进程组件）**：新增 [AppContainer/管道/Job 所有权薄层实测](evidence/2026-10-17-windows-owned-process-provider.md)，35 项检查通过；组件未接仓颉执行器与产品打包，不能开放执行门禁。
 
 - **2026-10-17（AppContainer 身份探针）**：新增 [最小环境与身份实测](evidence/2026-10-17-appcontainer-minimal-environment.md)。原生对照定位空子环境的 error 203，仓颉加入 LOCALAPPDATA/SystemRoot 后身份测试 5/5；仍未开放实际执行后端，工作区/网络/后代隔离继续待验。
@@ -76,3 +86,5 @@
 - 2026-10-15/16：测试临时根迁移至 `target/tmp/`，守卫上线（[`testing.md`](testing.md)、[`plans/artifact-layout-and-retention-2026-10-16.md`](plans/artifact-layout-and-retention-2026-10-16.md)）。
 - 2026-10-13：README 口径更新（平台读数、历史化标注）。
 - 2026-10-09：初版索引与进度对账节。
+
+2026-10-17 提交整理：[独立候选复验](evidence/2026-10-17-windows-execution-commit-candidate.md)，只纳入已验证的 Windows 执行内部组件与私有目录，保留未完成和其他会话改动。

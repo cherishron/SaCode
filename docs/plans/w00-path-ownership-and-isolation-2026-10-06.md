@@ -269,3 +269,13 @@ A/W90 新增自有 scripts/pack-windows-execution.mjs、docs/evidence/windows-ex
 2026-10-17 Codex/W40 后续独占新增 `core/src/windows_process_adapter.cj`、`core/test-support/windows_process_adapter_test.cj`，负责内部 DLL ABI/句柄、profile 生命周期、管道和启动取消屏障适配；实际集成测试需显式 DLL 与 Medium 测试环境，用定向 CJC 编译，不混入无需该组件的默认单测发现；只读现有 shlex/cancel 契约，不改公共执行器或门禁。
 
 同批独占新增 `scripts/verify-windows-process-adapter.ps1`：显式当前 core 产物 + DLL + 中性导出根的定向测试入口；记录最后 Summary、退出码和指纹，不安装、不调 ACL、不删除运行证据。
+
+2026-10-17 Codex/W40 继续仅修改 windows_process_adapter.cj、其 test-support 测试与 verify-windows-process-adapter.ps1：增加挂起进程到共享 ShellResult 的回执、取消、超时与双流收束转换；不修改公共执行器或门禁。
+
+2026-10-17 Codex/W40 认领 execution_supervisor.cj 的可注入受监督进程接口与异常结算增量，新增 execution_process_provider.cj，并在自有 windows_process_adapter.cj/test-support 接实际任务日志验证；保留 ShellExecutor 默认路径，不改平台就绪门禁。修改前 execution_supervisor.cj 无工作区差异。
+
+2026-10-17 Codex/W40 认领新增 core/native/windows_workspace.h/.c、scripts/verify-windows-workspace.c 与 scripts/verify-windows-workspace.mjs：仅新建私有任务目录的初始 DACL、固定句柄与撤销/独立清理测试，不修改真实工作区或父目录权限。build-windows-process.mjs 仅追加本批源文件编译；其余进程 ABI 保留。
+
+2026-10-17 Codex/W40 新增自有 core/src/windows_workspace_adapter.cj，复用 WindowsProcessLibrary/profile 所有权，接原生私有目录有限调用；原 windows_process_adapter.cj 仅补库 retain 引用。test-support 与 verify 脚本增加仓颉真实私有 cwd 的共享任务验证；不改原工作区 ACL 或自动合入。
+
+同批新增 scripts/cleanup-windows-workspace-fixture.mjs，仅独立删除显式夹具私有根下 input.txt/result.txt 两个普通单链接文件；拒绝重解析、不递归、不接受模型输入。

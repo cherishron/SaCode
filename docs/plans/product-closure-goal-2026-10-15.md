@@ -93,7 +93,7 @@ F07 的既有判决仍是“配置 CRUD 主窗口链已验证；费用/路由/�
 |---|---|---|
 | BASE-01 当前产物基线 | 修复后的仓颉 1.1.3 下，core/CLI/Host/daemon 4/4 构建成功；本轮同源码完整 `win-unpacked` 候选已生成，Host 载荷 SHA-256 与已验私有 Host 一致，719/719 文件对账。 | 默认安全启动 smoke 以 `0x80000003` 失败，安装态未验；隔离 CLI 包因缺 MinGW DLL 未完成。`deviceRunVerified=false`；不写默认 `dist`，不使用 `--no-sandbox` 作为产品默认配置 | 先定位并修复默认 Electron 安全启动失败，再用同一候选复验默认启动与真实窗口/Host；安装/升级仍需单独授权。CLI 包待可核验的 MinGW 运行库来源 |
 | EDIT-01 文件编辑 | 页面→read→一次性审批→核心 write→回读已接；外部冲突、未保存、迟到回执保护已有源码 | 本轮统一构建出的真实 Host 在 private payload 下验证：审批后写入中文/空白、审批期间第三方改动拒绝、空正文、模型写入 allowed-once/denied、工作区绑定/切换/重启及写者竞争，共 14 项集成组通过；受限 `%TEMP%` 的失败与 repo-local TEMP 的通过分别留证 | 仍需默认 Electron/完整桌面载荷的用户路径验收及冷恢复；不要把假模型写入验收说成真实模型任务，也不要混淆 AI 与手工修改归属 |
-| EX-01 执行 | execution/propose/authorize/start/list/describe/output/stop 接入终端；当前 Host 提案/审批/拒绝链通过。2026-10-17 修正空子环境后，AppContainer 实际身份专项 5/5，创建/token/SID/终止/profile 清理通过 | Windows `platformSandbox` 仍无实际后端，`platformExecutionReady=false`；下一步私有工作区 ACL、文件/网络/后代反向隔离及原生创建绑定到同一任务进程/Job。保持 fail-closed；还需验启动竞态、双流、限额后排空、未知与中断恢复。身份证据见 2026-10-17-appcontainer-minimal-environment |
+| EX-01 执行 | execution/propose/authorize/start/list/describe/output/stop 接入终端；当前 Host 提案/审批/拒绝链通过。2026-10-17 修正空子环境后，AppContainer 实际身份专项 5/5，创建/token/SID/终止/profile 清理通过；原生进程 35 项及包内适配已验，新增共享执行结果转换见 [记录](../evidence/2026-10-17-windows-process-collector.md)；共享核心显式消费已验真实任务/停止/持久回放 [13/13](../evidence/2026-10-17-windows-execution-supervisor-integration.md)，Host/CLI 默认装配仍待完成 | Windows `platformSandbox` 仍无实际后端，`platformExecutionReady=false`；下一步私有工作区 ACL、文件/网络/后代反向隔离及原生创建绑定到同一任务进程/Job。保持 fail-closed；还需验启动竞态、双流、限额后排空、未知与中断恢复。身份证据见 2026-10-17-appcontainer-minimal-environment |
 | REVIEW-01 差异 | 新增右侧“差异审查”页，组合现有编辑器未保存草稿差异与当前会话/目录绑定的 Git 索引、工作区只读差异；明确提示尚无 Agent 任务归属 | 下一步建立任务归属与文件修订关联，再绑定执行/测试报告；旧 Host 下页面真实数据验收未做。陈旧提案拒绝，不能展示错任务 patch |
 | GIT-01 Git 授权操作 | 工作台已有暂存/提交/推送提案，实际写入统一经过 ExecutionService；2026-10-17 当前 Host 集成 1/1，三种操作各自独立审批，门禁拒绝时 index/HEAD/远端不变 | 尚未证明真实 Git 写操作成功；需执行前核对审批后的索引/文件变化、保护部分暂存与 index.lock，补文件/hunk 选择、取消暂存、提交/历史/推送验收；hooks/签名/凭据/网络保持明确授权。依赖 EX-01，不能把拒绝链通过当 Git 写闭环 |
 
@@ -114,3 +114,9 @@ F07 的既有判决仍是“配置 CRUD 主窗口链已验证；费用/路由/�
 - 自有临时仓库、假服务和真实服务分开登记；不以模拟页面或单元测试替代产品使用链。
 - 默认 Electron、测试夹具、开发态和安装态分别验收；不能把 --no-sandbox 页面夹具通过扩大成安全默认启动通过。
 - 当前目标尚未完成。目标工具因旧未完成目标存在拒绝创建新目标；未将旧目标虚标完成。本文件是本批新范围与收口依据，后续继续按此实施。
+
+
+2026-10-17 EX-01/D14 增量：[私有任务目录组件](../evidence/2026-10-17-windows-private-workspace-scope.md)47 项实际文件访问/拒绝/独立清理通过，父 DACL 保持不变；尚未接入仓颉工作区快照、受保护子树排除及差异合入，不能解除 D14 或默认执行门禁。
+
+
+2026-10-17 后续装配：[仓颉私有 cwd 真实任务](../evidence/2026-10-17-cangjie-private-workspace-task.md)新增 WindowsPrivateWorkspace 生命周期与同一共享审批/执行链的私有文件读写，当前定向 16/16。生产树快照、排除清单、源修订与差异导出/合入仍未完成；D14 和默认执行门禁保持未解除。

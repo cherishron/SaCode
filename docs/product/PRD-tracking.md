@@ -90,7 +90,7 @@
 | **D11** | `host-capabilities.json` 与 Host 不同步：文件 120 条，Host 工作区 169 条声明（HEAD 158 条） | 需同步或改为生成式；knowledge/automation/profile/web-settings/workspace-recent 等域在文件内缺失 | [gate-triad-repair](../evidence/2026-10-16-gate-triad-repair.md)、[host-capabilities.json](../plans/host-capabilities.json) |
 | **D12** | CLI 包装探针缺 MinGW 运行库（`libgcc_s_seh-1.dll`、`libstdc++-6.dll`）退出 1 | 未借旧 npm 包 DLL，未安装；CLI 安装态待验 | [product-closure-goal](../plans/product-closure-goal-2026-10-15.md) 10-16 段 |
 | **D13** | 原执行页面测试 8/9：真实 Host 夹具缺 runtime/stdx 运行路径 | **原执行页待复验**。2026-10-17 知识库 CLI 夹具已按既有运行路径约定修复；当前源码重编后 CLI 跨轮集成 1/1、核心检索 5/5 通过。先前两份旧 CLI 产物的 goal/save 差异本轮未复现，不能据此认定 D20/D21 为当前逻辑缺陷，也不能用知识库测试替代本行原执行页验收。历史环境及失败记录保留，见证据 §6/§11 | [专项复验](../evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md)；[产品主链](../plans/product-closure-goal-2026-10-15.md) |
-| **D14** | 全 core 执行集成 1 ERROR：真实子进程启动失败 `execution-provider-failed`（缺沙箱后端） | **仍未解除**。2026-10-17 身份专项 5/5；新增 AppContainer/双流/Job 原生组件 35 项实测通过，含恢复前停止和后代收束。仓颉适配、工作区 ACL、网络/逃逸反向验证、同任务产品装配及打包尚未完成，产品继续拒绝；不代表完整执行成功 | [原失败](../evidence/session-persistence-repair-2026-10-13.md)、[身份](../evidence/2026-10-17-appcontainer-minimal-environment.md)、[原生进程组件](../evidence/2026-10-17-windows-owned-process-provider.md) |
+| **D14** | 全 core 执行集成 1 ERROR：真实子进程启动失败 `execution-provider-failed`（缺沙箱后端） | **仍未解除**。2026-10-17 身份专项 5/5；新增 AppContainer/双流/Job 原生组件 35 项实测通过，含恢复前停止和后代收束。包内仓颉适配及共享 ShellResult 转换已实测，含创建回执失败不恢复线程、取消、超时和输出排空（[记录](../evidence/2026-10-17-windows-process-collector.md)）；共享核心显式装配已通过真实任务审批/执行/停止/持久回放（[13/13](../evidence/2026-10-17-windows-execution-supervisor-integration.md)）；Host/CLI 默认装配、工作区 ACL、网络/逃逸反向验证及打包尚未完成，产品继续拒绝；不代表完整执行成功 | [原失败](../evidence/session-persistence-repair-2026-10-13.md)、[身份](../evidence/2026-10-17-appcontainer-minimal-environment.md)、[原生进程组件](../evidence/2026-10-17-windows-owned-process-provider.md) |
 
 ### 2.3 已闭合（保留历史行）
 
@@ -132,3 +132,9 @@
 4. **证据落位**：新证据写入 `docs/evidence/`（带日期），本台账引用；接口/契约变化同步 `docs/interfaces/README.md`、对接状态同步 `docs/integration/README.md`。
 5. **不计算完成率**：不汇总"已完成域数/百分比"；域级状态与缺口清单就是进度表达。
 6. 本文件的建立与每次更新，须同批登记 [product/README.md](README.md) 与 [docs/README.md](../README.md) 维护记录。
+
+
+2026-10-17 EX-01/D14 增量：[私有任务目录组件](../evidence/2026-10-17-windows-private-workspace-scope.md)47 项实际文件访问/拒绝/独立清理通过，父 DACL 保持不变；尚未接入仓颉工作区快照、受保护子树排除及差异合入，不能解除 D14 或默认执行门禁。
+
+
+2026-10-17 后续装配：[仓颉私有 cwd 真实任务](../evidence/2026-10-17-cangjie-private-workspace-task.md)新增 WindowsPrivateWorkspace 生命周期与同一共享审批/执行链的私有文件读写，当前定向 16/16。生产树快照、排除清单、源修订与差异导出/合入仍未完成；D14 和默认执行门禁保持未解除。

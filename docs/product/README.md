@@ -23,3 +23,5 @@
 
 - 设计与契约：[`../plans/README.md`](../plans/README.md)、[`../superpowers/README.md`](../superpowers/README.md)
 - 验收与证据：[`../qa/README.md`](../qa/README.md)、[`../evidence/README.md`](../evidence/README.md)
+
+2026-10-17：PRD-tracking 更新 EX-01/D14 的内部组件进度；[提交候选验证](../evidence/2026-10-17-windows-execution-commit-candidate.md)通过不解除产品默认执行门禁。

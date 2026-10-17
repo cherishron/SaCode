@@ -45,6 +45,9 @@ $neutral=Join-Path $DestinationRoot (Split-Path -Leaf $run)
 & node (Join-Path $repo 'scripts\export-windows-artifact.mjs') $payload $neutral *> (Join-Path $run 'export.log')
 if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $run 'export.log'); throw 'Neutral export failed; no permissions are changed' }
 $env:SACODE_WINDOWS_PROCESS_DLL=Join-Path $neutral 'sacode-windows-process.dll'
+$env:SACODE_WINDOWS_SCOPE_PARENT=$neutral
+$env:SACODE_WORKSPACE_FIXTURE_NODE=(Get-Command node).Source
+$env:SACODE_WORKSPACE_CLEANUP_SCRIPT=Join-Path $repo 'scripts\cleanup-windows-workspace-fixture.mjs'
 $env:TEMP=$runtimeTemp
 $env:TMP=$runtimeTemp
 $stdout=Join-Path $run 'run.out'
@@ -64,15 +67,19 @@ $summaries=[regex]::Matches($clean,'Summary:\s*TOTAL:\s*(\d+)\s*PASSED:\s*(\d+),
 $passed=$false
 if ($summaries.Count -gt 0) {
     $summary=$summaries[$summaries.Count-1]
-    $passed=!$timedOut -and $actualExit -eq 0 -and $summary.Groups[1].Value -eq '5' -and $summary.Groups[2].Value -eq '5' -and $summary.Groups[3].Value -eq '0' -and $summary.Groups[4].Value -eq '0' -and $summary.Groups[5].Value -eq '0'
+    $passed=!$timedOut -and $actualExit -eq 0 -and $summary.Groups[1].Value -eq '16' -and $summary.Groups[2].Value -eq '16' -and $summary.Groups[3].Value -eq '0' -and $summary.Groups[4].Value -eq '0' -and $summary.Groups[5].Value -eq '0'
 }
-$report=[ordered]@{version=1;passed=$passed;timedOut=$timedOut;exitCode=$actualExit;expectedTests=5;neutral=$neutral;
+$report=[ordered]@{version=1;passed=$passed;timedOut=$timedOut;exitCode=$actualExit;expectedTests=16;neutral=$neutral;
     coreLibrarySha256=(Get-FileHash (Join-Path $coreLib 'libcore.a')).Hash;
     adapterSourceSha256=(Get-FileHash (Join-Path $repo 'core\src\windows_process_adapter.cj')).Hash;
+    processProviderSourceSha256=(Get-FileHash (Join-Path $repo 'core\src\execution_process_provider.cj')).Hash;
+    supervisorSourceSha256=(Get-FileHash (Join-Path $repo 'core\src\execution_supervisor.cj')).Hash;
+    workspaceAdapterSourceSha256=(Get-FileHash (Join-Path $repo 'core\src\windows_workspace_adapter.cj')).Hash;
+    fixtureCleanupScriptSha256=(Get-FileHash $env:SACODE_WORKSPACE_CLEANUP_SCRIPT).Hash;
     testSourceSha256=(Get-FileHash (Join-Path $source 'windows_process_adapter_test.cj')).Hash;
     nativeDllSha256=(Get-FileHash $NativeDll).Hash;
     runtimeSha256=(Get-FileHash (Join-Path $SdkHome 'runtime\lib\windows_x86_64_cjnative\libcangjie-runtime.dll')).Hash}
 [IO.File]::WriteAllText((Join-Path $run 'verification.json'),($report | ConvertTo-Json -Depth 4))
 Write-Output $clean
 Write-Output "EVIDENCE=$run"
-if (!$passed) { Get-Content $stderr; throw 'Current-source adapter tests did not produce a nonempty 5/5 Summary' }
+if (!$passed) { Get-Content $stderr; throw 'Current-source adapter tests did not produce a nonempty 16/16 Summary' }

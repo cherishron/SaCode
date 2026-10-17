@@ -185,7 +185,7 @@ SID，argv 可以原样；但**返回原 argv 后再用普通 std.process.launch
 
 ### 第 2 步：4 条隔离探针
 
-**2026-10-17 原生进程增量**：`core/native/windows_process.h/.c` 已提供受限 C ABI v1，实际验证挂起创建、令牌核验、Job 在恢复前绑定、三句柄继承名单、双流 EOF、恢复前停止和后代收束，35 项通过。详见 [本轮组件证据](../evidence/2026-10-17-windows-owned-process-provider.md)。当前仅独立构建和原生消费端，尚未与仓颉 `ShellExecutor`/`ExecutionSupervisor`、启动令牌和持久化装配；未修改公共门禁。以下文件/网络隔离条件仍须逐项实测，不以 Job 收束替代文件/网络隔离。
+**2026-10-17 原生进程增量**：`core/native/windows_process.h/.c` 已提供受限 C ABI v1，实际验证挂起创建、令牌核验、Job 在恢复前绑定、三句柄继承名单、双流 EOF、恢复前停止和后代收束，35 项通过。详见 [本轮组件证据](../evidence/2026-10-17-windows-owned-process-provider.md)。后续包内仓颉适配与 TurnToken 已完成真实 DLL 验证，并新增共享 ShellResult 转换（[记录](../evidence/2026-10-17-windows-process-collector.md)）；已通过可注入进程接口进入同一 `ExecutionSupervisor`/`ExecutionService` 持久链，显式装配实测 [13/13](../evidence/2026-10-17-windows-execution-supervisor-integration.md)；默认 `ShellExecutor` 路径及 Host/CLI 装配未开放；未修改公共门禁。以下文件/网络隔离条件仍须逐项实测，不以 Job 收束替代文件/网络隔离。
 
 后续在 `core/src/appcontainer_win_test.cj` 中逐条验证，逐条红→绿：
 
@@ -352,3 +352,13 @@ AppContainer 创建失败、SID 派生失败、ACL 授权失败、机制冲突�
 
 已具备的条件：CFFI 范本（`procwin.cj`、`filewin.cj`）、隔离效果的既有实测证据、
 方案裁决（第九节）、`SandboxRuntime` 的 fail-closed 收口与 `sandboxRuntime!` 注入口。
+
+
+### 2026-10-17 私有目录实现增量
+
+[原生组件 47 项实测](../evidence/2026-10-17-windows-private-workspace-scope.md)采用创建时的受保护初始 DACL，避免修改真实项目根和父目录权限。拒绝宽泛应用 SID、重解析父路径、未知档位和既有目录覆盖授权。撤销不递归 SetSecurityInfo：进程整树结束、产物导出并独立清理内容后，对持有句柄的空目录标记删除；非空拒绝，close 最终删除目录。当前只证明特定文件 canary、两档访问和清理，不证明网络或所有区外路径隔离。
+
+下一步必须实现私有副本范围、.git/target/node_modules 等排除、修订绑定、字节复制与变更导出，再与共享执行监督层和 F08 合入语义衔接。不得把原提案 cwd 静默映射到未披露的副本，也不允许以这批组件测试解除公共门禁。
+
+
+2026-10-17 后续装配：[仓颉私有 cwd 真实任务](../evidence/2026-10-17-cangjie-private-workspace-task.md)新增 WindowsPrivateWorkspace 生命周期与同一共享审批/执行链的私有文件读写，当前定向 16/16。生产树快照、排除清单、源修订与差异导出/合入仍未完成；D14 和默认执行门禁保持未解除。

@@ -20,7 +20,9 @@
 
 ## 2. 契约文档清单（plans/ 契约类）
 
-内部平台 C ABI（不属于上方公开七个入口面）：`core/native/windows_process.h` v1 定义 Windows 原生所有权进程的 8 个有限函数。create 返回挂起、已核身份且已入 Job 的句柄，resume/read/wait/active/stop/close 管理同一对象；非零 create 结果可能带 cleanup-only 句柄，close 前须终止整树并 join 读者。原生 35 项实测见 [当前记录](../evidence/2026-10-17-windows-owned-process-provider.md)，仓颉适配/授权/持久化及产品装配尚未接通。
+新增私有目录 C ABI：`core/native/windows_workspace.h` 提供 create/revoke/close 三动作，只创建新的受保护目录，拒绝重解析父路径与宽泛应用 SID；revoke 仅删除已空且持续持有句柄的自有目录，非空拒绝。当前只在原生驱动验证，仓颉/Host/CLI 未消费；见 [47 项实测](../evidence/2026-10-17-windows-private-workspace-scope.md)。
+
+内部平台 C ABI（不属于上方公开七个入口面）：`core/native/windows_process.h` v1 定义 Windows 原生所有权进程的 8 个有限函数。create 返回挂起、已核身份且已入 Job 的句柄，resume/read/wait/active/stop/close 管理同一对象；非零 create 结果可能带 cleanup-only 句柄，close 前须终止整树并 join 读者。原生 35 项实测见 [当前记录](../evidence/2026-10-17-windows-owned-process-provider.md)，包内仓颉适配已完成真实 DLL 验证；新增共享 ShellResult 转换覆盖回执、取消、超时和双流排空，见 [当前收束记录](../evidence/2026-10-17-windows-process-collector.md)。新增 ExecutionProcessProvider/ExecutionProcessRequest 由监督层在 beginStart 后消费；显式 Windows 装配已通过审批、执行、停止及持久回放（[13/13](../evidence/2026-10-17-windows-execution-supervisor-integration.md)）。Host/CLI 默认装配与隔离策略仍待完成。
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
@@ -46,3 +48,6 @@
 2. 本页状态列只用：契约｜设计稿·待评审｜登记单｜变更单｜设计中｜待批准｜历史登记，不写模糊状态；
 3. 全局协议口径（固定十值错误原因、requestId / revision / 幂等）以 `sacode-product-interfaces` 为登记入口，变更走增补；
 4. 桌面 IPC 的唯一权威永远是 `preload.cjs` 顶层 key，本页数字仅为读数。
+
+
+2026-10-17 后续装配：[仓颉私有 cwd 真实任务](../evidence/2026-10-17-cangjie-private-workspace-task.md)新增 WindowsPrivateWorkspace 生命周期与同一共享审批/执行链的私有文件读写，当前定向 16/16。生产树快照、排除清单、源修订与差异导出/合入仍未完成；D14 和默认执行门禁保持未解除。
