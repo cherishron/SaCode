@@ -93,12 +93,16 @@ class HostModelRoute {
             ledger.voidAttempt(plan.attemptId, "cancelled", epoch: routingEpoch())
             throw Exception("cancelled")
         }
-        let opened = RealSseProvider.open(plan.baseUrl, creds.getOrThrow().value, request, token)
-        if (let Some(failure) <- opened.failure) {
-            recordRouteFailure(plan, failure)
-            throw Exception(failure.messageWithReason())
-        }
-        return AccountedModelProvider(opened.provider.getOrThrow(), plan, logicalId, sessionId, start, token)
+        let routeLogicalId = logicalId
+        let routeSessionId = sessionId
+        return RequestTraceProvider(request, plan.providerId, log, token, { body =>
+            let opened = RealSseProvider.open(plan.baseUrl, creds.getOrThrow().value, body, token)
+            if (let Some(failure) <- opened.failure) {
+                recordRouteFailure(plan, failure)
+                throw Exception(failure.messageWithReason())
+            }
+            AccountedModelProvider(opened.provider.getOrThrow(), plan, routeLogicalId, routeSessionId, start, token)
+        }, metadataOnly: true)
     }
 }
 func recordRouteFailure(plan: AttemptPlan, failure: TransportFailure) {

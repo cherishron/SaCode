@@ -41,7 +41,7 @@ import stdx.encoding.json.*
 // session/subscribe 不在这里：宿主的长连接通知由本代理读线程统一收帧后送 bus，
 // 一次性 HTTP RPC 转它只会等到一个永远不来的应答。
 let hostMethods = [
-    "appearance/get", "approval/answer", "approval/ask", "approval/status",
+    "appearance/get", "approval/answer", "approval/ask", "approval/get-mode", "approval/set-mode", "approval/status",
     "attachment/image-read", "attachment/upload", "binding/remove", "binding/reorder",
     "binding/upsert", "credential/describe", "credential/set", "credential/unset",
     "custom/describe", "custom/import/into", "custom/import/new", "custom/remove",
