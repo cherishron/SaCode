@@ -9,6 +9,7 @@ export {createFilePreview} from './file-preview';
 export {AccountMenu} from './account-menu';
 export {ProjectPicker} from './project-picker';
 export {PermissionMenu} from './permission-menu';
+export {ToolCard} from './tool-card';
 export {WorkspaceSearch} from './workspace-search';
 export {FileEditor,createFileEditor} from './file-editor';
 export {GitWorkbench} from './git-workbench';

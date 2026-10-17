@@ -203,8 +203,29 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .streaming { margin-top: var(--space-5); min-width:0; overflow-wrap:anywhere;
   font-size: var(--fs-content); line-height: var(--line-content); }
 .streaming > .msg-role { padding:0 var(--space-4); color:var(--accent); }
-.stream-content { padding:var(--space-3) var(--space-4); min-width:0; }
+/* 流式正文卡与落库助手气泡同一容器：背景/圆角取 --tr-bubble-box-bg 桥接值，
+   内距本就与 .tr-bubble__box 一致——流式中与落库后不跳版、不错位。 */
+.stream-content { padding:var(--space-3) var(--space-4); min-width:0;
+  background:var(--tr-bubble-box-bg); border-radius:var(--radius-xl); }
 .stream-status { display:block; margin:var(--space-2) var(--space-4) 0; }
+/* 工具结果卡：容器仍是气泡盒（背景/圆角由 .tr-bubble__box 出），
+   卡内只放结构化头部与正文，不另造一层外壳避免双重卡片。 */
+.tool-node { display:flex; flex-direction:column; gap:var(--space-2); min-width:0; }
+.tool-head { display:flex; align-items:center; gap:var(--space-2); min-width:0; font-size:var(--fs-s); }
+.tool-label { font-weight:600; white-space:nowrap; }
+.tool-target { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:var(--text-muted); font-family:ui-monospace,monospace; }
+.tool-reason { color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
+.tool-meta { color:var(--text-muted); white-space:nowrap; }
+.tool-toggle { margin-left:auto; flex:none; border:0; background:transparent; color:var(--accent);
+  font-size:var(--fs-s); cursor:pointer; padding:2px 4px; border-radius:var(--radius-xs); }
+.tool-toggle:hover { background:var(--surface-3); }
+.tool-body { margin:0; padding:var(--space-2) var(--space-3); background:var(--surface-3);
+  border-radius:var(--radius-s); font-family:ui-monospace,monospace; font-size:var(--fs-s);
+  line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; }
+.tool-hint { margin:0; font-size:11px; color:var(--text-muted); }
+.tool-node[data-tool-status=error] .tool-label { color:var(--danger); }
+.tool-node[data-tool-status=warning] .tool-label { color:var(--warn); }
 .turn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
   padding: var(--space-3) var(--space-5); border-top: 0.5px solid var(--border); flex-shrink: 0; }
 .turn-actions .badge { margin-left: auto; }
@@ -272,6 +293,17 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .workspace-group.expanded .sidebar-session { padding-left: 28px; }
 .workspace-overflow { padding-left: 28px; font-size: var(--fs-xs); color: var(--text-muted); background: transparent; border: 0; cursor: pointer; }
 .workspace-overflow:hover { color: var(--accent); }
+/* 会话行第二行元信息：事件条数贴在标题下，不挤占标题的省略空间。 */
+.sidebar-session { display:flex; flex-wrap:wrap; align-items:center; column-gap:var(--space-2); row-gap:0; width:100%; text-align:left; }
+.sidebar-session>span { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sidebar-session-meta { flex:0 0 100%; margin-left:22px; font-size:10px; line-height:14px; color:var(--text-muted); }
+/* 会话右键菜单：fixed 定位，菜单外按下/Escape 即收（见 app.js 监听）。 */
+.session-context-menu { position:fixed; z-index:60; min-width:172px; display:flex; flex-direction:column; gap:2px; padding:6px; border:1px solid var(--border); border-radius:10px; background:var(--panel-surface); color:var(--text); box-shadow:0 8px 30px #0002; }
+.session-menu-title { margin:0 0 2px; padding:2px 8px 4px; font-size:10px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border-bottom:1px solid var(--border); }
+.session-menu-item { display:flex; align-items:center; width:100%; padding:6px 8px; border:0; border-radius:6px; background:transparent; color:var(--text); text-align:left; cursor:pointer; font:12px/18px var(--font-ui); }
+.session-menu-item:hover:not(:disabled) { background:var(--surface-3); }
+.session-menu-item:disabled { opacity:.5; cursor:default; }
+.session-menu-note { margin:2px 8px 0; font-size:10px; color:var(--accent); }
 .file-tree-entry { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2); font-size: var(--fs-s); border-radius: var(--radius-m); }
 .file-tree-entry:hover { background: var(--surface-2); }
 .file-tree-dir { font-weight: 600; }

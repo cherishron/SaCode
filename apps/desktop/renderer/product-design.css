@@ -154,7 +154,23 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
 .queue-preview { white-space:pre-wrap; overflow-wrap:anywhere; }
 .composer-menu-root { position:relative; }
 .composer-menu-popover { position:fixed; z-index:50; display:flex; width:max-content; max-width:calc(100vw - 24px); max-height:calc(100vh - 100px); border:1px solid var(--border); border-radius:12px; background:var(--panel-surface); color:var(--text); box-shadow:0 8px 30px #0002; overflow:auto; }
-.composer-menu-primary { width:216px; flex:none; padding:6px; }
+.composer-menu-primary { width:328px; flex:none; padding:8px; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+/* 卡片式入口：图标瓷片 + 标题 + 说明；两列网格，点击即用，无需手打。 */
+.composer-card { display:flex; align-items:center; gap:10px; min-height:56px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; cursor:pointer; font:13px/18px var(--font-ui); transition:border-color .15s, background .15s; }
+.composer-card:hover:not(:disabled) { border-color:var(--accent); background:var(--surface-3); }
+.composer-card:disabled { opacity:.5; cursor:default; }
+.composer-card-icon { flex:none; display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:8px; background:var(--surface-3); color:var(--accent); }
+.composer-card-text { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.composer-card-text>strong { font-weight:600; }
+.composer-card-text>small { color:var(--text-muted); font-size:10px; line-height:14px; }
+/* 技能清单行：名称 + 说明 + 审批标记，点击插入 @引用。 */
+.composer-menu-tools { display:flex; flex-direction:column; gap:4px; }
+.composer-tool-row { display:flex; align-items:center; gap:8px; width:100%; padding:7px 8px; border:0; border-radius:7px; background:transparent; color:var(--text); text-align:left; cursor:pointer; font:12px/16px var(--font-ui); }
+.composer-tool-row:hover { background:var(--surface-3); }
+.composer-tool-icon { flex:none; display:flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px; background:var(--surface-3); color:var(--accent); font-size:12px; }
+.composer-tool-body { display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+.composer-tool-body>small { color:var(--text-muted); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.composer-tool-flag { flex:none; color:var(--warn); font-size:10px; border:1px solid var(--warn); border-radius:4px; padding:0 4px; }
 .composer-menu-item { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:8px; border:0; border-radius:7px; background:transparent; color:var(--text); text-align:left; cursor:pointer; font:13px/20px var(--font-ui); }
 .composer-menu-item>svg { flex:none; }
 .composer-menu-item>span { flex:1; min-width:0; overflow-wrap:anywhere; }

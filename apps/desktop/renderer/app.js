@@ -131,6 +131,9 @@ const TextBubble = {
   setup(props) {
     return () => {
       const m = props.message || {};
+      // 工具结果行改走结构化卡片（状态/类型/目标/可折叠正文），
+      // 不再当原始文本段平铺。数据只来自投影的 tool/result，不补调用侧事实。
+      if (m.role === "tool") return h(window.SaCodeSlots.ToolCard, { message: m });
       const text = typeof m.content === "string" ? m.content : "";
       const id = m.id || "";
       const plan = FOLD.foldPlan(text, FOLD.FOLD_THRESHOLD);
@@ -212,6 +215,43 @@ createApp({
     const tools = ref([]);
     const detailName = ref("");
     const goalEditorRequest = ref(0);
+    // 侧栏会话右键菜单：重命名/移除需要 core「末条标题胜出」与删除语义（当前未接），
+    // 菜单先落地，真实动作只放已接通项，未接项诚实禁用并写明原因。
+    const sessionMenu = ref(null);
+    const sessionMenuNote = ref('');
+    const closeSessionMenu = ()=>{sessionMenu.value=null;sessionMenuNote.value='';};
+    const openSessionMenu = (item,e)=>{
+      if(sessionLocked||item.status==='replay-rejected')return;
+      e.preventDefault();
+      const x=Math.min(e.clientX,window.innerWidth-180),y=Math.min(e.clientY,window.innerHeight-120);
+      sessionMenu.value={id:item.id,title:item.title||'未命名会话',left:x+'px',top:y+'px'};
+      sessionMenuNote.value='';
+    };
+    // 剪贴板双通道：异步 API 在个别 WebView 上下文不可用，降级到选中复制，不静默失败。
+    const copyText = async(text)=>{
+      try{await navigator.clipboard.writeText(text);return true;}
+      catch{
+        try{
+          const ta=document.createElement('textarea');ta.value=text;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';
+          document.body.appendChild(ta);ta.select();const ok=document.execCommand('copy');document.body.removeChild(ta);return ok;
+        }catch{return false;}
+      }
+    };
+    const copySessionId = async()=>{
+      const target=sessionMenu.value;if(!target)return;
+      sessionMenuNote.value=await copyText(target.id)?'会话 ID 已复制。':'复制失败，请手动选择文本。';
+    };
+    // 菜单外按下即收；Escape 也收（与全仓顶栏 Escape 仲裁同一路数，不另起轮子）。
+    const sessionMenuOutside=(e)=>{
+      if(!sessionMenu.value)return;
+      const menu=document.querySelector('.session-context-menu');
+      if(menu?.contains(e.target))return;
+      if(e.target&&e.target.closest&&e.target.closest('.sidebar-session'))return;
+      closeSessionMenu();
+    };
+    const sessionMenuKey=(e)=>{if(e.key==='Escape'&&sessionMenu.value){e.stopPropagation();closeSessionMenu();}};
+    onMounted(()=>{document.addEventListener('pointerdown',sessionMenuOutside,true);document.addEventListener('keydown',sessionMenuKey,true);});
+    onBeforeUnmount(()=>{document.removeEventListener('pointerdown',sessionMenuOutside,true);document.removeEventListener('keydown',sessionMenuKey,true);});
     const sideTab = ref("files"), workbenchExpanded = ref(false);
     const filePreviewRevision = ref(0);
     const fileEditorRevision = ref(0);
@@ -588,6 +628,10 @@ createApp({
     // 这里只在供应商写动作之后刷新目录——两处是同一份注册表的投影，不能一新一旧。
     const modelDirectory = window.SaCodeModelDirectory.createModelDirectory(window.sacode);
     void modelDirectory.load();
+    // 目录异步装载/切换后 snapshot 才带上 contextWindow；meter 的 pressure 从快照取容量，
+    // 不挂这个修订号的话，首次求值（装载中、容量为空）会一直挂到下次无关重渲才翻身。
+    const modelDirectoryRevision = ref(0);
+    modelDirectory.subscribe(()=>{modelDirectoryRevision.value++;});
     // 发送入口的自定义模型候选只从核心读（custom/describe 的 models），
     // 未启用的条目不给选；空选中态表示「不指定」，Host 沿用注册表默认指针。
     const customModels = ref([]), selectedCustomModel = ref("");
@@ -773,7 +817,7 @@ createApp({
       proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, canRetryLastTurn, retryLastTurn, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       worktreeState, worktreeController, worktreeLocked,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, managementPage, managementDraft, pluginManagerOpen, pluginManagerAdapter,
-      appearanceBusy, appearanceNote, setTheme, modelDirectory, composerDirectory, customModels, selectedCustomModel,
+      appearanceBusy, appearanceNote, setTheme, modelDirectory, modelDirectoryRevision, composerDirectory, customModels, selectedCustomModel,
       globalAppearance, fontBusy, fontNote, setFontSize, refreshGlobalAppearance,
       generalSettings, generalPrefsNote, busySendSaving, busySendNote, busySendError, setBusySend,
       tips, tipsHidden, tipsBusy, tipsNote, tipsError, tipsPressure, setTipsHidden, dismissTips, refreshTips,
@@ -792,7 +836,7 @@ createApp({
       workspaceOpen, workspace, workspaceBusy, workspaceNote, workspaceRecent, workspaceRecentBusy, workspaceFiles, workspaceFilesBusy, openWorkspace, chooseWorkspace, selectRecentWorkspace, workspaceSessionLimits, workspaceGroupExpanded,
       sidebarQuery, catalogStatus,
       send, runTurn, cancelTurn, askTool, answerTool,
-      queueRows, queuePending, updateQueue, goalEditorRequest,
+      queueRows, queuePending, updateQueue, goalEditorRequest, sessionMenu, sessionMenuNote, openSessionMenu, closeSessionMenu, copySessionId,
     };
   },
   render() {
@@ -824,8 +868,9 @@ createApp({
     // 会话名过长会被 ellipsis 截断，需要提示补全；但原生 title 的浮层直接盖在列表上方，
     // 上下扫视找旧会话时它会不断弹出遮住下一条，所以走自定义提示：浮在侧栏右侧、不压列表，
     // 再给一点延迟，快速划过时不弹。title 属性保留作降级，挂载时由 tooltip 自行摘除。
-    const renderSession = item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话')],{
+    const renderSession = item=>el('button','sidebar-session'+(item.current?' selected':''),[navIcon('M4 4h16v12H9l-5 4z'),el('span',null,item.title||'未命名会话'),el('small','sidebar-session-meta',(item.durable||0)+' 条事件')],{
       'data-sidebar-session':item.id,'aria-current':item.current?'page':null,'aria-label':item.title||'未命名会话',title:item.title||'未命名会话',disabled:sessionLocked||item.status==='replay-rejected',onClick:()=>{self.pluginManagerOpen=false;self.managementPage='';self.selectSession(item.id);},
+      onContextmenu:(e)=>self.openSessionMenu(item,e),
       tooltip:{label:item.title||'未命名会话',side:'right',delayMs:400}});
     const head = el("header", "top", [
       el("div", "heading", [el("h1", null, currentTitle, {id:"current-session-title", title:currentTitle, hidden:emptyConversation && nativePlatform!=="win32"})]),
@@ -884,6 +929,13 @@ createApp({
         !matchingSessions.length ? el('div','sidebar-empty',[navIcon('M4 5h16v14H4z M8 9h8 M8 13h8'),el('span',null,sidebarSessions.length ? '无匹配会话' : '暂无会话')]) : null,
         self.catalogNote && self.catalogNote.includes('失败') ? el('p','note',self.catalogNote,{role:'status'}) : null,
       ]),
+      self.sessionMenu?el('div','session-context-menu',{role:'menu','aria-label':'会话操作',style:{left:self.sessionMenu.left,top:self.sessionMenu.top}},[
+        el('p','session-menu-title',self.sessionMenu.title,{title:self.sessionMenu.id}),
+        el('button','session-menu-item',{role:'menuitem',onClick:()=>{void self.copySessionId();}},'复制会话 ID'),
+        el('button','session-menu-item',{role:'menuitem',disabled:true,title:'重命名需要宿主「末条标题胜出」语义，后端未接入'},'重命名'),
+        el('button','session-menu-item',{role:'menuitem',disabled:true,title:'移除需要宿主删除语义与目录索引收尾，后端未接入'},'移除'),
+        self.sessionMenuNote?el('p','session-menu-note',self.sessionMenuNote,{role:'status'}):null,
+      ]):null,
       el('div','sidebar-product-links',[
         ...[['knowledge','知识库','M3 4h8l1 2 1-2h8v16h-8l-1 1-1-1H3zM12 6v15'],['automation','自动化','M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l4 2'],['extensions','扩展','M9 3h6v6h6v6h-6v6H9v-6H3V9h6z'],['connections','连接','M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2']].map(([id,label,path])=>el('button','nav-item nav-panel',[navIcon(path),el('span','nav-label',label)],{id:'open-'+id,'aria-label':id==='extensions'?'扩展管理':label,'aria-pressed':id==='extensions'?self.pluginManagerOpen:self.managementPage===id,onClick:()=>{if(id==='extensions'){self.pluginManagerOpen=!self.pluginManagerOpen;self.managementPage='';}else{self.pluginManagerOpen=false;self.managementPage=self.managementPage===id?'':id;}}})),
       ]),
@@ -1000,7 +1052,7 @@ createApp({
         submit:accelerated=>self.send(accelerated),
       }]]),
       h(window.SaCodeAttachments.Composer,{key:'attachments-'+self.scrollSession,active:!self.pluginManagerOpen,canAcceptDrop:true,showAdd:false,attachments:self.attachments,uploads:self.uploads,limits:{count:20,size:'20 MB'},onAdd:(files,dirs)=>self.addAttachments(files,dirs),onRemove:(id)=>self.removeAttachment(id),onRetry:(id)=>self.retryAttachment(id)}),
-      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),slashTrigger:self.slashTrigger,onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;},onCommand:(name)=>{if(name==='clear'){proj.value={...proj.value,messages:[]};}}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.composerDirectory,locked:self.turn.running,customs:self.customModels,customId:self.selectedCustomModel,onPickCustom:id=>{self.selectedCustomModel=id;}}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+      el("div", "composer-controls", [h(window.SaCodeAttachments.AddButton,{key:'menu-'+self.scrollSession,disabled:self.catalogBusy,goalAvailable:self.scrollSession!=='initial'&&self.scrollSession!==0,workspaceConfigured:!!self.workspace?.configured,listFiles:path=>window.sacode.workspaceFiles(path),listTools:()=>window.sacode.toolsList(),slashTrigger:self.slashTrigger,onAdd:(files,dirs)=>self.addAttachments(files,dirs),onGoal:()=>{self.goalEditorRequest++;},onReference:path=>{self.userEditDraft(self.draft+(self.draft?'\n':'')+'工作区文件：'+path);window.Vue.nextTick(()=>document.getElementById('composer').focus());},onExtensions:()=>{self.pluginManagerOpen=true;},onCommand:(name)=>{if(name==='clear'){proj.value={...proj.value,messages:[]};}}}),h(window.SaCodeModelSelect.Select,{key:self.scrollSession,directory:self.composerDirectory,locked:self.turn.running,customs:self.customModels,customId:self.selectedCustomModel,onPickCustom:id=>{self.selectedCustomModel=id;}}),h(window.SaCodeSlots.PermissionMenu,{key:'permission-'+self.scrollSession}),el("div", "composer-trailing", [el("button", "composer-enhance", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         // 同一颗图标位换三副面孔：进行中转圈、可回退时换回退箭头，用户一改就转回增强。
         self.enhance.busy
           ? h('path',{d:'M8 1.6a6.4 6.4 0 1 1-6.3 7.5',fill:'none',stroke:'currentColor','stroke-width':'1.6','stroke-linecap':'round'})
@@ -1011,7 +1063,7 @@ createApp({
         disabled:!self.enhance.busy && !self.enhance.undo && !self.draft.trim(),
         tooltip:{label:self.enhance.busy?'取消增强':(self.enhance.undo?'回退增强（Ctrl+Z）':'用当前模型把这条说得更清楚'),side:'top',delayMs:500},
         // 与发送按钮一样不把焦点从输入框挪走：增强完还要接着改草稿。
-        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el('button','composer-voice',[navIcon('M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8')],{type:'button',disabled:true,'aria-label':'语音输入待接入',title:'当前版本尚未支持语音输入'}),h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,pressure:(()=>{const v=self.modelDirectory.getSnapshot();const s=self.tipsPressure;return {contextWindow:parseCapacity(v&&v.contextWindow)||undefined,projectedTokens:(s&&Number.isFinite(s.projectedTokens))?s.projectedTokens:undefined};})()}),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el('button','composer-voice',[navIcon('M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8')],{type:'button',disabled:true,'aria-label':'语音输入待接入',title:'当前版本尚未支持语音输入'}),h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,pressure:(()=>{void self.modelDirectoryRevision.value;const v=self.modelDirectory.getSnapshot();const s=self.tipsPressure;return {contextWindow:parseCapacity(v&&v.contextWindow)||undefined,projectedTokens:(s&&Number.isFinite(s.projectedTokens))?s.projectedTokens:undefined};})()}),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),

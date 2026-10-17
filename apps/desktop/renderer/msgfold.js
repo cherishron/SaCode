@@ -112,6 +112,36 @@ window.SaCodeMsgFold = (function () {
     return out;
   }
 
+  // 工具结果卡的数据来源：投影只 surface tool/result（tool/call 按冻结不变量不进投影），
+  // 所以这里只解析「结果侧」真实存在的事实，不补调用名与参数——投影里没有就不编。
+  // 路径可能含 Windows 盘符冒号，字节数按最后一段数字认，不按第一个冒号切。
+  function parseToolResult(text) {
+    var raw = String(text == null ? "" : text);
+    var brk = raw.indexOf("\n");
+    var head = brk < 0 ? raw : raw.slice(0, brk);
+    var body = brk < 0 ? "" : raw.slice(brk + 1);
+    var m;
+    if (head.indexOf("ok-read:") === 0) {
+      var rest = head.slice("ok-read:".length);
+      var linesNote = null;
+      var li = rest.lastIndexOf(":lines=");
+      if (li >= 0) { linesNote = rest.slice(li + 7); rest = rest.slice(0, li); }
+      var ci = rest.lastIndexOf(":");
+      if (ci > 0 && /^\d+$/.test(rest.slice(ci + 1))) {
+        return { kind: "read", label: "读取", status: "done", target: rest.slice(0, ci), bytes: Number(rest.slice(ci + 1)), lines: linesNote, body: body };
+      }
+      return { kind: "read", label: "读取", status: "done", target: rest, bytes: null, lines: linesNote, body: body };
+    }
+    if ((m = /^ok-edit:(.+)$/.exec(head))) { return { kind: "edit", label: "编辑", status: "done", target: m[1], bytes: null, lines: null, body: body }; }
+    if ((m = /^ok:(.+)$/.exec(head))) { return { kind: "write", label: "写入", status: "done", target: m[1], bytes: null, lines: null, body: body }; }
+    if ((m = /^cancelled:(.+)$/.exec(head))) { return { kind: "cancel", label: "已取消", status: "warning", target: m[1], bytes: null, lines: null, body: body }; }
+    if ((m = /^denied:([^:]+)(?::([\s\S]*))?$/.exec(head))) { return { kind: "denied", label: "已拒绝", status: "error", target: m[1], reason: m[2] || "", bytes: null, lines: null, body: body }; }
+    if (head === "bad-args" || head.indexOf("err") === 0 || head.indexOf("web-error:") === 0 || head.indexOf("computer.") === 0) {
+      return { kind: "error", label: "失败", status: "error", target: "", reason: head, bytes: null, lines: null, body: body };
+    }
+    return { kind: "generic", label: "工具", status: "idle", target: "", bytes: null, lines: null, body: raw };
+  }
+
   return {
     FOLD_THRESHOLD: FOLD_THRESHOLD,
     OUTLINE_TITLE_LIMIT: OUTLINE_TITLE_LIMIT,
@@ -121,6 +151,7 @@ window.SaCodeMsgFold = (function () {
     turnOutline: turnOutline,
     roleConfigs: roleConfigs,
     foldPlan: foldPlan,
-    latestReadPreview: latestReadPreview
+    latestReadPreview: latestReadPreview,
+    parseToolResult: parseToolResult
   };
 })();
