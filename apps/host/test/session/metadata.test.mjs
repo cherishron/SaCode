@@ -1,0 +1,42 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createRequire} from 'node:module';
+const {HostBridge}=createRequire(import.meta.url)('../../../desktop/host-bridge.cjs');
+test('真实Host重命名与可恢复归档，修订屏障、会话隔离与正常重启',{timeout:30000},async()=>{
+  const root=process.env.SACODE_TEST_ROOT||fileURLToPath(new URL('../../../../target/tmp/session-metadata',import.meta.url));
+  mkdirSync(root,{recursive:true});const dir=mkdtempSync(join(root,'metadata-'));
+  assert.ok(process.env.SACODE_HOST&&existsSync(process.env.SACODE_HOST),'需要本轮Host');
+  const env={...process.env,SACODE_USER_SETTINGS_DIR:join(dir,'settings')};
+  let bridge=new HostBridge(process.env.SACODE_HOST,env),stopped=false;
+  try{
+    await bridge.start(dir);
+    const a=(await bridge.request('session/create',{title:'甲会话'})).id;
+    const b=(await bridge.request('session/create',{title:'乙会话'})).id;
+    await bridge.request('session/select',{sessionId:a});
+    const entry=async id=>(await bridge.request('session/catalog')).entries.find(e=>e.id===id);
+    let row=await entry(a);const oldRevision=row.durable;
+    await bridge.request('session/rename',{sessionId:a,title:'重命名后',expectedRevision:oldRevision});
+    assert.equal((await entry(a)).title,'重命名后');assert.equal((await entry(b)).title,'乙会话');
+    await assert.rejects(bridge.request('session/rename',{sessionId:a,title:'迟到修改',expectedRevision:oldRevision}),/session-revision-conflict/);
+    row=await entry(a);
+    await assert.rejects(bridge.request('session/rename',{sessionId:a,title:'',expectedRevision:row.durable}),/bad-session-title/);
+    await assert.rejects(bridge.request('session/archive',{sessionId:'../outside',archived:true,expectedRevision:0}),/unknown-session/);
+    const ticket=await bridge.request('approval/ask',{name:'write'});
+    await assert.rejects(bridge.request('session/archive',{sessionId:a,archived:true,expectedRevision:row.durable}),/session-resources-in-flight/);
+    await bridge.request('approval/answer',{approvalId:ticket.approvalId,decision:'denied'});
+    await bridge.request('session/flush'); row=await entry(a);
+    const logPath=join(dir,a,'session.log'),before=readFileSync(logPath,'utf8');
+    await bridge.request('session/archive',{sessionId:a,archived:true,expectedRevision:row.durable});
+    assert.equal((await entry(a)).archived,true);assert.ok(readFileSync(logPath,'utf8').startsWith(before));
+    assert.ok((await entry(a)).updatedAt);assert.equal((await entry(b)).archived,false);
+    let stop=await bridge.stop();stopped=true;assert.equal(stop.code,0);assert.equal(stop.forced,false);
+    bridge=new HostBridge(process.env.SACODE_HOST,env);await bridge.start(dir);stopped=false;
+    row=await entry(a);assert.equal(row.title,'重命名后');assert.equal(row.archived,true);
+    await bridge.request('session/archive',{sessionId:a,archived:false,expectedRevision:row.durable});
+    assert.equal((await entry(a)).archived,false);assert.ok(existsSync(logPath));
+    writeFileSync(join(dir,'metadata-result.json'),JSON.stringify({normalRestart:true,title:(await entry(a)).title,restored:true},null,2));
+  }finally{if(!stopped){const stop=await bridge.stop();assert.equal(stop.code,0);assert.equal(stop.forced,false);}}
+});
