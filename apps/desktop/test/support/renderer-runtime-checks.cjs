@@ -1,0 +1,146 @@
+// 完整生产页面的运行时检查；通过真实 Vue 实例执行，不以语法扫描代替渲染。
+module.exports = async function rendererRuntimeChecks(previous) {
+  const checks = [];
+  const check = (value, name) => { if (!value) throw Error(name); checks.push(name); };
+  const tick = () => Vue.nextTick();
+  const wait=async probe=>{for(let i=0;i<200;i++){await tick();if(probe())return;await new Promise(r=>setTimeout(r,25));}throw Error('runtime-check-timeout');};
+  const capture=async phase=>{document.body.dataset.runtimeCapture=phase;await wait(()=>document.body.dataset.runtimeCaptured===phase);};
+  const root = document.querySelector('#app');
+  const vm = root?._vnode?.component?.proxy;
+  check(vm && document.querySelector('#composer'), '根 setup/render 完成，输入区存在');
+  check(typeof vm.modelDirectoryRevision === 'number', '根代理已自动解包模型目录修订号');
+  await wait(()=>vm.catalog&&!vm.catalogBusy);
+  check(!vm.sendBusy&&!vm.budgetBusy&&!vm.appearanceBusy&&!vm.workspaceBusy,'启动配置与会话加载已结算');
+  if(previous?.imageAttachmentId&&vm.scrollSession!=='current'){
+    await vm.selectSession('current');await wait(()=>vm.scrollSession==='current'&&!vm.catalogBusy);
+  }
+  vm.turn = {...vm.turn, running:false}; vm.approval = null;
+  let prevented = 0;
+  const event = {clientX:80, clientY:160, preventDefault:()=>prevented++};
+  vm.openSessionMenu({id:'runtime-fixture', title:'运行时菜单'}, event);
+  await tick();
+  const menu = document.querySelector('.session-context-menu');
+  check(menu?.getAttribute('role') === 'menu', '右键菜单正确渲染属性与子节点');
+  check(menu.querySelectorAll('[role=menuitem]').length === 3, '菜单操作为真实按钮节点');
+  check(prevented === 1, '右键事件被接管');
+  document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+  await tick();
+  check(!document.querySelector('.session-context-menu'), 'Escape 关闭右键菜单');
+  vm.sendBusy = true;
+  vm.openSessionMenu({id:'blocked'}, event); await tick();
+  check(!document.querySelector('.session-context-menu'), '在途操作禁止打开会话菜单');
+  vm.sendBusy = false;
+  vm.openSessionMenu({id:'rejected',status:'replay-rejected'},event); await tick();
+  check(!document.querySelector('.session-context-menu'), '拒绝回放的会话不开放操作');
+  const composer = document.querySelector('.composer-card');
+  const before = getComputedStyle(composer);
+  check(before.flexDirection === 'column' && before.cursor !== 'pointer', '输入容器未被菜单卡片样式污染');
+  document.querySelector('[aria-label="添加内容"]').click(); await tick();
+  check(document.querySelectorAll('.composer-menu-card').length >= 4, '添加菜单使用独立卡片样式');
+  const cards = document.querySelectorAll('.composer-menu-card');
+  check([...cards].every(c=>c.tagName==='BUTTON'), '卡片均为可操作按钮');
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+  const oldProjection=vm.proj, oldTurn=vm.turn;
+  const text='# 流式对齐\n\n'+('正文用于验证长消息不会收束后截断。'.repeat(20))+'\n\n```js\nconst result = 1 + 2;\n```';
+  const question='请修改示例';
+  vm.proj={...oldProjection,messages:['user/message: '+question],messageRows:[{id:'fixture-user',attachments:[]}]};
+  vm.turn={...oldTurn,running:true,settled:false,text};
+  await tick(); await new Promise(requestAnimationFrame);
+  const live=document.querySelector('[data-live-message="true"] .markdown-body');
+  check(live?.querySelector('h1') && live.querySelector('code'), '流式正文显示 Markdown 与代码块');
+  const beforeBox=live.getBoundingClientRect();
+  vm.proj={...vm.proj,messages:['user/message: '+question,'assistant/message: '+text],messageRows:[{id:'fixture-user',attachments:[]},{id:'fixture-assistant',attachments:[]}]};
+  vm.turn={...vm.turn,running:false,settled:true};
+  await tick(); await new Promise(requestAnimationFrame);
+  const final=document.querySelector('.markdown-body[data-msg-id="fixture-assistant"]');
+  check(final?.querySelector('h1') && final.querySelector('code'), '落盘后保持完整 Markdown 与代码块');
+  const afterBox=final.getBoundingClientRect();
+  check(Math.abs(beforeBox.width-afterBox.width)<1 && Math.abs(beforeBox.x-afterBox.x)<1 && Math.abs(beforeBox.height-afterBox.height)<1, '流式与落盘正文宽度、缩进、高度误差小于 1px');
+  check(!document.querySelector('[data-live-message="true"]'), '成功收束不存在重复临时气泡');
+  vm.proj=oldProjection; vm.turn=oldTurn; await tick();
+  const attachment={attachmentId:'sha256:synthetic-reference',kind:'file',name:'工具附件.txt',bytes:3};
+  vm.proj={...oldProjection,messages:['tool/result: ok:普通文字'],messageRows:[{id:'event-3',attachments:[attachment]}],toolCalls:[{id:'tool-event-2',eventSeq:2,callId:'fixture-call',name:'edit',arguments:'{"path":"a.txt"}',status:'denied',resultMessageId:'event-3'}]};
+  await tick();
+  const tool=document.querySelector('[data-tool-call-id="fixture-call"]');
+  check(tool?.dataset.toolStatus==='denied'&&tool.textContent.includes('edit'),'真实调用元数据驱动名称和状态，正文不能伪造成功');
+  const toggle=tool.querySelector('.tool-toggle');toggle.click();await tick();
+  check(tool.querySelector('.tool-arguments')&&tool.querySelector('pre'),'工具卡展开显示参数与结果');
+  await capture('tool-expanded');
+  check(document.querySelector('[data-history-attachment="sha256:synthetic-reference"]'),'工具卡展开保留附件');
+  toggle.click();await tick();
+  check(document.querySelector('[data-history-attachment="sha256:synthetic-reference"]'),'工具卡收起保留附件');
+  vm.proj=oldProjection;await tick();
+  let imageVerified=false;
+  if(previous?.imageAttachmentId){
+    const holder=()=>[...document.querySelectorAll('[data-history-attachment]')].find(node=>node.dataset.historyAttachment===previous.imageAttachmentId);
+    await wait(()=>holder()?.querySelector('img')?.naturalWidth===2);
+    check(holder().querySelector('img').naturalHeight===1,'真实Host图片读取经Blob在浏览器完成PNG解码');
+    const imageTool=document.querySelector('[data-tool-call-id="tool-image-call"]');
+    check(imageTool?.dataset.toolStatus==='completed','图片结果保留工具调用身份和实际终态');
+    const imageToggle=imageTool.querySelector('.tool-toggle');
+    imageToggle.click();await tick();
+    check(imageTool.querySelector('.tool-arguments')&&holder()?.querySelector('img')?.naturalWidth===2,'展开工具参数结果后真实图片仍显示');
+    await capture('tool-image-expanded');
+    imageToggle.click();await tick();
+    check(!imageTool.querySelector('.tool-arguments')&&holder()?.querySelector('img')?.naturalWidth===2,'折叠工具参数结果后真实图片仍显示');
+    await capture('tool-image-collapsed');imageVerified=true;
+  }
+  await vm.refreshCatalog();
+  let metadataId=previous?.metadataId;
+  if(metadataId){
+    const saved=vm.catalog.entries.find(e=>e.id===metadataId);
+    check(saved?.title==='运行时会话重命名'&&!!saved.archived===!!previous.metadataArchived,'正常重启回读标题与归档状态');
+  }else{
+    document.querySelector('#sidebar-new-session').click();
+    await wait(()=>!vm.catalogBusy&&vm.catalog.entries.some(e=>e.current&&e.title==='新会话'));
+    metadataId=vm.catalog.entries.find(e=>e.current).id;
+    const row=[...document.querySelectorAll('[data-sidebar-session]')].find(e=>e.dataset.sidebarSession===metadataId);
+    row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:180}));await tick();
+    [...document.querySelectorAll('.session-menu-item')].find(e=>e.textContent==='重命名').click();await tick();
+    const input=document.querySelector('#rename-session-title');check(!!input,'右键菜单打开真实重命名表单');
+    input.value='运行时会话重命名';input.dispatchEvent(new Event('input',{bubbles:true}));await tick();
+    input.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    await wait(()=>!vm.catalogBusy&&!vm.sessionRenameTarget);
+    check(vm.catalog.entries.find(e=>e.id===metadataId).title==='运行时会话重命名','重命名经生产IPC与Host持久化');
+    await capture('metadata-renamed');
+    const current=[...document.querySelectorAll('[data-sidebar-session]')].find(e=>e.dataset.sidebarSession===metadataId);
+    current.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:180}));await tick();
+    [...document.querySelectorAll('.session-menu-item')].find(e=>e.textContent.includes('从列表移除')).click();
+    await wait(()=>!vm.catalogBusy&&vm.catalog.entries.find(e=>e.id===metadataId)?.archived);
+    check(![...document.querySelectorAll('[data-sidebar-session]')].some(e=>e.dataset.sidebarSession===metadataId),'归档后从历史侧栏移除');
+    await capture('metadata-archived');
+  }
+  if(previous?.metadataArchived||(previous?.questionTest&&vm.catalog.entries.find(e=>e.id===metadataId).archived)){
+    document.querySelector('#open-catalog').click();await wait(()=>!vm.catalogBusy&&document.querySelector('#catalog-archived'));
+    if(!vm.showArchived)document.querySelector('#catalog-archived').click();await tick();
+    const restore=[...document.querySelectorAll('[data-restore-session]')].find(e=>e.dataset.restoreSession===metadataId);
+    check(!!restore,'归档目录提供恢复动作');restore.click();
+    await wait(()=>!vm.catalogBusy&&!vm.catalog.entries.find(e=>e.id===metadataId).archived);
+    check([...document.querySelectorAll('[data-sidebar-session]')].some(e=>e.dataset.sidebarSession===metadataId),'恢复后会话回到历史侧栏');
+    await capture('metadata-restored');
+    vm.catalogOpen=false;await tick();
+  }
+  let questionVerified=!!previous?.questionVerified;
+  const sidebar=document.querySelector('.sidebar-session-list');
+  check(sidebar.scrollWidth<=sidebar.clientWidth+1,'标题与时间元信息不制造侧栏横向滚动');
+  if(previous?.questionTest&&!questionVerified){
+    const composer=document.querySelector('#composer');composer.value='请先让我选择方向、范围和说明，确认后继续原任务。';composer.dispatchEvent(new Event('input',{bubbles:true}));await tick();document.querySelector('#send').click();
+    const pending=()=>vm.proj.questionCards?.find(card=>card.status==='pending');
+    await wait(()=>pending()?.questions.length===3);
+    let card=pending(),node=document.querySelector('[data-question-card="'+card.id+'"]');
+    const choose=(q,value)=>{const input=node.querySelector('input[name="'+card.id+'-'+q+'"][value="'+value+'"]');input.checked=true;input.dispatchEvent(new Event('change',{bubbles:true}));};
+    choose('single','a');choose('multi','a');choose('multi','b');
+    const texts=node.querySelectorAll('textarea');texts[0].value='自定义补充';texts[0].dispatchEvent(new Event('input',{bubbles:true}));texts[1].value='GUI 合成输入';texts[1].dispatchEvent(new Event('input',{bubbles:true}));await tick();
+    await capture('question-multi');const submit=node.querySelector('button[type=submit]');submit.click();submit.click();
+    await wait(()=>pending()?.questions[0].type==='confirm');card=pending();node=document.querySelector('[data-question-card="'+card.id+'"]');choose('confirm','yes');await tick();
+    await capture('question-confirm');node.querySelector('button[type=submit]').click();
+    await wait(()=>vm.turn.settled&&!vm.turn.running&&!vm.turn.projectionPending);
+    check(!vm.turn.cancelled&&!vm.turn.interrupted&&vm.proj.questionCards.filter(c=>c.status==='answered').length===2,'结构化单选、多选、确认及自定义输入经真实Host继续原任务');
+    check(document.querySelector('#messages').textContent.includes('原任务继续完成'),'选择后原任务续答进入真实历史');await capture('question-settled');
+    composer.value='这次任务用卡片取消。';composer.dispatchEvent(new Event('input',{bubbles:true}));await tick();document.querySelector('#send').click();await wait(()=>pending());
+    node=document.querySelector('[data-question-card="'+pending().id+'"]');[...node.querySelectorAll('button')].find(b=>b.textContent==='取消本次任务').click();
+    await wait(()=>vm.turn.settled&&vm.turn.cancelled&&!vm.turn.projectionPending);
+    check(vm.proj.questionCards.some(c=>c.status==='cancelled'),'卡片取消真实任务并保存取消状态');await capture('question-cancelled');questionVerified=true;
+  }else if(questionVerified){check(vm.proj.questionCards?.filter(c=>c.status==='answered').length===2&&vm.proj.questionCards.some(c=>c.status==='cancelled'),'正常重启回放选择回答与取消状态');}
+  return {checks,metadataId,metadataArchived:!!vm.catalog.entries.find(e=>e.id===metadataId).archived,questionVerified,imageVerified,nodeIntegrationDisabled: typeof require === 'undefined', title:document.title};
+};
