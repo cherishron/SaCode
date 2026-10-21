@@ -37,7 +37,7 @@ public class SecurityScanRpc {
                 if (args.size() != 1) { throw Exception("scan-bad-arguments") }
                 emit(okFrame(id, scan().describe()))
             } else if (method == "security/scan") {
-                if (args.size() != 2) { throw Exception("scan-bad-arguments") }
+                if (args.size() != 3) { throw Exception("scan-bad-arguments") }
                 let scope = ArrayList<SecurityScanFile>()
                 for (row in args.get("scope").getOrThrow().asArray().getItems()) {
                     let item = row.asObject()

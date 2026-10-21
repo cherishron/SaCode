@@ -18,5 +18,9 @@ func approvalModeWriteRequest(log: SessionLog, lease: WriteLease, payload: Strin
     try {
         let result = ModeController(log).setDurable(mode, lease)
         emit(okFrame(idText, "{\"ok\":true,\"result\":\"${result}\"}"))
-    } catch (_: Exception) { emit(errFrame(idText, -32020, "mode-persistence-failed")) }
+    } catch (e: Exception) {
+        // 计划模式期间拒切权限：与持久失败分开报，界面才能给出可行动的提示。
+        if (e.message == "plan-mode-active") { emit(errFrame(idText, -32020, "plan-mode-active")); return }
+        emit(errFrame(idText, -32020, "mode-persistence-failed"))
+    }
 }

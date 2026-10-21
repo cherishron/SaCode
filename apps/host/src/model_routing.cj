@@ -42,6 +42,8 @@ class HostModelRoute {
     let sessionId: String
     let cursor = Cursor()
     var seq: Int64 = 0
+    // 上一步实际选中的 providerId；只在首选仍冷却时由核心优先复用。
+    var stickyProviderId = ""
     init(customId: String, logicalId: String, sessionId: String) {
         this.customId = customId; this.logicalId = logicalId; this.sessionId = sessionId
     }
@@ -53,14 +55,21 @@ class HostModelRoute {
             if (m.id == customId && m.bindings.size > 0) { currency = m.bindings[0].currency }
         }
         // 生产请求总是流式，并带模型工具目录；路由必须匹配真正发出的请求形状。
-        let out = route(RouteRequest(customId, ["text-output", "stream", "tools"]), customs, providers,
+        // 预览不读取也不更新 sticky，避免一次 UI 预览改变真实降级线路。
+        let out = route(RouteRequest(customId, ["text-output", "stream", "tools"],
+            stickyProviderId: if (preview) { "" } else { stickyProviderId }), customs, providers,
             RouteHealth.forUser().view(), credentialViewOf(providers, CredentialStore.forUser()),
             UsageLedger.forUser().routerView(currency), if (preview) { Cursor() } else { cursor }, routingEpoch())
-        if (let Some(reject) <- out.rejection) { throw Exception("route-rejected:${reject.code}") }
+        if (let Some(reject) <- out.rejection) {
+            if (let Some(failure) <- reject.failure) { throw TransportFailureException(failure) }
+            throw Exception("route-rejected:${reject.code}")
+        }
         let plan = planFor(customId, out.decision.getOrThrow(), customs, providers)
         if (plan.isNone()) { throw Exception("route-expand-failed") }
-        if (plan.getOrThrow().protocol != "openai-completions") { throw Exception("protocol-not-supported") }
-        return plan.getOrThrow()
+        let selected = plan.getOrThrow()
+        if (selected.protocol != "openai-completions") { throw Exception("protocol-not-supported") }
+        if (!preview) { stickyProviderId = selected.providerId }
+        return selected
     }
     func open(log: SessionLog, token: TurnToken, attach: AttachmentStore,
         tools: ModelToolRuntime): Provider {
@@ -99,7 +108,7 @@ class HostModelRoute {
             let opened = RealSseProvider.open(plan.baseUrl, creds.getOrThrow().value, body, token)
             if (let Some(failure) <- opened.failure) {
                 recordRouteFailure(plan, failure)
-                throw Exception(failure.messageWithReason())
+                throw TransportFailureException(failure)
             }
             AccountedModelProvider(opened.provider.getOrThrow(), plan, routeLogicalId, routeSessionId, start, token)
         }, metadataOnly: true)
