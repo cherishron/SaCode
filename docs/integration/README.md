@@ -5,6 +5,35 @@
 
 ## 1. 对接面总览
 
+2026-10-21 D23：[核心局部修复证据](../evidence/2026-10-21-d23-reasoning-content.md)。reasoning独立增量经Agent保存为assistant.reasoning_content，日志flush/load后重建请求回传；不混content，不改Host/前端。隔离core构建成功，新增及Agent/请求/附件回归25/25。SSE全文件23通过/1真实供应商跳过/9网络夹具临时目录EPERM错误；真实DeepSeek、统一候选和GUI待验，不据此闭合产品链。
+
+
+2026-10-21 MCP-E-2：[`客户端`](../../core/src/mcp_client.cj)新增显式env净化后覆盖及mcp/server策略读取；不改mcp.cj/main.cj/前端。隔离源码与依赖快照 `target/tmp/mcp-e2-20261021/snapshot` 中core构建rc=0（35警告），[新增测试](../../core/src/mcp_env_policy_test.cj)2项+既有客户端15项合计17/17通过、0跳过/失败/错误。覆盖子进程实际接收显式env且日志不含值、旧事件默认、配置名字隔离、指数延迟、显式策略优先、JSON与扩展注册格式、非法配置回退。策略在构造时冻结；Trae MCP-B-2配置事件需符合[接口格式](../interfaces/README.md)，JSON配置不代替注册授权。既有请求失败重连不等于空闲退出监视；本轮未验证真实服务/Host/GUI，不发布。
+
+
+2026-10-21 MCP-E局部实现：[`mcp_client.cj`](../../core/src/mcp_client.cj) 新增重连 supervisor 与环境净化。重连由 `McpReconnectPolicy.delayForAttempt` 驱动指数退避，`listTools`/`callTool` 经 `requestWithReconnect` 包裹：传输层失败且非 `close()` 触发时自动重连，成功后原样重试一次请求；`close()` 置 `closing=true` 跳过重连；`maxAttempts` 后返回 `mcp-reconnect-exhausted`。重连期间 `isConnected()` 为 false（`closeProcess` 保证）。`launchServer` 调 `scrubEnvironment`：从 `getVariables()` 复制全量环境，命中 KEY/PASSWORD/SECRET/TOKEN（大小写不敏感）或 SACODE_* 的键值替换为 `<redacted>`，记 `mcp/env-scrub` 事件只记键名。私有 core 构建 `target/tmp/mcp-supervisor/build` rc=0（35 警告无错误）；[定向测试](../../core/src/mcp_client_test.cj) 15/15 通过（4 项新增：env 净化返回 `<redacted>` 且子进程不见原值且 `mcp/env-scrub` 记键名、崩溃后按策略重连成功、`close()` 后不重连返回 `mcp-not-connected`、重连耗尽返回 `mcp-reconnect-exhausted`）。不改 mcp.cj/main.cj/preload/前端；生产模型工具桥与真实 MCP 服务器接入仍待验。
+
+
+2026-10-21 SK-F局部实现：新增[`tool_skill.cj`](../../core/src/tool_skill.cj)，[ModelToolRuntime](../../core/src/model_tool_runtime.cj)始终登记一个skill_load，执行器复用内部ToolRuntime.skillRegistry（含既有FilesystemSkillProvider），可选注入替代仓；无需修改agent.cj或Host装配。正文按调用getSkill加载返回，诊断日志只记skill-loaded不复制全文；modelInvocable=false拒绝，四档只读权限免审批，guard仍保留。私有core构建 `target/tmp/skill-load-skf/build` rc=0、35警告无错误；[定向测试](../../core/src/tool_skill_test.cj)2/2通过（唯一声明/schema/正文/缺失/坏参数/四档零审批/模型禁用/guard及默认文件系统仓）。无编译阻塞；真实供应商Host回合/GUI/全量回归待验，不代表技能产品链交付。初轮编译发现初始化闭包捕获成员限制，已用局部绑定修复；共享目标由其他会话使用，本轮独立输出未干扰。
+
+
+2026-10-21 R8-HOST后续：[`main.cj`](../../apps/host/src/main.cj) 两处ModelToolRuntime注入可信子代理绑定；覆盖下方R8历史“Host未注入”状态。角色仓用户→项目覆盖后写轮次私有快照（不改源配置），运行根在会话日志父目录下原子创建，工作目录/父权限与工具集取本轮可信快照；执行前重查取消、目录和权限deny。模型工厂使用本轮供应商/key及Runner独立body/childToken，只接受继承模型；子审批复用Host通知、精确消费父票、持久后签发独立子票。子流使用独立有界sink，不污染父正文。私有Host构建 `target/tmp/r8-host/build/release/bin/main.exe` rc=0（core35/Host33警告）；[真实Host回环测试](../../apps/host/test/subagent/subagent-host.test.mjs)3/3通过：声明/批准→Runner→摘要、拒绝零子请求、项目角色覆盖用户角色；同轮core库复验[兼容测试](../../core/src/subagent_delegate_test.cj)1/1通过（含无注入不宣告与父取消）。CLI、角色独立模型路由、子写操作审批端到端、持续目标自动起轮实跑、真实供应商与GUI仍待验。无并发编译阻塞，不提交/安装/发布。
+
+
+2026-10-21 HOST-COMPACT-FIX：仅在 [`main.cj`](../../apps/host/src/main.cj) 的 CompactRpcWiring 装配处注入安全探针。CompactSafety依次为 providerActive/awaitingApproval/awaitingPlan/awaitingQuestion；未结算工具并入providerActive。状态来自绑定shared日志快照（turn、关联模型调用/结果、审批、计划、提问）及Host在途状态，不取RPC参数；绑定变化或解析失败保持queued。私有构建 `target/tmp/host-compact-fix/build/release/bin/main.exe` 成功，core35/Host33警告、无错误；[协议测试](../../apps/host/test/compact/compact-safety-host.test.mjs)1/1通过，实际Host+合成日志验证安全分支与ready/compact-published产物及输入缩小。要求已持有真实写租约，未改租约取得逻辑，无租约仍报compact-not-writer；未测真实供应商流中竞争/GUI/安装态。本轮不改compact适配文件、core、preload或前端。
+
+
+2026-10-21 R8 主模型子代理工具（核心局部验证）：[`SubagentDelegateTool`](../../core/src/tool_subagent.cj) 通过 [`ModelToolRuntime`](../../core/src/model_tool_runtime.cj) 可选绑定注册 `subagent_delegate(roleId, task)`；角色仓加载 → Runner 独立执行 → JSON 摘要，复用审批/guard/父取消。独立输出 `target/tmp/subagent-delegate-r8/build` 的 `cjpm build` 成功（35个既有/并发源码警告，无错误）；[`定向合成测试`](../../core/src/subagent_delegate_test.cj) 1/1通过，覆盖声明、build审批不获准零启动、角色缺失、成功摘要、执行中父取消。当前 Runner 已有 isClosed，本轮未修改。存在他会话共享目标构建/测试及临时移动测试源码的并发活动，本轮使用私有库与独立测试链接避开共享输出，没有并发编译阻塞。Host/CLI 尚未注入角色仓/可信Runner/模型工厂/子审批，真实供应商及产品入口未验，不升级为主链完成。
+
+
+2026-10-21 网页工具内联结果（局部验证）：[`msgfold.js`](../../apps/desktop/renderer/msgfold.js) 兼容核心 `{result,text}` 信封及直接结果对象，严格 `externalContent===true`，抓取须 HTTP(S) 来源 URL，搜索须 sources 数组；查询优先取已关联工具调用参数，缺失不猜测。正文按500个Unicode字符预览，展开还原已返回正文；来源、HTTP、发布时间、上游截断与低信任提示独立展示。[工具卡](../../apps/desktop/renderer/pages/tool-card.ts) 全部按文本 VNode 渲染，不执行网页HTML或来源URL；旧工具与复制功能保留。解析/渲染相关29项通过，页面构建及静态CSP门禁通过；未改Host/主进程/preload，真实网络消息流与GUI仍待验。
+
+2026-10-21 输入区统计 pill（局部验证）：[`composer-stats.ts`](../../apps/desktop/renderer/pages/composer-stats.ts) 已接 composer 上方一行。Activity 只收 `turn/poll` 的 `elapsedMs/ttftMs/tokensPerSecond`；模型切换或新轮次清旧值，会话/轮询换代拒绝迟到结果。Usage 调既有 `usageStatus` / `ledgerStats`，完整四维优先读取 `tokenTotals` 或顶层 `input/cacheRead/cacheWrite/output`；缓存命中为 `cacheRead/(cacheRead+input)`，缓存写入计总量但不计命中率。当前 Host 尚无上述性能与累计 token 明细，只可回退会话 `used`，详情以未知展示；未新增 IPC/后端字段。组件、ContextMeter、轮询、模型目录相关20项通过，页面构建及静态 CSP 门禁通过；完整 GUI/真实提供方待验。
+
+2026-10-21 Web 执行适配（实施中）：[`WebRpc`](../../apps/host/src/web_rpc.cj) 已提供 `web/fetch` / `web/search` 的共享核心调用与出帧接缝，见[接口登记](../interfaces/README.md)。按本次范围不修改主路由，公开 Host/桌面入口、授权归属接线及真实网络验收仍待完成，D08 不闭合。
+
+2026-10-19桌面交互接线：[第一批增量证据](../evidence/2026-10-19-first-batch-interactions.md)、[接口契约](../interfaces/session-interactions-2026-10-19.md)。模型提问等待与应答复用共享问题日志，同一模型轮续答；不授予工具执行许可，不自动开放daemon/ACP远程面。第一批尚未验收。
+
 | 对接对象 | 方案文档 | 状态与边界 | 验收出口 |
 |---|---|---|---|
 | ACP · OpenCode | [opencode-acp-diagnostics-repair-2026-10-14](../plans/opencode-acp-diagnostics-repair-2026-10-14.md) | F10-ACP-01 待验收；02–04 实施中；05–06 未开始。关闭零启动、诊断分列、复用现有任务链 | 真实实例 + Host/CLI/桌面共用任务/审批/取消/结算 |

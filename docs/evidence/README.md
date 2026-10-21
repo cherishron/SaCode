@@ -1,5 +1,13 @@
 # evidence/ — 历史证据（冻结区 · 索引）
 
+- 2026-10-21：[D23 reasoning_content核心链路局部验证](2026-10-21-d23-reasoning-content.md)：隔离core构建成功，合成链路及回归25/25；SSE全文件23通过/1跳过/9网络夹具环境错误，真实DeepSeek与候选待验。
+
+- 2026-10-19：[c4 验收 bug 修复批次](2026-10-19-c4-acceptance-bugfix.md)：6 项（权限切换 turn-in-flight 友好提示、流式折叠跳位、工具卡复制按钮、重命名 CAS 冲突自动重读再试、provider 错误携带分类原因、shell 执行通路诊断折叠）。桌面 58/58 通过；仓颉端断言已更新待构建验证。
+
+- 2026-10-19：[c4候选交接与手动验收](2026-10-19-c4-delivery.md)，含用户配置共享5/5、候选哈希与五项未验边界；候选待验。
+
+- 2026-10-19：[Electron 测试环境门禁与交互跑道](2026-10-19-electron-test-env-gate.md)。判据＝默认沙箱最小 Electron 探针（不传 `--no-sandbox`）；代理环境 `exit=0x80000003`。10 个文件 16 条用例在受限时标为 `env-blocked-electron` 跳过。二轮修复 6 项非 Electron 前提：2 条缺 `SACODE_CLI` 标 `env-blocked-missing-cli`、3 条缺 openssl 标 `env-blocked-missing-openssl`、windows-artifact-export 改仓外中性目录后真过。全套自测 **1066/1038 pass/0 fail/28 skip**（16 env-blocked-electron ＋ 2 missing-cli ＋ 3 missing-openssl ＋ 6 模型凭据 ＋ 1 空）。交互跑道 `scripts/run-electron-tests-interactive.cmd` 命中受限即 exit 2、不写结果。正向交互路径须用户复验。
+
 - 2026-10-17 13:52 新复验：[A3 GPU 阻塞脱敏报告](../../target/tmp/codex-outputs-20261017/A3-GPU复验-20261017-1352.html)。三种后端均失败，真实调用日志可见性未验，不升级历史结论。
 
 > 类别：⑦历史证据。**本目录是冻结区：只增不改**——新结果用新记录，不覆盖旧失败、不把旧通过升级成当前通过。
@@ -13,6 +21,10 @@
 4. 当前状态**永远不看本目录单独判定**——核 PRD 与该主题最新文件，必要时看 `docs/README.md` 登记的当前口径。
 
 ## 1. 按主题检索（检索关键词 → 代表文件）
+
+- [2026-10-19 第一批交互增量](2026-10-19-first-batch-interactions.md)：工具身份关联、重命名/归档及AI选择卡片；Host12/12、仓颉定向7/7，元信息完整页面两轮22项；卡片GUI与整批真实任务仍待验。
+
+- [2026-10-18 R4运行时与流式修复](2026-10-18-r4-runtime-and-stream-repair.md)：dev 接管；65/65 定向测试、完整页面15项检查及原生菜单/输入证据；截图链差异、同源候选/真实任务仍待验，第一批未完成。
 
 - [2026-10-18 R2真实冷启动持久性](2026-10-18-r2-cold-restart-persistence.md)：真实获批edit后Host退出0，再以不同PID同目录只读RPC回放；40事件/8消息、plan模式、工作区及请求追踪一致，文件/单测保持，日志哈希不变、无模型重发。协议层1/1，不冒充GUI或真实LongCat验收。
 
@@ -86,3 +98,7 @@
 2026-10-18 F08/EX-01：[私有执行生命周期与真实双入口](../evidence/2026-10-18-execution-capsule-entries.md)：核心定向50/50、真实状态层→IPC→Host及CLI 13项、桌面定向14/14；同进程准备/独立审批/执行/审查/写回及EOF取消收束已实测。未提交增量；项目与会话数据重合、完整Electron/安装态及隔离专项仍待验，整体功能不升级完成。
 
 2026-10-18 F08/EX-01：[项目与会话数据同目录](../evidence/2026-10-18-colocated-execution-metadata.md)：按真实日志/租约/附件路径排除元数据，保留用户同名文件；新产物同目录与分离布局真实Host/CLI各13项通过。核心52项首轮51通过1清理错误，修正夹具后完整52/52通过、零跳过/错误/失败；不升级整体完成状态。
+
+2026-10-20 模型 shell：[io-error:shell-pwsh 诊断折叠与 Windows 强制隔离接线](2026-10-20-model-shell-io-error-diagnosis-and-windows-wiring.md)：诊断折叠已闭合（真实 Host 回执由裸 `io-error:shell-pwsh` 变为带 `SANDBOX_UNAVAILABLE`）；根因确认为 Windows 默认 platformSandbox 无 provider。既有 AppContainer 私有通路已接入模型 shell，仅 `SACODE_WINDOWS_ENFORCING`+原生 DLL 时启用，默认 fail-closed；enforcing 下命令真实启动并观测真实退出码，但 AppContainer 内 PowerShell 与工作区 ACL 未完成，`node --test` 未取得通过结算。不声称"读取→审批→修改→运行测试→通过结算"已走通。
+
+2026-10-20 AppContainer 根因：[exit 1 / 空输出诊断](2026-10-20-appcontainer-exit1-root-cause.md)：AppContainer 内 `cmd`/`powershell`/`hostname`/最小静态 exe 全部 exit 1 空输出，普通进程同管道/环境 exit 0；token 为 `caps=0`、无 `S-1-15-2-1` 的 LPAC 形态，且原始 `verify-windows-process.c` 在本机重编译后 `FAIL real-exit-code`。判定为 OS/AppContainer 层回归，非 PowerShell 参数、非 ACL、非产品源码；未改 ACL/产品代码。

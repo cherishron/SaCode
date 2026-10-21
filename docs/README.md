@@ -1,5 +1,35 @@
 # SaCode 文档体系总览（2026-10-16 归类版）
 
+- 2026-10-21：[D23 reasoning_content链路局部修复证据](evidence/2026-10-21-d23-reasoning-content.md)：独立思考增量、保存与历史回传；隔离构建成功，25/25合成回归，真实供应商及候选待验，SSE网络夹具9项环境错误保留。
+
+- 2026-10-21：[调度者 Agent 与团队方案](plans/sacode-orchestrator-agent-2026-10-21.md)。取代原 [本地 Agent 预设](plans/sacode-local-agent-presets-2026-10-11.md) 的"标准/PTC/极简/创造"四模式方向（原方案存储/作用域/修订/导入导出与生命周期约束仍可复用）。核心定位：本地主 Agent 是调度者，委派原语唯一＝subagent；ACP 不是顶层委派通道，而是 subagent 可持有的**能力**（动机＝用户用外部 Agent 额度省自己 token）；外部 Agent 继承委派它的 subagent 权限边界（"什么人干什么事情"）；预设团队（explorer/planner/implementer/reviewer）+用户可编辑员工，员工编辑器用 checkbox 快捷勾选 SaCode 既有能力；多外部 Agent 默认顺序按优先级降级、轮询可选；主 Agent 直调 ACP 默认关、subagent 默认开；额度来源单独记账。F10 拓扑调整：ACP 从主 Agent 直连下沉为 subagent 能力。[plans 索引](plans/README.md) B 节同批登记，原预设条目标注方向废弃。纯设计，未改产品代码。
+
+- 2026-10-21：[记忆与每日自动进化方案](plans/sacode-memory-daily-evolution-2026-10-21.md)。补 F11"记忆/速记/批注未收口"缺口。与知识库分工：记忆=agent 自动提取的跨会话事实（草稿低信任），知识库=用户显式手写文档（用户权威）。三态生命周期（draft→confirmed→archived）+ draft 不注入模型铁律；轮末自动提取 + 启动时合并 pass（>24h 触发去重/解冲突/衰减/晋升，避开 F13 executor 未实现 D07）；密钥擦除（KEY/PASSWORD/SECRET/TOKEN/SACODE_* 命中 fail-closed）；记忆分类与配额；设置四开关（总开关/自动学习/自动晋升/每日进化，自动学习与自动晋升默认关）；`memory/*` RPC + 记忆页。复用 KnowledgeStore 存储/CAS/作用域框架。[plans 索引](plans/README.md) B 节同批登记。纯设计，未改产品代码。
+
+- 2026-10-21：[自学习闭环总方案](plans/sacode-self-learning-loop-2026-10-21.md)。串联调度者/记忆/skill 三子方案的蓝图。核心闭环：test/build/syntax 失败自动捕获 → 错题本（ErrorBook，按技术语言 java/cangjie/rust/ts 分类，不直接注入模型）→ skill 草稿生成（用户审阅才启用，版本化可回滚，C 决策不让步）→ 启用后注入模型避免再犯。新增会话内 `knowledge_save` 模型工具（走审批，plan deny/build ask）；skill 启用开关 D2（用户决定、跨会话持久、启用的目录摘要进 context）；skill 本地/线上来源标记 + 一键发布（密钥擦除+用户确认，平台接口待研究）；内置 create-skill 元技能；自动化生成文章列为后续阶段（F13 executor 未实现）。三个子方案按 §6 调整接口（记忆 rejected→错题本补充通道、skill 增 source/enabled/revision+草稿版本化、调度者员工增 enabledSkills）。[plans 索引](plans/README.md) B 节同批登记。纯设计，未改产品代码。
+
+- 2026-10-20：[AppContainer exit 1 根因诊断](evidence/2026-10-20-appcontainer-exit1-root-cause.md)。`cmd`/`powershell`/`hostname`/最小静态 exe 在 AppContainer 内全部 exit 1 空输出，普通进程同条件 exit 0；token 为 `caps=0`、无 `ALL APPLICATION PACKAGES` 的 LPAC 形态，原始 `verify-windows-process.c` 本机重编译后 `FAIL real-exit-code`。判为 OS/AppContainer 层回归，非 PowerShell 参数、非 ACL；未改产品代码。
+
+- 2026-10-20：[目标持续执行调度接入方案](plans/goal-execution-scheduling-design-2026-10-20.md)（F04，设计待评审）。对照 DSH `goal-round-driver`：SaCode 核心 GoalRunner 已能内循环，缺 Host 空闲边；不写产品代码。
+
+- 2026-10-20：[模型 shell io-error 诊断折叠与 Windows 强制隔离接线](evidence/2026-10-20-model-shell-io-error-diagnosis-and-windows-wiring.md)。诊断折叠已闭合并经真实 Host 复验（回执带 `SANDBOX_UNAVAILABLE`）；AppContainer 私有通路已接入模型 shell，默认仍 fail-closed；enforcing 下命令真实启动，但 PowerShell/工作区 ACL 未完成，未取得通过结算，不升级交付。
+
+- 2026-10-19：[c4 验收 bug 修复批次](evidence/2026-10-19-c4-acceptance-bugfix.md)：6 项（权限切换 turn-in-flight 友好提示、流式折叠跳位、工具卡复制按钮、重命名 CAS 冲突自动重读再试、provider 错误携带分类原因、shell 执行通路诊断折叠）。桌面 58/58 通过；仓颉端断言已更新待构建验证。
+
+- 2026-10-19：[c4候选交接与手动验收](evidence/2026-10-19-c4-delivery.md)，含用户配置共享5/5、候选哈希与五项未验边界；候选待验。
+
+- 2026-10-19：[Electron 测试环境门禁与交互跑道](evidence/2026-10-19-electron-test-env-gate.md)。代理环境里把 16 项 `0x80000003` 假失败标为 `env-blocked-electron` 跳过；二轮修复 6 项非 Electron 前提（2 条缺 `SACODE_CLI`→`env-blocked-missing-cli`、3 条缺 openssl→`env-blocked-missing-openssl`、windows-artifact-export 改仓外中性目录后真过）。全套自测 **1066/1038 pass/0 fail/28 skip**；交互跑道 `scripts/run-electron-tests-interactive.cmd` 命中受限即 exit 2。判据＝默认沙箱最小 Electron 探针，不传 `--no-sandbox`。正向交互路径须用户复验。
+
+- 2026-10-20：[「创建计划」接入方案（DSH Plan/Todo 调研）](plans/plan-todo-integration-design-2026-10-20.md)。更正前提：DSH 的 Plan 是 **plan mode**（`dsh-plan-mode`+`dsh-client-ui-plan`），`dsh-tool-workflow` 是多 agent 编排工具、与计划无关；Plan（AI 生成 markdown、用户审阅、`exit_plan_mode` 批准后退出并执行）与 Todo（`todo_write` 整表替换、`todos` 投影）正交，**计划审阅走 `user-questions` 通道而非工具审批**；Goal（`{id,revision}` CAS + round-driver）驱动轮次。SaCode 现状：**Todo 与 Goal 已完整**（`todo.cj`/`todo_tool.cj`/`todos` 投影/`TodoPanel`；`goal*.cj`+`goal/*`），**唯独计划无产品闭环**（`plan.cj:PlanModeController` 已废弃，`composer-menu.ts` "创建计划"按钮禁用），PRD 第 804 行同口径。推荐：复用 Todo/Goal/审批工单/权限模式，新增计划模式+`exit_plan_mode`+计划审阅通道，`execution/*` 与 Plan 不同层不可复用。纯调研设计，未实施。
+
+- 2026-10-20：[MCP 接入方案设计](plans/mcp-integration-design-2026-10-20.md)。DSH 调研（静态配置发现、复用官方 SDK 握手、`mcp__<server>__<rawName>` 命名、原子世代交换、指数退避重连、本包不接审批）+ SaCode 现状对照（core 已有 `McpClient`/`McpRegistry`/`mcpPublicToolName`/`McpReconnectPolicy`，缺配置加载/`mcp/*` RPC/工具桥/UI/重连 supervisor）。推荐路径：stdio 优先、MCP 工具走 `approval/ask` 工单（比 DSH 更严）、`mcp/*` RPC 6 条、status 结构化暴露。纯调研设计，未实施。
+
+- 2026-10-20：[技能清单接入方案设计](plans/skill-integration-design-2026-10-20.md)。DSH 调研（技能＝可复用任务专项指令文本，**非**"工具+提示词+约束"打包；provider 注册表+分层目录扫描 `.dsh/skills`/`.agents/skills`；`/name` 斜杠手势引用即注入；只注入 `<skill_content>` 文本，不注册工具、不进 system-prompt section、与 MCP 完全分离）+ SaCode 现状对照（`SkillRegistry` 是 log-only 存根无正文/provider；`composer-menu.ts` "技能"卡片误接 `extension/list` 普通工具——即用户反馈点；`user-text.ts` 已有 `/name` slash 钩子但无后端）。推荐路径：扩 `SkillRegistry` 持 content+provider、`FilesystemSkillProvider` 扫 `.sa-code/skills`+`.agents/skills` SKILL.md、`skill` 加载工具 + agent pre-step 注入、`skill/list`+`skill/get` RPC、UI 切数据源到 `skill/list`。纯调研设计，未实施。
+
+- 2026-10-19 第一批仍未验收：[交互增量与验证边界](evidence/2026-10-19-first-batch-interactions.md)，新增接口见[会话交互契约](interfaces/session-interactions-2026-10-19.md)。不把诊断窗口或Host局部通过升级为同源版本交付。
+
+- 2026-10-18 第一批进行中：[R4运行时与流式修复](evidence/2026-10-18-r4-runtime-and-stream-repair.md)。dev 源码定向65/65、诊断页面15项通过；不升级为同源候选或真实任务交付。
+
 > **2026-10-18 当前主线：先交付一个走通版本。** 所有 IDE / AI 会话先读根 `AGENTS.md` 的最高推进优先级、[交付主线 §0](plans/product-closure-goal-2026-10-15.md#0-当前执行顺序先交付一个走通版本2026-10-18-用户确认) 与 [当前交付卡](product/PRD-tracking.md#当前交付卡2026-10-18-用户确认)。固定候选→同源完整包→普通用户条件真实任务→用户复验；阻塞期只修挡路问题，暂缓无关扩展，局部PASS不叫版本交付。F01–F21、安全与平台目标不删。
 
 - 2026-10-17 A3 GPU 最小对照复验：[脱敏 HTML 报告](../target/tmp/codex-outputs-20261017/A3-GPU复验-20261017-1352.html)（临时运行报告，按用户裁决迁移），阻塞未解决，真实日志页面未验；任务34保持进行中。
@@ -77,6 +107,22 @@
 | 文档模板 | `templates/` | 见 [`templates/README.md`](templates/README.md) |
 
 ## 4. 维护记录
+
+- 2026-10-20（功能域设计批量归档）：十四份功能域设计文档从 `target/tmp/` 归档到 `docs/plans/`：F06 上下文压缩、F08 Git 工作台后端、F09 实时交互终端（后端+前端两份）、F11 知识库索引服务（CodeArts + MonkeyCode 两份互补）、F13 自动化与 Hooks、F14 浏览器与电脑操控、F15 SSH 后端、F16 数据库面板、F17 三层安全扫描、F18 语音与提示词增强、F19 数据导入（OpenCode + Qoder 两份，调度方判定以 Qoder 版为实施基线）。[plans 索引](plans/README.md) B 节与详细设计覆盖速览同批登记。全部为纯调研设计，未改产品代码。
+
+- 2026-10-20（统一构建 T8 轮）：CodeBuddy 统一构建 T8 轮：core 构建 PASS，core 测试 FAIL（`plan_permission_test.cj:217` 类型不匹配 `ArrayList` → `Array`，归属 Trae 新增文件，0 用例执行，超 30min 上限），Host 构建未启动。Trae 已修复（`.toArray()`），等待重开 core 测试 → Host 构建。构建期间六方并行推进功能域设计任务，不阻断构建。
+
+- 2026-10-20（六方修复收齐停写）：OpenCode 技能编译（`skill_filesystem.cj` Byte/trim/Path）、Trae 计划持久化（`plan_review.cj` 批准→持久化→放行，`main.cj` 1 行计划装配）、MonkeyCode 目标三项（cancel 不续跑/满额 blocked/输入不重不丢，`main.cj` 目标区域 3 处）、CodeBuddy shell 收口（`windows_process_adapter.cj` 事实桶+泄漏计数）、CodeArts 前端目标可见性（`goal-bar.ts` pendingTurnCount + `send-queue-state.js` 在途区分）全部停写。LSP 结果渲染组件（`lsp-results.ts` 7 verb 全覆盖 13/13 测试）与 Git 工作台前端在 CodeArts 并行推进。
+
+- 2026-10-20（03:48六方阶段调度）：[产品台账](product/PRD-tracking.md)与[提示词交付页](../target/tmp/coordination-20261020-r3/outputs/六方阶段调度与可转发提示词-20261020.html)同步OpenCode/Trae/Monkey/CodeArts/CodeBuddy/Qoder六份自包含任务。阶段修复收齐后统一构建、独立验收、失败回派；main.cj按Trae→Monkey交接，其他独立范围并行。协调者按回报推进，不重复源码核查或构建；任务已形成，未确认转发接收，不新增实现或发布授权。
+
+- 2026-10-20（OpenCode技能样例审核）：[实时台账](product/PRD-tracking.md)当前卡/F12登记25合成场景、27技能输入、60058B/70058B已核；矩阵仅预期，未运行解析器。当前标志未接生产调用策略，不把/name或模型限制当既成行为；读取预算/异常、祖先提前break及测试默认真实用户层须定点收口，四份技能文件仍匹配T7，统一编译阻塞未变。审核与自包含回派见 `target/tmp/coordination-20261020-r3/outputs/OpenCode-技能样例审核与定点回派-20261020.txt`；只形成任务，不冒称已下发/执行，不开放技能第3段或共享构建。
+
+- 2026-10-20（Qoder原生准备审核）：[实时台账](product/PRD-tracking.md)登记准备回报已核及分阶段裁定：固定Clang22.1.0、冻结输入、独立输出，不改.deps/共享脚本；任务书仅独立构建+35项进程探针诊断，47/54/正式Host另排、core仍唯一构建方。原`--verify`与workspace驱动仍会先覆盖.deps，不能原样执行；同调用生成manifest不保证同源。未实际编译/跑探针，未解除产品门禁。
+
+- 2026-10-20（协调复核）：更新 [PRD-tracking当前交付卡](product/PRD-tracking.md#当前交付卡2026-10-18-用户确认) 与F03/F04：前端r2八份TAP核对94/94、五项GUI未验；统一core第二轮rc=1，测试/Host未执行，阻塞回派技能归属方。旧临时协议结果已撤回为3 PASS/2 BLOCKED；goal-bar旧脏差异未证明完整恢复，shell监督事实/回收所有权与原生同源风险仍开放。下方/顶部历史AppContainer“LPAC、OS回归、初始化或ACL唯一根因”属于当时推断，当前未证实；不据此改token/ACL或降低沙箱。未构建、提交、推送或发布。
+
+- 2026-10-20：新增 [`plans/goal-execution-scheduling-design-2026-10-20.md`](plans/goal-execution-scheduling-design-2026-10-20.md) —— F04 自动跨轮执行接入方案（DSH round-driver / epoch / projection 权威清边对照；推荐 Host 持有 `GoalActivation` + `requestGoalDrive`，不新增 RPC）；[plans 索引](plans/README.md) 同批登记。纯设计，未改产品代码。
 
 - 2026-10-17：[仓颉私有 cwd 任务](evidence/2026-10-17-cangjie-private-workspace-task.md)定向真实 DLL 16/16；尚无生产快照、受保护子树排除与 F08 合入，不开放公共门禁。
 

@@ -176,5 +176,8 @@
   "worktree/cleanup",
   "worktree/describe",
   "worktree/enter",
-  "worktree/exit"
+  "worktree/exit",
+  "session/rename",
+  "session/archive",
+  "user-question/answer"
 ]

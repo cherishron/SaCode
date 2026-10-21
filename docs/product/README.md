@@ -21,8 +21,16 @@
 
 ## 相关
 
+2026-10-20（03:48六方阶段调度）：[实时台账](PRD-tracking.md)同步六方职责与阶段顺序；[可转发任务交付页](../../target/tmp/coordination-20261020-r3/outputs/六方阶段调度与可转发提示词-20261020.html)及同目录01–06文本/完整合集已形成。任务自包含，实施方负责实现，阶段由CodeBuddy统一构建、Qoder独立协议与CodeArts真实GUI验收；main.cj先Trae再Monkey，独立工作并行。不重复源码审计，未确认已转发或接收。
+
+2026-10-20（技能样例审核）：[PRD-tracking](PRD-tracking.md)当前卡与F12登记25个合成场景/27份技能输入已核、解析器未运行、四份技能文件仍匹配T7。矩阵调用权限表述须降为标志解析/待消费；读取预算与异常、祖先检查及测试真实HOME默认值存在待收口项，未运行复现。新回派仅自有技能文件，不放行第3段或自行构建；审核任务书位于 `target/tmp/coordination-20261020-r3/outputs/OpenCode-技能样例审核与定点回派-20261020.txt`。
+
+2026-10-20（原生准备审核）：[PRD-tracking](PRD-tracking.md)登记Qoder回报已核与独立构建/35项进程探针的分阶段任务书；任务尚未确认转发/接收或执行。不得原样运行会覆盖.deps的`--verify`/工作区驱动，47/54与正式Host另排；不解除D14或shell监督/回收缺口。
+
 - 设计与契约：[`../plans/README.md`](../plans/README.md)、[`../superpowers/README.md`](../superpowers/README.md)
 - 验收与证据：[`../qa/README.md`](../qa/README.md)、[`../evidence/README.md`](../evidence/README.md)
+
+2026-10-20（协调复核）：[PRD-tracking](PRD-tracking.md) 当前卡与F03/F04同步前端r2原始TAP 94/94的有限证据、第二轮core编译rc=1（测试/Host未执行）、旧临时协议结果撤回为3 PASS/2 BLOCKED及goal-bar历史差异风险；五项GUI与真实开发任务仍未验。本轮仅证据审核/台账更新，不改需求，不提交推送；历史AppContainer唯一根因推断不作为当前结论。
 
 2026-10-17：PRD-tracking 更新 EX-01/D14 的内部组件进度；[提交候选验证](../evidence/2026-10-17-windows-execution-commit-candidate.md)通过不解除产品默认执行门禁。
 
