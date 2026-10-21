@@ -20,6 +20,19 @@ public class TokenMeter {
         this.rejected = Int64(0)
     }
 
+    // 本地 token 预算只认 used()；外部来源单独查询，绝不合入预算累计。
+    public func sourceTotals(): Array<QuotaUsageTotal> {
+        return SessionUsageLedger(log).sourceTotals()
+    }
+
+    // 切换执行器由调度方负责；本入口只为已耗尽的本地额度追加降级事实。
+    public func recordExternalFallback(transitionId: String, agentId: String): Bool {
+        if (!over()) {
+            return false
+        }
+        return SessionUsageLedger(log).recordFallback(transitionId, "local-token", "", agentId)
+    }
+
     public func used(): Int64 {
         return total
     }
@@ -86,7 +99,11 @@ public class TokenMeter {
         // 格式问题变成不可诊断的拒绝。
         badCount += 1
         // 空串在日志里会塌成一条看不见的事件体，补一个哨兵词
-        log.append("usage/bad-usage", if (raw == "") { "empty" } else { raw })
+        log.append("usage/bad-usage", if (raw == "") {
+            "empty"
+        } else {
+            raw
+        })
         return "bad-usage"
     }
 

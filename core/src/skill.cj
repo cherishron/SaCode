@@ -22,6 +22,7 @@ class SkEntry {
 public class SkillRegistry {
     let log: SessionLog
     let entries = ArrayList<SkEntry>()
+    let providers = ArrayList<SkillProvider>()
 
     public init(log: SessionLog) {
         this.log = log
@@ -99,6 +100,70 @@ public class SkillRegistry {
             return ""
         }
         return entries[i].description
+    }
+
+    // ===== 以下为第 2 段新增：provider 聚合（与上方 log-only register/uninstall 并存） =====
+    // listSummaries/getSkill/skillDigest 聚合 provider；register/uninstall/list/describe 保留向后兼容。
+
+    public func registerProvider(provider: SkillProvider): Unit {
+        providers.add(provider)
+    }
+
+    // 聚合 provider 摘要：按注册顺序先到先得（项目层先注册则优先覆盖同名）。
+    public func listSummaries(): ArrayList<SkillSummary> {
+        let out = ArrayList<SkillSummary>()
+        let seen = HashSet<String>()
+        for (p in providers) {
+            for (s in p.list()) {
+                if (!seen.contains(s.name)) {
+                    seen.add(s.name)
+                    out.add(s)
+                }
+            }
+        }
+        return out
+    }
+
+    // 取某 name 完整定义：按 provider 注册顺序，第一个返回 Some 即返回（先到先得）。
+    public func getSkill(name: String): ?SkillDefinition {
+        for (p in providers) {
+            let r = p.get(name)
+            if (let Some(_) <- r) {
+                return r
+            }
+        }
+        return None
+    }
+
+    // 稳定摘要 digest：按 name 排序的 name|description 拼接，用于检测目录变化。
+    // 不引 crypto；用确定序拼接字符串即可做相等比较。
+    public func skillDigest(): String {
+        let summaries = listSummaries()
+        var names = ArrayList<String>()
+        for (s in summaries) { names.add(s.name) }
+        // 冒泡排序（避免引入 sort API 的不确定性）
+        var a = Int64(0)
+        while (a < names.size) {
+            var b = Int64(0)
+            while (b < names.size - Int64(1) - a) {
+                if (names[b] > names[b + Int64(1)]) {
+                    let t = names[b]
+                    names[b] = names[b + Int64(1)]
+                    names[b + Int64(1)] = t
+                }
+                b = b + Int64(1)
+            }
+            a = a + Int64(1)
+        }
+        var out = ""
+        for (n in names) {
+            for (s in summaries) {
+                if (s.name == n) {
+                    out = out + n + "|" + s.description + "\n"
+                }
+            }
+        }
+        return out
     }
 
     private func indexOf(name: String): Int64 {

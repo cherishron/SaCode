@@ -27,6 +27,41 @@ foreign func CloseHandle(handle: CPointer<Unit>): Int32
 @When[os == "Windows"]
 foreign func GetLastError(): UInt32
 
+@When[os == "Windows"]
+foreign func K32EnumProcesses(pids: CPointer<UInt32>, bytes: UInt32, used: CPointer<UInt32>): Int32
+
+// LastError是本机线程局部状态，不能依赖两次仓颉FFI调用之间保留它。
+// 只有成功且未填满的完整进程列表才能证明PID不存在；截断/失败始终保守拒绝。
+@When[os == "Windows"]
+func processEnumerationProvesAbsent(pid: UInt32): Bool {
+    var capacity: Int64 = 1024
+    while (capacity <= 262144) {
+        let pids = Array<UInt32>(capacity, repeat: 0)
+        let memory = unsafe { acquireArrayRawData(pids) }
+        var used: UInt32 = 0
+        var ok: Int32 = 0
+        let bytes = UInt32(capacity * 4)
+        try {
+            ok = unsafe { K32EnumProcesses(memory.pointer, bytes, inout used) }
+        } finally {
+            unsafe { releaseArrayRawData(memory) }
+        }
+        if (ok == 0 || used > bytes || used % 4 != 0) {
+            return false
+        }
+        for (index in 0..Int64(used / 4)) {
+            if (pids[index] == pid) {
+                return false
+            }
+        }
+        if (used < bytes) {
+            return true
+        }
+        capacity *= 2
+    }
+    return false
+}
+
 // PROCESS_QUERY_LIMITED_INFORMATION：只要「能不能问它的退出码」，不需要更多权限
 @When[os == "Windows"]
 let QUERY_LIMITED: UInt32 = 4096
@@ -48,9 +83,7 @@ public func processLiveness(pid: Int64): String {
     }
     let handle = unsafe { OpenProcess(QUERY_LIMITED, 0, UInt32(pid)) }
     if (handle.isNull()) {
-        let error = unsafe { GetLastError() }
-        // 非零、范围内的 pid 不存在时返回 ERROR_INVALID_PARAMETER；访问拒绝不等于死亡。
-        return if (error == 87) {
+        return if (processEnumerationProvesAbsent(UInt32(pid))) {
             "dead"
         } else {
             "unknown"
@@ -99,7 +132,13 @@ public func ownProcessId(): Int64 {
 @When[os != "Windows"]
 public func processLiveness(pid: Int64): String {
     let result = unsafe { sacode_process_liveness(pid) }
-    return if (result == 0) { "alive" } else if (result == 1) { "dead" } else { "unknown" }
+    return if (result == 0) {
+        "alive"
+    } else if (result == 1) {
+        "dead"
+    } else {
+        "unknown"
+    }
 }
 
 @When[os != "Windows"]

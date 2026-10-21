@@ -15,6 +15,11 @@ class GoalRoundTotals {
 // 那一轮照样计入上限，否则「起一轮就崩」可以无限重入绕过轮数上限。
 let ROUND_START_EVENT = "goal/round-start"
 
+// Host / CLI / 投影共用的产品限额。不要在宿主里再写一份 8/3600/3。
+public let GOAL_MAX_ROUNDS: Int64 = 8
+public let GOAL_MAX_ELAPSED: Int64 = 3600
+public let GOAL_NO_PROGRESS_LIMIT: Int64 = 3
+
 // 持续目标调度器：把「一轮模型工具循环结束 → 是否已达目标 → 未达且允许就续下一轮」
 // 的决策收进共享核心，桌面与 CLI 共用同一份判据，前端只展示与提交控制、不决定目标是否完成。
 //
@@ -189,10 +194,26 @@ public class GoalScheduler {
         if (decision.run) {
             return
         }
-        let reason = decision.reason
-        if (reason == "budget" || reason == "round-limit" || reason == "elapsed-limit" || reason == "no-progress") {
-            svc.block(revision, "goal-${reason}")
+        if (isGoalLimitStopReason(decision.reason)) {
+            svc.block(revision, "goal-${decision.reason}")
         }
+    }
+
+    // 空闲边（resume / 新句柄 / 结算后预检）与驱动边界共用：限额类停止必须落到 blocked，
+    // 不能只跳过开轮而把目标留在 active。paused/complete 等非限额理由不动 phase。
+    public func enforceLimits(
+        svc: GoalService,
+        maxRounds: Int64,
+        maxElapsed: Int64,
+        noProgressLimit: Int64,
+        budgetExceeded: Bool
+    ): GoalDecision {
+        let snap = svc.snapshot()
+        let decision = decide(snap.phase, maxRounds, maxElapsed, noProgressLimit, budgetExceeded)
+        if (snap.phase == "active") {
+            applyStop(svc, snap.revision, decision)
+        }
+        return decision
     }
 
     // 证据完成闸：无证据不收口（返回 false，目标照旧 active）；有证据才经 CAS 收口，
@@ -208,6 +229,15 @@ public class GoalScheduler {
         svc.complete(basedOnRevision)
         return true
     }
+}
+
+public func isGoalLimitStopReason(reason: String): Bool {
+    return reason == "budget" || reason == "round-limit" || reason == "elapsed-limit" || reason == "no-progress"
+}
+
+public func enforceGoalLimits(log: SessionLog, budgetExceeded!: Bool = false): GoalDecision {
+    return GoalScheduler(log, { => Int64(0) }).enforceLimits(
+        GoalService(log), GOAL_MAX_ROUNDS, GOAL_MAX_ELAPSED, GOAL_NO_PROGRESS_LIMIT, budgetExceeded)
 }
 
 // 一轮模型工具循环的产物：本轮是否有实质进展（喂给 no-progress 判据）、
@@ -253,7 +283,8 @@ public class GoalDriver {
 
     public func run(maxRounds: Int64, maxElapsed: Int64, noProgressLimit: Int64,
         budgetExceeded: () -> Bool, runRound: () -> RoundOutcome,
-        armed!: () -> Bool = { => true }, checkpoint!: () -> Bool = { => true }): DriveResult {
+        armed!: () -> Bool = { => true }, checkpoint!: () -> Bool = { => true },
+        onHold!: () -> Unit = { => }): DriveResult {
         var rounds = Int64(0)
         var stopReason = ""
         var done = false
@@ -266,6 +297,7 @@ public class GoalDriver {
             // 时照样不开轮。恢复授权就落在这里——重启后 active 目标不会自己发请求。
             if (snap.phase == "active" && !armed()) {
                 stopReason = "disarmed"
+                onHold()
                 done = true
             } else {
                 let decision = scheduler.decide(snap.phase, maxRounds, maxElapsed, noProgressLimit, budgetExceeded())
@@ -282,7 +314,10 @@ public class GoalDriver {
                     if (!checkpoint()) { throw Exception("goal-round-checkpoint-failed") }
                     rounds += Int64(1)
                     if (outcome.cancelled) {
+                        // 用户停止：本轮已结算，收回自动续跑。结算/poll 再见到 hold
+                        // 不得自己打模型；显式 resume 才会重新 arm。
                         stopReason = "cancelled"
+                        onHold()
                         done = true
                     } else if (outcome.evidence) {
                         // 证据属于本轮开头的目标修订。轮内编辑/暂停/删除后，不能把旧证据

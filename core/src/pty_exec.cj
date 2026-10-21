@@ -95,6 +95,7 @@ func ptyWide(text: String): Array<UInt16> {
 }
 
 // 显式 Unicode 环境块；不传 NULL，不继承父进程密钥。拒绝大小写冲突键。
+// 安全预算按UTF-8输入字节累计32767（保守限制），而非宣称Win32最大码元数。
 func ptyEnvironment(env: HashMap<String, String>): Array<UInt16> {
     let names = ArrayList<String>()
     let seen = HashSet<String>()
@@ -214,6 +215,9 @@ public class PtySession {
             }
             var offset: Int64 = 0
             while (offset < input.size) {
+                if (stopped.load()) {
+                    throw Exception("pty-closed")
+                }
                 let count = driver.write(input[offset..input.size])
                 if (count <= 0 || count > input.size - offset) {
                     throw Exception("pty-input-io-error")
@@ -264,22 +268,47 @@ public class PtySession {
             }
             stopped.store(true)
             var confirmed = false
+            var closeFailure = ""
             try {
                 confirmed = driver.stopTree()
-            } finally {
-                // release负责取消在途输入，并等操作退出后才回收句柄。
+            } catch (e: Exception) {
+                closeFailure = e.message
+            }
+            // 无论stop/release哪个失败，都收束状态并等待reader，不让异常跳过清理。
+            try {
                 driver.release()
-                synchronized(operation) {
-                    ()
+            } catch (e: Exception) {
+                confirmed = false
+                if (closeFailure.size == 0) {
+                    closeFailure = e.message
                 }
-                synchronized(mutex) {
-                    closed = true
-                    ended = true
-                    treeConfirmed = confirmed
+            }
+            synchronized(operation) {
+                ()
+            }
+            synchronized(mutex) {
+                closed = true
+                ended = true
+                treeConfirmed = confirmed
+                if (closeFailure.size > 0) {
+                    failure = "pty-close-failed"
                 }
             }
             if (let Some(worker) <- reader) {
-                worker.get(2 * Duration.second)
+                try {
+                    worker.get(2 * Duration.second)
+                } catch (_: Exception) {
+                    synchronized(mutex) {
+                        treeConfirmed = false
+                        failure = "pty-close-failed"
+                    }
+                    if (closeFailure.size == 0) {
+                        closeFailure = "pty-reader-stop-unconfirmed"
+                    }
+                }
+            }
+            if (closeFailure.size > 0) {
+                throw Exception(closeFailure)
             }
             if (!confirmed) {
                 throw Exception("pty-tree-stop-unconfirmed")

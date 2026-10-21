@@ -3,6 +3,7 @@ package core
 import std.io.*
 import std.collection.ArrayList
 import std.sync.AtomicBool
+import std.time.MonoTime
 import stdx.net.http.*
 import stdx.encoding.json.*
 
@@ -24,11 +25,17 @@ func drainSummary(stream: InputStream, cap: Int64): String {
     let all = ArrayList<Byte>()
     while (Int64(all.size) < cap) {
         let n = stream.read(buf)
-        if (n <= 0) { break }
+        if (n <= 0) {
+            break
+        }
         var i: Int64 = 0
         while (i < n && Int64(all.size) < cap) {
             let b = buf[i]
-            all.add(if (b < 32 || b >= 127) { UInt8(46) } else { b })
+            all.add(if (b < 32 || b >= 127) {
+                UInt8(46)
+            } else {
+                b
+            })
             i += 1
         }
     }
@@ -39,6 +46,11 @@ func drainSummary(stream: InputStream, cap: Int64): String {
 // 读异常显式失败；取消优先于缓冲，usage 总量先于延迟交付的 finish。
 public class RealSseProvider <: Provider & Resource {
     let token: TurnToken
+    // 首包等待与包间隔分开计时：大上下文首 token 慢，但不能让后续每包都等同样久。
+    let firstByteTimeout: Duration
+    let chunkTimeout = Duration.second * 30
+    var sawFirstChunk = false
+    let timedOut = AtomicBool(false)
     var body: InputStream
     let buf = Array<UInt8>(8192, repeat: 0)
     var lineBuf = ArrayList<UInt8>()
@@ -57,47 +69,66 @@ public class RealSseProvider <: Provider & Resource {
     var usage: Option<Int64> = None
     var finish: Option<String> = None
     public var reportedUsage: LedgerUsage = LedgerUsage.absent()
-    public prop termination: String { get() { terminal } }
-    public prop errorCode: String { get() { failure } }
-    public prop doneReceived: Bool { get() { receivedDone } }
+    public prop termination: String {
+        get() {
+            terminal
+        }
+    }
+    public prop errorCode: String {
+        get() {
+            failure
+        }
+    }
+    public prop doneReceived: Bool {
+        get() {
+            receivedDone
+        }
+    }
 
-    // 生产构造器：发真实 HTTPS POST
-    // 正常读超时仍为30秒；阻塞读取期间由请求独占Client的取消监视器主动断连。
+    // 生产构造器：发真实 HTTPS POST。
+    // 首包默认等 120 秒；收到首个 chunk 后按包间隔 30 秒计时。
     // 失败仍在构造期抛（message 形态 http-status:<n> / http-request-error 不变，
     // 既有网络用例按该形态断言）；要拿结构化失败详情的调用方走 open()。
     public init(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
-        readTimeout!: Duration = Duration.second * 30) {
+        readTimeout!: Duration = Duration.second * 120) {
         let opened = RealSseProvider.open(baseUrl, apiKey, requestJsonBody, token, readTimeout: readTimeout)
         if (let Some(f) <- opened.failure) {
-            throw Exception(f.messageWithReason())
+            throw TransportFailureException(f)
         }
         let p = opened.provider.getOrThrow()
         this.token = token
         this.body = p.body
         this.clientOpt = p.clientOpt
         this.responseOpt = p.responseOpt
+        this.firstByteTimeout = readTimeout
     }
 
     // 私有装配构造器：只给 open() 用
-    private init(token: TurnToken, body: InputStream, client: Option<Client>, resp: Option<HttpResponse>) {
+    private init(token: TurnToken, body: InputStream, client: Option<Client>, resp: Option<HttpResponse>,
+        firstByteTimeout: Duration) {
         this.token = token
         this.body = body
         this.clientOpt = client
         this.responseOpt = resp
+        this.firstByteTimeout = firstByteTimeout
     }
 
     // 结构化打开：非 200 时**先读白名单头与正文摘要、再关响应**——
     // 原实现是先 close 再抛，响应头与正文都拿不到（§5.2 实测三段全缺的第一段），
     // 于是「遵守供应商恢复时间」只能由夹具喂绿。
     public static func open(baseUrl: String, apiKey: String, requestJsonBody: String, token: TurnToken,
-        readTimeout!: Duration = Duration.second * 30): SseOpenResult {
+        readTimeout!: Duration = Duration.second * 120): SseOpenResult {
         let c = ClientBuilder().tlsConfig(tlsClientConfigForUrl(baseUrl)).autoRedirect(false).build()
         var opened: Option<HttpResponse> = None
         try {
-            let req = HttpRequestBuilder().post().url("${baseUrl}/chat/completions")
+            let req = HttpRequestBuilder()
+                .post()
+                .url("${baseUrl}/chat/completions")
                 .header("Authorization", "Bearer ${apiKey}")
                 .header("Content-Type", "application/json")
-                .body(requestJsonBody).readTimeout(readTimeout).build()
+                .body(requestJsonBody)
+                .readTimeout(readTimeout)
+                .build()
             let resp = c.send(req)
             opened = Some(resp)
             if (resp.status != 200) {
@@ -118,24 +149,33 @@ public class RealSseProvider <: Provider & Resource {
                 let kept = whitelistedHeaders(pairs.toArray())
                 let raw = drainSummary(resp.body, 8192)
                 let redacted = redactBody(raw)
-                try { resp.close() } catch (_: Exception) {}
-                try { c.close() } catch (_: Exception) {}
-                return SseOpenResult(None, Some(failureOf("http-status", true, status: status,
-                    retryAfterSeconds: retryAfterFromHeaders(kept, 0), bodyLen: redacted[0],
-                    summary: "http-status:${status}")))
+                try {
+                    resp.close()
+                } catch (_: Exception) {}
+                try {
+                    c.close()
+                } catch (_: Exception) {}
+                return SseOpenResult(None,
+                    Some(
+                        failureOf("http-status", true, status: status, retryAfterSeconds: retryAfterFromHeaders(kept, 0),
+                            bodyLen: redacted[0], summary: "http-status:${status}")))
             }
-            return SseOpenResult(Some(RealSseProvider(token, resp.body, Some(c), Some(resp))), None)
+            return SseOpenResult(Some(RealSseProvider(token, resp.body, Some(c), Some(resp), readTimeout)), None)
         } catch (e: Exception) {
-            try { c.close() } catch (_: Exception) {}
+            try {
+                c.close()
+            } catch (_: Exception) {}
             if (let Some(resp) <- opened) {
-                try { resp.close() } catch (_: Exception) {}
+                try {
+                    resp.close()
+                } catch (_: Exception) {}
             }
             // 连接类失败：异常文案里有可分辨的原因（TLS 锚缺失、对端拒绝握手、
             // DNS、连接被拒），但原文可能带路径与请求片段，所以只让稳定原因外传，
             // 文本面仍是 http-request-error。unattributed 且 reachedUpstream=false：
             // 由 §5.2 末行口径不进任何一档计数——不默认算成模型故障。
-            return SseOpenResult(None, Some(failureOf("transport", false, summary: "http-request-error",
-                reason: transportReason(e.message))))
+            return SseOpenResult(None,
+                Some(failureOf("transport", false, summary: "http-request-error", reason: transportReason(e.message))))
         }
     }
 
@@ -144,6 +184,7 @@ public class RealSseProvider <: Provider & Resource {
         this.token = token
         this.body = body
         this.clientOpt = None
+        this.firstByteTimeout = Duration.second * 120
     }
 
     public func next(): Option<Chunk> {
@@ -156,8 +197,12 @@ public class RealSseProvider <: Provider & Resource {
                 closeResources()
                 return None
             }
-            if (failure.size > 0) { throw Exception(failure) }
-            if (closed) { return None }
+            if (failure.size > 0) {
+                throw Exception(failure)
+            }
+            if (closed) {
+                return None
+            }
             if (pendingIndex < pending.size) {
                 let ch = pending[pendingIndex]
                 pendingIndex += 1
@@ -165,29 +210,49 @@ public class RealSseProvider <: Provider & Resource {
             }
             pending.clear()
             pendingIndex = 0
-            if (finished) { return None }
+            if (finished) {
+                return None
+            }
             if (let Some(line) <- tryExtractLine()) {
                 processLine(line)
                 continue
             }
-            if (lineBuf.size > 262144) { fail("line-limit") }
+            if (lineBuf.size > 262144) {
+                fail("line-limit")
+            }
             let n = readChunk()
-            if (token.cancelled()) { continue }
-            if (n < 0 || n > buf.size) { fail("read-error") }
+            if (token.cancelled()) {
+                continue
+            }
+            if (timedOut.load()) {
+                fail("timeout")
+            }
+            if (n < 0 || n > buf.size) {
+                fail("read-error")
+            }
             if (n == 0) {
                 if (lineBuf.size > 0) {
                     let last = toArray(lineBuf)
                     lineBuf.clear()
-                    try { processLine(String.fromUtf8(last)) }
-                    catch (_: Exception) {
-                        if (failure.size > 0) { throw Exception(failure) }
+                    try {
+                        processLine(String.fromUtf8(last))
+                    } catch (_: Exception) {
+                        if (failure.size > 0) {
+                            throw Exception(failure)
+                        }
                         fail("protocol-error")
                     }
                 }
-                if (!finished && hasData) { dispatch() }
-                if (!finished) { complete(false) }
+                if (!finished && hasData) {
+                    dispatch()
+                }
+                if (!finished) {
+                    complete(false)
+                }
             } else {
-                for (i in 0..n) { lineBuf.add(buf[i]) }
+                for (i in 0..n) {
+                    lineBuf.add(buf[i])
+                }
             }
         }
         return None
@@ -205,42 +270,94 @@ public class RealSseProvider <: Provider & Resource {
     }
 
     func readChunk(): Int64 {
-        // 只监视本次真实HTTP读取，不捕获provider或更改解析/账本状态。
-        // Client为单请求独占；关闭连接使原读取线程返回，仍由它唯一结算。
-        // 测试注入的InputStream不假定可跨线程关闭，沿用原有同步契约。
-        if (let Some(c) <- clientOpt) {
-            let stopped = AtomicBool(false)
-            let cancelToken = token
-            let monitor = spawn {
-                while (!stopped.load()) {
-                    if (cancelToken.cancelled()) {
-                        try { c.close() } catch (_: Exception) {}
-                        break
+        // 取消与超时都必须能打断阻塞读：只靠检查 token 不够，必须从另一线程关掉传输层。
+        // 依次断 Client → HttpResponse → body；任一层能唤醒 read 即可，全部关闭由幂等 close 保底。
+        // 注入的 InputStream 没有 Client/Response，也按 Resource 关，保证测试与真实路径同一语义。
+        if (token.cancelled()) {
+            return 0
+        }
+        // 首包按 firstByteTimeout（默认 120 秒）；已收到 chunk 后按包间隔 30 秒。
+        let budgetMs = (if (sawFirstChunk) {
+            chunkTimeout
+        } else {
+            firstByteTimeout
+        }).toMilliseconds()
+        let started = MonoTime.now()
+        let stopped = AtomicBool(false)
+        let cancelToken = token
+        let clientRef = clientOpt
+        let responseRef = responseOpt
+        let bodyRef = body
+        let monitor = spawn {
+            while (!stopped.load()) {
+                if (cancelToken.cancelled()) {
+                    if (let Some(c) <- clientRef) {
+                        try {
+                            c.close()
+                        } catch (_: Exception) {}
                     }
-                    sleep(Duration.millisecond * 20)
+                    if (let Some(r) <- responseRef) {
+                        try {
+                            r.close()
+                        } catch (_: Exception) {}
+                    } else if (let Some(r) <- (bodyRef as Resource)) {
+                        try {
+                            r.close()
+                        } catch (_: Exception) {}
+                    }
+                    break
                 }
-            }
-            try {
-                return readChunkOwned()
-            } finally {
-                stopped.store(true)
-                // 不遗弃监视Future，也不提前释放仍在使用body的读取线程。
-                monitor.get()
+                if ((MonoTime.now() - started).toMilliseconds() >= budgetMs) {
+                    timedOut.store(true)
+                    if (let Some(c) <- clientRef) {
+                        try {
+                            c.close()
+                        } catch (_: Exception) {}
+                    }
+                    if (let Some(r) <- responseRef) {
+                        try {
+                            r.close()
+                        } catch (_: Exception) {}
+                    } else if (let Some(r) <- (bodyRef as Resource)) {
+                        try {
+                            r.close()
+                        } catch (_: Exception) {}
+                    }
+                    break
+                }
+                sleep(Duration.millisecond * 10)
             }
         }
-        return readChunkOwned()
+        try {
+            return readChunkOwned()
+        } finally {
+            // 不遗弃监视 Future；轮询上限 10ms，不会把取消或超时拖成读超时。
+            stopped.store(true)
+            monitor.get()
+        }
     }
 
     func readChunkOwned(): Int64 {
-        try { return body.read(buf) }
-        catch (_: HttpTimeoutException) {
-            if (token.cancelled()) { return 0 }
+        try {
+            return body.read(buf)
+        } catch (_: HttpTimeoutException) {
+            if (token.cancelled()) {
+                return 0
+            }
             fail("timeout")
         } catch (_: TimeoutException) {
-            if (token.cancelled()) { return 0 }
+            if (token.cancelled()) {
+                return 0
+            }
             fail("timeout")
         } catch (_: Exception) {
-            if (token.cancelled()) { return 0 }
+            if (token.cancelled()) {
+                return 0
+            }
+            // 超时由监视线程断连触发；必须与普通读错误区分，文案与分类都不同。
+            if (timedOut.load()) {
+                fail("timeout")
+            }
             fail("read-error")
         }
     }
@@ -250,10 +367,15 @@ public class RealSseProvider <: Provider & Resource {
         var i: Int64 = 0
         while (i < Int64(lineBuf.size)) {
             if (lineBuf[i] == 10) { // \n
-                if (i > 262144) { fail("line-limit") }
+                if (i > 262144) {
+                    fail("line-limit")
+                }
                 let lineBytes = extractAndShift(i)
-                try { return Some(String.fromUtf8(lineBytes)) }
-                catch (_: Exception) { fail("protocol-error") }
+                try {
+                    return Some(String.fromUtf8(lineBytes))
+                } catch (_: Exception) {
+                    fail("protocol-error")
+                }
             }
             i += 1
         }
@@ -281,17 +403,33 @@ public class RealSseProvider <: Provider & Resource {
     }
 
     func processLine(line: String) {
-        if (line.size > 262144) { fail("line-limit") }
+        if (line.size > 262144) {
+            fail("line-limit")
+        }
         if (line.size == 0) {
-            if (hasData) { dispatch() }
+            if (hasData) {
+                dispatch()
+            }
             return
         }
-        if (line.startsWith(":")) { return }
+        if (line.startsWith(":")) {
+            return
+        }
         if (line == "data" || line.startsWith("data:")) {
-            var value = if (line == "data") { "" } else { line[5..] }
-            if (value.startsWith(" ")) { value = value[1..] }
-            if (payload.size + value.size + 1 > 1048576) { fail("event-limit") }
-            if (hasData) { payload += "\n" }
+            var value = if (line == "data") {
+                ""
+            } else {
+                line[5..]
+            }
+            if (value.startsWith(" ")) {
+                value = value[1..]
+            }
+            if (payload.size + value.size + 1 > 1048576) {
+                fail("event-limit")
+            }
+            if (hasData) {
+                payload += "\n"
+            }
             payload += value
             hasData = true
         }
@@ -301,39 +439,68 @@ public class RealSseProvider <: Provider & Resource {
         let data = payload
         payload = ""
         hasData = false
-        if (data.trimAscii() == "[DONE]") { complete(true); return }
-        try { parsePayload(data) }
-        catch (_: Exception) {
-            if (failure.size > 0) { throw Exception(failure) }
+        if (data.trimAscii() == "[DONE]") {
+            complete(true);
+            return
+        }
+        try {
+            parsePayload(data)
+        } catch (_: Exception) {
+            if (failure.size > 0) {
+                throw Exception(failure)
+            }
             fail("protocol-error")
         }
     }
 
     func enqueue(ch: Chunk) {
-        if (pending.size >= 1024) { fail("event-limit") }
+        if (pending.size >= 1024) {
+            fail("event-limit")
+        }
+        // 首个 chunk 一到就切到包间隔计时，后续不再享受首包的长预算。
+        if (!sawFirstChunk) {
+            sawFirstChunk = true
+        }
         pending.add(ch)
     }
 
     func complete(done: Bool) {
         receivedDone = done
-        if (done && finish.isNone()) { fail("protocol-error") }
+        if (done && finish.isNone()) {
+            fail("protocol-error")
+        }
         finished = true
-        terminal = if (done) { "done" } else { "eof" }
+        terminal = if (done) {
+            "done"
+        } else {
+            "eof"
+        }
         lineBuf.clear()
-        if (let Some(n) <- usage) { enqueue(Chunk("usage", "${n}", "")) }
-        if (let Some(reason) <- finish) { enqueue(Chunk("finish", "", reason, choiceIndex: Some(0))) }
+        if (let Some(n) <- usage) {
+            enqueue(Chunk("usage", "${n}", ""))
+        }
+        if (let Some(reason) <- finish) {
+            enqueue(Chunk("finish", "", reason, choiceIndex: Some(0)))
+        }
         closeResources()
     }
 
     func isNull(v: JsonValue): Bool {
-        match (v.kind()) { case JsNull => true; case _ => false }
+        match (v.kind()) {
+            case JsNull => true;
+            case _ => false
+        }
     }
 
     func integer(obj: JsonObject, key: String): Option<Int64> {
         if (let Some(v) <- obj.get(key)) {
-            if (isNull(v)) { return None }
+            if (isNull(v)) {
+                return None
+            }
             let n = v.asInt().getValue()
-            if (n < 0) { fail("protocol-error") }
+            if (n < 0) {
+                fail("protocol-error")
+            }
             return Some(n)
         }
         return None
@@ -341,7 +508,9 @@ public class RealSseProvider <: Provider & Resource {
 
     func stringField(obj: JsonObject, key: String): Option<String> {
         if (let Some(v) <- obj.get(key)) {
-            if (isNull(v)) { return None }
+            if (isNull(v)) {
+                return None
+            }
             return Some(v.asString().getValue())
         }
         return None
@@ -351,7 +520,9 @@ public class RealSseProvider <: Provider & Resource {
     func parsePayload(data: String) {
         let obj = JsonValue.fromStr(data).asObject()
         if (let Some(err) <- obj.get("error")) {
-            if (!isNull(err)) { fail("upstream-error") }
+            if (!isNull(err)) {
+                fail("upstream-error")
+            }
         }
         var recognized = false
         if (let Some(v) <- obj.get("usage")) {
@@ -374,18 +545,25 @@ public class RealSseProvider <: Provider & Resource {
                     let p = prompt.getOrThrow()
                     let read = max(cacheRead, 0)
                     let written = max(cacheWrite, 0)
-                    if (read > p || written > p - read) { fail("protocol-error") }
+                    if (read > p || written > p - read) {
+                        fail("protocol-error")
+                    }
                     input = p - read - written
                 }
                 reportedUsage = LedgerUsage(input, output, cacheRead, cacheWrite, "vendor")
-                if (let Some(n) <- integer(u, "total_tokens")) { usage = Some(n) }
-                else {
+                if (let Some(n) <- integer(u, "total_tokens")) {
+                    usage = Some(n)
+                } else {
                     let pt = integer(u, "prompt_tokens")
                     let ct = integer(u, "completion_tokens")
-                    if (pt.isNone() || ct.isNone()) { fail("protocol-error") }
+                    if (pt.isNone() || ct.isNone()) {
+                        fail("protocol-error")
+                    }
                     let p = pt.getOrThrow()
                     let c = ct.getOrThrow()
-                    if (p > Int64.Max - c) { fail("protocol-error") }
+                    if (p > Int64.Max - c) {
+                        fail("protocol-error")
+                    }
                     usage = Some(p + c)
                 }
             }
@@ -398,21 +576,38 @@ public class RealSseProvider <: Provider & Resource {
             while (let Some(item) <- choices.get(pos)) {
                 pos += 1
                 let choice = item.asObject()
-                if ((integer(choice, "index") ?? 0) != 0) { continue }
-                if (selected) { fail("protocol-error") }
+                if ((integer(choice, "index") ?? 0) != 0) {
+                    continue
+                }
+                if (selected) {
+                    fail("protocol-error")
+                }
                 selected = true
                 parseChoice(choice)
             }
         }
-        if (!recognized) { fail("protocol-error") }
+        if (!recognized) {
+            fail("protocol-error")
+        }
     }
 
     func parseChoice(choice: JsonObject) {
         if (let Some(v) <- choice.get("delta")) {
             let delta = v.asObject()
+            // DeepSeek 思考增量独立交付，禁止拼入用户可见 content。
+            if (let Some(reasoning) <- stringField(delta, "reasoning_content")) {
+                if (reasoning.size > 0) {
+                    if (finish.isSome()) {
+                        fail("protocol-error")
+                    }
+                    enqueue(Chunk("reasoning", reasoning, "", choiceIndex: Some(0)))
+                }
+            }
             if (let Some(text) <- stringField(delta, "content")) {
                 if (text.size > 0) {
-                    if (finish.isSome()) { fail("protocol-error") }
+                    if (finish.isSome()) {
+                        fail("protocol-error")
+                    }
                     enqueue(Chunk("text", text, "", choiceIndex: Some(0)))
                 }
             }
@@ -421,10 +616,14 @@ public class RealSseProvider <: Provider & Resource {
                 var pos: Int64 = 0
                 while (let Some(item) <- tools.get(pos)) {
                     pos += 1
-                    if (finish.isSome()) { fail("protocol-error") }
+                    if (finish.isSome()) {
+                        fail("protocol-error")
+                    }
                     let tc = item.asObject()
                     let index = integer(tc, "index")
-                    if (index.isNone()) { fail("protocol-error") }
+                    if (index.isNone()) {
+                        fail("protocol-error")
+                    }
                     let id = stringField(tc, "id")
                     var name: Option<String> = None
                     var args = ""
@@ -434,34 +633,57 @@ public class RealSseProvider <: Provider & Resource {
                         args = stringField(f, "arguments") ?? ""
                     }
                     // arguments 原串；空分片也保留首帧 id/name。
-                    enqueue(Chunk("tool-call-delta", args, "", choiceIndex: Some(0),
-                        toolIndex: index, toolId: id, toolName: name))
+                    enqueue(
+                        Chunk("tool-call-delta", args, "", choiceIndex: Some(0), toolIndex: index, toolId: id,
+                            toolName: name))
                 }
             }
         }
         if (let Some(reason) <- stringField(choice, "finish_reason")) {
-            if (reason.size == 0 || finish.isSome()) { fail("protocol-error") }
-            finish = Some(if (reason == "length") { "max-tokens" } else { reason })
+            if (reason.size == 0 || finish.isSome()) {
+                fail("protocol-error")
+            }
+            finish = Some(if (reason == "length") {
+                "max-tokens"
+            } else {
+                reason
+            })
         }
     }
 
     func closeResources() {
-        if (resourceClosed) { return }
+        if (resourceClosed) {
+            return
+        }
         resourceClosed = true
         if (let Some(r) <- responseOpt) {
-            try { r.close() } catch (_: Exception) {}
+            try {
+                r.close()
+            } catch (_: Exception) {}
         } else if (let Some(r) <- (body as Resource)) {
-            try { r.close() } catch (_: Exception) {}
+            try {
+                r.close()
+            } catch (_: Exception) {}
         }
-        if (let Some(c) <- clientOpt) { try { c.close() } catch (_: Exception) {} }
+        if (let Some(c) <- clientOpt) {
+            try {
+                c.close()
+            } catch (_: Exception) {}
+        }
     }
 
-    public func isClosed(): Bool { resourceClosed }
+    public func isClosed(): Bool {
+        resourceClosed
+    }
 
     public func close() {
-        if (closed) { return }
+        if (closed) {
+            return
+        }
         closed = true
-        if (terminal == "open") { terminal = "closed" }
+        if (terminal == "open") {
+            terminal = "closed"
+        }
         pending.clear()
         lineBuf.clear()
         payload = ""

@@ -5,9 +5,11 @@ package core
 // 核心实际登记的始终一致。角色定义在最前，工具清单追加在后面。
 public class SystemPromptBuilder {
     let registry: ToolRegistry
+    let skillRegistry: ?SkillRegistry
 
-    public init(registry: ToolRegistry) {
+    public init(registry: ToolRegistry, skillRegistry!: ?SkillRegistry = None) {
         this.registry = registry
+        this.skillRegistry = skillRegistry
     }
 
     public func build(goal!: ?GoalSnapshot = None, rounds!: Int64 = 0, elapsed!: Int64 = 0): String {
@@ -23,6 +25,19 @@ public class SystemPromptBuilder {
                 // 只有 active 才催「继续推进到完成 / 完成要有证据」；暂停或受阻不该反过来催模型冲。
                 if (g.phase == "active") {
                     out += "请持续推进直到达成该目标；只有当有实际证据（测试通过、产物生成、真实副作用）表明目标达成时才可提出完成，无充分证据不得声称完成。\n"
+                }
+            }
+        }
+        if (let Some(skills) <- skillRegistry) {
+            // enabled 字段待 D2 落地后过滤；当前注入所有技能的摘要，不加载正文。
+            let summaries = skills.listSummaries()
+            if (summaries.size > 0) {
+                out += "\n## 可用技能\n"
+                for (summary in summaries) {
+                    let name = summary.name.replace("\r", " ").replace("\n", " ")
+                    let description = summary.description.replace("\r", " ").replace("\n", " ")
+                    let whenToUse = summary.whenToUse.replace("\r", " ").replace("\n", " ")
+                    out += "${name}: ${description} (${whenToUse})\n"
                 }
             }
         }

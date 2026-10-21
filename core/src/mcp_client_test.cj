@@ -1,8 +1,11 @@
 package core
 
+import std.collection.*
 import std.fs.*
 import std.io.*
 import std.process.*
+import std.env.*
+import std.time.*
 import std.unittest.*
 
 // MCP 真实客户端测试（H/W70）：不起假 provider，spawn 一个真 Node MCP 服务器
@@ -285,4 +288,199 @@ func mcpAuditMatchesRealCalls() {
     client.close()
     deleteMcpServer()
     mcpCleanup(root)
+}
+
+// ─── MCP-E：重连 supervisor + 环境净化 ────────────────────
+
+func mcpSupervisorDir(): String {
+    let root = "../target/tmp/mcp-supervisor-test"
+    if (!exists(root)) { Directory.create(root, recursive: true) }
+    return canonicalize(root).toString()
+}
+
+// 崩溃计数器脚本：首次启动（crash=1）150ms 后退出，后续启动稳定。
+// 工具描述返回 process.env.TEST_API_KEY 的值，供环境净化测试验证。
+func mcpWriteSupervisorScript(dir: String): String {
+    let path = "${dir}/mcp-supervisor-server.js"
+    let body = joinStrings([
+        "const fs=require('fs'),readline=require('readline');",
+        "let crash=0;",
+        "try{crash=parseInt(fs.readFileSync(process.env.MCP_CRASH_COUNTER,'utf8'))||0;}catch(e){}",
+        "crash++;",
+        "try{fs.writeFileSync(process.env.MCP_CRASH_COUNTER,String(crash));}catch(e){}",
+        "if(crash===1){setTimeout(()=>process.exit(1),150);}",
+        "const rl=readline.createInterface({input:process.stdin,terminal:false});",
+        "function send(o){process.stdout.write(JSON.stringify(o)+'\\n');}",
+        "rl.on('line',(raw)=>{",
+        "  let m;",
+        "  try{m=JSON.parse(raw);}catch(e){return;}",
+        "  if(m.method==='initialize'){",
+        "    send({jsonrpc:'2.0',id:m.id,result:{",
+        "      protocolVersion:'2024-11-05',capabilities:{},",
+        "      serverInfo:{name:'supervisor-test',version:'1'}}});",
+        "  } else if(m.method==='tools/list'){",
+        "    const v=process.env.TEST_API_KEY||'<absent>';",
+        "    send({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'echo',description:v}]}});",
+        "  } else if(m.method==='tools/call'){",
+        "    const v=process.env.TEST_API_KEY||'<absent>';",
+        "    send({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:v}],isError:false}});",
+        "  }",
+        "});"
+    ], "\n")
+    File.writeTo(path, body.toArray())
+    return path
+}
+
+// 重连耗尽脚本：首次启动（crash=1）150ms 后退出，后续启动立即退出。
+func mcpWriteExhaustionScript(dir: String): String {
+    let path = "${dir}/mcp-exhaust-server.js"
+    let body = joinStrings([
+        "const fs=require('fs'),readline=require('readline');",
+        "let crash=0;",
+        "try{crash=parseInt(fs.readFileSync(process.env.MCP_CRASH_COUNTER,'utf8'))||0;}catch(e){}",
+        "crash++;",
+        "try{fs.writeFileSync(process.env.MCP_CRASH_COUNTER,String(crash));}catch(e){}",
+        "if(crash===1){setTimeout(()=>process.exit(1),150);}else{process.exit(1);}",
+        "const rl=readline.createInterface({input:process.stdin,terminal:false});",
+        "function send(o){process.stdout.write(JSON.stringify(o)+'\\n');}",
+        "rl.on('line',(raw)=>{",
+        "  let m;",
+        "  try{m=JSON.parse(raw);}catch(e){return;}",
+        "  if(m.method==='initialize'){",
+        "    send({jsonrpc:'2.0',id:m.id,result:{",
+        "      protocolVersion:'2024-11-05',capabilities:{},",
+        "      serverInfo:{name:'exhaust-test',version:'1'}}});",
+        "  } else if(m.method==='tools/list'){",
+        "    send({jsonrpc:'2.0',id:m.id,result:{tools:[{name:'echo',description:'ok'}]}});",
+        "  }",
+        "});"
+    ], "\n")
+    File.writeTo(path, body.toArray())
+    return path
+}
+
+func mcpScrubEventKeys(log: SessionLog): Array<String> {
+    let keys = ArrayList<String>()
+    for (event in log.snapshotEvents()) {
+        if (event.eventType == "mcp/env-scrub") {
+            for (k in event.data.split(",").toArray()) {
+                if (k.size > 0) { keys.add(k) }
+            }
+        }
+    }
+    return keys.toArray()
+}
+
+// spawn 前环境净化：TEST_API_KEY 的值被替换为 <redacted>，子进程只看到脱敏值。
+@Test
+func mcpEnvScrubRedactsSensitiveKeys() {
+    let dir = mcpSupervisorDir()
+    let script = mcpWriteSupervisorScript(dir)
+    let counter = "${dir}/crash-env.txt"
+    File.writeTo(counter, "10".toArray())
+    setVariable("TEST_API_KEY", "secret123")
+    setVariable("MCP_CRASH_COUNTER", counter)
+    let log = SessionLog("${dir}/env-scrub.log")
+    let reg = McpRegistry(log)
+    reg.register("scrub-server", "stdio")
+    let policy = McpReconnectPolicy(initialDelayMs: 100.0, maxDelayMs: 300.0, maxAttempts: 3.0)
+    let client = McpClient(reg, log, "scrub-server", "node", [script], reconnectPolicy: policy)
+    try {
+        @Expect(client.connect(timeoutMs: 10000).ok, true)
+        let tools = client.listTools(timeoutMs: 10000)
+        @Expect(tools.ok, true)
+        @Expect(tools.tools.size > 0, true)
+        @Expect(tools.tools[0].description == "<redacted>", true)
+        let call = client.callTool("echo", "{}", timeoutMs: 10000)
+        @Expect(call.ok, true)
+        @Expect(call.content == "<redacted>", true)
+        @Expect(call.content.contains("secret123"), false)
+        let scrubbed = mcpScrubEventKeys(log)
+        @Expect(scrubbed.contains("TEST_API_KEY"), true)
+    } finally {
+        client.close()
+        removeVariable("TEST_API_KEY")
+        removeVariable("MCP_CRASH_COUNTER")
+    }
+}
+
+// 子进程异常退出 → 按 McpReconnectPolicy 自动重连，重连后 listTools 成功。
+@Test
+func mcpReconnectAfterCrash() {
+    let dir = mcpSupervisorDir()
+    let script = mcpWriteSupervisorScript(dir)
+    let counter = "${dir}/crash-reconnect.txt"
+    File.writeTo(counter, "0".toArray())
+    setVariable("MCP_CRASH_COUNTER", counter)
+    let log = SessionLog("${dir}/reconnect.log")
+    let reg = McpRegistry(log)
+    reg.register("rc-server", "stdio")
+    let policy = McpReconnectPolicy(initialDelayMs: 100.0, maxDelayMs: 500.0, maxAttempts: 5.0)
+    let client = McpClient(reg, log, "rc-server", "node", [script], reconnectPolicy: policy)
+    try {
+        @Expect(client.connect(timeoutMs: 10000).ok, true)
+        @Expect(client.listTools(timeoutMs: 10000).ok, true)
+        // 等待首次启动的子进程崩溃（150ms 后退出）
+        sleep(400 * Duration.millisecond)
+        // 崩溃后 listTools 应触发重连并成功；重连期间 isConnected() 为 false
+        let result = client.listTools(timeoutMs: 15000)
+        @Expect(result.ok, true)
+        @Expect(client.isConnected(), true)
+    } finally {
+        client.close()
+        removeVariable("MCP_CRASH_COUNTER")
+    }
+}
+
+// close() 调用 → 不重连；后续 listTools 直接返回 mcp-not-connected。
+@Test
+func mcpNoReconnectAfterClose() {
+    let dir = mcpSupervisorDir()
+    let script = mcpWriteSupervisorScript(dir)
+    let counter = "${dir}/crash-close.txt"
+    File.writeTo(counter, "10".toArray())
+    setVariable("MCP_CRASH_COUNTER", counter)
+    let log = SessionLog("${dir}/no-reconnect.log")
+    let reg = McpRegistry(log)
+    reg.register("close-server", "stdio")
+    let policy = McpReconnectPolicy(initialDelayMs: 100.0, maxDelayMs: 300.0, maxAttempts: 3.0)
+    let client = McpClient(reg, log, "close-server", "node", [script], reconnectPolicy: policy)
+    try {
+        @Expect(client.connect(timeoutMs: 10000).ok, true)
+        client.close()
+        @Expect(client.isConnected(), false)
+        let result = client.listTools(timeoutMs: 5000)
+        @Expect(result.ok, false)
+        @Expect(result.message, "mcp-not-connected")
+    } finally {
+        removeVariable("MCP_CRASH_COUNTER")
+    }
+}
+
+// 重连耗尽：每次重连的子进程都立即崩溃 → 达到 maxAttempts → mcp-reconnect-exhausted。
+@Test
+func mcpReconnectExhaustion() {
+    let dir = mcpSupervisorDir()
+    let script = mcpWriteExhaustionScript(dir)
+    let counter = "${dir}/crash-exhaust.txt"
+    File.writeTo(counter, "0".toArray())
+    setVariable("MCP_CRASH_COUNTER", counter)
+    let log = SessionLog("${dir}/exhaustion.log")
+    let reg = McpRegistry(log)
+    reg.register("ex-server", "stdio")
+    let policy = McpReconnectPolicy(initialDelayMs: 50.0, maxDelayMs: 100.0, maxAttempts: 2.0)
+    let client = McpClient(reg, log, "ex-server", "node", [script], reconnectPolicy: policy)
+    try {
+        @Expect(client.connect(timeoutMs: 10000).ok, true)
+        @Expect(client.listTools(timeoutMs: 10000).ok, true)
+        // 等待首次子进程崩溃
+        sleep(400 * Duration.millisecond)
+        // 崩溃后重连：crash=2+ 子进程立即退出，重连全部失败 → 耗尽
+        let result = client.listTools(timeoutMs: 30000)
+        @Expect(result.ok, false)
+        @Expect(result.message == "mcp-reconnect-exhausted", true)
+    } finally {
+        client.close()
+        removeVariable("MCP_CRASH_COUNTER")
+    }
 }

@@ -4,6 +4,7 @@ import std.collection.*
 import std.io.*
 import std.process.*
 import std.sync.*
+import std.env.getVariables
 import std.time.MonoTime
 import stdx.encoding.json.*
 
@@ -26,13 +27,17 @@ import stdx.encoding.json.*
 // 和「超时」都能在有限时间内被看见，而不是卡在一次阻塞的 readln 上。
 
 // MCP 工具清单条目。
+// inputSchema 是 MCP 协议 tools/list 响应中工具的 JSON Schema 原文；
+// 服务器不返回时为空串，由桥用通用 schema 兜底。
 public class McpToolInfo {
     public let name: String
     public let description: String
+    public let inputSchema: String
 
-    public init(name: String, description: String) {
+    public init(name: String, description: String, inputSchema!: String = "") {
         this.name = name
         this.description = description
+        this.inputSchema = inputSchema
     }
 }
 
@@ -47,7 +52,7 @@ public class McpOpResult {
     public var tools: ArrayList<McpToolInfo>
     public var content: String
     public var isError: Bool
-    public let failureKind: String   // "" | not-registered | bad-args | spawn-failed | transport | timeout | cancelled | protocol
+    public let failureKind: String // "" | not-registered | bad-args | spawn-failed | transport | timeout | cancelled | protocol
     public let message: String
     public let elapsedMs: Int64
 
@@ -150,6 +155,18 @@ func jsonText(obj: JsonObject, key: String): String {
     return ""
 }
 
+// 取一个键的 JSON 值原文（序列化回字符串）；用于 inputSchema 这种本身就是 JSON Schema 的值。
+// 缺失或 null 返回空串。
+func jsonRaw(obj: JsonObject, key: String): String {
+    if (let Some(v) <- obj.get(key)) {
+        if (isJsonValueNull(v)) {
+            return ""
+        }
+        return v.toString()
+    }
+    return ""
+}
+
 func jsonBool(obj: JsonObject, key: String): Bool {
     if (let Some(v) <- obj.get(key)) {
         if (isJsonValueNull(v)) {
@@ -217,6 +234,121 @@ func joinStrings(items: Array<String>, sep: String): String {
     return out
 }
 
+// ─── 环境净化：spawn 前擦除敏感值 ──────────────────────────
+// 键名匹配 KEY|PASSWORD|SECRET|TOKEN（大小写不敏感）或以 SACODE_ 开头。
+// 命中值替换为 <redacted>（保留键，避免子进程因缺失键而行为异常），
+// 并记录 mcp/env-scrub 事件（只记键名，不记值）。
+
+func mcpEnvKeyShouldScrub(key: String): Bool {
+    if (key.startsWith("SACODE_")) {
+        return true
+    }
+    let patterns = ["KEY", "PASSWORD", "SECRET", "TOKEN"]
+    for (pat in patterns) {
+        if (mcpContainsIgnoreCase(key, pat)) {
+            return true
+        }
+    }
+    return false
+}
+
+func mcpContainsIgnoreCase(haystack: String, needle: String): Bool {
+    let hs = haystack.toArray()
+    let ns = needle.toArray()
+    let hsLen = Int64(hs.size)
+    let nsLen = Int64(ns.size)
+    if (nsLen > hsLen || nsLen == 0) {
+        return false
+    }
+    var i: Int64 = 0
+    while (i <= hsLen - nsLen) {
+        var matched = true
+        var j: Int64 = 0
+        while (j < nsLen) {
+            if (mcpToUpperByte(hs[i + j]) != mcpToUpperByte(ns[j])) {
+                matched = false
+                break
+            }
+            j += 1
+        }
+        if (matched) {
+            return true
+        }
+        i += 1
+    }
+    return false
+}
+
+func mcpToUpperByte(b: Byte): Int64 {
+    let v = Int64(b)
+    // 'a'(97)..'z'(122) → 'A'(65)..'Z'(90)
+    if (v >= 97 && v <= 122) {
+        return v - 32
+    }
+    return v
+}
+
+func scrubEnvironment(log: SessionLog): HashMap<String, String> {
+    let env = HashMap<String, String>()
+    let scrubbed = ArrayList<String>()
+    for ((key, value) in getVariables()) {
+        if (mcpEnvKeyShouldScrub(key)) {
+            env[key] = "<redacted>"
+            scrubbed.add(key)
+        } else {
+            env[key] = value
+        }
+    }
+    if (scrubbed.size > 0) {
+        log.append("mcp/env-scrub", joinStrings(scrubbed.toArray(), ","))
+    }
+    return env
+}
+
+// 兼容旧注册事件；扩展配置只作用于同名服务器，构造时冻结最新配置。
+func mcpConfiguredReconnect(log: SessionLog, name: String): McpReconnectPolicy {
+    var policy = McpReconnectPolicy()
+    for (event in log.snapshotEvents()) {
+        if (event.eventType != "mcp/server") {
+            continue
+        }
+        var json = event.data
+        if (json.startsWith("register::${name}::")) {
+            policy = McpReconnectPolicy()
+            let tail = json[(12 + name.size)..json.size]
+            let separator = tail.indexOf("::")
+            if (separator.isNone()) {
+                continue
+            }
+            json = tail[(separator.getOrThrow() + 2)..tail.size]
+        } else if (!json.startsWith("{")) {
+            continue
+        }
+        try {
+            let obj = JsonValue.fromStr(json).asObject()
+            if (event.data.startsWith("{")) {
+                if (jsonText(obj, "name") != name) {
+                    continue
+                }
+            }
+            var attempts = 10.0
+            var delay = 500.0
+            if (let Some(value) <- obj.get("maxAttempts")) {
+                attempts = Float64(value.asInt().getValue())
+            }
+            if (let Some(value) <- obj.get("baseDelayMs")) {
+                delay = Float64(value.asInt().getValue())
+            }
+            policy = McpReconnectPolicy(initialDelayMs: delay, maxAttempts: attempts)
+        } catch (_: Exception) {
+            // 非法配置不沿用旧配置，也不泄露原始载荷。
+            policy = McpReconnectPolicy()
+            log.append("mcp/reconnect-config-invalid", name)
+        }
+    }
+    return policy
+}
+
 // 真实 MCP stdio 客户端。
 public class McpClient {
     let registry: McpRegistry
@@ -224,18 +356,24 @@ public class McpClient {
     let serverName: String
     let command: String
     let args: Array<String>
+    let reconnectPolicy: McpReconnectPolicy
+    let environment: Array<(String, String)>
     var proc: Option<SubProcess> = None
     var queue = McpLineQueue()
     var nextId: Int64 = 1
     var connected: Bool = false
+    // close() 调用置 true：区分预期关闭与异常崩溃，前者不触发重连。
+    var closing: Bool = false
 
-    public init(registry: McpRegistry, log: SessionLog, serverName: String,
-                command: String, args: Array<String>) {
+    public init(registry: McpRegistry, log: SessionLog, serverName: String, command: String, args: Array<String>,
+        reconnectPolicy!: ?McpReconnectPolicy = None, env!: Array<(String, String)> = []) {
         this.registry = registry
         this.log = log
         this.serverName = serverName
         this.command = command
         this.args = args
+        this.reconnectPolicy = reconnectPolicy ?? mcpConfiguredReconnect(log, serverName)
+        this.environment = env.clone()
     }
 
     public func isConnected(): Bool {
@@ -253,8 +391,7 @@ public class McpClient {
         }
         // 权限门：未登记的服务器不 spawn
         if (!registry.isRegistered(serverName)) {
-            return McpOpResult(false, "initialize", "not-registered", "mcp-server-not-registered",
-                elapsedOf(started))
+            return McpOpResult(false, "initialize", "not-registered", "mcp-server-not-registered", elapsedOf(started))
         }
         if (connected) {
             return McpOpResult(true, "initialize", "", "mcp-already-connected", elapsedOf(started))
@@ -262,14 +399,15 @@ public class McpClient {
 
         let launched = launchServer(command, args)
         if (launched.isNone()) {
-            return McpOpResult(false, "initialize", "spawn-failed", "mcp-spawn-failed",
-                elapsedOf(started))
+            return McpOpResult(false, "initialize", "spawn-failed", "mcp-spawn-failed", elapsedOf(started))
         }
         let p = launched.getOrThrow()
         proc = Some(p)
-        spawn { => readAllStream(p.stdErrPipe) }
+        // 每次连接用新队列：旧进程 stdout 已 EOF 标记 done，重连后须重置。
+        queue = McpLineQueue()
+        spawn {=> readAllStream(p.stdErrPipe)}
         let stdoutPipe = p.stdOutPipe
-        spawn { => readMcpStdout(queue, stdoutPipe) }
+        spawn {=> readMcpStdout(queue, stdoutPipe)}
 
         let initParams = "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"sacode-mcp-client\",\"version\":\"1.0.0\"}}"
         let reply = request("initialize", initParams, token, timeoutMs, started)
@@ -292,7 +430,7 @@ public class McpClient {
         if (let Some(p) <- precheck("tools/list", token, started)) {
             return p
         }
-        let reply = request("tools/list", "{}", token, timeoutMs, started)
+        let reply = requestWithReconnect("tools/list", "{}", token, timeoutMs, started)
         if (!reply.result.ok) {
             closeProcess()
             logCall("tools/list", "err")
@@ -310,7 +448,9 @@ public class McpClient {
                             continue
                         }
                         let t = item.asObject()
-                        tools.add(McpToolInfo(jsonText(t, "name"), jsonText(t, "description")))
+                        tools.add(
+                            McpToolInfo(jsonText(t, "name"), jsonText(t, "description"),
+                                inputSchema: jsonRaw(t, "inputSchema")))
                     }
                 }
             }
@@ -322,8 +462,7 @@ public class McpClient {
     }
 
     // tools/call：调用一个工具。argumentsJson 是调用方给的 JSON 对象字面量。
-    public func callTool(name: String, argumentsJson: String,
-                         token!: TurnToken = TurnToken(), timeoutMs!: Int64 = 15000): McpOpResult {
+    public func callTool(name: String, argumentsJson: String, token!: TurnToken = TurnToken(), timeoutMs!: Int64 = 15000): McpOpResult {
         let started = MonoTime.now()
         if (let Some(p) <- precheck("tools/call", token, started)) {
             return p
@@ -332,7 +471,7 @@ public class McpClient {
             return McpOpResult(false, "tools/call", "bad-args", "mcp-empty-tool", elapsedOf(started))
         }
         let params = "{\"name\":\"${name}\",\"arguments\":${argumentsJson}}"
-        let reply = request("tools/call", params, token, timeoutMs, started)
+        let reply = requestWithReconnect("tools/call", params, token, timeoutMs, started)
         if (!reply.result.ok) {
             closeProcess()
             logCall("tools/call", "err")
@@ -364,11 +503,16 @@ public class McpClient {
         let out = McpOpResult(true, "tools/call", "", "", elapsedOf(started))
         out.content = content
         out.isError = isError
-        logCall("tools/call", if (isError) { "iserr" } else { "ok" })
+        logCall("tools/call", if (isError) {
+            "iserr"
+        } else {
+            "ok"
+        })
         return out
     }
 
     public func close(): Unit {
+        closing = true
         connected = false
         closeProcess()
     }
@@ -378,36 +522,33 @@ public class McpClient {
             return Some(McpOpResult(false, op, "cancelled", "mcp-cancelled", elapsedOf(started)))
         }
         if (!connected) {
-            return Some(McpOpResult(false, op, "not-registered", "mcp-not-connected",
-                elapsedOf(started)))
+            return Some(McpOpResult(false, op, "not-registered", "mcp-not-connected", elapsedOf(started)))
         }
         return None
     }
 
     // 发一个带 id 的请求并按 deadline 等匹配 id 的回复；返回终态。
-    func request(method: String, params: String, token: TurnToken, timeoutMs: Int64,
-                 started: MonoTime): McpReply {
+    func request(method: String, params: String, token: TurnToken, timeoutMs: Int64, started: MonoTime): McpReply {
         let id = nextId
         nextId = nextId + 1
         let line = "{\"jsonrpc\":\"2.0\",\"id\":${id},\"method\":\"${method}\",\"params\":${params}}"
         if (!writeLine(line)) {
             closeProcess()
-            return McpReply(McpOpResult(false, method, "transport", "mcp-write-failed",
-                elapsedOf(started)), None)
+            return McpReply(McpOpResult(false, method, "transport", "mcp-write-failed", elapsedOf(started)), None)
         }
         let deadline = MonoTime.now() + Duration.millisecond * timeoutMs
         var pending: Option<McpReply> = None
         while (pending.isNone()) {
             if (token.cancelled()) {
                 closeProcess()
-                pending = Some(McpReply(McpOpResult(false, method, "cancelled", "mcp-cancelled",
-                    elapsedOf(started)), None))
+                pending = Some(McpReply(McpOpResult(false, method, "cancelled", "mcp-cancelled", elapsedOf(started)),
+                    None))
                 break
             }
             if ((deadline - MonoTime.now()).toMilliseconds() <= 0) {
                 closeProcess()
-                pending = Some(McpReply(McpOpResult(false, method, "timeout", "mcp-reply-timeout",
-                    elapsedOf(started)), None))
+                pending = Some(
+                    McpReply(McpOpResult(false, method, "timeout", "mcp-reply-timeout", elapsedOf(started)), None))
                 break
             }
             if (let Some(reply) <- queue.take(jsonRpcId, id)) {
@@ -418,8 +559,8 @@ public class McpClient {
             }
             if (queue.isDone() && queue.isEmpty()) {
                 closeProcess()
-                pending = Some(McpReply(McpOpResult(false, method, "transport", "mcp-server-closed",
-                    elapsedOf(started)), None))
+                pending = Some(
+                    McpReply(McpOpResult(false, method, "transport", "mcp-server-closed", elapsedOf(started)), None))
                 break
             }
             sleep(mcpPollSleepMs * Duration.millisecond)
@@ -433,7 +574,7 @@ public class McpClient {
         try {
             objOpt = Some(JsonValue.fromStr(line).asObject())
         } catch (_: Exception) {
-            return None   // 服务器日志误入 stdout 之类的噪声：跳过继续等
+            return None // 服务器日志误入 stdout 之类的噪声：跳过继续等
         }
         let obj = objOpt.getOrThrow()
         if (jsonNumber(obj, "id") != wantId) {
@@ -447,12 +588,12 @@ public class McpClient {
                 code = jsonNumber(eo, "code")
                 msg = jsonText(eo, "message")
             }
-            return Some(McpReply(McpOpResult(false, method, "protocol", "mcp-rpc-error-${code}:${msg}",
-                elapsedOf(started)), None))
+            return Some(
+                McpReply(McpOpResult(false, method, "protocol", "mcp-rpc-error-${code}:${msg}", elapsedOf(started)),
+                    None))
         }
         if (obj.get("result").isNone()) {
-            return Some(McpReply(McpOpResult(false, method, "protocol", "mcp-missing-result",
-                elapsedOf(started)), None))
+            return Some(McpReply(McpOpResult(false, method, "protocol", "mcp-missing-result", elapsedOf(started)), None))
         }
         let res = obj.get("result").getOrThrow()
         let ok = McpOpResult(true, method, "", "", elapsedOf(started))
@@ -491,8 +632,13 @@ public class McpClient {
 
     func launchServer(cmd: String, args: Array<String>): Option<SubProcess> {
         try {
-            let p = launch(cmd, args, stdIn: ProcessRedirect.Pipe,
-                stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Pipe)
+            let env = scrubEnvironment(log)
+            // 显式服务器环境是可信配置：在净化继承环境之后覆盖，不记录值。
+            for ((key, value) in environment) {
+                env[key] = value
+            }
+            let p = launch(cmd, args, stdIn: ProcessRedirect.Pipe, stdOut: ProcessRedirect.Pipe,
+                stdErr: ProcessRedirect.Pipe, environment: Some(env))
             return Some(p)
         } catch (_: Exception) {
             return None
@@ -506,9 +652,57 @@ public class McpClient {
         let p = proc.getOrThrow()
         proc = None
         connected = false
-        try { p.terminate(force: true) } catch (_: Exception) {}
-        try { p.wait() } catch (_: Exception) {}
+        try {
+            p.terminate(force: true)
+        } catch (_: Exception) {}
+        try {
+            p.wait()
+        } catch (_: Exception) {}
         queue.clear()
+    }
+
+    // ─── 重连 supervisor ──────────────────────────────────
+    // 子进程异常退出（非 close() 调用）时，按 McpReconnectPolicy 自动重连。
+    // 重连期间 isConnected() 返回 false（由 closeProcess 保证）。
+
+    func reconnect(token: TurnToken, timeoutMs: Int64): McpOpResult {
+        var attempt: Int64 = 1
+        while (attempt <= reconnectPolicy.maxAttempts) {
+            if (closing || token.cancelled()) {
+                return McpOpResult(false, "reconnect", "cancelled", "mcp-cancelled", 0)
+            }
+            let delayMs = reconnectPolicy.delayForAttempt(attempt)
+            sleep(Int64(delayMs) * Duration.millisecond)
+            if (closing || token.cancelled()) {
+                return McpOpResult(false, "reconnect", "cancelled", "mcp-cancelled", 0)
+            }
+            let result = connect(token: token, timeoutMs: timeoutMs)
+            if (result.ok) {
+                return result
+            }
+            attempt += 1
+        }
+        return McpOpResult(false, "reconnect", "transport", "mcp-reconnect-exhausted", 0)
+    }
+
+    // 请求 + 传输失败自动重连：仅 transport 类失败且非 close() 触发时重连一次。
+    func requestWithReconnect(method: String, params: String, token: TurnToken, timeoutMs: Int64, started: MonoTime): McpReply {
+        let reply = request(method, params, token, timeoutMs, started)
+        if (reply.result.ok) {
+            return reply
+        }
+        if (reply.result.failureKind != "transport" || closing || !reconnectPolicy.enabled) {
+            return reply
+        }
+        let rcResult = reconnect(token, timeoutMs)
+        if (!rcResult.ok) {
+            return McpReply(rcResult, None)
+        }
+        let retry = request(method, params, token, timeoutMs, started)
+        if (!retry.result.ok) {
+            closeProcess()
+        }
+        return retry
     }
 
     func logCall(method: String, verdict: String): Unit {

@@ -1,5 +1,6 @@
 package core
 import std.fs.*
+import std.collection.ArrayList
 import std.unittest.*
 
 // 持续目标调度器上游契约（goal 313 行 + agent-loop 的 roundsStarted/maxGoalRounds/
@@ -559,5 +560,81 @@ func schedulerResetsAdmissionOnNewGoal() {
     @Expect(s.roundsAdmitted(), Int64(0))
     s.beginRound(); fc.advance(1); s.endRound(true)
     @Expect(s.roundsAdmitted(), Int64(1))
+    removeIfExists(root, recursive: true)
+}
+
+// ── F04-A：取消一个目标轮次后，调度器是否继续处理队列 ─────────────────────
+// 期望口径（本任务）：取消某个任务只终止该任务，驱动继续处理后续任务。
+// 现状：GoalDriver 在 outcome.cancelled 时直接 stopReason="cancelled" 并收束
+//（见 goal_scheduler.cj 的「取消绝不自动续跑」分支）。因此下面三个用例预期失败；
+// 失败就是本轮的 bug 证据，按任务要求只记录、不改生产代码。
+
+class TaskSequence {
+    let ran = ArrayList<Int64>()
+    func mark(n: Int64): Unit { ran.add(n) }
+    func size(): Int64 { return Int64(ran.size) }
+    func at(i: Int64): Int64 { return if (i < 0 || i >= Int64(ran.size)) { Int64(-1) } else { ran[i] } }
+}
+
+@Test
+func goalCancelFirstTaskKeepsDrivingSecond() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let d = GoalDriver(s, svc)
+    let seq = TaskSequence()
+    let r = d.run(8, 3600, 3, { => false }, { =>
+        let n = seq.size() + 1
+        seq.mark(n)
+        if (n == 1) { return RoundOutcome(false, false, cancelled: true) }
+        return RoundOutcome(true, true)
+    })
+    @Expect(r.rounds, Int64(2))
+    @Expect(r.stopReason, "completed")
+    @Expect(seq.size(), Int64(2))
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func goalCancelMiddleTaskRunsBothSides() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let d = GoalDriver(s, svc)
+    let seq = TaskSequence()
+    let r = d.run(8, 3600, 3, { => false }, { =>
+        let n = seq.size() + 1
+        seq.mark(n)
+        if (n == 2) { return RoundOutcome(false, false, cancelled: true) }
+        return RoundOutcome(true, true)
+    })
+    @Expect(r.rounds, Int64(3))
+    @Expect(seq.size(), Int64(3))
+    @Expect(seq.at(0), Int64(1))
+    @Expect(seq.at(1), Int64(2))
+    @Expect(seq.at(2), Int64(3))
+    removeIfExists(root, recursive: true)
+}
+
+@Test
+func goalCancelledTaskIsNotExecutedTwice() {
+    let (root, log, svc) = activeGoal()
+    let fc = FakeClock()
+    let s = GoalScheduler(log, { => fc.now() })
+    let d = GoalDriver(s, svc)
+    let seq = TaskSequence()
+    let r = d.run(8, 3600, 3, { => false }, { =>
+        let n = seq.size() + 1
+        seq.mark(n)
+        if (n == 1) { return RoundOutcome(false, false, cancelled: true) }
+        return RoundOutcome(true, true)
+    })
+    // 被取消的任务只能出现一次，且后续任务仍被执行。
+    var cancelledCount = Int64(0)
+    for (i in 0..seq.size()) {
+        if (seq.at(i) == 1) { cancelledCount += 1 }
+    }
+    @Expect(cancelledCount, Int64(1))
+    @Expect(r.rounds >= 2, true)
     removeIfExists(root, recursive: true)
 }

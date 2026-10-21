@@ -128,6 +128,23 @@ public class ApprovalDesk {
         return state
     }
 
+    // 取消只收束指定调用自己的票，不把取消伪记为用户拒绝，也不改其他工单。
+    public func cancel(id: Int64): Bool {
+        mtx.lock()
+        var cancelled = false
+        try {
+            reap()
+            if (let Some(ticket) <- find(id)) {
+                if (ticket.state == "pending" || ticket.state == "allowed-once") {
+                    ticket.state = "cancelled"
+                    log.append("approval/cancelled", "${ticket.id}:${ticket.tool}")
+                    cancelled = true
+                }
+            }
+        } finally { mtx.unlock() }
+        return cancelled
+    }
+
     public func pendingCount(): Int64 {
         mtx.lock()
         var n: Int64 = 0

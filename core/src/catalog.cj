@@ -12,12 +12,15 @@ public class SessionCatalogEntry {
     public let durable: Int64
     public let status: String
     public let workspaceDirectory: String
-    public init(id: String, title: String, durable: Int64, status: String, workspaceDirectory!: String = "") {
+    public let archived: Bool
+    public let updatedAt: String
+    public init(id: String, title: String, durable: Int64, status: String, workspaceDirectory!: String = "", archived!: Bool = false, updatedAt!: String = "") {
         this.id = id
         this.title = title
         this.durable = durable
         this.status = status
         this.workspaceDirectory = workspaceDirectory
+        this.archived = archived; this.updatedAt = updatedAt
     }
 }
 
@@ -31,17 +34,19 @@ public class SessionCatalog {
             return SessionCatalogEntry(id, "", 0, "replay-rejected")
         }
         var title = ""
+        var archived = false
         for (event in log.snapshotEvents()) {
-            if (event.eventType == "session/title") { title = event.data; break }
-            if (event.eventType == "user/message" && event.data.size > 0) {
+            if (event.eventType == "session/title") { title = event.data }
+            if (event.eventType == "session/archived") { archived = event.data == "true" }
+            if (title.size == 0 && event.eventType == "user/message" && event.data.size > 0) {
                 title = event.data
-                break
             }
         }
         let status = if (log.isTruncatedTail()) { "truncated-tail" } else { "ready" }
         // 工作区归属与打开会话使用同一日志投影；不能因标题已找到而漏掉后续目录变更。
         return SessionCatalogEntry(id, title, log.durableCount(), status,
-            workspaceDirectory: SessionWorkspace(log).directory())
+            workspaceDirectory: SessionWorkspace(log).directory(), archived: archived,
+            updatedAt: FileInfo(path).lastModificationTime.toString())
     }
 
     public func indexPath(): String {
@@ -89,11 +94,7 @@ public class SessionCatalog {
     // 显式写一条反而多一条冗余事件。必须顺着同一个 log 实例追加后再 flush，
     // 另起一个未 load 的实例会让 flush 的「只允许追加」前缀核对失败、事件落不了盘。
     public func create(title: String, defaultMode: String): String {
-        for (b in title.toArray()) {
-            if (b < 32 || b == 127) { throw Exception("bad-session-title") }
-        }
-        let name = title.trimStart({r => r.isWhiteSpace()}).trimEnd({r => r.isWhiteSpace()})
-        if (name.size == 0 || name.size > 512) { throw Exception("bad-session-title") }
+        let name = validatedTitle(title)
         let base = canonicalize(root).toString()
         let sessions = "${base}/sessions"
         if (!exists(sessions)) { Directory.create(sessions) }
@@ -130,6 +131,26 @@ public class SessionCatalog {
         }
         if (!log.flush()) { throw Exception("session-create-flush-failed") }
         return id
+    }
+
+    private func validatedTitle(title: String): String {
+        for (b in title.toArray()) {
+            if (b < 32 || b == 127) { throw Exception("bad-session-title") }
+        }
+        let name = title.trimStart({r => r.isWhiteSpace()}).trimEnd({r => r.isWhiteSpace()})
+        if (name.size == 0 || name.size > 512) { throw Exception("bad-session-title") }
+        return name
+    }
+
+    // 调用方负责持有对应日志租约；修订号不匹配时不得追加或刷新。
+    public func rename(log: SessionLog, title: String, expectedRevision: Int64): Unit {
+        let name = validatedTitle(title)
+        if (log.eventCount() != expectedRevision || log.durableCount() != expectedRevision) { throw Exception("session-revision-conflict") }
+        log.append("session/title", name)
+    }
+    public func setArchived(log: SessionLog, archived: Bool, expectedRevision: Int64): Unit {
+        if (log.eventCount() != expectedRevision || log.durableCount() != expectedRevision) { throw Exception("session-revision-conflict") }
+        log.append("session/archived", if (archived) { "true" } else { "false" })
     }
 
     public func list(): ArrayList<SessionCatalogEntry> {

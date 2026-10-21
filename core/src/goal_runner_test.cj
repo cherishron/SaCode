@@ -316,3 +316,133 @@ func goalRunnerRequiresMechanicalEvidenceBesideClaim() {
     @Expect(GoalEvidence(log).count(), Int64(0))
     removeIfExists(root, recursive: true)
 }
+
+// start() 必须尊重 armed：disarmed 时一轮都不开，durable phase 仍保持 active。
+@Test
+func goalRunnerStartStopsWhenDisarmedWithoutOpeningARound() {
+    let root = "core-grunner-start-disarmed"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("重启后不该自己跑")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let handle = GoalRunner().start(
+        { => tick.bump(); toolTurnFirst("z-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32),
+        sched, svc, Int64(8), Int64(3600), Int64(3),
+        { => true }, { => false },
+        armed: { => false })
+    let r = handle.result()
+    @Expect(r.finishReason, "disarmed")
+    @Expect(tick.n, Int64(0))
+    @Expect(svc.snapshot().phase, "active")
+    removeIfExists(root, recursive: true)
+}
+
+// 取消后 onHold 收回自动续跑；未消费的 next-turn 仍待处理，不得为了消化它再开一轮。
+@Test
+func goalRunnerCancelHoldsDriveAndLeavesUnreadInboxPending() {
+    let root = "core-grunner-cancel-hold"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("停止后补充仍待处理")
+    AgentInbox(log).queue("c1", "第一轮会消费", "rpc-c1")
+    AgentInbox(log).queue("c2", "取消后应留下", "rpc-c2")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let held = RoundTick()
+    let token = TurnToken()
+    let r = GoalRunner().run(
+        { => tick.bump(); token.cancel(); toolTurnFirst("hold-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", token, log, DeliveryQueue(32), false,
+        sched, svc,
+        GOAL_MAX_ROUNDS, GOAL_MAX_ELAPSED, GOAL_NO_PROGRESS_LIMIT,
+        { => false },
+        { => false },
+        onHold: { => held.bump() })
+    @Expect(tick.n, Int64(1))
+    @Expect(held.n, Int64(1))
+    @Expect(r.rounds, Int64(1))
+    @Expect(r.stopReason, "cancelled")
+    @Expect(svc.snapshot().phase, "active")
+    @Expect(AgentInbox(log).sizeOf("next-turn"), Int64(1))
+    @Expect(AgentInbox(log).textAt("next-turn", Int64(0)), "取消后应留下")
+    @Expect(goalProjectionJson(log).contains("\"pendingTurnCount\":1"), true)
+    var drained = Int64(0)
+    for (m in log.deriveMessages()) {
+        if (m == "user/message: 取消后应留下") { drained += Int64(1) }
+    }
+    @Expect(drained, Int64(0))
+    removeIfExists(root, recursive: true)
+}
+
+// 已满额再开句柄：立即 blocked，不 claim 队列，也不为消化补充突破 8 轮。
+@Test
+func goalRunnerAtRoundLimitBlocksWithoutClaimingInbox() {
+    let root = "core-grunner-cap-inbox"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("满额不消费补充")
+    let primed = GoalScheduler(log, { => Int64(0) })
+    var i = Int64(0)
+    while (i < GOAL_MAX_ROUNDS) {
+        primed.beginRound()
+        i += 1
+    }
+    AgentInbox(log).queue("late", "满额后的补充", "rpc-late")
+    let tick = RoundTick()
+    let r = GoalRunner().run(
+        { => tick.bump(); toolTurnFirst("cap-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32), false,
+        GoalScheduler(log, { => Int64(0) }), svc,
+        GOAL_MAX_ROUNDS, GOAL_MAX_ELAPSED, GOAL_NO_PROGRESS_LIMIT,
+        { => false },
+        { => false })
+    @Expect(tick.n, Int64(0))
+    @Expect(r.rounds, Int64(0))
+    @Expect(r.stopReason, "round-limit")
+    @Expect(svc.snapshot().phase, "blocked")
+    @Expect(svc.snapshot().blockedReason, "goal-round-limit")
+    @Expect(AgentInbox(log).sizeOf("next-turn"), Int64(1))
+    @Expect(goalProjectionJson(log).contains("\"pendingTurnCount\":1"), true)
+    removeIfExists(root, recursive: true)
+}
+
+// 目标多轮路径是 Host turn/poll 的另一个结算入口：活动三字段必须同样带出，
+// 不能因为重新聚合 TurnResult 就丢掉；没有 usage 时速率保持 None。
+@Test
+func goalRunnerStartKeepsTurnPerformance() {
+    let root = "core-grunner-start-performance"
+    removeIfExists(root, recursive: true)
+    Directory.create(root, recursive: true)
+    let log = SessionLog("${root}/session.log")
+    log.append("user/message", "开工")
+    let svc = GoalService(log)
+    svc.create("多轮也要有活动读数")
+    let sched = GoalScheduler(log, { => Int64(0) })
+    let tick = RoundTick()
+    let handle = GoalRunner().start(
+        { => tick.bump(); toolTurnFirst("perf-${tick.n}") },
+        { _ => stopTurn() },
+        "test-model", TurnToken(), log, DeliveryQueue(32),
+        sched, svc, Int64(2), Int64(3600), Int64(0),
+        { => true }, { => false })
+    let r = handle.result()
+    @Expect(tick.n, Int64(2))
+    @Expect(r.elapsedMs.isSome(), true)
+    @Expect(r.ttftMs.isSome(), true)
+    @Expect(r.tokensPerSecond.isNone(), true)
+    removeIfExists(root, recursive: true)
+}

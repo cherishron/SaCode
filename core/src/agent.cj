@@ -131,6 +131,7 @@ public class ToolRuntime {
     var browserExecutor: Option<BrowserToolExecutor> = None
     // slash 命令注册表：纯内存，每次启动重新注册。供 ACP（agent-loop / composer）使用。
     public let commands: CommandRegistry
+    public let skillRegistry: SkillRegistry
 
     public init(log: SessionLog, registry: ToolRegistry, workingDirectory!: String = "", agentOwned!: Bool = false, todoAllowParallel!: Bool = false, modelProtocol!: Bool = false,
         sandboxRuntime!: SandboxRuntime = platformSandbox(workingDirectory),
@@ -150,6 +151,11 @@ public class ToolRuntime {
         this.terminalBuffer = TerminalBuffer(log)
         this.jobStore = JobStore()
         this.commands = CommandRegistry()
+        this.skillRegistry = SkillRegistry(log)
+        this.skillRegistry.registerProvider(FilesystemSkillProvider(
+            SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()))
+        // composer 手动命令专用，不扩大模型运行时的工具声明面。
+        if (!agentOwned && !modelProtocol) { registry.register(projectInitSpec()) }
         registerBuiltinExecutors()
         if (let Some(bound) <- page) {
             for (spec in pageToolSpecs()) {
@@ -184,6 +190,11 @@ public class ToolRuntime {
             executors.add(worktreeEnterToolName, { n, a => worktreeStep(bound, n, a) })
             executors.add(worktreeExitToolName, { n, a => worktreeStep(bound, n, a) })
         }
+    }
+
+    // 供模型入口显式使用；每次 build 重读技能摘要，不在构造时缓存目录。
+    public func systemPromptBuilder(): SystemPromptBuilder {
+        return SystemPromptBuilder(registry, skillRegistry: skillRegistry)
     }
 
     // worktree 派发：目录、分支、三重保护与 workspace/directory 事件都在 SessionWorktree 里，
@@ -233,6 +244,7 @@ public class ToolRuntime {
         executors.add("update_goal", { _, a => updateGoalStep(a) })
         executors.add("read", { _, a => readStep(a) })
         executors.add("write", { _, a => writeStep(a) })
+        executors.add("project_init", { _, a => projectInitStep(a) })
         executors.add("edit", { _, a => editStep(a) })
         executors.add("glob", { _, a => globStep(a) })
         executors.add("grep", { _, a => grepStep(a) })
@@ -381,7 +393,7 @@ public class ToolRuntime {
             recordResult( "unregistered:${name}")
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
-        if (registry.requiresApproval(name)) {
+        if (registry.requiresApproval(name) || name == "project_init") {
             // 桌面动作不接受自报审批：调用方说「批过了」不作数，只能凭 desk 发的精确工单走
             // executeWithApproval()。留在这条入口上等于给绕过审批面开了一道口子。
             if (name.startsWith("computer.") || name.startsWith("page.") || name.startsWith("page_")) {
@@ -393,6 +405,11 @@ public class ToolRuntime {
             // 退出会话 worktree 只认 desk 发过号的工单：调用方自报「批过了」在这条路上
             // 不作数——keep 会挪走后续所有工具的地基，remove 还要删目录，
             // 免审批档不能替人批这两件事。
+            if (name == "project_init") {
+                lastDetail.stage = "approval-denied"
+                recordResult("denied:project_init:exact-approval-required")
+                return ApprovalOutcome(false, "project-init-exact-approval-required")
+            }
             if (name == worktreeExitToolName) {
                 lastDetail.stage = "approval-denied"
                 recordResult("denied:${name}:worktree-exact-approval-required")
@@ -420,13 +437,13 @@ public class ToolRuntime {
             recordResult( "unregistered:${name}")
             return ApprovalOutcome(false, "unregistered-tool:${name}")
         }
-        if (registry.requiresApproval(name) || policyApproval) {
+        if (registry.requiresApproval(name) || policyApproval || name == "project_init") {
             // 桌面控制动的是真人的鼠标键盘，工单必须绑死这一次的arguments：旧式只批工具名的票
             // 能被他挪去放行任意一次点击，这里不吃。其余工具保持原宽松语义。
             // computer.* 与退出会话 worktree 都要「绑着原始参数」的工单：只登记工具名
             // （desk.ask 那条旧路）的票不能放行删目录与挪地基——沿用 consumeExactForCall
             // 这条既有语义，不另发明审批。
-            let exactApproval = policyApproval || name.startsWith("computer.") || name.startsWith("page.") || name.startsWith("page_") || name == worktreeExitToolName
+            let exactApproval = policyApproval || name == "project_init" || name.startsWith("computer.") || name.startsWith("page.") || name.startsWith("page_") || name == worktreeExitToolName
             let grant = if (exactApproval) {
                 desk.consumeExactForCall(approvalId, name, args)
             } else {
@@ -530,6 +547,21 @@ public class ToolRuntime {
         } catch (e: Exception) {
             lastDetail.stage = "bad-args"
             recordResult( e.message)
+            return ApprovalOutcome(false, e.message)
+        }
+    }
+
+    private func projectInitStep(args: String): ApprovalOutcome {
+        try {
+            let result = initializeProject(log, args)
+            lastDetail.argsAfterPre = args
+            lastDetail.stage = "ran"
+            lastDetail.verified = true
+            recordResult(result)
+            return ApprovalOutcome(true, result)
+        } catch (e: Exception) {
+            lastDetail.stage = "project-init-failed"
+            recordResult(e.message)
             return ApprovalOutcome(false, e.message)
         }
     }
@@ -646,6 +678,16 @@ public class ToolRuntime {
             lastDetail.stage = "bad-args"
             recordResult( "bad-args")
             return ApprovalOutcome(false, "bad-args")
+        }
+        // 工作区边界：read 不得读取会话工作区之外的绝对路径，避免模型用绝对路径
+        // 绕过工作区禁锢把外部正文带回上下文。与 LSP 的 lspPathInsideWorkspace 同口径，
+        // 但 base 为空（CLI 手工面/fs_test 未绑会话）时保持既有放行语义；生产入口总传
+        // workingDirectory，base 必非空，边界在生产态始终生效。
+        let workspaceBase = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
+        if (workspaceBase.size > 0 && !lspPathInsideWorkspace(path, workspaceBase)) {
+            lastDetail.stage = "outside-workspace"
+            recordResult( "outside-workspace:${path}")
+            return ApprovalOutcome(false, "outside-workspace:${path}")
         }
         if (!exists(Path(path))) {
             // 缺失也是观察；若之后别人创建了它，只能走禁止覆盖的创建意图。

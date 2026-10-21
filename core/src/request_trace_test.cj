@@ -66,7 +66,9 @@ func traceInitFailureRecordsOneSafeTerminalWithoutExceptionSecret() {
     var failure = ""
     try { p.next() } catch (e: Exception) { failure = e.message }
     p.close(); p.close()
-    @Expect(failure, "request-provider-failed"); @Expect(log.eventCount(), Int64(3))
+    @Expect(failure.startsWith("request-provider-failed"), true)
+    @Expect(failure != "request-provider-failed", true) // 必须携带已分类的 reason 后缀
+    @Expect(log.eventCount(), Int64(3))
     let view = requestTraceProjection(log.snapshotEvents().toArray())
     @Expect(view.contains("PRIVATE"), false); @Expect(view.contains("failed"), true)
 }

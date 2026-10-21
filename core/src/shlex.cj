@@ -145,6 +145,16 @@ func readShellBounded(pipe: InputStream, limit!: Int64 = 65536): ShellCapture {
     catch (_: Exception) { return ShellCapture("", truncated, false) }
 }
 
+// confine 抛出的异常只可能是固定枚举串；白名单放行，避免任何路径/底层细节泄漏到协议层。
+// 返回的固定串（SANDBOX_UNAVAILABLE 等）不携带密钥、工作区路径或底层实现细节，满足 metadataOnly。
+func sanitizeSandboxError(message: String): String {
+    if (message == "SANDBOX_UNAVAILABLE" || message == "SANDBOX_MODE_NOT_CONFINED" ||
+        message == "SANDBOX_UNSAFE_WORKSPACE" || message.startsWith("SANDBOX_UNAVAILABLE:")) {
+        return message
+    }
+    return "sandbox-confine-failed"
+}
+
 // 执行器校验模式名称，但当前 SandboxRuntime 不提供操作系统隔离。
 // 未知模式和显式缺后端拒绝；产品入口仍需独立授权与真实能力探针。
 public class ShellExecutor {
@@ -165,7 +175,30 @@ public class ShellExecutor {
                     onStarted!: (Int64) -> Unit = { _ => }, outputLimit!: Int64 = 65536,
                     startToken!: ?TurnToken = None, onCreated!: (Int64) -> Unit = { _ => }): Option<ShellResult> {
         if (timeoutMs < 1 || timeoutMs > 300000 || outputLimit < 1 || outputLimit > 65536 || cancelled()) { return None }
-        // 这里只验证策略名称；现有 SandboxRuntime 不提供操作系统隔离。
+        let resolvedCwd = if (cwd.size > 0) { cwd } else { workingDirectory }
+        // Windows 强制隔离为显式选择加入：原生 DLL 与 SACODE_WINDOWS_ENFORCING 齐备时，
+        // 模型 shell 经 AppContainer 启动执行，保持沙箱语义；二者不齐备则 fail-closed，不降级裸运行。
+        if (shellWindows) {
+            if (!isConfinedMode(sandboxMode)) {
+                // 未启动进程：既不观测到退出，也没有"完整输出"可言，outputComplete 必须为 false。
+                return Some(ShellResult(-1, "", "", false, "SANDBOX_MODE_NOT_CONFINED",
+                    outputComplete: false, exitObserved: false))
+            }
+            if (windowsExecutionEnforcingAvailable(resolvedCwd)) {
+                let token = if (let Some(t) <- startToken) { t } else { TurnToken() }
+                // 是否属于沙箱初始化/启动失败，只由原生启动链给出的阶段与错误证据决定：
+                // windowsEnforcingExecute 按固定契约返回 appcontainer-init-failed / command-invalid /
+                // create-failed / supervision-failed（已回收未确认时追加 |appcontainer-cleanup-unconfirmed）。
+                // 这里不再根据 exitCode/stdout/stderr 反推：已观测到子进程退出时，真实 exitCode、
+                // exitObserved 与输出必须原样保留；空输出不能证明是初始化失败。
+                return windowsEnforcingExecute(workingDirectory, command, args, resolvedCwd, timeoutMs, outputLimit, token,
+                    onCreated, onStarted)
+            }
+        }
+        // 这里只验证策略名称；现有 SandboxRuntime 不提供操作系统隔离时，confine 会抛具体原因
+        // （如 SANDBOX_UNAVAILABLE）。原先这里把异常吞成 None，导致上层只看到泛化 io-error、
+        // 真实异常类型与消息被吞掉；现在保留真实原因进 ShellResult.error（固定枚举串，无密钥/路径），
+        // 让上层 io-error:shell-<tool> 可归因，且不改变"执行未成功"这一事实。
         let fullArgs = ArrayList<String>()
         fullArgs.add(command)
         for (a in args) { fullArgs.add(a) }
@@ -173,12 +206,11 @@ public class ShellExecutor {
         try {
             confined = sandboxRuntime.confine(fullArgs.toArray(), sandboxMode)
         } catch (e: Exception) {
-            return None
+            return Some(ShellResult(-1, "", "", false, sanitizeSandboxError(e.message),
+                outputComplete: false, exitObserved: false))
         }
 
-        let resolvedCwd = if (cwd.size > 0) { cwd } else { workingDirectory }
-        var wdOpt: Option<Path> = None
-        if (resolvedCwd.size > 0) { wdOpt = Some(Path(resolvedCwd)) }
+        let wdOpt: Option<Path> = if (resolvedCwd.size > 0) { Some(Path(resolvedCwd)) } else { None }
         return runOwnedProcess(confined[0], confined[1..], wdOpt, timeoutMs, outputLimit, cancelled, onStarted,
             startToken: startToken, onCreated: onCreated)
     }
@@ -281,6 +313,13 @@ func runOwnedProcess(command: String, args: Array<String>, wdOpt: ?Path, timeout
                 cancelled: wasCancelled, stdoutTruncated: stdout.truncated,
                 stderrTruncated: stderr.truncated, outputComplete: complete, exitObserved: observed))
         } catch (e: Exception) {
-            return None
+            // 进程启动或等待失败（shell 不存在、权限拒绝、管道错误等）：
+            // 原来返回 None 吞掉异常，上游只看到 io-error:shell-* 无原因。
+            // 返回固定分类串 process-start-failed，让上游 io-error:shell-<tool>:process-start-failed 可归因。
+            // 不拼接 e.message：std.process 异常可能含本机路径/权限细节，直接送入模型/UI 会泄露环境信息。
+            // 与 sanitizeSandboxError 同一脱敏思路：只放行固定枚举串，不透传底层异常文案。
+            return Some(ShellResult(-1, "", "", false, "process-start-failed",
+                cancelled: false, stdoutTruncated: false, stderrTruncated: false,
+                outputComplete: false, exitObserved: false))
         }
     }

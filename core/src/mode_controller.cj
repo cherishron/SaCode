@@ -24,6 +24,9 @@ public class ModeController {
         if (mode != "plan" && mode != "build" && mode != "auto" && mode != "yolo") {
             throw Exception("unknown-approval-mode")
         }
+        // 计划模式期间有效权限恒为只读；此时切换权限会破坏只读覆盖，直接拒绝。
+        // 退出计划由 PlanModeController.exit() 在 deactivate 之后调用本方法恢复原档，不受此拒。
+        if (PlanModeController(log).active()) { throw Exception("plan-mode-active") }
         if (current() == mode) { return "noop" }
         log.append("mode/mode", mode)
         return "committed"

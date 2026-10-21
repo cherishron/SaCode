@@ -14,10 +14,7 @@ import stdx.encoding.json.*
 //   3. 它不进 isSurfaceEvent，所以不污染桌面转录与 deriveMessages；
 //      只在请求装配时折成一条 developer 消息（见 model_request.cj）。
 //
-// 声明侧（模型显式声明完成）不在本文件：那是上游 tool-goal 的模型工具通道，
-// 需要在 ToolRuntime.pipeline 上加分支。在它接上之前，本仓的完成闸默认关闭
-// （GoalRunner 的 claim 闭包恒假）——宁可目标跑到限额落阻塞，也不让「工具调用次数」
-// 单独充当完成证明。
+// 声明侧走 `goal/claim`（GoalClaim）与 GoalRunner 的 claim 合取；机械证据单独不收口。
 let EVIDENCE_EVENT = "goal/evidence"
 
 public class GoalEvidence {

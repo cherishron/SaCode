@@ -153,8 +153,13 @@ public class TurnResult {
     // 结算包含拒绝、失败和取消；目标进展只能使用成功执行的次数。
     public let successfulToolCalls: Int64
     public let pendingToolCalls: Int64
+    // 回合级活动读数：真实测量；无可信来源时保持 None，投影为 null，不用 0 冒充。
+    public let elapsedMs: Option<Int64>
+    public let ttftMs: Option<Int64>
+    public let tokensPerSecond: Option<Int64>
 
-    public init(cancelled: Bool, delivered: Int64, text: String, finishReason: String, usage: String, interrupted: Bool, settledToolCalls: Int64, pendingToolCalls: Int64, successfulToolCalls!: Int64 = 0) {
+    public init(cancelled: Bool, delivered: Int64, text: String, finishReason: String, usage: String, interrupted: Bool, settledToolCalls: Int64, pendingToolCalls: Int64, successfulToolCalls!: Int64 = 0,
+        elapsedMs!: Option<Int64> = None, ttftMs!: Option<Int64> = None, tokensPerSecond!: Option<Int64> = None) {
         this.cancelled = cancelled
         this.delivered = delivered
         this.text = text
@@ -164,6 +169,9 @@ public class TurnResult {
         this.settledToolCalls = settledToolCalls
         this.successfulToolCalls = successfulToolCalls
         this.pendingToolCalls = pendingToolCalls
+        this.elapsedMs = elapsedMs
+        this.ttftMs = ttftMs
+        this.tokensPerSecond = tokensPerSecond
     }
 }
 

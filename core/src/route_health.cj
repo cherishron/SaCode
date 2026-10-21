@@ -58,12 +58,27 @@ public class ScopeState {
     }
 }
 
+public class FailureRecord {
+    public let key: String
+    public let failure: TransportFailure
+    public let epoch: Int64
+    public init(key: String, failure: TransportFailure, epoch: Int64) {
+        this.key = key
+        this.failure = failure
+        this.epoch = epoch
+    }
+}
+
 public class RouteHealthView {
     public let states: Array<ScopeState>
     public let highWater: Int64
-    public init(states: Array<ScopeState>, highWater: Int64) {
+    // 失败事件按发生顺序保留；路由拒绝时据此带回「最后一个结构化失败」，
+    // 而不是只给一个 route-cooling 码让宿主猜原因。
+    public let failures: Array<FailureRecord>
+    public init(states: Array<ScopeState>, highWater: Int64, failures!: Array<FailureRecord> = []) {
         this.states = states
         this.highWater = highWater
+        this.failures = failures
     }
     // 纯函数版冷却查询：路由器只拿视图，不读盘、不写状态（断言 48 的形态要求）。
     // 与 RouteHealth.isCooling 同一条判据——水位作为「现在」的下界。
@@ -75,6 +90,23 @@ public class RouteHealthView {
             }
         }
         return false
+    }
+    // 从候选涉及的多个作用域里取最近一次失败；相同 epoch 以日志后写的为准。
+    public func latestFailure(keys: Array<String>): Option<TransportFailure> {
+        var bestEpoch = Int64(-1)
+        var best: Option<TransportFailure> = None
+        for (fr in failures) {
+            var matched = false
+            for (key in keys) {
+                if (fr.key == key) { matched = true; break }
+            }
+            if (!matched) { continue }
+            if (fr.epoch >= bestEpoch) {
+                bestEpoch = fr.epoch
+                best = Some(fr.failure)
+            }
+        }
+        return best
     }
 }
 
@@ -96,7 +128,7 @@ public class RouteHealth {
 
     public func view(): RouteHealthView {
         let replay = replayEvents()
-        return RouteHealthView(replay[0], replay[1])
+        return RouteHealthView(replay[0], replay[1], failures: replay[2])
     }
 
     public func stateOf(key: String): ScopeState {
@@ -117,12 +149,18 @@ public class RouteHealth {
         var failures = current.failures
         var cooling = current.cooling
         var level = current.level
-        // 有效失败才累加；取消/本地拒绝/工具失败/归因不明都不进任何一档计数
+        // 有效失败才累加；取消/本地拒绝/工具失败/归因不明都不进任何一档计数。
+        // 429 带 Retry-After 是供应商明确要求「现在别来」：首次即冷却；
+        // 没给 Retry-After 才沿用三次累计，避免一次抖动就熔断整个模型。
         if (category == "effective") {
             failures += 1
-            if (failures >= coolingThreshold) { cooling = true }
+            if (failures >= coolingThreshold || failure.retryAfterSeconds >= 0) { cooling = true }
         } else if (category == "credential") {
             // 401/403：不消耗三次机会，但立即暂停该凭证作用域，且不做定时盲试
+            cooling = true
+        } else if (category == "channel") {
+            // 线路故障不记入模型三次失败，但必须立即冷却该 transport/relay 作用域，
+            // 否则 route 看不到它，连接超时后仍会继续撞同一条坏线路。
             cooling = true
         }
         var notBefore = current.notBefore
@@ -131,8 +169,9 @@ public class RouteHealth {
             level += 1
             if (level > Int64(coolingLadder.size)) { level = Int64(coolingLadder.size) }
             var window = coolingLadder[level - 1]
-            // 供应商证据优先：Retry-After 或额度重置时刻
-            if (failure.retryAfterSeconds > 0) {
+            // 供应商证据优先：Retry-After 或额度重置时刻。
+            // >= 0 才能区分「没提供」(-1) 与「明确要求 0 秒后可重试」(0)。
+            if (failure.retryAfterSeconds >= 0) {
                 window = failure.retryAfterSeconds
             } else if (failure.resetEpoch > 0) {
                 window = failure.resetEpoch - now
@@ -150,6 +189,9 @@ public class RouteHealth {
             "\"cooling\":${boolText(cooling)},\"notBefore\":${notBefore},\"level\":${level}," +
             "\"clamped\":${boolText(clamped)},\"failureKind\":\"${jsonEscapeText(failure.kind)}\"," +
             "\"reachedUpstream\":${boolText(failure.reachedUpstream)}," +
+            "\"status\":${failure.status},\"retryAfterSeconds\":${failure.retryAfterSeconds}," +
+            "\"resetEpoch\":${failure.resetEpoch},\"bodyLen\":${failure.bodyLen}," +
+            "\"reason\":\"${jsonEscapeText(failure.reason)}\"," +
             "\"summary\":\"${jsonEscapeText(failure.summary)}\",\"epoch\":${now}}"
         appendEvent("route/failed", data)
     }
@@ -180,12 +222,14 @@ public class RouteHealth {
         return out.toArray()
     }
 
-    // 回放得到 [states, highWater]：水位 = 日志里见过的最大 epoch（单调不减）
-    private func replayEvents(): (Array<ScopeState>, Int64) {
+    // 回放得到 [states, highWater, failures]：水位 = 日志里见过的最大 epoch（单调不减）；
+    // failures 按日志顺序保存，供 route 在拒绝时带回最近一次结构化失败。
+    private func replayEvents(): (Array<ScopeState>, Int64, Array<FailureRecord>) {
         let states = ArrayList<ScopeState>()
+        let failures = ArrayList<FailureRecord>()
         var highWater: Int64 = -1
         if (!exists(file)) {
-            return (states.toArray(), highWater)
+            return (states.toArray(), highWater, failures.toArray())
         }
         let log = SessionLog(file)
         if (!log.load()) {
@@ -195,12 +239,14 @@ public class RouteHealth {
             let epoch = intOfText(ev.data, "epoch")
             if (epoch > highWater) { highWater = epoch }
             if (ev.eventType == "route/failed") {
+                let kind = fieldOfText(ev.data, "failureKind")
+                let summary = fieldOfText(ev.data, "summary")
+                let status = intOfText(ev.data, "status")
                 let rec = ScopeState(fieldOfText(ev.data, "key"), fieldOfText(ev.data, "kind"),
                     intOfText(ev.data, "failures"), boolOfText(ev.data, "cooling"),
                     intOfText(ev.data, "notBefore"), intOfText(ev.data, "level"),
                     boolOfText(ev.data, "clamped"), fieldOfText(ev.data, "category"),
-                    fieldOfText(ev.data, "failureKind"), boolOfText(ev.data, "reachedUpstream"),
-                    fieldOfText(ev.data, "summary"))
+                    kind, boolOfText(ev.data, "reachedUpstream"), summary)
                 var replaced = false
                 var i = Int64(0)
                 while (i < Int64(states.size)) {
@@ -208,6 +254,14 @@ public class RouteHealth {
                     i += 1
                 }
                 if (!replaced) { states.add(rec) }
+                // 旧日志没有 status/retryAfter 等字段；只要还能认出失败类型就保留记录。
+                if (kind.size > 0 || summary.size > 0 || status >= 0) {
+                    let failure = TransportFailure(kind, boolOfText(ev.data, "reachedUpstream"),
+                        status, intOfText(ev.data, "retryAfterSeconds"),
+                        intOfText(ev.data, "resetEpoch"), intOfText(ev.data, "bodyLen"),
+                        summary, reason: fieldOfText(ev.data, "reason"))
+                    failures.add(FailureRecord(rec.key, failure, epoch))
+                }
             } else if (ev.eventType == "route/recovered") {
                 let key = fieldOfText(ev.data, "key")
                 var i = Int64(0)
@@ -222,7 +276,7 @@ public class RouteHealth {
                 }
             }
         }
-        return (states.toArray(), highWater)
+        return (states.toArray(), highWater, failures.toArray())
     }
 
     private func appendEvent(eventType: String, data: String): Unit {

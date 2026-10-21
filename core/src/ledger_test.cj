@@ -643,3 +643,77 @@ func modelTotalsReportsPerModelSettledAmounts() {
     @Expect(UsageLedger(path).modelTotals().size, Int64(2))
     lgClean(tag)
 }
+
+@Test
+func q1cBudget1000Used800RejectsReservation300() {
+    let tag = "q1c-used-boundary"
+    lgClean(tag)
+    let path = lgPath(tag)
+    try {
+        let ledger = UsageLedger(path)
+        @Expect(ledger.reserve(ReserveIntent("q1c-used", 800, "CNY"), 1000).accepted, true)
+        let settled = ledger.settle(AttemptAccounting("q1c-used",
+            LedgerUsage(800, 0, 0, 0, "vendor"), RateCard(1, 1, 0, 0, "CNY", "q1c")))
+        @Expect(settled.status, "settled")
+        @Expect(settled.amountMicros, Int64(800))
+        // 重新打开账本，验证准入使用持久化已用量而非当前实例缓存。
+        let replay = UsageLedger(path)
+        let denied = replay.reserve(ReserveIntent("q1c-denied", 300, "CNY"), 1000)
+        @Expect(denied.accepted, false)
+        @Expect(denied.code, "budget-exceeded")
+        @Expect(denied.usedMicros, Int64(800))
+        @Expect(denied.reservedMicros, Int64(0))
+        @Expect(replay.state().localInFlight("CNY"), Int64(0))
+        @Expect(replay.attemptEntry("q1c-denied"), "")
+        @Expect(replay.reserve(ReserveIntent("q1c-exact", 200, "CNY"), 1000).accepted, true)
+        @Expect(replay.state().localUsed("CNY"), Int64(800))
+        @Expect(replay.state().localInFlight("CNY"), Int64(200))
+    } finally {
+        lgClean(tag)
+    }
+}
+
+@Test
+func q1cConcurrentReservations500RespectBudget800() {
+    let tag = "q1c-concurrent-boundary"
+    lgClean(tag)
+    let path = lgPath(tag)
+    try {
+        let first = UsageLedger(path)
+        let second = UsageLedger(path)
+        let gate = SyncCounter(2)
+        let a = spawn { =>
+            gate.dec()
+            gate.waitUntilZero()
+            first.reserve(ReserveIntent("q1c-task-a", 500, "CNY"), 800)
+        }
+        let b = spawn { =>
+            gate.dec()
+            gate.waitUntilZero()
+            second.reserve(ReserveIntent("q1c-task-b", 500, "CNY"), 800)
+        }
+        let ra = a.get()
+        let rb = b.get()
+        var accepted: Int64 = 0
+        var denied: Int64 = 0
+        for (decision in [ra, rb]) {
+            if (decision.accepted) { accepted += 1 }
+            if (decision.code == "budget-exceeded") {
+                denied += 1
+                @Expect(decision.inFlightMicros, Int64(500))
+                @Expect(decision.reservedMicros, Int64(0))
+            }
+        }
+        // 租约繁忙不能冒充预算拒绝，必须恰好一笔成功、一笔超预算。
+        @Expect(accepted, Int64(1))
+        @Expect(denied, Int64(1))
+        let replay = UsageLedger(path)
+        @Expect(replay.state().localUsed("CNY"), Int64(0))
+        @Expect(replay.state().localInFlight("CNY"), Int64(500))
+        let winner = if (ra.accepted) { "q1c-task-a" } else { "q1c-task-b" }
+        @Expect(replay.voidAttempt(winner, "q1c-cancelled"), "voided")
+        @Expect(replay.reserve(ReserveIntent("q1c-after-release", 500, "CNY"), 800).accepted, true)
+    } finally {
+        lgClean(tag)
+    }
+}

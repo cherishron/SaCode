@@ -148,9 +148,8 @@ public class RateCard {
     public let currency: String
     public let priceVersion: String
 
-    public init(inputMicrosPerUnit: Int64, outputMicrosPerUnit: Int64,
-        cacheReadMicrosPerUnit: Int64, cacheWriteMicrosPerUnit: Int64,
-        currency: String, priceVersion: String) {
+    public init(inputMicrosPerUnit: Int64, outputMicrosPerUnit: Int64, cacheReadMicrosPerUnit: Int64,
+        cacheWriteMicrosPerUnit: Int64, currency: String, priceVersion: String) {
         this.inputMicrosPerUnit = inputMicrosPerUnit
         this.outputMicrosPerUnit = outputMicrosPerUnit
         this.cacheReadMicrosPerUnit = cacheReadMicrosPerUnit
@@ -190,8 +189,8 @@ public class LedgerUsage {
     public let meterSource: String
     public let rawField: String
 
-    public init(input: Int64, output: Int64, cacheRead: Int64, cacheWrite: Int64,
-        meterSource: String, rawField!: String = "") {
+    public init(input: Int64, output: Int64, cacheRead: Int64, cacheWrite: Int64, meterSource: String,
+        rawField!: String = "") {
         this.input = input
         this.output = output
         this.cacheRead = cacheRead
@@ -247,14 +246,16 @@ public class AttemptAccounting {
     public let audioSeconds: Int64
     public let usage: LedgerUsage
     public let rates: RateCard
+    // 额度归属与 meterSource（计量依据）正交。
+    public let quotaSource: String
+    public let externalAgentId: String
 
-    public init(attemptId: String, usage: LedgerUsage, rates: RateCard,
-        logicalRequestId!: String = "", usageKind!: String = "chat",
-        customModelId!: String = "", providerId!: String = "", modelId!: String = "",
-        session!: String = "", goal!: String = "", turn!: String = "",
-        resultClass!: String = "", meterUnit!: String = "token",
-        startedEpoch!: Int64 = 0, endedEpoch!: Int64 = 0, durationMillis!: Int64 = 0,
-        imageCount!: Int64 = 0, audioSeconds!: Int64 = 0) {
+    public init(attemptId: String, usage: LedgerUsage, rates: RateCard, logicalRequestId!: String = "",
+        usageKind!: String = "chat", customModelId!: String = "", providerId!: String = "", modelId!: String = "",
+        session!: String = "", goal!: String = "", turn!: String = "", resultClass!: String = "",
+        meterUnit!: String = "token", startedEpoch!: Int64 = 0, endedEpoch!: Int64 = 0, durationMillis!: Int64 = 0,
+        imageCount!: Int64 = 0, audioSeconds!: Int64 = 0, quotaSource!: String = "local-token",
+        externalAgentId!: String = "") {
         this.attemptId = attemptId
         this.logicalRequestId = logicalRequestId
         this.usageKind = usageKind
@@ -273,6 +274,8 @@ public class AttemptAccounting {
         this.audioSeconds = audioSeconds
         this.usage = usage
         this.rates = rates
+        this.quotaSource = quotaSource
+        this.externalAgentId = externalAgentId
     }
 }
 
@@ -288,9 +291,8 @@ public class ReserveIntent {
     public let modelId: String
     public let epoch: Int64
 
-    public init(attemptId: String, reservedMicros: Int64, currency: String,
-        logicalRequestId!: String = "", usageKind!: String = "chat",
-        customModelId!: String = "", providerId!: String = "", modelId!: String = "",
+    public init(attemptId: String, reservedMicros: Int64, currency: String, logicalRequestId!: String = "",
+        usageKind!: String = "chat", customModelId!: String = "", providerId!: String = "", modelId!: String = "",
         epoch!: Int64 = 0) {
         this.attemptId = attemptId
         this.reservedMicros = reservedMicros
@@ -311,8 +313,7 @@ public class LedgerDecision {
     public let usedMicros: Int64
     public let inFlightMicros: Int64
 
-    public init(accepted: Bool, code: String, reservedMicros: Int64,
-        usedMicros: Int64, inFlightMicros: Int64) {
+    public init(accepted: Bool, code: String, reservedMicros: Int64, usedMicros: Int64, inFlightMicros: Int64) {
         this.accepted = accepted
         this.code = code
         this.reservedMicros = reservedMicros
@@ -332,8 +333,8 @@ public class SettleOutcome {
     public let meterSource: String
     public let idempotent: Bool
 
-    public init(status: String, code: String, amountMicros: Int64, currency: String,
-        priceVersion: String, meterSource: String, idempotent: Bool) {
+    public init(status: String, code: String, amountMicros: Int64, currency: String, priceVersion: String,
+        meterSource: String, idempotent: Bool) {
         this.status = status
         this.code = code
         this.amountMicros = amountMicros
@@ -596,29 +597,42 @@ class LedgerSnapshot {
 
     // 某模型在某币种下的已结算金额（预算判据的「已用」半）
     func usedForModel(customModelId: String, currency: String): Int64 {
-        if (customModelId.size == 0) { return 0 }
+        if (customModelId.size == 0) {
+            return 0
+        }
         for (kv in modelTotals) {
-            if (kv[0] == customModelId && kv[1] == currency) { return kv[2] }
+            if (kv[0] == customModelId && kv[1] == currency) {
+                return kv[2]
+            }
         }
         return 0
     }
 
     // 某模型在某币种下的在途预留总量（预算判据的「在途」半）
     func inFlightForModel(customModelId: String, currency: String): Int64 {
-        if (customModelId.size == 0) { return 0 }
+        if (customModelId.size == 0) {
+            return 0
+        }
         for (kv in modelInFlight) {
-            if (kv[0] == customModelId && kv[1] == currency) { return kv[2] }
+            if (kv[0] == customModelId && kv[1] == currency) {
+                return kv[2]
+            }
         }
         return 0
     }
 
     private func bumpModelInFlight(customModelId: String, currency: String, amount: Int64): Unit {
-        if (customModelId.size == 0) { return }
+        if (customModelId.size == 0) {
+            return
+        }
         var i: Int64 = 0
         while (i < Int64(modelInFlight.size)) {
             if (modelInFlight[i][0] == customModelId && modelInFlight[i][1] == currency) {
                 let old = modelInFlight[i][2]
-                if (amount > 0 && old > Int64.Max - amount) { overflowed = true; return }
+                if (amount > 0 && old > Int64.Max - amount) {
+                    overflowed = true
+                    return
+                }
                 modelInFlight[i] = (customModelId, currency, old + amount)
                 return
             }
@@ -628,12 +642,17 @@ class LedgerSnapshot {
     }
 
     private func takeFromModelInFlight(customModelId: String, currency: String, amount: Int64): Unit {
-        if (customModelId.size == 0) { return }
+        if (customModelId.size == 0) {
+            return
+        }
         var i: Int64 = 0
         while (i < Int64(modelInFlight.size)) {
             if (modelInFlight[i][0] == customModelId && modelInFlight[i][1] == currency) {
                 let old = modelInFlight[i][2]
-                if (amount > old) { overflowed = true; return }
+                if (amount > old) {
+                    overflowed = true
+                    return
+                }
                 if (old - amount == 0) {
                     modelInFlight.remove(i..(i + 1))
                 } else {
@@ -751,8 +770,8 @@ class LedgerSnapshot {
         }
         var i: Int64 = 0
         while (i < Int64(providerTotals.size)) {
-            if (providerTotals[i][0] == providerId && providerTotals[i][1] == customModelId &&
-                providerTotals[i][2] == currency) {
+            if (providerTotals[i][0] == providerId && providerTotals[i][1] == customModelId && providerTotals[i][2] ==
+                currency) {
                 providerTotals[i] = (providerId, customModelId, currency, providerTotals[i][3] + amount)
                 return
             }
@@ -768,8 +787,7 @@ class LedgerSnapshot {
         bumpKeyed(modelTotals, customModelId, currency, amount)
     }
 
-    private func bumpKeyed(list: ArrayList<(String, String, Int64)>, key: String,
-        currency: String, amount: Int64): Unit {
+    private func bumpKeyed(list: ArrayList<(String, String, Int64)>, key: String, currency: String, amount: Int64): Unit {
         var i: Int64 = 0
         while (i < Int64(list.size)) {
             if (list[i][0] == key && list[i][1] == currency) {
@@ -788,21 +806,26 @@ func ledgerReplay(events: ArrayList<SessionEvent>): Option<LedgerSnapshot> {
     for (ev in events) {
         let kind = ev.eventType
         if (kind == "ledger/reserved") {
-            snap.addReservation(ledgerFieldText(ev.data, "attemptId"),
-                ledgerFieldText(ev.data, "currency"), ledgerFieldInt(ev.data, "reservedMicros"),
-                ledgerFieldText(ev.data, "customModelId"))
+            snap.addReservation(ledgerFieldText(ev.data, "attemptId"), ledgerFieldText(ev.data, "currency"),
+                ledgerFieldInt(ev.data, "reservedMicros"), ledgerFieldText(ev.data, "customModelId"))
         } else if (kind == "ledger/settled") {
             let id = ledgerFieldText(ev.data, "attemptId")
             snap.removeReservation(id)
+            if (ledgerQuotaSource(ev.data) != "local-token" || ledgerFieldText(ev.data, "externalAgentId").size > 0) {
+                return None
+            }
             let amount = ledgerFieldInt(ev.data, "amountMicros")
             let currency = ledgerFieldText(ev.data, "currency")
             snap.addUsed(currency, amount)
             snap.addUsageKind(ledgerFieldText(ev.data, "usageKind"), currency, amount)
-            snap.addProvider(ledgerFieldText(ev.data, "providerId"),
-                ledgerFieldText(ev.data, "customModelId"), currency, amount)
+            snap.addProvider(ledgerFieldText(ev.data, "providerId"), ledgerFieldText(ev.data, "customModelId"), currency,
+                amount)
             snap.addModel(ledgerFieldText(ev.data, "customModelId"), currency, amount)
             snap.setFinal(id, "settled", ev.data)
         } else if (kind == "ledger/unsettled") {
+            if (!quotaSourceValid(ledgerQuotaSource(ev.data), ledgerFieldText(ev.data, "externalAgentId"))) {
+                return None
+            }
             let id = ledgerFieldText(ev.data, "attemptId")
             snap.removeReservation(id)
             snap.markUnsettled(id)
@@ -837,15 +860,14 @@ func ledgerOutcomeOf(data: String, idempotent: Bool): SettleOutcome {
     if (code.size == 0) {
         code = status
     }
-    return SettleOutcome(status, code, ledgerFieldInt(data, "amountMicros"),
-        ledgerFieldText(data, "currency"), ledgerFieldText(data, "priceVersion"),
-        ledgerFieldText(data, "meterSource"), idempotent)
+    return SettleOutcome(status, code, ledgerFieldInt(data, "amountMicros"), ledgerFieldText(data, "currency"),
+        ledgerFieldText(data, "priceVersion"), ledgerFieldText(data, "meterSource"), idempotent)
 }
 
 // 被拒的结算：不产生账目，也不改任何金额
 func ledgerRefusalOutcome(data: String, idempotent: Bool): SettleOutcome {
-    return SettleOutcome("rejected", ledgerFieldText(data, "code"), -1,
-        ledgerFieldText(data, "currency"), ledgerFieldText(data, "priceVersion"), "unknown", idempotent)
+    return SettleOutcome("rejected", ledgerFieldText(data, "code"), -1, ledgerFieldText(data, "currency"),
+        ledgerFieldText(data, "priceVersion"), "unknown", idempotent)
 }
 
 func ledgerReservedData(intent: ReserveIntent): String {
@@ -853,8 +875,7 @@ func ledgerReservedData(intent: ReserveIntent): String {
         "\"logicalRequestId\":\"${jsonEscapeText(intent.logicalRequestId)}\"," +
         "\"usageKind\":\"${jsonEscapeText(intent.usageKind)}\"," +
         "\"customModelId\":\"${jsonEscapeText(intent.customModelId)}\"," +
-        "\"providerId\":\"${jsonEscapeText(intent.providerId)}\"," +
-        "\"modelId\":\"${jsonEscapeText(intent.modelId)}\"," +
+        "\"providerId\":\"${jsonEscapeText(intent.providerId)}\"," + "\"modelId\":\"${jsonEscapeText(intent.modelId)}\"," +
         "\"reservedMicros\":${intent.reservedMicros}," +
         "\"currency\":\"${jsonEscapeText(intent.currency)}\",\"epoch\":${intent.epoch}}"
 }
@@ -885,14 +906,12 @@ func ledgerEntryData(a: AttemptAccounting, result: String, reason: String, amoun
 func ledgerAccountingData(a: AttemptAccounting, result: String, reason: String, amount: Int64): String {
     return "{\"attemptId\":\"${jsonEscapeText(a.attemptId)}\"," +
         "\"logicalRequestId\":\"${jsonEscapeText(a.logicalRequestId)}\"," +
-        "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\"," +
+        "\"usageKind\":\"${jsonEscapeText(a.usageKind)}\"," + "\"quotaSource\":\"${jsonEscapeText(a.quotaSource)}\"," +
+        "\"externalAgentId\":\"${jsonEscapeText(a.externalAgentId)}\"," +
         "\"customModelId\":\"${jsonEscapeText(a.customModelId)}\"," +
-        "\"providerId\":\"${jsonEscapeText(a.providerId)}\"," +
-        "\"modelId\":\"${jsonEscapeText(a.modelId)}\"," +
-        "\"session\":\"${jsonEscapeText(a.session)}\"," +
-        "\"goal\":\"${jsonEscapeText(a.goal)}\"," +
-        "\"turn\":\"${jsonEscapeText(a.turn)}\"," +
-        "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\"," +
+        "\"providerId\":\"${jsonEscapeText(a.providerId)}\"," + "\"modelId\":\"${jsonEscapeText(a.modelId)}\"," +
+        "\"session\":\"${jsonEscapeText(a.session)}\"," + "\"goal\":\"${jsonEscapeText(a.goal)}\"," +
+        "\"turn\":\"${jsonEscapeText(a.turn)}\"," + "\"resultClass\":\"${jsonEscapeText(a.resultClass)}\"," +
         "\"meterUnit\":\"${jsonEscapeText(a.meterUnit)}\"," +
         "\"result\":\"${jsonEscapeText(result)}\",\"reason\":\"${jsonEscapeText(reason)}\"," +
         "\"input\":${a.usage.input},\"output\":${a.usage.output}," +
@@ -906,8 +925,7 @@ func ledgerAccountingData(a: AttemptAccounting, result: String, reason: String, 
         "\"rateOutputMicrosPerUnit\":${a.rates.outputMicrosPerUnit}," +
         "\"rateCacheReadMicrosPerUnit\":${a.rates.cacheReadMicrosPerUnit}," +
         "\"rateCacheWriteMicrosPerUnit\":${a.rates.cacheWriteMicrosPerUnit}," +
-        "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch}," +
-        "\"durationMillis\":${a.durationMillis}}"
+        "\"startedEpoch\":${a.startedEpoch},\"endedEpoch\":${a.endedEpoch}," + "\"durationMillis\":${a.durationMillis}}"
 }
 
 // ===== 账本 =====
@@ -974,10 +992,14 @@ public class UsageLedger {
                 // 未填 customModelId 的旧调用方退回账户口径，行为与改动前一致。
                 let modelUsed = if (intent.customModelId.size > 0) {
                     snap.usedForModel(intent.customModelId, intent.currency)
-                } else { used }
+                } else {
+                    used
+                }
                 let modelInFlight = if (intent.customModelId.size > 0) {
                     snap.inFlightForModel(intent.customModelId, intent.currency)
-                } else { inFlight }
+                } else {
+                    inFlight
+                }
                 // 同一 attempt 重复预留：不叠加，交回同一条预留
                 if (let Some(existing) <- snap.liveReservation(intent.attemptId)) {
                     return LedgerDecision(true, "already-reserved", existing[2], modelUsed, modelInFlight)
@@ -1051,7 +1073,16 @@ public class UsageLedger {
                 }
                 // 1b) 幂等：已有首次结算结论（已结算或待核算）就原样交回，不重复扣费
                 if (let Some(entry) <- snap.finalEntry(accounting.attemptId)) {
+                    if (ledgerQuotaSource(entry) != accounting.quotaSource ||
+                        ledgerFieldText(entry, "externalAgentId") != accounting.externalAgentId) {
+                        return SettleOutcome("rejected", "quota-source-mismatch", -1, accounting.rates.currency,
+                            accounting.rates.priceVersion, "unknown", false)
+                    }
                     return ledgerOutcomeOf(entry, true)
+                }
+                if (!quotaSourceValid(accounting.quotaSource, accounting.externalAgentId)) {
+                    return SettleOutcome("rejected", "bad-quota-source", -1, accounting.rates.currency,
+                        accounting.rates.priceVersion, "unknown", false)
                 }
                 // 2) 已作废的尝试不许再产生费用；3) 币种必须与在途预留一致（跨币种不许静默合并）
                 var reason = ""
@@ -1060,14 +1091,21 @@ public class UsageLedger {
                     refused = true
                     reason = "attempt-voided"
                 } else if (let Some(live) <- snap.liveReservation(accounting.attemptId)) {
-                    if (live[1] != accounting.rates.currency) {
+                    if (accounting.quotaSource != "local-token") {
+                        refused = true
+                        reason = "quota-source-mismatch"
+                    } else if (live[1] != accounting.rates.currency) {
                         refused = true
                         reason = "currency-mismatch"
                     }
                 }
                 // 4) 维度计价与快照完整性
                 if (!refused) {
-                    if (accounting.usage.input < 0 || accounting.usage.output < 0 || ledgerSourceOf(accounting.usage) == "unknown") {
+                    if (accounting.quotaSource == "external-agent") {
+                        // 外部协议用量不套用用户模型费率，也不占用本地预算。
+                        reason = "external-account"
+                    } else if (accounting.usage.input < 0 || accounting.usage.output < 0 ||
+                        ledgerSourceOf(accounting.usage) == "unknown") {
                         reason = "usage-unspecified"
                     } else if (accounting.rates.currency.size == 0) {
                         reason = "currency-unspecified"
@@ -1092,20 +1130,27 @@ public class UsageLedger {
                     }
                 }
                 // 唯一的落盘点：整段临界区里只有这一次写入
-                log.append(ledgerEventTypeOf(result),
-                    ledgerEntryData(accounting, result, reason, amount))
+                log.append(ledgerEventTypeOf(result), ledgerEntryData(accounting, result, reason, amount))
                 if (!log.flush()) {
-                    return SettleOutcome("rejected", "ledger-write-failed", -1,
-                        accounting.rates.currency, accounting.rates.priceVersion, "unknown", false)
+                    return SettleOutcome("rejected", "ledger-write-failed", -1, accounting.rates.currency,
+                        accounting.rates.priceVersion, "unknown", false)
                 }
                 if (result == "refused") {
                     return SettleOutcome("rejected", reason, -1, accounting.rates.currency,
                         accounting.rates.priceVersion, "unknown", false)
                 }
-                let status = if (result == "settled") { "settled" } else { "unsettled" }
-                let code = if (reason.size == 0) { "settled" } else { reason }
-                return SettleOutcome(status, code, amount, accounting.rates.currency,
-                    accounting.rates.priceVersion, ledgerSourceOf(accounting.usage), false)
+                let status = if (result == "settled") {
+                    "settled"
+                } else {
+                    "unsettled"
+                }
+                let code = if (reason.size == 0) {
+                    "settled"
+                } else {
+                    reason
+                }
+                return SettleOutcome(status, code, amount, accounting.rates.currency, accounting.rates.priceVersion,
+                    ledgerSourceOf(accounting.usage), false)
             } finally {
                 lease.release()
             }
@@ -1142,8 +1187,9 @@ public class UsageLedger {
                 if (snap.liveReservation(attemptId).isNone()) {
                     return "no-reservation"
                 }
-                log.append("ledger/voided", "{\"attemptId\":\"${jsonEscapeText(attemptId)}\"," +
-                    "\"reason\":\"${jsonEscapeText(reason)}\",\"epoch\":${epoch}}")
+                log.append("ledger/voided",
+                    "{\"attemptId\":\"${jsonEscapeText(attemptId)}\"," +
+                        "\"reason\":\"${jsonEscapeText(reason)}\",\"epoch\":${epoch}}")
                 if (!log.flush()) {
                     return "ledger-write-failed"
                 }
@@ -1220,6 +1266,14 @@ public class UsageLedger {
         return loadSnapshot().dispatchedUnsettled().toArray()
     }
 
+    public func sourceTotals(): Array<QuotaUsageTotal> {
+        let totals = ArrayList<QuotaUsageTotal>()
+        for (entry in loadSnapshot().finalEntries) {
+            quotaUsageAdd(totals, entry[1])
+        }
+        return totals.toArray()
+    }
+
     // 按 usageKind 分组的已结算金额
     public func usageKindTotals(): Array<UsageTotal> {
         let snap = loadSnapshot()
@@ -1292,7 +1346,9 @@ public class UsageLedger {
             if (providers.size > 0) {
                 providers += ","
             }
-            providers += "{\"providerId\":\"${jsonEscapeText(kv[0])}\"," + "\"customModelId\":\"${jsonEscapeText(kv[1])}\"," + "\"currency\":\"${jsonEscapeText(kv[2])}\",\"usedMicros\":${kv[3]}}"
+            providers += "{\"providerId\":\"${jsonEscapeText(kv[0])}\"," +
+                "\"customModelId\":\"${jsonEscapeText(kv[1])}\"," +
+                "\"currency\":\"${jsonEscapeText(kv[2])}\",\"usedMicros\":${kv[3]}}"
         }
         var unsettled = ""
         for (id in snap.unsettledList) {
@@ -1308,9 +1364,14 @@ public class UsageLedger {
             }
             pending += "\"${jsonEscapeText(r[0])}\""
         }
+        let sources = ArrayList<QuotaUsageTotal>()
+        for (entry in snap.finalEntries) {
+            quotaUsageAdd(sources, entry[1])
+        }
+        let sourcesJson = quotaUsageJson(sources.toArray()).toString()
         return "{\"scopeKey\":\"${jsonEscapeText(scopeKey())}\"," +
             "\"localUsedLabel\":\"本地累计\",\"totals\":[${totals}]," +
-            "\"usageKinds\":[${kinds}],\"providers\":[${providers}]," +
+            "\"usageKinds\":[${kinds}],\"providers\":[${providers}],\"sources\":${sourcesJson}," +
             "\"unsettled\":[${unsettled}],\"pending\":[${pending}]}"
     }
 

@@ -9,8 +9,8 @@ import std.convert.*
 // 口径：
 //   - progressed：本轮干净地执行了工具调用（有真实副作用、未被打断/取消）才算推进，喂 no-progress 判据；
 //   - 完成证据是**两个条件的合取**：机械侧（本轮确有成功结算的副作用，落成绑定开轮修订的
-//     `goal/evidence`）∧ 声明侧（模型显式声明达成，走 claim 闭包注入）。任一单独都不收口；
-//     claim 缺席时恒假，完成闸默认关闭——宁可跑到限额落阻塞，也不让工具调用次数充当完成证明；
+//     `goal/evidence`）∧ 声明侧（模型显式声明达成，走 `goal/claim` 或 claim 闭包）。
+//     任一单独都不收口。start() 从日志读 GoalClaim，不再把声明侧写死为假；
 //   - 暂停 / 删除 / 编辑由调用方经 GoalService 落进会话日志，驱动在「轮次边界」重读，
 //     故不强杀当前轮——当前 turn 会跑完，下一轮才据新状态决定是否启动；
 //   - 取消则不同：取消的那一轮结算完时长就不再开新轮（cancelled 是停止理由，不是限额）；
@@ -23,6 +23,10 @@ class GoalTurnTotals {
     var settled: Int64 = 0
     var succeeded: Int64 = 0
     var interrupted = false
+    // 目标会话在 Host 侧仍是一个 turn：已测轮次按真实墙钟累加，
+    // TTFT 取第一轮有输出的读数；全缺时保持 None，不用 0 冒充。
+    var elapsedMs: Option<Int64> = None
+    var ttftMs: Option<Int64> = None
 }
 
 public class GoalRunner {
@@ -32,15 +36,22 @@ public class GoalRunner {
         scheduler: GoalScheduler, svc: GoalService, maxRounds: Int64, maxElapsed: Int64,
         noProgressLimit: Int64, checkpoint: () -> Bool, budgetExceeded: () -> Bool,
         maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
-        toolRuntime!: ?ModelToolRuntime = None, settleRound!: (TurnResult) -> String = { _ => "absent" }): TurnHandle {
+        toolRuntime!: ?ModelToolRuntime = None, settleRound!: (TurnResult) -> String = { _ => "absent" },
+        armed!: () -> Bool = { => true }, onHold!: () -> Unit = { => }): TurnHandle {
         let future = spawn { =>
             let totals = GoalTurnTotals()
             var reason = ""
             try {
+                let claimLog = log
+                let claimSched = scheduler
+                let arm = armed
+                let hold = onHold
                 let result = run(makeFirst, nextProvider, model, token, log, sink, false,
-                    scheduler, svc, maxRounds, maxElapsed, noProgressLimit, budgetExceeded, { => false },
+                    scheduler, svc, maxRounds, maxElapsed, noProgressLimit, budgetExceeded,
+                    { => GoalClaim(claimLog).claimedFor(claimSched.openRoundRevision(), claimSched.openRoundNumber()) },
                     maxSteps: maxSteps, attach: attach, supportsImages: supportsImages, toolRuntime: toolRuntime,
-                    armed: { => !token.cancelled() }, maxGoalRounds: maxRounds, checkpoint: checkpoint,
+                    armed: { => arm() && !token.cancelled() }, onHold: { => hold() },
+                    maxGoalRounds: maxRounds, checkpoint: checkpoint,
                     settleRound: { round =>
                         totals.delivered += round.delivered
                         totals.text += round.text
@@ -48,12 +59,23 @@ public class GoalRunner {
                         totals.succeeded += round.successfulToolCalls
                         totals.interrupted = totals.interrupted || round.interrupted
                         if (round.usage.size > 0) { totals.usage += Int64.parse(round.usage) }
+                        if (let Some(ms) <- round.elapsedMs) {
+                            var prior = Int64(0)
+                            if (let Some(acc) <- totals.elapsedMs) { prior = acc }
+                            totals.elapsedMs = Some(prior + ms)
+                        }
+                        if (totals.ttftMs.isNone()) { totals.ttftMs = round.ttftMs }
                         settleRound(round)
                     })
                 reason = result.stopReason
             } catch (e: Exception) { reason = "error:${e.message}"; totals.interrupted = true }
+            // 输出速率与单轮同口径：只认累计 usage 与累计真实墙钟，缺数据时保持 null。
+            let speed: Option<Int64> = if (let Some(ms) <- totals.elapsedMs) {
+                if (ms > 0 && totals.usage > 0) { Some(totals.usage * 1000 / ms) } else { None }
+            } else { None }
             TurnResult(token.cancelled(), totals.delivered, totals.text, reason, "${totals.usage}",
-                totals.interrupted, totals.settled, 0, successfulToolCalls: totals.succeeded)
+                totals.interrupted, totals.settled, 0, successfulToolCalls: totals.succeeded,
+                elapsedMs: totals.elapsedMs, ttftMs: totals.ttftMs, tokensPerSecond: speed)
         }
         return TurnHandle(token, future)
     }
@@ -65,6 +87,7 @@ public class GoalRunner {
         budgetExceeded: () -> Bool, claim: () -> Bool,
         maxSteps!: Int64 = 16, attach!: ?AttachmentStore = None, supportsImages!: Bool = false,
         toolRuntime!: ?ModelToolRuntime = None, armed!: () -> Bool = { => true },
+        onHold!: () -> Unit = { => },
         maxGoalRounds!: Int64 = 0, checkpoint!: () -> Bool = { => true },
         settleRound!: (TurnResult) -> String = { _ => "absent" }): DriveResult {
         let driver = GoalDriver(scheduler, svc)
@@ -99,7 +122,7 @@ public class GoalRunner {
             settleRound(result)
             RoundOutcome(progressed, evidence.satisfiedFor(revision, round) &&
                 (GoalClaim(log).claimedFor(revision, round) || claim()), cancelled: result.cancelled)
-        }, armed: armed, checkpoint: checkpoint)
+        }, armed: armed, checkpoint: checkpoint, onHold: onHold)
     }
 }
 

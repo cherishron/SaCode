@@ -80,3 +80,43 @@ func goalReplacedMidRoundDoesNotInheritOldRoundSettlement() {
     @Expect(scheduler.roundsDone(), Int64(0))
     @Expect(scheduler.elapsedSeconds(), Int64(0))
 }
+
+@Test
+func goalResumeAtRoundLimitStaysBlockedAndDisarmed() {
+    let path = "core-goal-resume-cap.log"
+    removeIfExists(path, recursive: false)
+    let log = SessionLog(path)
+    let activation = GoalActivation()
+    _ = controlGoalJson(log, "goal/create", Int64(0), "满额不可绕过", activation: activation)
+    let s = GoalScheduler(log, { => Int64(0) })
+    var i = Int64(0)
+    while (i < GOAL_MAX_ROUNDS) {
+        s.beginRound()
+        i += 1
+    }
+    let resumed = controlGoalJson(log, "goal/resume", GoalService(log).snapshot().revision, "", activation: activation)
+    @Expect(resumed.contains("\"phase\":\"blocked\""), true)
+    @Expect(resumed.contains("\"blockedReason\":\"goal-round-limit\""), true)
+    @Expect(resumed.contains("\"activation\":\"disarmed\""), true)
+    @Expect(activation.isArmed(), false)
+    @Expect(GoalScheduler(log, { => Int64(0) }).roundsAdmitted(), GOAL_MAX_ROUNDS)
+    removeIfExists(path, recursive: false)
+}
+
+@Test
+func goalProjectionReportsPendingTurnCountWithoutClaiming() {
+    let path = "core-goal-pending-turn.log"
+    removeIfExists(path, recursive: false)
+    let log = SessionLog(path)
+    GoalService(log).create("补充仍待处理")
+    AgentInbox(log).queue("p1", "还没轮到的补充", "rpc-p1")
+    let json = goalProjectionJson(log)
+    @Expect(json.contains("\"pendingTurnCount\":1"), true)
+    @Expect(AgentInbox(log).sizeOf("next-turn"), Int64(1))
+    var seen = Int64(0)
+    for (m in log.deriveMessages()) {
+        if (m == "user/message: 还没轮到的补充") { seen += Int64(1) }
+    }
+    @Expect(seen, Int64(0))
+    removeIfExists(path, recursive: false)
+}

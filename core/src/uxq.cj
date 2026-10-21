@@ -46,6 +46,10 @@ public class UserQuestionStore {
                     items[i].status = "answered"
                     items[i].answer = parts.v1Name
                 }
+            } else if (t == "user-questions/cancel") {
+                let parts = splitOnce(event.data, "::")
+                let i = indexOf(parts.v0Name)
+                if (i >= 0) { items[i].status = "cancelled" }
             }
         }
     }
@@ -69,7 +73,7 @@ public class UserQuestionStore {
         if (i < 0) {
             throw Exception("uxq-unknown")
         }
-        if (items[i].status == "answered") {
+        if (items[i].status != "pending") {
             throw Exception("uxq-already-answered")
         }
         log.append("user-questions/answer", "${id}::${text}")
@@ -91,6 +95,14 @@ public class UserQuestionStore {
             throw Exception("uxq-unknown")
         }
         return items[i].answer
+    }
+
+    public func cancel(id: String, reason: String): Unit {
+        let i = indexOf(id)
+        if (i < 0) { throw Exception("uxq-unknown") }
+        if (items[i].status != "pending") { return }
+        log.append("user-questions/cancel", "${id}::${reason}")
+        items[i].status = "cancelled"
     }
 
     private func indexOf(id: String): Int64 {

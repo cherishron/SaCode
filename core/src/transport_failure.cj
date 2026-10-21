@@ -56,6 +56,19 @@ public class TransportFailure {
     }
 }
 
+// Provider 接口只允许抛 Exception；结构化失败要靠这个包装过接口边界，
+// 不能让 ModelAgentLoop 再从 message 文本反推 status/Retry-After。
+public class TransportFailureException <: Exception {
+    public let failure: TransportFailure
+    public init(failure: TransportFailure) {
+        super(failure.messageWithReason())
+        this.failure = failure
+    }
+    public override func getClassName(): String {
+        return "TransportFailureException"
+    }
+}
+
 public func failureOf(kind: String, reachedUpstream: Bool, status!: Int64 = -1,
     retryAfterSeconds!: Int64 = -1, resetEpoch!: Int64 = -1, bodyLen!: Int64 = -1,
     summary!: String = "", reason!: String = ""): TransportFailure {

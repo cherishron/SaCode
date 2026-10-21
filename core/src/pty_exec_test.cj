@@ -1,6 +1,7 @@
 package core
 
 import std.collection.{ArrayList, HashMap}
+import std.sync.{AtomicBool, Mutex}
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -16,6 +17,8 @@ class PtySyntheticPipe <: PtyPipeDriver {
     var releases: Int64 = 0
     var confirm = true
     var throwStop = false
+    var throwRelease = false
+    var writesBeforeFailure: Int64 = -1
     var failRead = false
     var failWrite = false
     var failResize = false
@@ -33,7 +36,8 @@ class PtySyntheticPipe <: PtyPipeDriver {
         return size
     }
     public func write(data: Array<Byte>): Int64 {
-        if (failWrite) { throw Exception("synthetic-write-failure") }
+        if (failWrite || writesBeforeFailure == 0) { throw Exception("synthetic-write-failure") }
+        if (writesBeforeFailure > 0) { writesBeforeFailure -= 1 }
         if (zeroWrite) { return 0 }
         let size = min(Int64(2), data.size)
         for (i in 0..size) { received.add(data[i]) }
@@ -49,8 +53,37 @@ class PtySyntheticPipe <: PtyPipeDriver {
         if (confirm) { children = 0 }
         return confirm
     }
-    public func release(): Unit { releases += 1; done = true }
+    public func release(): Unit {
+        releases += 1; done = true
+        if (throwRelease) { throw Exception("synthetic-release-failed") }
+    }
     public func exitCode(): ?Int64 { return if (done) { Some(Int64(0)) } else { None } }
+}
+
+// 用原子屏障控制在途write；stopTree负责解阻，release仅在write离开后生效。
+class PtyBlockingFixture <: PtyPipeDriver {
+    let entered = AtomicBool(false)
+    let stopped = AtomicBool(false)
+    let mutex = Mutex()
+    var stops: Int64 = 0
+    var releases: Int64 = 0
+    public func read(_: Array<Byte>): Int64 { return 0 }
+    public func write(_: Array<Byte>): Int64 {
+        entered.store(true)
+        while (true) {
+            if (stopped.load()) { break }
+            sleep(Duration.millisecond)
+        }
+        throw Exception("fixture-cancelled")
+    }
+    public func resize(_: Int64, _: Int64): Unit { () }
+    public func stopTree(): Bool {
+        synchronized(mutex) { stops += 1 }
+        stopped.store(true)
+        return true
+    }
+    public func release(): Unit { synchronized(mutex) { releases += 1 } }
+    public func exitCode(): ?Int64 { return None }
 }
 
 func ptyTestError(action: () -> Unit): String {
@@ -246,6 +279,89 @@ func ptyBackgroundReaderSurfacesFailureAndJoinsOnClose() {
     @Expect(session.readOutput(8).failure, "pty-output-io-error")
     session.close()
     @Expect(pipe.releases, 1)
+}
+
+@Test
+func ptyConcurrentCloseCancelsInFlightWriteAndIsIdempotent() {
+    let pipe = PtyBlockingFixture()
+    let session = PtySession(pipe, 8)
+    session.startReader()
+    let writer = spawn { => ptyTestError({ => session.write("blocked"); () }) }
+    let barrier = spawn { =>
+        while (true) {
+            if (pipe.entered.load()) { break }
+            sleep(Duration.millisecond)
+        }
+    }
+    try {
+        barrier.get(2 * Duration.second)
+        let a = spawn { => session.close() }
+        let b = spawn { => session.close() }
+        a.get(2 * Duration.second)
+        b.get(2 * Duration.second)
+        @Expect(writer.get(2 * Duration.second), "fixture-cancelled")
+        @Expect(pipe.stops, 1)
+        @Expect(pipe.releases, 1)
+        @Expect(session.readOutput(8).eof, true)
+    } finally { session.close() }
+}
+
+@Test
+func ptyReleaseExceptionClosesStateAndJoinsReader() {
+    let pipe = PtySyntheticPipe([])
+    pipe.throwRelease = true
+    let session = PtySession(pipe, 8)
+    session.startReader()
+    session.reader.getOrThrow().get(2 * Duration.second)
+    @Expect(ptyTestError({ => session.close() }), "synthetic-release-failed")
+    @Expect(pipe.releases, 1)
+    @Expect(session.closed, true)
+    @Expect(session.readOutput(8).failure, "pty-close-failed")
+    @Expect(ptyTestError({ => session.close() }), "pty-tree-stop-unconfirmed")
+}
+
+@Test
+func ptyPartialPrefixFailureIsNotAutomaticallyReplayed() {
+    let pipe = PtySyntheticPipe([])
+    pipe.writesBeforeFailure = 1
+    let session = PtySession(pipe, 8)
+    try {
+        @Expect(ptyTestError({ => session.write("abcdef"); () }), "synthetic-write-failure")
+        @Expect(String.fromUtf8(pipe.received.toArray()), "ab")
+        pipe.writesBeforeFailure = -1
+        session.write("ok")
+        @Expect(String.fromUtf8(pipe.received.toArray()), "abok")
+    } finally { session.close() }
+}
+
+@Test
+func ptyEnvironmentBudgetAndAsciiKeyPolicy() {
+    let boundary = HashMap<String, String>()
+    boundary.add("A", String.fromUtf8(Array<Byte>(32763, repeat: 120)))
+    @Expect(ptyEnvironment(boundary).size, 32767)
+    boundary.add("A", String.fromUtf8(Array<Byte>(32764, repeat: 120)))
+    @Expect(ptyTestError({ => ptyEnvironment(boundary); () }), "pty-environment-too-large")
+    let unicodeKey = HashMap<String, String>()
+    unicodeKey.add("Ä", "value")
+    @Expect(ptyTestError({ => ptyEnvironment(unicodeKey); () }), "pty-invalid-environment-key")
+    let sorted = HashMap<String, String>()
+    sorted.add("_", "1"); sorted.add("a", "2")
+    @Expect(ptyEnvironment(sorted), ptyWide("a=2").concat(ptyWide("_=1")).concat([UInt16(0)]))
+}
+
+@Test
+func ptyByteChunksMaySplitUtf8WithoutInventingText() {
+    let pipe = PtySyntheticPipe("é".toArray())
+    let session = PtySession(pipe, 2)
+    try {
+        session.pumpOnce()
+        @Expect(session.readOutput(1).data, [UInt8(195)])
+        @Expect(session.readOutput(1).data, [UInt8(169)])
+        let one = PtyByteRing(1)
+        one.append("é".toArray(), 2)
+        @Expect(one.take(1), [UInt8(169)])
+        @Expect(one.lost, true)
+    } finally { session.close() }
 }
 
 @When[os == "Windows"]

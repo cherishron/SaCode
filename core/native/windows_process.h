@@ -18,6 +18,9 @@ typedef struct sacode_windows_process sacode_windows_process;
  * environment must be an explicit double-NUL UTF-16 block; NULL is rejected.
  * On a create error, a non-NULL result is cleanup-only when termination could
  * not be confirmed. Stop/wait/close it; never attempt to resume it.
+ * Returns ERROR_NOT_SUPPORTED when the created token lacks the ALL APPLICATION
+ * PACKAGES group (LPAC-like token): that is a sandbox initialization failure,
+ * not a command exit code. Callers must surface it as such.
  * Never call close until all readers have joined. Errors are captured in C. */
 SACODE_PROCESS_API uint32_t sacode_windows_process_version(void);
 SACODE_PROCESS_API uint32_t sacode_windows_process_create(

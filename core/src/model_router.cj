@@ -17,9 +17,13 @@ import std.collection.*
 public class RouteRequest {
     public let customModelId: String
     public let needs: Array<String>
-    public init(customModelId: String, needs: Array<String>) {
+    // 宿主把上一步实际选中的 providerId 带回来。路由只在首选绑定仍不可用
+    // （典型是冷却窗口内）时粘住它；首选恢复后不永久锁死降级线路。
+    public let stickyProviderId: String
+    public init(customModelId: String, needs: Array<String>, stickyProviderId!: String = "") {
         this.customModelId = customModelId
         this.needs = needs
+        this.stickyProviderId = stickyProviderId
     }
 }
 
@@ -106,9 +110,12 @@ public class RouteDecision {
 public class RouteRejection {
     public let code: String
     public let detail: String
-    public init(code: String, detail: String) {
+    // 双候选都冷却时，拒绝不能只剩一个码；把最近一次结构化失败一并带回宿主。
+    public let failure: Option<TransportFailure>
+    public init(code: String, detail: String, failure!: Option<TransportFailure> = None) {
         this.code = code
         this.detail = detail
+        this.failure = failure
     }
 }
 
@@ -166,12 +173,16 @@ public func route(request: RouteRequest, customs: CustomModelView, providers: Pr
     }
 
     let candidates = ArrayList<RouteCandidate>()
+    let cooledKeys = ArrayList<String>()
     var firstReject = ""
+    var preferredKey = ""
     var index = Int64(0)
     while (index < Int64(model.bindings.size)) {
         let b = model.bindings[index]
         index += 1
         if (!b.enabled) { continue }
+        // 首选按绑定顺序取第一条启用项；sticky 只在它不可用时生效。
+        if (preferredKey.size == 0) { preferredKey = "${b.providerId}/${b.modelId}" }
         var provider: Option<ProviderRecord> = None
         for (p in providers.providers) {
             if (p.id == b.providerId) { provider = Some(p) }
@@ -209,18 +220,45 @@ public func route(request: RouteRequest, customs: CustomModelView, providers: Pr
             if (firstReject.size == 0) { firstReject = "credential-unconfigured" }
             continue
         }
-        // 两档都要看：模型自身故障（upstream）与凭证/额度档（route-set）
-        if (health.isCooling("${p.id}/${s.id}", now) || health.isCooling(p.credentialRef, now)) {
+        // 三档都要看：模型自身（upstream）、凭证/额度（route-set）与线路（channel）。
+        // channel 键就是 transport；连接超时后同一线路的所有候选都应被排除。
+        let modelCooling = health.isCooling("${p.id}/${s.id}", now)
+        let credentialCooling = health.isCooling(p.credentialRef, now)
+        let channelCooling = health.isCooling(p.transport, now)
+        if (modelCooling || credentialCooling || channelCooling) {
             if (firstReject.size == 0) { firstReject = "route-cooling" }
+            if (modelCooling) { cooledKeys.add("${p.id}/${s.id}") }
+            if (credentialCooling) { cooledKeys.add(p.credentialRef) }
+            if (channelCooling) { cooledKeys.add(p.transport) }
             continue
         }
         candidates.add(RouteCandidate(index - 1, p, s, b.weight, b.order))
     }
     if (candidates.size == 0) {
+        var lastFailure: Option<TransportFailure> = None
+        if (cooledKeys.size > 0) { lastFailure = health.latestFailure(cooledKeys.toArray()) }
         if (firstReject.size > 0) {
-            return reject(firstReject, model.id)
+            return reject(firstReject, model.id, failure: lastFailure)
         }
-        return reject("no-enabled-binding", model.id)
+        return reject("no-enabled-binding", model.id, failure: lastFailure)
+    }
+
+    // 首选仍在候选里就按正常轮询/加权走；首选被冷却排除时，把上一步的降级
+    // Provider 粘住，避免同一冷却窗口内每一步又换到第三候选。
+    if (request.stickyProviderId.size > 0) {
+        var stickyIndex = Int64(-1)
+        var preferredAvailable = false
+        var i = Int64(0)
+        while (i < Int64(candidates.size)) {
+            if (candidates[i].provider.id == request.stickyProviderId) { stickyIndex = i }
+            if (candidates[i].key() == preferredKey) { preferredAvailable = true }
+            i += 1
+        }
+        if (stickyIndex >= 0 && !preferredAvailable) {
+            let sticky = candidates[stickyIndex]
+            return RouteOutcome(Some(RouteDecision(sticky.provider.id, sticky.spec.id,
+                sticky.provider.protocol, sticky.bindingIndex)), None)
+        }
     }
 
     var pick = Int64(0)
@@ -280,8 +318,8 @@ func hasValue(list: Array<String>, value: String): Bool {
     return false
 }
 
-func reject(code: String, detail: String): RouteOutcome {
-    return RouteOutcome(None, Some(RouteRejection(code, detail)))
+func reject(code: String, detail: String, failure!: Option<TransportFailure> = None): RouteOutcome {
+    return RouteOutcome(None, Some(RouteRejection(code, detail, failure: failure)))
 }
 
 // ---------------------------------------------------------------------------

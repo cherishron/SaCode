@@ -114,6 +114,16 @@ public class RequestTraceProvider <: Provider & Resource {
             finish(if (token.cancelled()) { "cancelled" } else { "interrupted" }, "eof")
             close()
             return None
+        } catch (e: TransportFailureException) {
+            // 结构化失败原样越过观察器，供 ModelAgentLoop 触发候选切换；
+            // request/end 仍只记稳定类目，不落原始异常文案。
+            let classified = classifyProviderError(e.message)
+            let reason = if (classified[0] == "provider-error") { "provider-error" }
+                else if (classified[1] > 0) { "provider-error:${classified[0]}:${classified[1]}" }
+                else { "provider-error:${classified[0]}" }
+            finish(if (token.cancelled()) { "cancelled" } else { "failed" }, reason)
+            close()
+            throw e
         } catch (e: Exception) {
             // 红脱敏：只把「HTTP 状态码 + 粗类目」记入 request/end，绝不写原始异常文案。
             // 原始异常可能含连接配置/请求片段，已在上游各层脱敏，这里再次收窄到稳定类目。
@@ -123,7 +133,9 @@ public class RequestTraceProvider <: Provider & Resource {
                 else { "provider-error:${classified[0]}" }
             finish(if (token.cancelled()) { "cancelled" } else { "failed" }, reason)
             close()
-            throw Exception("request-provider-failed")
+            // 把已脱敏的 reason 拼进异常 message，上游能看到 request-provider-failed:provider-error:server:500
+            // 而非笼统的 request-provider-failed。reason 只含稳定类目 + HTTP 状态码，不含原始异常文案。
+            throw Exception("request-provider-failed:${reason}")
         }
     }
 

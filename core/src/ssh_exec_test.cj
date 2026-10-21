@@ -1,208 +1,264 @@
 package core
 
+import std.collection.ArrayList
+import std.env.*
 import std.fs.*
+import std.io.InputStream
+import std.process.*
+import std.sync.AtomicBool
+import std.time.MonoTime
 import std.unittest.*
+import stdx.encoding.base64.*
 
-// SSH 真实驱动测试（H/W70）：不起假 provider，用真 `ssh` 二进制真连真机器。
-//
-// 环境事实（2026-10-06 实测）：本机装有 OpenSSH_for_Windows_9.5p2，且 127.0.0.1:22
-// 有 sshd 在听。所以这里能测到三种真结果——连不上的端口、连得上但认证被拒、
-// 以及完全没连出去就被权限门拦下的情形。
-
-func sshExecRoot(tag: String): String {
-    return "core-sshexec-${tag}"
-}
-
+// 安全前置与本地合成子进程测试，不依赖个人账户、真实网络或本机 sshd。
 func sshExecSetup(tag: String): (String, SessionLog, SshRegistry) {
-    let root = sshExecRoot(tag)
-    removeIfExists(root, recursive: true)
-    Directory.create(root, recursive: true)
-    let log = SessionLog("${root}/session.log")
+    if (!exists("target/tmp")) { Directory.create("target/tmp", recursive: true) }
+    let root = canonicalize(Directory.createTemp(Path("target/tmp"))).toString()
+    let log = SessionLog("${root}/session-${tag}.log")
     return (root, log, SshRegistry(log))
 }
 
-func sshExecAuditCount(log: SessionLog, host: String): Int64 {
-    var n: Int64 = 0
+func sshTestKey(value: Byte): String {
+    let blob = ArrayList<Byte>()
+    let prefix: Array<Byte> = [0, 0, 0, 11, 115, 115, 104, 45, 101, 100, 50, 53, 53, 49, 57, 0, 0, 0, 32]
+    for (b in prefix) { blob.add(b) }
+    for (_ in 0..32) { blob.add(value) }
+    return "ssh-ed25519 " + toBase64String(blob.toArray())
+}
+
+func sshExecAuditCount(log: SessionLog): Int64 {
+    var count: Int64 = 0
     for (event in log.snapshotEvents()) {
-        if (event.eventType == "ssh/exec" && event.data.startsWith("${host}::")) {
-            n = n + 1
-        }
+        if (event.eventType == "ssh/exec") { count += 1 }
     }
-    return n
+    return count
 }
 
-func joinWith(items: Array<String>, sep: String): String {
-    var out = ""
-    var first = true
-    for (s in items) {
-        if (!first) {
-            out += sep
-        }
-        out += s
-        first = false
+func sshTestChild(windows: String, posix: String): SubProcess {
+    let onWindows = (getVariable("OS") ?? "") == "Windows_NT"
+    return launch(if (onWindows) { "powershell.exe" } else { "/bin/sh" },
+        if (onWindows) { ["-NoProfile", "-NonInteractive", "-Command", windows] } else { ["-c", posix] },
+        stdIn: ProcessRedirect.Discard, stdOut: ProcessRedirect.Pipe, stdErr: ProcessRedirect.Pipe)
+}
+
+class SshTestStream <: InputStream {
+    let bytes: Array<Byte>
+    let broken: Bool
+    var offset: Int64 = 0
+    init(bytes: Array<Byte>, broken!: Bool = false) { this.bytes = bytes; this.broken = broken }
+    public func read(out: Array<Byte>): Int64 {
+        if (broken) { throw Exception("fixture-read-failed") }
+        let count = min(out.size, bytes.size - offset)
+        for (i in 0..count) { out[i] = bytes[offset + i] }
+        offset += count
+        return count
     }
-    return out
 }
 
-// argv 形状：安全旗标齐、user@host、命令在末位。抽成纯函数以便逐字符核对。
 @Test
-func sshArgvShape() {
-    let args = sshArgv("prod.example", "deploy", "ls -la", [], Int64(-1), Int64(10))
-    let joined = joinWith(args, " ")
-    @Expect(joined.contains("BatchMode=yes"), true)
-    @Expect(joined.contains("ConnectTimeout=10"), true)
-    @Expect(joined.contains("StrictHostKeyChecking=no"), true)
-    @Expect(joined.contains("deploy@prod.example"), true)
-    @Expect(args[args.size - 1], "ls -la")
-
-    let withPort = sshArgv("prod.example", "", "uptime", ["-v"], Int64(2222), Int64(5))
-    let j2 = joinWith(withPort, " ")
-    @Expect(j2.contains(" -p 2222 "), true)
-    @Expect(j2.contains("prod.example uptime"), true)
-    @Expect(withPort[withPort.size - 1], "uptime")
+func sshArgvUsesOnlyStrictManagedTrust() {
+    let args = sshArgv("prod.example", "deploy", "echo hi", [], 2222, 5,
+        knownHostsFile: "C:/private trust/known_hosts")
+    @Expect(args[0], "-F")
+    @Expect(args[1], "none")
+    for (flag in ["StrictHostKeyChecking=yes", "GlobalKnownHostsFile=none", "KnownHostsCommand=none",
+        "UpdateHostKeys=no", "VerifyHostKeyDNS=no", "ProxyCommand=none", "ProxyJump=none",
+        "ControlPath=none", "ForwardAgent=no", "ClearAllForwardings=yes",
+        "UserKnownHostsFile=\"C:/private trust/known_hosts\""]) {
+        var found = false
+        for (arg in args) { if (arg == flag) { found = true } }
+        @Expect(found, true)
+    }
+    @Expect(args[args.size - 2], "deploy@prod.example")
+    @Expect(args[args.size - 1], "echo hi")
 }
 
-// 权限门：未登记的 host 一个字节都不发，也不落审计事件。
 @Test
-func sshExecRejectsUnregisteredHost() {
-    let (root, log, reg) = sshExecSetup("unreg")
-    let exec = SshExecutor(reg, log)
-    let r = exec.run("never-seen.example", "echo hi")
-    @Expect(r.ok, false)
-    @Expect(r.failureKind, "not-registered")
-    @Expect(r.message, "ssh-unknown-host")
-    @Expect(r.stdout, "")
-    @Expect(r.stderr, "")
-    @Expect(sshExecAuditCount(log, "never-seen.example"), Int64(0))
-    removeIfExists(root, recursive: true)
+func sshArgvRejectsOptionsAndTargetInjection() {
+    for ((host, user, options) in [("prod.example", "", ["-oProxyCommand=evil"]),
+        ("-oProxyCommand=evil", "", []), ("prod.example\nother", "", []),
+        ("prod.example", "evil@other", [])]) {
+        var rejected = false
+        try { sshArgv(host, user, "echo hi", options, 22, 5, knownHostsFile: "/private/known_hosts") }
+        catch (_: Exception) { rejected = true }
+        @Expect(rejected, true)
+    }
 }
 
-// 权限门：曾登记但已断开 → 同样不放行。
 @Test
-func sshExecRejectsDisconnectedHost() {
-    let (root, log, reg) = sshExecSetup("dropped")
-    reg.connect("prod.example")
-    reg.disconnect("prod.example")
-    let exec = SshExecutor(reg, log)
-    let r = exec.run("prod.example", "echo hi")
-    @Expect(r.ok, false)
-    @Expect(r.failureKind, "not-registered")
-    @Expect(r.message, "ssh-target-disconnected")
-    @Expect(sshExecAuditCount(log, "prod.example"), Int64(0))
-    removeIfExists(root, recursive: true)
+func sshFirstFingerprintRequiresSeparateConfirmation() {
+    let (root, log, reg) = sshExecSetup("first-trust")
+    try {
+        reg.connect("prod.example")
+        let trust = SshHostTrust(root + "/trust")
+        let exec = SshExecutor(reg, log, binary: "missing-ssh-fixture", trust: Some(trust))
+        let candidate = trust.prepare("prod.example", 22, sshTestKey(1))
+        @Expect(candidate.fingerprint.startsWith("SHA256:"), true)
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "host-key-unconfirmed")
+        var rejected = false
+        try { trust.confirm(candidate, "SHA256:wrong") } catch (_: Exception) { rejected = true }
+        @Expect(rejected, true)
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "host-key-unconfirmed")
+        trust.confirm(candidate, candidate.fingerprint)
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "spawn-failed")
+        @Expect(sshExecAuditCount(log), Int64(0))
+        let reloaded = SshHostTrust(root + "/trust")
+        @Expect(reloaded.prepare("prod.example", 22, sshTestKey(1)).fingerprint, candidate.fingerprint)
+        @Expect(SshExecutor(reg, log, binary: "missing-ssh-fixture", trust: Some(reloaded))
+            .run("prod.example", "echo hi", port: 2222).failureKind, "host-key-unconfirmed")
+    } finally { removeIfExists(root, recursive: true) }
 }
 
-// 参数校验：空 host 与空命令各自拒，发生在任何子进程之前。
 @Test
-func sshExecRejectsBadArgs() {
-    let (root, log, reg) = sshExecSetup("badargs")
-    reg.connect("prod.example")
-    let exec = SshExecutor(reg, log)
-    let r1 = exec.run("", "echo hi")
-    @Expect(r1.ok, false)
-    @Expect(r1.failureKind, "bad-args")
-    let r2 = exec.run("prod.example", "")
-    @Expect(r2.ok, false)
-    @Expect(r2.failureKind, "bad-args")
-    @Expect(sshExecAuditCount(log, "prod.example"), Int64(0))
-    removeIfExists(root, recursive: true)
+func sshHostKeyChangeCannotOverwriteExistingPin() {
+    let (root, _, _) = sshExecSetup("changed")
+    try {
+        let trust = SshHostTrust(root + "/trust")
+        let first = trust.prepare("prod.example", 2222, sshTestKey(1))
+        let changed = trust.prepare("prod.example", 2222, sshTestKey(2))
+        trust.confirm(first, first.fingerprint)
+        var prepareRejected = false
+        var confirmRejected = false
+        try { trust.prepare("prod.example", 2222, sshTestKey(2)) }
+        catch (_: Exception) { prepareRejected = true }
+        try { trust.confirm(changed, changed.fingerprint) }
+        catch (_: Exception) { confirmRejected = true }
+        @Expect(prepareRejected, true)
+        @Expect(confirmRejected, true)
+        @Expect(trust.prepare("prod.example", 2222, sshTestKey(1)).fingerprint, first.fingerprint)
+        let path = trust.knownHosts("prod.example", 2222)
+        @Expect(String.fromUtf8(File.readFrom(path)), "[prod.example]:2222 ${first.publicKey}\n")
+    } finally { removeIfExists(root, recursive: true) }
 }
 
-// 二进制不存在 → spawn-failed，绝不抛出。
 @Test
-func sshExecReportsMissingBinary() {
-    let (root, log, reg) = sshExecSetup("nobb")
-    reg.connect("prod.example")
-    let exec = SshExecutor(reg, log, binary: "definitely-not-a-real-binary-xyz")
-    let r = exec.run("prod.example", "echo hi", timeoutMs: 5000)
-    @Expect(r.ok, false)
-    @Expect(r.failureKind, "spawn-failed")
-    @Expect(r.message, "ssh-binary-not-found")
-    @Expect(sshExecAuditCount(log, "prod.example"), Int64(0))
-    removeIfExists(root, recursive: true)
+func sshRejectsMalformedKeyAndCorruptTrustFile() {
+    let (root, log, reg) = sshExecSetup("bad-pin")
+    try {
+        reg.connect("prod.example")
+        let trust = SshHostTrust(root + "/trust")
+        for (key in ["ssh-rsa AAAA", "ssh-ed25519 AAAA", sshTestKey(1) + "\n@cert-authority * bad"]) {
+            var rejected = false
+            try { trust.prepare("prod.example", 22, key) } catch (_: Exception) { rejected = true }
+            @Expect(rejected, true)
+        }
+        let candidate = trust.prepare("prod.example", 22, sshTestKey(1))
+        trust.confirm(candidate, candidate.fingerprint)
+        let path = trust.knownHosts("prod.example", 22)
+        @Expect(String.fromUtf8(File.readFrom(path)), "prod.example ${candidate.publicKey}\n")
+        File.writeTo(path, "@cert-authority * invalid\n".toArray())
+        let result = SshExecutor(reg, log, trust: Some(trust)).run("prod.example", "echo hi")
+        @Expect(result.failureKind, "host-key-unconfirmed")
+        @Expect(sshExecAuditCount(log), Int64(0))
+    } finally { removeIfExists(root, recursive: true) }
 }
 
-// 取消闭环：令牌已取消 → 连 ssh 都不启动，也不落审计事件。
 @Test
-func sshExecCancelledTokenShortCircuits() {
-    let (root, log, reg) = sshExecSetup("cancelled")
-    reg.connect("prod.example")
-    let exec = SshExecutor(reg, log)
-    let token = TurnToken()
-    token.cancel()
-    let r = exec.run("prod.example", "echo hi", token: token, timeoutMs: 5000)
-    @Expect(r.ok, false)
-    @Expect(r.cancelled, true)
-    @Expect(r.message, "ssh-cancelled")
-    @Expect(sshExecAuditCount(log, "prod.example"), Int64(0))
-    removeIfExists(root, recursive: true)
+func sshExecRejectsUnregisteredDisconnectedAndInvalidArguments() {
+    let (root, log, reg) = sshExecSetup("gates")
+    try {
+        let exec = SshExecutor(reg, log)
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "not-registered")
+        reg.connect("prod.example"); reg.disconnect("prod.example")
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "not-registered")
+        reg.connect("prod.example")
+        @Expect(exec.run("prod.example", "echo hi").failureKind, "host-key-unconfirmed")
+        @Expect(exec.run("", "echo hi").failureKind, "bad-args")
+        @Expect(exec.run("prod.example", "").failureKind, "bad-args")
+        @Expect(exec.run("prod.example", "echo hi", options: ["-v"]).failureKind, "bad-args")
+        @Expect(exec.run("prod.example", "echo hi", port: 0).failureKind, "bad-args")
+        @Expect(exec.run("prod.example", "echo hi", timeoutMs: 0).failureKind, "bad-args")
+        @Expect(SshExecutor(reg, log, maxOutputBytes: 0).run("prod.example", "echo hi").failureKind, "bad-args")
+        let token = TurnToken(); token.cancel()
+        @Expect(exec.run("", "", token: token, timeoutMs: 0).failureKind, "cancelled")
+        @Expect(sshExecAuditCount(log), Int64(0))
+    } finally { removeIfExists(root, recursive: true) }
 }
 
-// 真子进程 + 真网络：连一个没有监听的端口 → ssh 真实返回 255，stderr 是它自己的
-// 真实报错文本，审计事件记下 host::255。这一条证明整条链路是真跑通的，不是 mock。
 @Test
-func sshExecRunsRealSshAgainstUnreachablePort() {
-    let (root, log, reg) = sshExecSetup("real-refused")
-    reg.connect("127.0.0.1")
-    let exec = SshExecutor(reg, log)
-    let r = exec.run("127.0.0.1", "echo hi", port: 9, timeoutMs: 15000,
-        connectTimeoutSec: 4)
-    @Expect(r.ok, false)
-    @Expect(r.exitCode, Int64(255))
-    @Expect(r.failureKind, "transport")
-    @Expect(r.message, "ssh-exit-255")
-    @Expect(r.stderr.size > 0, true)
-    @Expect(sshExecAuditCount(log, "127.0.0.1"), Int64(1))
-    removeIfExists(root, recursive: true)
+func sshBoundedReaderUsesBytesAndRejectsOverflowAndReadFailure() {
+    let exact = AtomicBool(false)
+    let data = "中文\n".toArray()
+    let captured = sshReadBounded(SshTestStream(data), data.size, exact)
+    @Expect(String.fromUtf8(captured.bytes), "中文\n")
+    @Expect(exact.load(), false)
+    let exceeded = AtomicBool(false)
+    @Expect(sshReadBounded(SshTestStream(Array<Byte>(16384, repeat: 120)), 16, exceeded).bytes.size, Int64(0))
+    @Expect(exceeded.load(), true)
+    @Expect(sshReadBounded(SshTestStream([], broken: true), 16, AtomicBool(false)).failed, true)
 }
 
-// 真子进程 + 真握手：本机 22 端口有 sshd。BatchMode 下认证被拒也是真结果——
-// 关键是证明 ssh 真的做完了协议握手而不是我们自己编的假报错。
 @Test
-func sshExecRunsRealSshAgainstLiveSshd() {
-    let (root, log, reg) = sshExecSetup("real-auth")
-    reg.connect("127.0.0.1")
-    let exec = SshExecutor(reg, log)
-    let r = exec.run("127.0.0.1", "echo HELLO", user: "jingg", timeoutMs: 20000,
-        connectTimeoutSec: 5)
-    @Expect(r.ok, false)
-    @Expect(r.exitCode != 0, true)
-    @Expect(r.failureKind, "transport")
-    @Expect(r.stderr.size > 0, true)
-    // 认证阶段的真实文本；本机 sshd 要求凭据，BatchMode 下必然是拒绝
-    @Expect(r.stderr.contains("Permission denied"), true)
-    @Expect(sshExecAuditCount(log, "127.0.0.1"), Int64(1))
-    removeIfExists(root, recursive: true)
-}
-
-// 审计对账：发起 N 次执行，ssh/exec 事件恰为 N 条；被拦下的不计数。
-@Test
-func sshExecAuditMatchesExecutions() {
-    let (root, log, reg) = sshExecSetup("audit")
-    reg.connect("127.0.0.1")
-    let exec = SshExecutor(reg, log)
-    exec.run("127.0.0.1", "echo a", port: 9, timeoutMs: 15000, connectTimeoutSec: 3)
-    exec.run("127.0.0.1", "echo b", port: 9, timeoutMs: 15000, connectTimeoutSec: 3)
-    exec.run("not-registered.example", "echo c", timeoutMs: 15000)
-    let token = TurnToken()
-    token.cancel()
-    exec.run("127.0.0.1", "echo d", token: token, timeoutMs: 15000)
-    @Expect(sshExecAuditCount(log, "127.0.0.1"), Int64(2))
-    @Expect(sshExecAuditCount(log, "not-registered.example"), Int64(0))
-    removeIfExists(root, recursive: true)
-}
-
-// 超时：ssh 的 ConnectTimeout 与我们的总预算一致时，超时判定要走 timedOut 分支
-// 而不是 transport。用 1 毫秒预算强制触发。
-@Test
-func sshExecReportsTimeout() {
+func sshTimeoutSupervisesSilentOpenStdout() {
     let (root, log, reg) = sshExecSetup("timeout")
-    reg.connect("127.0.0.1")
-    let exec = SshExecutor(reg, log)
-    let r = exec.run("127.0.0.1", "echo hi", timeoutMs: 1, connectTimeoutSec: 5)
-    @Expect(r.ok, false)
-    @Expect(r.timedOut, true)
-    @Expect(r.cancelled, false)
-    @Expect(sshExecAuditCount(log, "127.0.0.1"), Int64(1))
-    removeIfExists(root, recursive: true)
+    try {
+        let proc = sshTestChild("Start-Sleep -Seconds 8", "exec sleep 8")
+        let r = SshExecutor(reg, log).collect(proc, "fixture", TurnToken(), 200, MonoTime.now())
+        @Expect(r.failureKind, "timeout")
+        @Expect(r.timedOut, true)
+        @Expect(r.elapsedMs < 4000, true)
+        @Expect(sshExecAuditCount(log), Int64(1))
+    } finally { removeIfExists(root, recursive: true) }
+}
+
+@Test
+func sshCancellationSupervisesPartialOutputBeforeEof() {
+    let (root, log, reg) = sshExecSetup("cancel")
+    try {
+        let proc = sshTestChild("[Console]::Out.Write('partial'); Start-Sleep -Seconds 8", "printf partial; exec sleep 8")
+        let token = TurnToken()
+        let cancel = spawn { => sleep(200 * Duration.millisecond); token.cancel() }
+        let r = SshExecutor(reg, log).collect(proc, "fixture", token, 10000, MonoTime.now())
+        cancel.get(Duration.second)
+        @Expect(r.failureKind, "cancelled")
+        @Expect(r.cancelled, true)
+        @Expect(r.elapsedMs < 4000, true)
+    } finally { removeIfExists(root, recursive: true) }
+}
+
+@Test
+func sshEachOutputPipeHasIndependentLimit() {
+    let (root, log, reg) = sshExecSetup("output-limit")
+    try {
+        for ((windows, posix) in [
+            ("[Console]::Out.Write(('x' * 8192)); Start-Sleep -Seconds 8", "printf '%8192s' x; exec sleep 8"),
+            ("[Console]::Out.Write('ok'); [Console]::Error.Write(('x' * 8192)); Start-Sleep -Seconds 8", "printf ok; printf '%8192s' x >&2; exec sleep 8")]) {
+            let r = SshExecutor(reg, log, maxOutputBytes: 64).collect(
+                sshTestChild(windows, posix), "fixture", TurnToken(), 10000, MonoTime.now())
+            @Expect(r.failureKind, "output-limit")
+            @Expect(r.stdout, "")
+            @Expect(r.stderr, "")
+            @Expect(r.elapsedMs < 4000, true)
+        }
+        @Expect(sshExecAuditCount(log), Int64(2))
+    } finally { removeIfExists(root, recursive: true) }
+}
+
+@Test
+func sshCollectPreservesBothPipesAndExitStatus() {
+    let (root, log, reg) = sshExecSetup("exit")
+    try {
+        for (code in [Int64(0), 7]) {
+            let proc = sshTestChild("[Console]::Out.Write('out'); [Console]::Error.Write('err'); exit ${code}",
+                "printf out; printf err >&2; exit ${code}")
+            let r = SshExecutor(reg, log, maxOutputBytes: 3).collect(proc, "fixture", TurnToken(), 10000, MonoTime.now())
+            @Expect(r.ok, code == 0)
+            @Expect(r.exitCode, code)
+            @Expect(r.stdout, "out")
+            @Expect(r.stderr, "err")
+        }
+        @Expect(sshExecAuditCount(log), Int64(2))
+    } finally { removeIfExists(root, recursive: true) }
+}
+
+@Test
+func sshCancellationHasPriorityOverExpiredBudget() {
+    let (root, log, reg) = sshExecSetup("priority")
+    try {
+        let proc = sshTestChild("Start-Sleep -Seconds 8", "exec sleep 8")
+        let token = TurnToken(); token.cancel()
+        let r = SshExecutor(reg, log).collect(proc, "fixture", token, 0, MonoTime.now())
+        @Expect(r.failureKind, "cancelled")
+        @Expect(r.timedOut, false)
+    } finally { removeIfExists(root, recursive: true) }
 }
