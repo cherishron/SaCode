@@ -6,9 +6,10 @@ import {join,dirname} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
+import {electronTestOptions} from '../test-support/electron-env-gate.mjs';
 const here=dirname(fileURLToPath(import.meta.url)),require=createRequire(import.meta.url);
 
-test('真实 Electron：目标和队列的多行编辑、输入法、取消、尺寸与保存锁',{timeout:40000},async()=>{
+test('真实 Electron：目标和队列的多行编辑、输入法、取消、尺寸与保存锁',electronTestOptions({timeout:40000}),async()=>{
   const base=join(here,'../../../target/tmp/inline-editor');mkdirSync(base,{recursive:true});
   const dir=mkdtempSync(join(base,'run-'));mkdirSync(join(dir,'user-data'));
   const result=await build({stdin:{contents:"export {GoalBar} from './goal-bar';export {QueueDock} from './queue-dock';",resolveDir:join(here,'../renderer/pages'),loader:'ts'},bundle:true,format:'iife',globalName:'EditorPages',outfile:join(dir,'pages.js'),metafile:true,plugins:[{name:'vue-runtime',setup(b){b.onResolve({filter:/^vue$/},()=>({path:'vue',namespace:'runtime'}));b.onLoad({filter:/.*/,namespace:'runtime'},()=>({contents:'module.exports=globalThis.Vue;',loader:'js'}));}}]});
@@ -70,7 +71,7 @@ test('真实 Electron：目标和队列的多行编辑、输入法、取消、�
 const result=await win.webContents.executeJavaScript('window.__result');if(result){console.log('EDITOR_RESULT '+JSON.stringify(result));app.exit(result.ok?0:1);return;}await new Promise(done=>setTimeout(done,100));}console.error('编辑器验收超时');app.exit(1);
     }).catch(error=>{console.error(error);app.exit(1);});`);
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-  const child=spawn(require('electron'),['--no-sandbox','--disable-gpu','--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
+  const child=spawn(require('electron'),['--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
   let output='';child.stdout.on('data',data=>output+=data);child.stderr.on('data',data=>output+=data);
   const timeout=setTimeout(()=>child.kill(),30000);
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);}).finally(()=>clearTimeout(timeout));

@@ -19,6 +19,21 @@
     matched: '已匹配', partial: '部分匹配', 'no-match': '未匹配', skipped: '未执行检索',
     'budget-exhausted': '上下文预算不足', 'discarded-changed-snapshot': '快照变化，结果已丢弃',
   }[value] || '未知状态');
+  // 对话与手动工具面共用同一工单视图；模型工单只在当前运行会话展示。
+  function renderApprovalCard(self, { el }) {
+    const proposal = self.approval;
+    if (!proposal) return null;
+    if (proposal.source === 'model' && (!self.turn.running || proposal.sessionId !== String(self.scrollSession))) return null;
+    return el('section', 'approval', [
+      el('p', null, '等待审批：' + ({ write:'写入文件', read:'读取文件' }[proposal.name] || proposal.name) + '（工单 #' + proposal.approvalId + '，仅本次调用）'),
+      proposal.source === 'model' ? el('pre', 'model-approval-arguments', proposal.displayArguments, { tabindex:0, 'aria-label':'完整工具参数' }) : null,
+      el('p', 'note', '请核对完整参数；工单过期后将拒绝执行。'),
+      el('div', 'approval-row', [
+        el('button', 'btn btn-primary', '允许一次', { id:'allow-once', onClick:()=>self.answerTool('allowed-once') }),
+        el('button', 'btn btn-danger', '拒绝', { id:'deny', onClick:()=>self.answerTool('denied') }),
+      ]),
+    ], { id:'approval', role:'region', 'aria-label':'当前工具调用审批' });
+  }
   function renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries }) {
     const refreshSources = () => {
       const session = self.scrollSession;
@@ -45,16 +60,8 @@
       ], { key: t.name })
     );
 
-    const approvalBox = self.approval
-      ? [el("div", "approval", [
-          el("p", null, "审批：" + ({ write: "写入文件", read: "读取文件" }[self.approval.name] || self.approval.name) + "（工单 #" + self.approval.approvalId + "，一次性放行，不给永久授权）"),
-          self.approval.source==='model' ? el('pre','model-approval-arguments',self.approval.displayArguments,{tabindex:0,'aria-label':'完整工具参数'}) : null,
-          el("div", "approval-row", [
-            el("button", "btn btn-primary", "允许一次", { id: "allow-once", onClick: () => self.answerTool("allowed-once") }),
-            el("button", "btn btn-danger", "拒绝", { id: "deny", onClick: () => self.answerTool("denied") }),
-          ]),
-        ], { id: "approval" })]
-      : [];
+    const approvalBox = self.approval && self.approval.source !== 'model'
+      ? [renderApprovalCard(self, { el })] : [];
 
     const sideTabs = h(window.SaCodeSlots.WorkbenchTabs,{active:self.sideTab,pendingApproval:!!self.approval,expanded:self.workbenchExpanded,split:self.sideSplit,
       onSelect:id=>{self.sideTab=id;if(id==='sources')refreshSources();},onClose:id=>{if(id==='preview')self.filePreview.close();},
@@ -186,5 +193,5 @@
     ];
     return { sideTabs, inspection, filesPage, tracePage, guide, previewBody };
   }
-  root.SaCodeSidePanels = Object.freeze({ renderPanels });
+  root.SaCodeSidePanels = Object.freeze({ renderPanels, renderApprovalCard });
 })(globalThis);

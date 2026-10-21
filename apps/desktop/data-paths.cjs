@@ -1,6 +1,9 @@
 // 桌面持久数据与项目源码分开；本地目录版共用 desktop/data/sacode，不默认写 C 盘 AppData。
+// 用户配置（模型供应商、凭据、外观等）默认读 ~/.sacode，不随 exe 路径走——
+// 与 CLI/Host/core 的 GlobalAppearanceSettings.forUser()/CredentialStore.forUser() 保持同根。
 const { join, dirname, resolve, isAbsolute } = require('node:path');
 const { mkdirSync, existsSync, readFileSync } = require('node:fs');
+const { homedir } = require('node:os');
 
 function defaultDataRoot(exe) {
   // 仓内不同版本目录共用数据；独立分发目录则在 exe 旁保存，不猜测其他项目归属。
@@ -17,6 +20,14 @@ function defaultDataRoot(exe) {
   return join(dirname(exe), 'data', 'sacode');
 }
 
+// 用户配置根：优先 SACODE_USER_SETTINGS_DIR 环境变量，其次 ~/.sacode/user。
+// 这样不同安装路径的 SaCode 共享同一份模型供应商配置和凭据，与 CLI/Host 行为一致。
+function defaultUserSettingsDir() {
+  const home = process.env.USERPROFILE || process.env.HOME || homedir();
+  if (!home) return null;
+  return join(home, '.sacode', 'user');
+}
+
 function configureDataPaths({ app, env, isolated = false, platform = process.platform }) {
   // 显式会话／冒烟目录由调用者拥有，不能偷偷读取或创建真实用户的数据根。
   if (isolated) return null;
@@ -29,7 +40,9 @@ function configureDataPaths({ app, env, isolated = false, platform = process.pla
   const paths = {
     root: resolve(root),
     sessions: join(root, 'sessions'),
-    settings: join(root, 'user'),
+    // 用户配置不随 exe 走：默认 ~/.sacode/user，让不同安装路径共享模型供应商和凭据。
+    // SACODE_USER_SETTINGS_DIR 显式覆盖仍优先（部署隔离、测试等场景）。
+    settings: env.SACODE_USER_SETTINGS_DIR || defaultUserSettingsDir(),
     userData: join(root, 'electron'),
     sessionData: join(root, 'cache'),
     temp: join(root, 'temp'),
@@ -42,4 +55,4 @@ function configureDataPaths({ app, env, isolated = false, platform = process.pla
   return paths;
 }
 
-module.exports = { configureDataPaths };
+module.exports = { configureDataPaths, defaultUserSettingsDir };

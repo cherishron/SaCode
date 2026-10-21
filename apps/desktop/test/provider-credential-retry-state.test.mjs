@@ -1,16 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
-import vm from 'node:vm';
-const source = readFileSync(new URL('../renderer/pages/provider-settings.ts', import.meta.url), 'utf8');
+import {loadPageModule} from './support/load-page-module.mjs';
 function fixture(adapter) {
   const mounts = [];
-  const ctx = { URL, defineComponent: v => v, ref: value => ({value}), onMounted: fn => mounts.push(fn), onBeforeUnmount() {}, cloneModel: v => ({...v}), renderModelCapabilities: () => null,
+  const vue = { defineComponent: v => v, ref: value => ({value}), onMounted: fn => mounts.push(fn), onBeforeUnmount() {},
     h: (tag, props, children) => ({tag, props: props || {}, children}) };
-  const code = stripTypeScriptTypes(source.replace(/^import .*;\r?$/gm, '').replace(/export /g, ''));
-  vm.runInNewContext(code + '\nglobalThis.page=Page;', ctx);
-  const render = ctx.page.setup({adapter});
+  const page=loadPageModule(new URL('../renderer/pages/provider-settings.ts',import.meta.url),{vue});
+  const render = page.Page.setup({adapter});
   mounts.forEach(fn => fn());
   const nodes = () => { const all=[]; const visit=v=>{if(Array.isArray(v))v.forEach(visit);else if(v&&typeof v==='object'){all.push(v);visit(v.children);}};visit(render());return all;};
   return { nodes, click: label => { const n=nodes().find(n=>n.tag==='button'&&n.children===label);assert.ok(n,label);return n.props.onClick(); }, input: (label,value)=>{const n=nodes().find(n=>n.tag==='input'&&n.props['aria-label']===label);assert.ok(n,label);n.props.onInput({target:{value}});} };

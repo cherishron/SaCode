@@ -139,7 +139,39 @@
 
     function openCatalog() { catalogOpen.value = true; refreshCatalog(); }
 
-    return { applySelection, selectSession, createSession, startNewSession, refreshCatalog, openCatalog };
+    async function mutateMetadata(id, action, value) {
+      if (catalogBusy.value || busy() || taskRunning() || editorBlocked()) return false;
+      const entry=catalog.value?.entries.find(item=>item.id===id);
+      if(!entry || entry.status==='replay-rejected')return false;
+      catalogBusy.value=true;catalogNote.value='正在保存会话信息…';
+      // turn 期间 durableCount 会增长，entry.durable 作为 expectedRevision 可能过期，
+      // Host 回 session-revision-conflict。此时自动重读 catalog 拿新 revision 再试一次，
+      // 不把 CAS 冲突的原始码直接抛给用户。
+      const attempt=async(rev)=>{
+        if(action==='rename')await api.sessionRename(id,value,rev);
+        else await api.sessionArchive(id,value,rev);
+      };
+      try{
+        try{
+          await attempt(entry.durable);
+        }catch(e){
+          if(String(e.message||e).includes('session-revision-conflict')){
+            // 重读到临时变量，找到 fresh entry 才更新 catalog；否则保留原目录不覆盖。
+            const freshCatalog=await api.sessionCatalog();
+            const fresh=freshCatalog?.entries.find(item=>item.id===id);
+            if(!fresh)throw e;
+            catalog.value=freshCatalog;
+            await attempt(fresh.durable);
+          }else throw e;
+        }
+        catalog.value=await api.sessionCatalog();
+        catalogNote.value=action==='rename'?'会话名称已保存。':value?'会话已归档，可在列表中恢复。':'会话已恢复。';
+        return true;
+      }catch(e){catalogNote.value=catalogError(e);error.value=catalogNote.value;return false;}
+      finally{catalogBusy.value=false;}
+    }
+
+    return { applySelection, selectSession, createSession, startNewSession, refreshCatalog, openCatalog, mutateMetadata };
   }
 
   root.SaCodeSessionState = { createSessionAssembly };

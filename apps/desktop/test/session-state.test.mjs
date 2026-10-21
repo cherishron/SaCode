@@ -133,6 +133,54 @@ test('新建被后端拒绝时保留名称草稿与当前会话', async()=>{
   assert.equal(deps.catalogBusy.value,false);
 });
 
+test('会话元信息保存绑定目标与修订，拒绝重复提交并刷新真实目录',async()=>{
+  let resolve,calls=0;const deps=makeDeps({catalog:ref({entries:[{id:'s1',durable:7,status:'ready'},{id:'s2',durable:9,status:'ready'}]})});
+  deps.api.sessionRename=async(...args)=>{calls++;assert.deepEqual(args,['s1','新标题',7]);await new Promise(r=>resolve=r);};
+  deps.api.sessionCatalog=async()=>({entries:[{id:'s1',title:'新标题',durable:8},{id:'s2',title:'乙',durable:9}]});
+  const state=createSessionAssembly(deps);const first=state.mutateMetadata('s1','rename','新标题');
+  assert.equal(await state.mutateMetadata('s1','rename','重复'),false);assert.equal(calls,1);
+  resolve();assert.equal(await first,true);assert.equal(deps.catalog.value.entries[1].title,'乙');
+  assert.equal(deps.catalogBusy.value,false);
+});
+test('会话元信息失败保留原目录，在途任务与无效目标不发请求',async()=>{
+  const deps=makeDeps({catalog:ref({entries:[{id:'s1',durable:1,status:'ready'}]})});let calls=0;
+  deps.api.sessionArchive=async()=>{calls++;throw Error('session-revision-conflict');};
+  const state=createSessionAssembly(deps);
+  deps.turn.value.running=true;assert.equal(await state.mutateMetadata('s1','archive',true),false);
+  deps.turn.value.running=false;assert.equal(await state.mutateMetadata('unknown','archive',true),false);assert.equal(calls,0);
+  assert.equal(await state.mutateMetadata('s1','archive',true),false);assert.match(deps.catalogNote.value,/session-revision-conflict/);
+  assert.equal(deps.catalog.value.entries[0].archived,undefined);assert.equal(deps.catalogBusy.value,false);
+});
+test('重命名 CAS 冲突时自动重读 catalog 拿新 revision 再试成功',async()=>{
+  // turn 期间 durableCount 增长，entry.durable 过期，Host 回 session-revision-conflict。
+  // mutateMetadata 应自动重读 catalog 拿新 durable 再试，不把原始码抛给用户。
+  let renameCalls=0;const deps=makeDeps({catalog:ref({entries:[{id:'s1',durable:5,status:'ready'}]})});
+  deps.api.sessionRename=async(_id,_title,rev)=>{
+    renameCalls++;
+    if(rev===5)throw Error('session-revision-conflict'); // 第一次用旧 revision 冲突
+    if(rev===8)return; // 第二次用新 revision 成功
+    throw Error('unexpected-revision:'+rev);
+  };
+  deps.api.sessionCatalog=async()=>({entries:[{id:'s1',title:'新名称',durable:8,status:'ready'}]});
+  const state=createSessionAssembly(deps);
+  const ok=await state.mutateMetadata('s1','rename','新名称');
+  assert.equal(ok,true,'冲突后重试应成功');
+  assert.equal(renameCalls,2,'应调用两次：第一次冲突、第二次成功');
+  assert.equal(deps.catalog.value.entries[0].title,'新名称');
+  assert.equal(deps.catalogBusy.value,false);
+});
+test('重命名 CAS 冲突后重读 catalog 找不到目标会话则报错',async()=>{
+  // 冲突后重读 catalog，目标会话已不在（被删或被归档移出），不无限重试。
+  const deps=makeDeps({catalog:ref({entries:[{id:'s1',durable:5,status:'ready'}]})});
+  deps.api.sessionRename=async()=>{throw Error('session-revision-conflict');};
+  deps.api.sessionCatalog=async()=>({entries:[]}); // 目标会话已消失
+  const state=createSessionAssembly(deps);
+  const ok=await state.mutateMetadata('s1','rename','新名称');
+  assert.equal(ok,false);
+  assert.match(deps.catalogNote.value,/session-revision-conflict/);
+  assert.equal(deps.catalogBusy.value,false);
+});
+
 // 构造最小 deps，允许覆盖个别字段
 function makeDeps(overrides = {}) {
   const api = {

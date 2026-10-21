@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { assertStaticRendererBundle } from '../../../scripts/renderer-bundle-guard.mjs';
+import { electronTestOptions } from '../test-support/electron-env-gate.mjs';
 
 const desktop = fileURLToPath(new URL('../', import.meta.url));
 const root = resolve(desktop, '../..');
@@ -48,7 +49,7 @@ for (const expression of ['eval("1")', 'new Function("return 1")']) {
   });
 }
 
-test('真实 Electron 严格 CSP 下初始化并注册、发现、执行全部页面工具', t => {
+test('真实 Electron 严格 CSP 下初始化并注册、发现、执行全部页面工具', electronTestOptions(), t => {
   const { app, result, output } = build(t);
   assert.equal(result.status, 0, output);
   copyFileSync(join(desktop, 'renderer/page-tools.js'), join(app, 'renderer/page-tools.js'));
@@ -122,7 +123,7 @@ app.whenReady().then(async () => {
   const electron = join(desktop, 'node_modules/electron/dist/electron.exe');
   const env = { ...process.env, TEMP: app, TMP: app };
   delete env.ELECTRON_RUN_AS_NODE;
-  const browser = spawnSync(electron, ['--no-sandbox', join(app, 'electron-probe.cjs')], {
+  const browser = spawnSync(electron, [ join(app, 'electron-probe.cjs')], {
     encoding: 'utf8', timeout: 30000, env,
   });
   const browserOutput = `${browser.stdout}\n${browser.stderr}`;

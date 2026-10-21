@@ -5,7 +5,9 @@
 "use strict";
 window.SaCodeMsgFold = (function () {
   // 全仓唯一的折叠阈值出处。要调只改这一处；组件里不许再出现第二个数字。
-  var FOLD_THRESHOLD = 240;
+  var FOLD_THRESHOLD = 600;
+  // 网页正文独立使用 500 个 Unicode 字符预览，不改变普通消息折叠阈值。
+  var WEB_PREVIEW_LIMIT = 500;
   // 历史导航的标题与摘要上限，同样只在这里出现一次。
   var OUTLINE_TITLE_LIMIT = 60;
   var OUTLINE_TEXT_LIMIT = 120;
@@ -42,17 +44,43 @@ window.SaCodeMsgFold = (function () {
     return rows && rows[i] ? rows[i].id : "m" + i;
   }
 
-  function toBubbleMessages(lines, rows, sessionId) {
+  function toBubbleMessages(lines, rows, sessionId, toolCalls) {
     var out = [];
+    var calls = Array.isArray(toolCalls) ? toolCalls : [];
+    var results = new Map(calls.filter(function(call) { return call.resultMessageId; }).map(function(call) { return [call.resultMessageId, call]; }));
     for (var i = 0; i < lines.length; i++) {
       var parts = splitMsg(lines[i]);
       var role = bubbleRole(parts.role);
       var metadata = rows && rows[i];
       var message = { id: metadata ? metadata.id : "m" + i, role: role, content: parts.text, sourceRole: parts.role, attachments: metadata ? metadata.attachments : [] };
+      if (metadata && results.has(metadata.id)) message.toolCall = results.get(metadata.id);
       if (sessionId) message.sessionId = sessionId;
       out.push(message);
     }
+    var firstSeq = rows && rows.length ? Number(String(rows[0].id).replace(/^event-/, '')) : 0;
+    for (var call of calls) {
+      if (call.resultMessageId || !Number.isSafeInteger(call.eventSeq) || (Number.isFinite(firstSeq) && call.eventSeq < firstSeq)) continue;
+      var pending = {id:call.id,role:'tool',content:call.result||'',sourceRole:'tool/call',attachments:[],sessionId:sessionId,toolCall:call};
+      var at = out.findIndex(function(message) { return Number(String(message.id).replace(/^(?:tool-)?event-/, '')) > call.eventSeq; });
+      out.splice(at < 0 ? out.length : at, 0, pending);
+    }
     return out;
+  }
+
+  // 系统与开发者上下文供模型消费，保留在日志/投影中，不混入普通对话气泡。
+  // 按真实角色筛选，不能按正文关键词隐藏用户或助手消息。
+  function conversationMessages(messages) {
+    return messages.filter(function(message) {
+      return message.role === 'user' || message.role === 'assistant' || message.role === 'tool';
+    });
+  }
+
+  // 临时正文复用落盘消息的同一气泡链，收束只替换数据来源，不替换布局。
+  function withStreamingMessage(messages, turn, sessionId) {
+    var persisted = turn.settled && !turn.cancelled && !turn.interrupted && !turn.projectionPending;
+    if ((!turn.running && persisted) || (!turn.running && !turn.text)) return messages;
+    return messages.concat([{id:'live-'+sessionId, role:'assistant', sourceRole:'assistant/message',
+      content:turn.text || '', attachments:[], sessionId:sessionId, live:true, running:!!turn.running}]);
   }
 
   // 定位与形状由同一张表生成，避免出现「映射表说 start、roleConfigs 说 end」这种双真源。
@@ -115,8 +143,49 @@ window.SaCodeMsgFold = (function () {
   // 工具结果卡的数据来源：投影只 surface tool/result（tool/call 按冻结不变量不进投影），
   // 所以这里只解析「结果侧」真实存在的事实，不补调用名与参数——投影里没有就不编。
   // 路径可能含 Windows 盘符冒号，字节数按最后一段数字认，不按第一个冒号切。
-  function parseToolResult(text) {
+  function safeWebUrl(value) {
+    if (typeof value !== 'string' || /[\s\u0000-\u001f\u007f]/.test(value) || value.indexOf('\\') >= 0) return '';
+    // 不提供点击执行通道；这里只把明确的 HTTP(S) 无凭据来源标为可识别地址。
+    return /^https?:\/\/[^/?#@]+(?:[/?#]|$)/i.test(value) ? value : '';
+  }
+
+  function parseWebResult(raw, argumentsText) {
+    try {
+      var envelope = JSON.parse(raw);
+      if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return null;
+      var value = envelope.result && typeof envelope.result === 'object' ? envelope.result : envelope;
+      if (value.externalContent !== true) return null;
+      var isSearch = Array.isArray(value.sources);
+      if (!isSearch && !safeWebUrl(value.url)) return null;
+      var content = typeof (isSearch ? value.content : value.body) === 'string' ? (isSearch ? value.content : value.body) : '';
+      var chars = Array.from(content);
+      var queries = [];
+      try {
+        var args = typeof argumentsText === 'string' ? JSON.parse(argumentsText) : argumentsText;
+        if (args && Array.isArray(args.queries)) queries = args.queries.filter(function(q) { return typeof q === 'string'; });
+      } catch (_) {}
+      if (!queries.length && Array.isArray(value.queries)) queries = value.queries.filter(function(q) { return typeof q === 'string'; });
+      return {
+        kind: isSearch ? 'web-search' : 'web-fetch', label: isSearch ? '网络搜索' : '网页抓取',
+        status: !isSearch && Number.isInteger(value.status) && value.status >= 400 ? 'error' : 'done',
+        target: isSearch ? queries.join(' · ') : value.url,
+        url: isSearch ? '' : value.url,
+        httpStatus: !isSearch && Number.isInteger(value.status) && value.status >= 100 && value.status <= 599 ? value.status : null,
+        externalContent: true, truncated: value.truncated === true, queries: queries,
+        sources: isSearch ? value.sources.filter(function(s) { return s && typeof s === 'object' && !Array.isArray(s); }).map(function(s) {
+          return { url: typeof s.url === 'string' ? s.url : '', title: typeof s.title === 'string' ? s.title : '',
+            snippet: typeof s.snippet === 'string' ? s.snippet : '', publishedAt: typeof s.publishedAt === 'string' ? s.publishedAt : '' };
+        }) : [],
+        body: content, preview: chars.slice(0, WEB_PREVIEW_LIMIT).join('') + (chars.length > WEB_PREVIEW_LIMIT ? '…' : ''),
+        folded: chars.length > WEB_PREVIEW_LIMIT, bytes: null, lines: null
+      };
+    } catch (_) { return null; }
+  }
+
+  function parseToolResult(text, argumentsText) {
     var raw = String(text == null ? "" : text);
+    var web = parseWebResult(raw, argumentsText);
+    if (web) return web;
     var brk = raw.indexOf("\n");
     var head = brk < 0 ? raw : raw.slice(0, brk);
     var body = brk < 0 ? "" : raw.slice(brk + 1);
@@ -144,10 +213,13 @@ window.SaCodeMsgFold = (function () {
 
   return {
     FOLD_THRESHOLD: FOLD_THRESHOLD,
+    WEB_PREVIEW_LIMIT: WEB_PREVIEW_LIMIT,
     OUTLINE_TITLE_LIMIT: OUTLINE_TITLE_LIMIT,
     OUTLINE_TEXT_LIMIT: OUTLINE_TEXT_LIMIT,
     ROLE_MAP: ROLE_MAP,
     toBubbleMessages: toBubbleMessages,
+    conversationMessages: conversationMessages,
+    withStreamingMessage: withStreamingMessage,
     turnOutline: turnOutline,
     roleConfigs: roleConfigs,
     foldPlan: foldPlan,

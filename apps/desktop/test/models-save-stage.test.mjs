@@ -11,8 +11,9 @@ test('配置失败不写凭据，并保留原错误', async()=>{
 });
 test('凭据失败交回已保存修订和稳定阶段，不泄漏底层消息', async()=>{
   const calls=[];
-  const result=await saveModelConfiguration(async method=>{calls.push(method);if(calls.length===1)return view;throw Error('secret');},{id:'p'},'secret',7);
-  assert.deepEqual(calls,['model/registry/update','credential/set']);
+  const result=await saveModelConfiguration(async (method,args)=>{calls.push({method,args});if(calls.length===1)return view;throw Error('secret');},{id:'p'},'secret',7);
+  assert.deepEqual(calls.map(call=>call.method),['model/registry/update','model/registry/save-credential']);
+  assert.deepEqual(calls[1].args,{providerId:'p',expectedRevision:8,key:'secret'});
   assert.equal(result.revision,8);
   assert.deepEqual(result.saveStatus,{configuration:'saved',credential:'failed',reason:'credential-save-failed'});
   assert.equal(JSON.stringify(result).includes('secret'),false);

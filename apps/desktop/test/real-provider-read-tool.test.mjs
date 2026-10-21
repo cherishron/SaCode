@@ -1,3 +1,4 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真实 StepFun 工具闭环（read）：模型决定调用 read、仓颉执行、结果续答（缺口二正证）。
 // 修复前请求里只有 todo_write 一个工具，模型根本没有 read 可调——它只能道歉，
 // 续答里不会出现文件正文。反证即把 toolRuntime 传回 None 重跑，本用例转红。
@@ -14,9 +15,8 @@ const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
 test('真实 StepFun 调用 read 读盘上文件并把正文带进续答', { timeout: 180000 }, async t => {
-  const keyFile = join(repo, 'target', 'step.key');
-  const key = process.env.STEPFUN_API_KEY || (existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : '');
-  if (!key) { t.skip('缺少 STEPFUN_API_KEY 或 target/step.key'); return; }
+  const key = realProviderCredential();
+  if (!key) { t.skip('未显式启用真实模型测试或缺少环境凭据'); return; }
   assert.ok(existsSync(host), '缺少自包含宿主');
   const directory = mkdtempSync(join(tmpdir(), 'sacode-real-read-'));
   // 文件放在宿主 CWD（= 本目录）下：未设工作区时相对路径就落在进程 CWD

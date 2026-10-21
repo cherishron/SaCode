@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import vm from 'node:vm';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
 
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../renderer/pages/tool-card.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue']});
 const tick=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
@@ -35,9 +36,12 @@ function fixture(opts={}){
     setTimeout:(fn,ms)=>{return ms;},
     clearTimeout(){},
   };
+  const foldContext={window:{}};
+  vm.runInNewContext(readFileSync(new URL('../renderer/msgfold.js',import.meta.url),'utf8'),foldContext);
+  ctx.SaCodeMsgFold=foldContext.window.SaCodeMsgFold;
   vm.runInNewContext(compiled.outputFiles[0].text,ctx);
   const ToolCard=ctx.module.exports.ToolCard;
-  const setup=ToolCard.setup({message:{id:'msg-1',content:'工具执行成功：3 个文件已更新',toolCall:{id:'call-1',callId:'c1',name:'edit_file',arguments:'{"path":"a.txt"}',status:'completed',result:'工具执行成功：3 个文件已更新'}}});
+  const setup=ToolCard.setup({message:opts.message||{id:'msg-1',content:'工具执行成功：3 个文件已更新',toolCall:{id:'call-1',callId:'c1',name:'edit_file',arguments:'{"path":"a.txt"}',status:'completed',result:'工具执行成功：3 个文件已更新'}}});
   return{setup,writes,appended,removed};
 }
 
@@ -56,6 +60,21 @@ async function expandAndCopy(setup){
   await tick();
   return setup();
 }
+
+test('抓取卡默认内联前500字，展开还原正文且保留不可信与HTTP状态',()=>{
+  const content=JSON.stringify({result:{externalContent:true,url:'https://example.com',status:404,body:'字'.repeat(501)+'<script>外部文本</script>'}});
+  const {setup}=fixture({message:{id:'web-1',content,toolCall:{id:'c',callId:'c',name:'web_fetch',status:'completed',arguments:'{"url":"https://example.com"}'}}});
+  let tree=setup();assert.match(text(tree),/网页抓取/);assert.match(text(tree),/HTTP 404/);assert.match(text(tree),/外部不可信/);
+  assert.equal(flatten(tree).find(n=>n.props?.class==='tool-body').children,'字'.repeat(500)+'…');
+  flatten(tree).find(n=>n.props?.class==='tool-toggle').props.onClick();tree=setup();
+  assert.match(text(tree),/<script>外部文本<\/script>/);assert.ok(!flatten(tree).some(n=>n.props?.innerHTML));
+});
+test('搜索卡内联查询及来源标题URL摘要日期，危险来源只作文本不提供可执行链接',()=>{
+  const content=JSON.stringify({externalContent:true,sources:[{url:'javascript:alert(1)',title:'<img src=x>',snippet:'合成摘要',publishedAt:'2026-10-21'}],content:'搜索正文'});
+  const {setup}=fixture({message:{content,toolCall:{name:'web_search',status:'completed',arguments:'{"queries":["仓颉 SDK"]}'}}});
+  const tree=setup();for(const value of ['网络搜索','仓颉 SDK','<img src=x>','合成摘要','2026-10-21','搜索正文'])assert.ok(text(tree).includes(value));
+  assert.ok(!flatten(tree).some(n=>n.type==='a'||n.type==='img'||n.props?.innerHTML));
+});
 
 test('展开后结果区底部有复制结果按钮',async()=>{
   const{setup}=fixture();

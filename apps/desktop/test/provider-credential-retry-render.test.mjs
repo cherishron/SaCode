@@ -6,9 +6,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
+import { electronTestOptions } from '../test-support/electron-env-gate.mjs';
 const here=dirname(fileURLToPath(import.meta.url));
 const require=createRequire(import.meta.url);
-test('真实Electron供应商部分保存与密钥独立重试', {timeout:40000}, async()=>{
+test('真实Electron供应商部分保存与密钥独立重试', electronTestOptions({timeout:40000}), async()=>{
   const base=join(here,'../../../target/tmp/provider-retry-render');mkdirSync(base,{recursive:true});
   const dir=mkdtempSync(join(base,'run-'));mkdirSync(join(dir,'user-data'));
   await build({entryPoints:[join(here,'../renderer/pages/provider-settings.ts')],bundle:true,format:'iife',globalName:'ProviderPage',outfile:join(dir,'page.js'),plugins:[{name:'vue-runtime',setup(b){b.onResolve({filter:/^vue$/},()=>({path:'vue',namespace:'runtime'}));b.onLoad({filter:/.*/,namespace:'runtime'},()=>({contents:'module.exports=globalThis.Vue;',loader:'js'}));}}]});
@@ -33,7 +34,7 @@ test('真实Electron供应商部分保存与密钥独立重试', {timeout:40000}
   writeFileSync(join(dir,'main.cjs'),`const {app,BrowserWindow}=require('electron');app.whenReady().then(async()=>{const win=new BrowserWindow({show:false,webPreferences:{offscreen:true,nodeIntegration:false,contextIsolation:true}});await win.loadFile(${JSON.stringify(join(dir,'fixture.html'))});for(let i=0;i<200;i++){const result=await win.webContents.executeJavaScript('window.__result');if(result){console.log('PROVIDER_RESULT '+JSON.stringify(result));app.exit(result.ok?0:1);return;}await new Promise(r=>setTimeout(r,100));}app.exit(1);}).catch(e=>{console.error(e);app.exit(1);});`);
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
   const electron=require('electron');
-  const child=spawn(electron,['--no-sandbox','--disable-gpu','--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
+  const child=spawn(electron,['--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
   let output='';child.stdout.on('data',v=>output+=v);child.stderr.on('data',v=>output+=v);
   const timer=setTimeout(()=>child.kill(),30000);
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);}).finally(()=>clearTimeout(timer));

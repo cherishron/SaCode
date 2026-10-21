@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
+import { electronTestOptions } from '../test-support/electron-env-gate.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -40,7 +41,7 @@ async function runWindow(source, hidden) {
   delete env.ELECTRON_RUN_AS_NODE;
   return await new Promise((resolve, reject) => {
     // 代理环境沙箱初始化可能崩溃；仅显式开启测试开关时关闭，不改变生产启动策略。
-    const args = [join(dir, 'main.cjs'), '--no-sandbox', '--disable-gpu'];
+    const args = [join(dir, 'main.cjs'),  '--disable-gpu'];
     // 可指定已核验发布包的同版本 Electron 运行时，不跳过真实窗口断言。
     const child = spawn(process.env.SACODE_ELECTRON_TEST_EXE || require('electron'), args, { env, windowsHide: true });
     let out = '', err = '';
@@ -59,13 +60,13 @@ async function runWindow(source, hidden) {
 }
 
 const source = readFileSync(join(here, '../window-visibility.cjs'), 'utf8');
-test('真实 Electron：没有 ready-to-show 时仍显示加载完成的窗口', { timeout: 25000 }, async () => {
+test('真实 Electron：没有 ready-to-show 时仍显示加载完成的窗口', electronTestOptions({ timeout: 25000 }), async () => {
   assert.deepEqual(await runWindow(source, false), { visible: true, loading: false });
 });
-test('真实 Electron：隐藏冒烟窗口保持隐藏', { timeout: 25000 }, async () => {
+test('真实 Electron：隐藏冒烟窗口保持隐藏', electronTestOptions({ timeout: 25000 }), async () => {
   assert.deepEqual(await runWindow(source, true), { visible: false, loading: false });
 });
-test('变异反证：删除加载完成兜底后窗口仍隐藏', { timeout: 25000 }, async () => {
+test('变异反证：删除加载完成兜底后窗口仍隐藏', electronTestOptions({ timeout: 25000 }), async () => {
   const mutant = source.replace("win.webContents.once('did-stop-loading', show);", '');
   assert.notEqual(mutant, source);
   assert.deepEqual(await runWindow(mutant, false), { visible: false, loading: false });

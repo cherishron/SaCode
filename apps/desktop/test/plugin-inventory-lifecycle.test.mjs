@@ -8,8 +8,9 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
 import {assertStaticRendererBundle} from '../../../scripts/renderer-bundle-guard.mjs';
+import {electronTestOptions} from '../test-support/electron-env-gate.mjs';
 const require=createRequire(import.meta.url),here=dirname(fileURLToPath(import.meta.url));
-test('插件清单提供者晚绑定、换绑、卸载与迟到读取隔离',{timeout:30000},async()=>{
+test('插件清单提供者晚绑定、换绑、卸载与迟到读取隔离',electronTestOptions({timeout:30000}),async()=>{
   // 与 model-pages-render 同款 harness 环境硬化：%TEMP% 可能被 ACL/AV 拒写，
   // esbuild 输出与 electron user-data 都落到仓库内可写目录；ELECTRON_RUN_AS_NODE
   // 会被 harness 注入，spawn 子进程必须删掉它，否则 electron 当纯 node 跑、app 未定义。
@@ -29,7 +30,7 @@ test('插件清单提供者晚绑定、换绑、卸载与迟到读取隔离',{ti
   let output='',errors='';
   const childEnv={...process.env};delete childEnv.ELECTRON_RUN_AS_NODE;
   const result=await new Promise((resolve,reject)=>{
-    const child=spawn(require('electron'),['--no-sandbox','--disable-gpu',`--user-data-dir=${userData}`,runner,page],{env:childEnv,windowsHide:true,stdio:['ignore','pipe','pipe']});
+    const child=spawn(require('electron'),[`--user-data-dir=${userData}`,runner,page],{env:childEnv,windowsHide:true,stdio:['ignore','pipe','pipe']});
     const timer=setTimeout(()=>{child.kill();reject(Error('Chromium 生命周期验收超时'));},25000);
     child.stdout.on('data',d=>output+=d);child.stderr.on('data',d=>errors+=d);child.on('error',e=>{clearTimeout(timer);reject(e);});child.on('close',code=>{clearTimeout(timer);resolve(code);});
   });

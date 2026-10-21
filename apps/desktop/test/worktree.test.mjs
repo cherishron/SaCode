@@ -437,8 +437,9 @@ function recorder() {
 // host-bridge 用全局 setTimeout 起超时；在 vm 里换成记录用值的桩，才能直接断言生效的超时值。
 function bridgeWithTimer() {
   const delays = [];
+  const bridgeRequire=createRequire(new URL('../host-bridge.cjs',import.meta.url));
   const sandbox = {
-    require: (id) => (id === 'node:child_process' ? { spawn: () => ({}) } : require(id)),
+    require: (id) => (id === 'node:child_process' ? { spawn: () => ({}) } : bridgeRequire(id)),
     module: { exports: {} },
     process: { env: {}, stderr: { write: () => {} }, exit: () => {} },
     console: { log: () => {}, error: () => {}, warn: () => {} },

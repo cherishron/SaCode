@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as sleep } from "node:timers/promises";
+import {spawn} from 'node:child_process';
 const require = createRequire(import.meta.url);
 const { HostBridge } = require("../host-bridge.cjs");
 
@@ -16,6 +17,24 @@ const REPO = jj(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 // 因此测试不再拼 PATH，也不出现任何字面 Windows 路径。
 const HOST = resolve(process.env.SACODE_HOST || jj(REPO, "apps", "desktop", "dist", "host", "bin", "sacode-host.exe"));
 const SEED = "0\tturn/start\tt\n1\tsystem\tx\n2\tuser/message\tfrom desktop\n3\tassistant/message\thello desktop\n";
+
+test('会话元信息预加载只传明确会话身份与修订号',()=>{
+  let exposed;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.sessionRename('s1','新标题',7);exposed.sessionArchive('s2',true,8);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:sessionRename',{sessionId:'s1',title:'新标题',expectedRevision:7}],['sacode:sessionArchive',{sessionId:'s2',archived:true,expectedRevision:8}]]);
+});
+
+test('清空对话 preload 只传会话身份，不带任何额外字段',()=>{
+  let exposed;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{exposed=value}},ipcRenderer:{invoke:(...args)=>calls.push(args),on:()=>{},removeListener:()=>{}}}),
+  });
+  exposed.sessionClear('s3');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:sessionClear',{sessionId:'s3'}]]);
+});
 
 test('知识库桥接只接受会话作用域，不允许渲染层指定存储根',()=>{
   const handlers=new Map();let calls=0;
@@ -137,6 +156,13 @@ async function activeSessionId(b) {
   return current.id;
 }
 
+async function bootFiles() {
+  const fixture=await boot();
+  try { await fixture.b.request('workspace/set-directory',{directory:fixture.dir}); }
+  catch(error){await fixture.b.stop();throw error;}
+  return fixture;
+}
+
 async function subscribe(b, params = {}) {
   const sessionId = params.sessionId || await activeSessionId(b);
   return b.request("session/subscribe", { ...params, sessionId });
@@ -168,12 +194,11 @@ test("握手声明协议与能力", async () => {
 });
 
 test("workspace/files 按 path 列子目录且拒绝越界", async () => {
-  // 自建会话目录：session.log 只放一条已结算记录，不带未完成 turn——
-  // 否则宿主启动时会把未完成 turn 续跑进后台，workspace/files 的首帧就追不上。
+  // 会话目录和工作区是不同事实；使用有效日志，并经生产方法显式选择工作区。
   const root = jj(REPO, "target", "tmp", "bridge");
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(jj(root, "wf-"));
-  writeFileSync(join(dir, "session.log"), "1\tsystem\tready\n");
+  writeFileSync(join(dir, "session.log"), "0\tsystem/message\tready\n");
   mkdirSync(join(dir, "sub"), { recursive: true });
   writeFileSync(join(dir, "sub", "inner.txt"), "hello");
   if (!existsSync(HOST)) throw new Error(`缺少自包含 host：${HOST}，请先跑 node scripts/pack-host.mjs`);
@@ -181,6 +206,7 @@ test("workspace/files 按 path 列子目录且拒绝越界", async () => {
   await b.start(dir);
   try {
     await b.request("initialize"); // 真实桌面总是先握手，测试也照此契约
+    await b.request('workspace/set-directory', {directory:dir});
     const top = await b.request("workspace/files", { path: "" });
     assert.ok(Array.isArray(top.files), "根目录应返回文件数组");
     assert.ok(top.files.some((f) => f.name === "sub" && f.isDir), "根目录应含 sub 目录");
@@ -211,11 +237,14 @@ test("经协议写入后可见且落盘", async () => {
   await b.stop();
 });
 
-test("租约冲突以 JSON-RPC 错误传播", async () => {
+test("未知归属的损坏租约明确拒绝且保留原凭据", async () => {
   const { b, dir } = await boot();
   writeFileSync(join(dir, "session.log.lease"), "held");
-  await assert.rejects(() => b.request("session/append", { eventType: "user/message", data: "blocked" }), /already-owned/);
-  await b.stop();
+  try {
+    await assert.rejects(() => b.request("session/append", { eventType: "user/message", data: "blocked" }), /session-owner-unknown/);
+    assert.equal(readFileSync(join(dir, 'session.log.lease'),'utf8'),'held');
+    assert.equal(readFileSync(join(dir, 'session.log'),'utf8'),SEED);
+  } finally { await b.stop(); }
 });
 
 test("未知方法返回 -32601", async () => {
@@ -249,6 +278,106 @@ test("无待写事件时 flush 明确拒绝", async () => {
   const { b } = await boot();
   await assert.rejects(() => b.request("session/flush"), /-32004|no-pending-writes/);
   await b.stop();
+});
+
+// clear 命令修复：清空的是会话日志真源，不是前端投影。
+// 4 条种子事件（turn/start、system、user、assistant）全属对话历史，清空后投影归零；
+// 会话身份基线（标题/目录/模式/权限/主题）必须原样保留，重开回放不丢身份。
+test("clear 清空会话日志真源并保留身份基线", async () => {
+  const { b, dir } = await boot();
+  try {
+    const sessionId = await activeSessionId(b);
+    // 补一条标题与一条目录事件：基线事件必须活过 clear。
+    // session/append 自带 flush（追加即落盘），无需再显式 flush。
+    await b.request("session/append", { eventType: "session/title", data: "清空用会话" });
+    await b.request("session/append", { eventType: "workspace/directory", data: dir });
+    const before = await b.request("session/projection");
+    assert.equal(before.events, 6);
+
+    const cleared = await b.request("session/clear", { sessionId });
+    assert.equal(cleared.cleared, true);
+    assert.equal(cleared.sessionId, sessionId);
+
+    // 投影以真源为准：消息清空，基线保留。
+    const after = await b.request("session/projection");
+    assert.equal(after.projection, 0, "对话历史必须清空");
+    const tail = await subscribe(b, { cursor: 0, limit: 50 });
+    const types = tail.events.map((e) => e.type);
+    assert.equal(types.includes("user/message"), false, "用户消息不得残留");
+    assert.equal(types.includes("assistant/message"), false, "助手消息不得残留");
+    assert.equal(types.includes("session/title"), true, "会话标题基线必须保留");
+    assert.equal(types.includes("workspace/directory"), true, "工作区目录基线必须保留");
+
+    // 目录侧身份不丢：清空后 catalog 仍按标题列出该会话。
+    const catalog = await b.request("session/catalog");
+    const entry = catalog.entries.find((e) => e.id === sessionId);
+    assert.ok(entry, "清空后目录必须仍列出该会话");
+    assert.equal(entry.title, "清空用会话");
+
+    // 落盘文件真实重建：旧对话不在盘上。
+    const log = readFileSync(join(dir, "session.log"), "utf8");
+    assert.equal(log.includes("from desktop"), false, "盘上不得残留旧对话");
+    assert.equal(log.includes("清空用会话"), true, "盘上必须保留标题基线");
+
+    // clear 之后可以继续正常发新消息（重放基线上再追加）。
+    const next = await b.request("session/append", { eventType: "user/message", data: "clear 之后的新消息" });
+    assert.equal(next.events, 3);
+    const p = await b.request("session/projection");
+    assert.equal(p.projection, 1, "清空后新消息必须正常进入投影");
+
+    // 崩溃等价性：重启宿主后（重开应用语义）从盘上重建，清空结果与基线保持。
+    await b.stop();
+    const b2 = new HostBridge(HOST, fixtureHostEnv(dir));
+    await b2.start(dir);
+    const reopened = await b2.request("session/projection");
+    assert.equal(reopened.projection, 1, "重开后只看到清空后的新消息");
+    const events = await subscribe(b2, { cursor: 0, limit: 50 });
+    const reopenedTypes = events.events.map((e) => e.type);
+    assert.equal(reopenedTypes.includes("assistant/message"), false, "重开后旧消息不得复活");
+    assert.equal(reopenedTypes.includes("session/title"), true, "重开后标题基线仍在");
+    await b2.stop();
+  } finally {
+    await b.stop().catch(() => {});
+  }
+});
+
+test("clear 拒绝不存在的会话与多余字段", async () => {
+  const { b } = await boot();
+  try {
+    await assert.rejects(() => b.request("session/clear", { sessionId: "no-such-session" }), /unknown-session|bad-session|no such|-32602|-32004/);
+    await assert.rejects(() => b.request("session/clear", {}), /bad-session-clear|-32602|-32004/);
+    await assert.rejects(() => b.request("session/clear", { sessionId: "s", extra: 1 }), /bad-session-clear|-32602|-32004/);
+  } finally { await b.stop(); }
+});
+
+// 归档不属于对话历史：清空后必须保留 session/archived，否则已归档会话会被「复活」。
+test("clear 保留 session/archived 基线事件", async () => {
+  const { b, dir } = await boot();
+  let b2;
+  try {
+    const sessionId = await activeSessionId(b);
+    await b.request("session/append", { eventType: "session/archived", data: "true" });
+    const before = await b.request("session/catalog");
+    assert.equal(before.entries.find((e) => e.id === sessionId)?.archived, true, "种下的归档状态必须先可见");
+
+    const cleared = await b.request("session/clear", { sessionId });
+    assert.equal(cleared.cleared, true);
+    const tail = await subscribe(b, { cursor: 0, limit: 50 });
+    const archived = tail.events.filter((e) => e.type === "session/archived");
+    assert.equal(archived.length, 1, "归档事件必须作为基线保留，不能随对话历史丢弃");
+
+    // 重开应用语义：归档状态由日志派生，重启后仍须是 archived=true。
+    await b.stop();
+    b2 = new HostBridge(HOST, fixtureHostEnv(dir));
+    await b2.start(dir);
+    const catalog = await b2.request("session/catalog");
+    const entry = catalog.entries.find((e) => e.id === sessionId);
+    assert.ok(entry, "重开后目录必须仍列出该会话");
+    assert.equal(entry.archived, true, "清空并重开后归档状态不得丢失");
+  } finally {
+    if (b2) await b2.stop().catch(() => {});
+    await b.stop().catch(() => {});
+  }
 });
 
 test("订阅按 cursor/limit 分页并给出 more", async () => {
@@ -299,7 +428,7 @@ test("桌面入口的 extension/list 与 CLI 内置注册表一致", async () =>
 // 读侧与版本过期同样要能从桌面入口走通：两个入口共用同一个 core，
 // 只在 core 里测过不等于入口这条路真的能走。
 test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒为版本过期", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
   try {
     const asked = await b.request("approval/ask", { name: "write" });
     await b.request("approval/answer", { approvalId: asked.approvalId, decision: "allowed-once" });
@@ -328,7 +457,7 @@ test("桌面入口的 read 交回盘上正文，等长外部改动后写被拒�
 });
 
 test("桌面文件工具拒绝未观察覆盖和路径别名绕过，解码失败后宿主仍可用", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
   const write = async (args) => {
     const a = await b.request("approval/ask", { name: "write" });
     await b.request("approval/answer", { approvalId: a.approvalId, decision: "allowed-once" });
@@ -356,7 +485,8 @@ test("桌面文件工具拒绝未观察覆盖和路径别名绕过，解码失�
 
 // 反向：未登记工具必须走 JSON-RPC 错误；自报的审批字符串在协议面上完全不起作用
 test("extension/call 未登记工具被拒且自报审批不放行", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
+  try {
   await assert.rejects(() => b.request("extension/call", { name: "no.such", args: "a b", approval: "allowed-once" }), /unregistered-tool:no.such/);
   // 关键反向用例：带着「我已经批过了」的自述来调用，没有工单就是不放行
   await assert.rejects(() => b.request("extension/call", { name: "write", args: "probe.txt hi", approval: "allowed-once" }), /approval-not-granted:unknown/);
@@ -367,11 +497,11 @@ test("extension/call 未登记工具被拒且自报审批不放行", async () =>
   assert.equal(ok.result, `ok:${join(dir, 'probe.txt')}`);
   const l = await b.request("extension/list", {});
   assert.equal(l.misses, 1, "未登记拒绝必须计数（审批被拒不计入注册表 miss）");
-  await b.stop();
+  } finally { await b.stop(); }
 });
 
 test("extension/dispose 逐个卸载后注册表清空且二次卸载失败", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
   try {
     const d = await b.request("extension/dispose", { name: "write" });
     assert.equal(d.disposed, true);
@@ -505,6 +635,7 @@ test("宿主退出前取消并结算在途 turn，不丢日志不留租约", asy
 // 依据是 core 的 SessionLog 访问已全部加锁（loglock_test 钉住），读的是自洽快照。
 test("turn 在途时读投影与订阅不再被拒，写侧仍串行", async () => {
   const { b } = await bootFresh();
+  try {
   const s = await b.request("turn/start", { limit: 2 });
   assert.equal(s.started, true);
   await nap(150);
@@ -512,7 +643,8 @@ test("turn 在途时读投影与订阅不再被拒，写侧仍串行", async () 
   assert.ok(p.events >= 3, `流式期读不到状态：${JSON.stringify(p)}`);
   assert.equal(p.durable, 0, "turn 在途尚未 flush，跨进程不可见");
   assert.equal(p.pending, p.events, "内存态与已落盘的差额必须如实报 pending");
-  const sub = await subscribe(b, { cursor: 0 });
+  // 首轮尚未落盘时目录没有当前行；本测试持有初始化新会话的明确身份。
+  const sub = await subscribe(b, { cursor: 0, sessionId:'current' });
   assert.deepEqual(sub.events, [], "订阅只回放已落盘事件");
   await assert.rejects(
     () => b.request("session/submit", { eventType: "user/message", data: "mid-turn" }),
@@ -527,7 +659,7 @@ test("turn 在途时读投影与订阅不再被拒，写侧仍串行", async () 
   const after = await b.request("session/projection", {});
   assert.equal(after.durable, after.events, "结算后应全部落盘");
   assert.ok(after.events >= p.events, "结算后读数不得回退");
-  await b.stop();
+  } finally { await b.stop(); }
 });
 
 // C5 桌面入口：JS 动态扩展必须由仓颉核心驱动的子进程提供，桌面看到的应答只能来自子进程。
@@ -763,7 +895,12 @@ async function bootWithLeaseFile(token) {
 // 持有者确认已死 → 自动接管；持有者还活着 → 仍须明确拒绝，一个字都不动别人的凭据。
 test("残留租按持有者死活分别接管与拒绝", async () => {
   {
-    const { b } = await bootWithLeaseFile("writer=4294967000-stale");
+    // 无效PID只能证明归属未知；用本测试真实创建并确认退出的进程验证死亡接管。
+    const owner=spawn(process.execPath,['-e',''],{stdio:'ignore',windowsHide:true});
+    assert.ok(owner.pid>0);
+    const exit=await new Promise((resolve,reject)=>{owner.once('error',reject);owner.once('close',resolve);});
+    assert.equal(exit,0);
+    const { b } = await bootWithLeaseFile(`writer=${owner.pid}-stale`);
     try {
       const r = await b.request("session/append", { eventType: "user/message", data: "接管后写入" });
       // SEED 本身 4 条事件，接管后这条写入进去才是 5
@@ -794,7 +931,7 @@ test("残留租按持有者死活分别接管与拒绝", async () => {
 // 工单句柄在协议里一律叫 approvalId，不叫 id：本宿主按整帧字节扫描取值，
 // "id" 会先撞上 JSON-RPC 信封自己的 id，参数被静默读成 -1（本批实测踩到）。
 test("审批工单 ask→answer(allowed-once)→call 只放行一次", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
   try {
     const asked = await b.request("approval/ask", { name: "write" });
     assert.equal(asked.state, "pending");
@@ -828,7 +965,7 @@ test("审批工单 ask→answer(allowed-once)→call 只放行一次", async () 
 });
 
 test("审批过期由真实单调钟决定，且只结算一次", async () => {
-  const { b, dir } = await boot();
+  const { b, dir } = await bootFiles();
   try {
     // ttl=1 秒：协议面只允许把窗口缩短，所以这条能等到真过期而不用等默认 30 秒
     const asked = await b.request("approval/ask", { name: "write", ttl: 1 });
@@ -875,7 +1012,7 @@ test("审批没有可推进的时钟通道，ttl 只可缩短不可延长", asyn
 
 // 反向：非法决定不得「顺手放行」，也不得把 pending 打成别的状态
 test("非法审批决定被拒且不改判", async () => {
-  const { b } = await boot();
+  const { b } = await bootFiles();
   try {
     const asked = await b.request("approval/ask", { name: "write" });
     for (const bad of ["allowed-always", "", "ALLOWED-ONCE"]) {
@@ -898,7 +1035,7 @@ test("非法审批决定被拒且不改判", async () => {
 });
 
 test("未应答的工单不放行（pending 不等于批准）", async () => {
-  const { b } = await boot();
+  const { b } = await bootFiles();
   try {
     const asked = await b.request("approval/ask", { name: "write" });
     await assert.rejects(
@@ -1347,6 +1484,199 @@ test('审批模式宿主失败原样拒绝，不伪造读取或设置成功', as
   assert.deepEqual(requests.map(row => row.method), ['approval/get-mode', 'approval/set-mode']);
 });
 
+// 新域固定负载表同时用于逐动作契约测试和真实主进程集合门禁。
+const newIpcDigest = 'a'.repeat(64);
+const newIpcOwner = { sessionId: 's', projectId: 'p', browserId: 'b', tabId: 't' };
+const newIpcBinding = { sessionId: 's', workspace: 'D:/project', workspaceRevision: 1 };
+const newIpcCalls = {
+  browserNavigate: [{ ...newIpcOwner, url: 'https://example.test/' }],
+  browserScreenshot: [newIpcOwner], browserClick: [{ ...newIpcOwner, x: 1, y: 2 }],
+  browserInput: [{ ...newIpcOwner, text: '测试' }], browserScroll: [{ ...newIpcOwner, deltaX: 0, deltaY: -1 }], browserClose: [newIpcOwner],
+  databaseConnect: [{ sessionId: 's', projectId: 'p', spec: { engine: 'postgresql', host: 'localhost', port: 5432, database: 'test', user: 'test', credentialRef: 'ref', tlsMode: 'verify-full', readonly: true, connectTimeoutMs: 10000, statementTimeoutMs: 30000 } }],
+  databaseDisconnect: ['c'], databaseQuery: [{ connectionId: 'c', sql: 'select 1', params: [null, 1, true, 'x'], opts: { readonly: true, maxRows: 100, maxBytes: 1024, statementTimeoutMs: 30000, cursorBatch: 100 } }],
+  importSources: ['s'], importPickFile: ['s', 'text-file'],
+  importPreview: [{ sessionId: 's', sourceId: 'text-file', kind: 'knowledge', mapping: {}, target: { scope: 'user' }, candidates: [{ sourceKey: 'doc', title: '文档', content: '内容' }] }],
+  importPlan: [{ sessionId: 's', previewToken: 'pv' }], importConfirm: [{ sessionId: 's', planHash: newIpcDigest, decisions: { item: 'dismiss' } }],
+  importApply: [{ sessionId: 's', planHash: newIpcDigest, requestId: 'r', selection: { itemIds: ['item'] } }], importDescribe: [{ sessionId: 's', jobId: 'j', offset: 0, limit: 100 }], importCancel: ['s', 'j'],
+  terminalCreate: [{ cwd: 'D:/project', env: {}, cols: 80, rows: 24 }], terminalInput: ['pty', 'YQ=='], terminalResize: ['pty', 80, 24], terminalInterrupt: ['pty'], terminalDescribe: ['pty', 8192], terminalClose: ['pty'],
+  compactRun: ['s', 'r'], compactDescribe: ['s'], securityScan: [{ sessionId: 's', requestId: 'r', scope: [{ path: 'src/a.cj', digest: newIpcDigest }] }],
+  securityDescribe: ['s'], securityFreshness: ['s', 'scan'], securityFixDraft: ['s', 'scan', ['f']],
+  sshExec: [{ sessionId: 's', arguments: JSON.stringify({ host: 'example.test', command: 'pwd', user: 'test', port: 22, timeoutMs: 1000, connectTimeoutSec: 1 }), approvalId: 1 }], sshDescribe: ['s'],
+  mcpList: ['s'],
+  mcpConnect: [{ sessionId: 's', name: 'fs', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'], approvalId: 1 }],
+  mcpDisconnect: ['s', 'fs'], mcpTools: ['s', 'fs'],
+  mcpCall: [{ sessionId: 's', name: 'fs', toolName: 'read_file', argumentsJson: '{"path":"a.txt"}', approvalId: 1 }],
+  mcpStatus: ['s', 'fs'],
+  automationTick: ['s', 'scope'], automationDescribeExecution: [{ sessionId: 's', scopeId: 'scope', taskId: 'task', fireId: 'fire' }],
+  knowledgeIndexBuild: [{ ...newIpcBinding, indexRevision: 0, files: [{ path: 'src/a.cj', digest: newIpcDigest }] }],
+  knowledgeSearch: [{ ...newIpcBinding, indexRevision: 0, query: 'name', limit: 6 }], knowledgeDescribeIndex: [newIpcBinding],
+};
+// MCP 通道的 Host 期望参数转换：preload 给扁平字段，main.cjs 打包成 Host mcp_rpc.cj 的嵌套 args JSON 字符串。
+// 测试 1 的通用断言「HostBridge.request 收到的 params == preload 传出的 payload」对 MCP 不成立，这里给出转换函数。
+const MCP_DEFAULT_TIMEOUT = 15000;
+const mcpHostParams = {
+  mcpList: p => p,
+  mcpConnect: p => ({ sessionId: p.sessionId, name: p.name, args: JSON.stringify({ command: p.command, args: p.args, timeoutMs: p.timeoutMs ?? MCP_DEFAULT_TIMEOUT }), approvalId: p.approvalId }),
+  mcpDisconnect: p => p,
+  mcpTools: p => ({ sessionId: p.sessionId, name: p.name, timeoutMs: MCP_DEFAULT_TIMEOUT }),
+  mcpCall: p => ({ sessionId: p.sessionId, name: p.name, args: JSON.stringify({ tool: p.toolName, argumentsJson: p.argumentsJson ?? '{}', timeoutMs: MCP_DEFAULT_TIMEOUT }), approvalId: p.approvalId }),
+  mcpStatus: p => p,
+};
+function newIpcPreload(invoke) {
+  let api;
+  require('node:vm').runInNewContext(readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8'), {
+    URL, require: () => ({ contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } }, ipcRenderer: { invoke, on() {}, removeListener() {} } }),
+  });
+  return api;
+}
+const newIpcMethods = {
+  browserNavigate: 'browser/navigate', browserScreenshot: 'browser/screenshot', browserClick: 'browser/click', browserInput: 'browser/input', browserScroll: 'browser/scroll', browserClose: 'browser/close',
+  databaseConnect: 'database/connect', databaseDisconnect: 'database/disconnect', databaseQuery: 'database/query',
+  importSources: 'import/sources', importPickFile: 'import/pick-file', importPreview: 'import/preview', importPlan: 'import/plan', importConfirm: 'import/confirm', importApply: 'import/apply', importDescribe: 'import/describe', importCancel: 'import/cancel',
+  terminalCreate: 'terminal/create', terminalInput: 'terminal/input', terminalResize: 'terminal/resize', terminalInterrupt: 'terminal/interrupt', terminalDescribe: 'terminal/describe', terminalClose: 'terminal/close',
+  compactRun: 'compact/run', compactDescribe: 'compact/describe', securityScan: 'security/scan', securityDescribe: 'security/describe', securityFreshness: 'security/freshness', securityFixDraft: 'security/fix-draft',
+  sshExec: 'ssh/exec', sshDescribe: 'ssh/describe',
+  mcpList: 'mcp/list', mcpConnect: 'mcp/connect', mcpDisconnect: 'mcp/disconnect', mcpTools: 'mcp/tools', mcpCall: 'mcp/call', mcpStatus: 'mcp/status',
+  automationTick: 'automation/tick', automationDescribeExecution: 'automation/describe-execution',
+  knowledgeIndexBuild: 'knowledge/index-build', knowledgeSearch: 'knowledge/search', knowledgeDescribeIndex: 'knowledge/describe-index',
+};
+test('新域主进程 42 个 handler 固定映射并保留实际回执和错误', async () => {
+  const reply = { actual: true };
+  const { handlers, requests } = lspMainHandlers(async () => reply);
+  const api = newIpcPreload((channel, payload) => handlers.get(channel)(null, payload));
+  assert.equal(Object.keys(newIpcMethods).length, 42);
+  for (const [key, args] of Object.entries(newIpcCalls)) {
+    let expected;
+    const capture = newIpcPreload((_channel, payload) => { expected = payload; return Promise.resolve(); });
+    await capture[key](...args);
+    assert.equal(await api[key](...args), reply, key);
+    // MCP 通道的 main.cjs 会把扁平参数打包成 Host 期望的嵌套 args JSON 字符串，所以 HostBridge.request 收到的 params 与 preload 传出的 payload 不同。
+    const expectedParams = mcpHostParams[key] ? mcpHostParams[key](expected) : expected;
+    assert.deepEqual(JSON.parse(JSON.stringify(requests.at(-1))), { method: newIpcMethods[key], params: JSON.parse(JSON.stringify(expectedParams)) }, key);
+  }
+  const error = new Error('host-rejected');
+  const failing = lspMainHandlers(async () => { throw error; });
+  const rejectedApi = newIpcPreload((channel, payload) => failing.handlers.get(channel)(null, payload));
+  for (const [key, args] of Object.entries(newIpcCalls)) await assert.rejects(() => rejectedApi[key](...args), e => e === error, key);
+});
+test('新域主进程直接调用也拒绝多余字段、非法嵌套和缺少必填项', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  const api = newIpcPreload(async (channel, payload) => {
+    const handler = handlers.get(channel);
+    await assert.rejects(() => handler(null, { ...payload, method: 'arbitrary' }), /ipc-invalid-arguments/);
+    await assert.rejects(() => handler(null, null), /ipc-invalid-arguments/);
+    if (Object.keys(payload).length) {
+      const missing = { ...payload }; delete missing[Object.keys(payload)[0]];
+      await assert.rejects(() => handler(null, missing), /ipc-invalid-arguments/);
+    }
+  });
+  for (const [key, args] of Object.entries(newIpcCalls)) await api[key](...args);
+  const bad = [
+    ['browserNavigate', { ...newIpcOwner, url: 'file:///secret' }],
+    ['databaseConnect', { ...newIpcCalls.databaseConnect[0], spec: { ...newIpcCalls.databaseConnect[0].spec, password: 'invalid-placeholder' } }],
+    ['databaseQuery', { ...newIpcCalls.databaseQuery[0], opts: { ...newIpcCalls.databaseQuery[0].opts, readonly: false } }],
+    ['terminalInput', { sessionId: 'pty', data: 'not-base64' }],
+    ['sshExec', { ...newIpcCalls.sshExec[0], approvalId: 'approved' }],
+    ['knowledgeSearch', { ...newIpcCalls.knowledgeSearch[0], limit: 13 }],
+    ['securityScan', { ...newIpcCalls.securityScan[0], scope: [{ path: '../outside', digest: newIpcDigest }] }],
+    ['importPreview', { ...newIpcCalls.importPreview[0], kind: 'conversation' }],
+  ];
+  for (const [key, payload] of bad) await assert.rejects(() => handlers.get('sacode:' + key)(null, payload), /ipc-invalid-arguments/, key);
+  assert.equal(requests.length, 0);
+});
+test('新域主进程保留可选字段缺省和导入分支', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  const api = newIpcPreload((channel, payload) => handlers.get(channel)(null, payload));
+  await api.terminalDescribe('pty');
+  await api.importApply({ sessionId: 's', jobId: 'j' });
+  await api.knowledgeSearch({ ...newIpcBinding, indexRevision: 0, query: '' });
+  await api.importPreview({ sessionId: 's', sourceId: 'chatgpt-export', kind: 'conversation', mapping: {}, target: { scope: 'user' }, candidates: [{ sourceKey: 'chat', messages: [{ role: 'user', text: '内容' }] }] });
+  await api.importPreview({ sessionId: 's', sourceId: 'sacode-migrate', kind: 'config', mapping: {}, target: { scope: 'user' }, payload: { kind: 'config', text: '{}' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0])), { method: 'terminal/describe', params: { sessionId: 'pty' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[1])), { method: 'import/apply', params: { sessionId: 's', jobId: 'j' } });
+  assert.equal(Object.hasOwn(requests[2].params, 'limit'), false);
+  assert.equal(requests[3].params.kind, 'conversation');
+  assert.equal(requests[4].params.kind, 'config');
+});
+test('新域 preload 42 个固定动作逐项转发合法负载且不伪造响应', async () => {
+  const calls = [], reply = { actual: true };
+  const api = newIpcPreload((...args) => { calls.push(args); return Promise.resolve(reply); });
+  assert.equal(Object.keys(newIpcCalls).length, 42);
+  for (const [key, args] of Object.entries(newIpcCalls)) {
+    assert.equal(await api[key](...args), reply);
+    assert.equal(calls.at(-1)[0], `sacode:${key}`);
+    const expected = args.length === 1 && typeof args[0] === 'object' ? args[0] : undefined;
+    if (expected) assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1)[1])), expected);
+  }
+  assert.equal(calls.length, 42);
+});
+test('新域 preload 拒绝缺字段、未知字段与非法类型且不触达 IPC', () => {
+  let invoked = 0;
+  const api = newIpcPreload(() => { invoked++; return Promise.resolve({}); });
+  for (const [key, args] of Object.entries(newIpcCalls)) {
+    assert.throws(() => api[key](), /preload:invalid-arguments/, key);
+    if (args.length === 1 && typeof args[0] === 'object') {
+      assert.throws(() => api[key]({ ...args[0], approved: true }), /preload:invalid-arguments/, key);
+      for (const field of Object.keys(args[0])) {
+        assert.throws(() => api[key]({ ...args[0], [field]: Symbol('非法类型') }), /preload:invalid-arguments/, `${key}.${field}`);
+      }
+    } else {
+      for (let index = 0; index < args.length; index++) {
+        const bad = [...args]; bad[index] = {};
+        assert.throws(() => api[key](...bad), /preload:invalid-arguments/, key);
+      }
+    }
+  }
+  const invalid = [
+    ['browserNavigate', [{ ...newIpcOwner, url: 'file:///private' }]],
+    ['browserNavigate', [{ ...newIpcOwner, url: 'https://user:pass@example.test/' }]],
+    ['terminalInput', ['pty', 'not base64']], ['terminalInput', ['pty', 'AAAA'.repeat(1366)]],
+    ['terminalResize', ['pty', 0, 24]], ['terminalDescribe', ['pty', 262145]],
+    ['terminalCreate', [{ ...newIpcCalls.terminalCreate[0], env: { PATH: 3 } }]],
+    ['databaseConnect', [{ ...newIpcCalls.databaseConnect[0], spec: { ...newIpcCalls.databaseConnect[0].spec, password: 'invalid-placeholder' } }]],
+    ['databaseConnect', [{ ...newIpcCalls.databaseConnect[0], spec: { ...newIpcCalls.databaseConnect[0].spec, tlsMode: 'disable' } }]],
+    ['databaseQuery', [{ ...newIpcCalls.databaseQuery[0], params: [{}] }]],
+    ['databaseQuery', [{ ...newIpcCalls.databaseQuery[0], opts: { ...newIpcCalls.databaseQuery[0].opts, readonly: false } }]],
+    ['knowledgeSearch', [{ ...newIpcCalls.knowledgeSearch[0], limit: 13 }]],
+    ['knowledgeIndexBuild', [{ ...newIpcCalls.knowledgeIndexBuild[0], files: [{ path: '../outside', digest: newIpcDigest }] }]],
+    ['securityScan', [{ ...newIpcCalls.securityScan[0], scope: [{ path: 'a', digest: 'bad' }] }]],
+    ['importConfirm', [{ sessionId: 's', planHash: newIpcDigest, decisions: { item: 'approved' } }]],
+    ['importPreview', [{ ...newIpcCalls.importPreview[0], mapping: { approved: true } }]],
+    ['importApply', [{ ...newIpcCalls.importApply[0], jobId: 'j' }]],
+    ['sshExec', [{ ...newIpcCalls.sshExec[0], arguments: JSON.stringify({ host: 'x', command: 'pwd', user: 'test', port: 22, timeoutMs: 1, connectTimeoutSec: 1, options: '-o' }) }]],
+    ['sshExec', [{ ...newIpcCalls.sshExec[0], approvalId: 'approved' }]],
+    ['automationDescribeExecution', [{ ...newIpcCalls.automationDescribeExecution[0], now: 123 }]],
+  ];
+  for (const [key, args] of invalid) assert.throws(() => api[key](...args), /preload:invalid-arguments/, key);
+  let getterRead = false;
+  assert.throws(() => api.browserScreenshot({ ...newIpcOwner, get approved() { getterRead = true; return true; } }), /preload:invalid-arguments/);
+  assert.equal(getterRead, false);
+  assert.equal(invoked, 0);
+});
+test('新域 preload 可选字段与导入分支严格匹配 Host 参数', async () => {
+  const calls = [];
+  const api = newIpcPreload((channel, payload) => { calls.push([channel, payload]); return Promise.resolve({}); });
+  await api.importPreview({ sessionId: 's', sourceId: 'chatgpt-export', kind: 'conversation', mapping: {}, target: { scope: 'user' }, candidates: [{ sourceKey: 'chat', messages: [{ role: 'user', text: '问题' }] }] });
+  await api.importPreview({ sessionId: 's', sourceId: 'sacode-migrate', kind: 'config', mapping: {}, target: { scope: 'user' }, payload: { kind: 'config', text: '{}' } });
+  await api.importApply({ sessionId: 's', jobId: 'j' });
+  await api.terminalDescribe('pty');
+  await api.automationDescribeExecution({ sessionId: 's', scopeId: 'scope', taskId: 'task' });
+  await api.knowledgeSearch({ ...newIpcBinding, indexRevision: 0, query: '' });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[3][1])), { sessionId: 'pty' });
+  assert.throws(() => api.importPreview({ ...newIpcCalls.importPreview[0], kind: 'conversation' }), /preload:invalid-arguments/);
+  assert.throws(() => api.importPreview({ sourceId: 'sacode-migrate', kind: 'config', mapping: {}, target: { scope: 'user' }, payload: { kind: 'secret-bundle', text: '{}' } }), /preload:invalid-arguments/);
+  assert.equal(calls.length, 6);
+});
+test('新域 preload 缺 handler 明确提示，真实错误和未知结果不得伪造成功', async () => {
+  for (const [key, args] of Object.entries(newIpcCalls)) {
+    const api = newIpcPreload(() => Promise.reject(new Error(`No handler registered for 'sacode:${key}'`)));
+    await assert.rejects(api[key](...args), /通道未接通：preload.cjs/);
+  }
+  const failure = new Error('approval-required');
+  await assert.rejects(newIpcPreload(() => Promise.reject(failure)).compactDescribe('s'), error => error === failure);
+  assert.equal(await newIpcPreload(() => Promise.resolve(undefined)).compactDescribe('s'), undefined);
+});
+
 // IPC 面的唯一权威是 preload.cjs 里 contextBridge.exposeInMainWorld 的顶层 key（AGENTS.md）。
 // 顶层 key 为权威；下方逐项登记有限动作，不以历史计数替代。
 // 增删通道必须同时改 preload.cjs 与这里：整串比对，为的就是「悄悄多出一条发任意方法的口子」当场红。
@@ -1368,21 +1698,23 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
     'executionStart', 'executionStop', 'globalAppearanceGet', 'globalAppearanceSetBusySend', 'globalAppearanceSetFontSize', 'globalAppearanceSetTheme',
     'globalSettingsGet', 'globalSettingsSet', 'goalClear', 'goalCreate', 'goalDescribe', 'goalEdit',
     'goalPause', 'goalResume', 'knowledgeImport', 'knowledgeList', 'knowledgeReference', 'knowledgeRemove', 'knowledgeSave', 'ledgerStats', 'lspCallHierarchy', 'lspDefine', 'lspDiagnostics',
-    'lspImplementation', 'lspLookup', 'lspReferences', 'lspRename', 'modelPull', 'modelPullCancel', 'modelPullDescribe', 'modelUpstreamUpsert',
+    'lspImplementation', 'lspLookup', 'lspReferences', 'lspRename',
+    'modelPull', 'modelPullCancel', 'modelPullDescribe', 'modelUpstreamUpsert',
     'modelsCatalog', 'modelsCreateInstance', 'modelsDescribe', 'modelsList', 'modelsRemove', 'modelsSave', 'modelsSaveCredential', 'modelsSetDefault',
-    'modelsSetEnabled', 'modelsSort', 'pageToolCall', 'pageToolsList', 'pluginsDescribe', 'pluginsInspect',
+    'modelsSetEnabled', 'modelsSort', 'pageToolCall', 'pageToolsList', 'planGetMode', 'planReviewAnswer', 'planSetMode', 'pluginsDescribe', 'pluginsInspect',
     'pluginsInstall', 'pluginsInstallCancel', 'pluginsInstallPoll', 'pluginsRegistries', 'pluginsSetEnabled', 'pluginsSetRowEnabled',
     'pluginsUninstall', 'profileGet', 'profileUpdate', 'projection', 'promptCancel', 'promptEnhance', 'promptPoll', 'queueDescribe',
-    'queueEnqueue', 'queueUpdate', 'requestTrace', 'sessionCatalog', 'sessionCreate', 'sessionEvents', 'sessionSelect',
+    'queueEnqueue', 'queueUpdate', 'requestTrace', 'sessionArchive', 'sessionCatalog', 'sessionClear', 'sessionCreate', 'sessionEvents', 'sessionRename', 'sessionSelect',
     'taskStart', 'teamApprovalAnswer', 'teamDescribe', 'teamMemberCreate', 'teamMemberStop', 'teamMessageBroadcast',
     'teamMessageSend', 'teamTaskAssign', 'teamTaskClaim', 'teamTaskComplete', 'teamTaskCreate', 'terminalOutput',
     'tipsAfterReply', 'tipsGet', 'tipsSetHidden', 'tipsStartup', 'toolCall', 'toolsList',
-    'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userSend',
+    'turnCancel', 'turnPoll', 'turnStart', 'usageSetBudget', 'usageStatus', 'userQuestionAnswer', 'userSend',
     'webSettingsApply', 'webSettingsDescribe', 'webSettingsSetCredential',
     'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitPushTarget', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
-  ]);
-  assert.equal(Object.keys(exposed).length, 149, 'IPC 通道计数须与 preload.cjs 同步更新');
+    ...Object.keys(newIpcCalls),
+  ].sort());
+  assert.equal(Object.keys(exposed).length, 198, 'IPC 通道计数须与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1398,17 +1730,149 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   let api;
   const invoked = [];
   vm.runInNewContext(readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8'), {
+    URL,
     require: () => ({
       contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
       ipcRenderer: { invoke: (channel) => { invoked.push(channel); return Promise.resolve({}); }, on: () => {}, removeListener: () => {} },
     }),
   });
-  // 每个动作都以「满参数」调用一次：任一通道在 invoke 之前抛掉，集合就会短一截，当场红。
-  for (const action of Object.values(api)) action('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h');
+  // 新动作使用真实合法字段，旧动作保留原有占位调用；不为未接入的主进程伪造 handler。
+  for (const [key, action] of Object.entries(api)) action(...(newIpcCalls[key] ?? ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']));
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 149, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含模型拉取控制）');
+  assert.equal(handlers.size, 198, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含模型拉取控制及会话交互）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }
+});
+
+// MCP 六动词桥接测试：preload 只传扁平参数，main.cjs 打包成 Host mcp_rpc.cj 期望的嵌套 args JSON 字符串。
+// connect 与 call 必须携带审批票；argumentsJson 必须可解析为 JSON 对象后才转发。
+test('MCP preload 只传会话身份给 mcpList，不带额外字段', () => {
+  let exposed; const calls = [];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO, 'apps/desktop/preload.cjs'), 'utf8'), {
+    require: () => ({ contextBridge: { exposeInMainWorld: (_name, value) => { exposed = value; } }, ipcRenderer: { invoke: (...args) => { calls.push(args); return Promise.resolve({}); }, on: () => {}, removeListener: () => {} } }),
+  });
+  exposed.mcpList('s1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['sacode:mcpList', { sessionId: 's1' }]]);
+});
+
+test('MCP preload mcpConnect 缺 approvalId 时校验拒绝', () => {
+  let invoked = 0;
+  const api = newIpcPreload(() => { invoked++; return Promise.resolve({}); });
+  // 缺 approvalId：ipcObject 闭集校验会拒绝
+  assert.throws(() => api.mcpConnect({ sessionId: 's', name: 'fs', command: 'npx', args: [] }), /preload:invalid-arguments/);
+  // approvalId 为 0：ipcInt(1) 拒绝
+  assert.throws(() => api.mcpConnect({ sessionId: 's', name: 'fs', command: 'npx', args: [], approvalId: 0 }), /preload:invalid-arguments/);
+  assert.equal(invoked, 0);
+});
+
+test('MCP preload mcpCall 缺 approvalId 时校验拒绝', () => {
+  let invoked = 0;
+  const api = newIpcPreload(() => { invoked++; return Promise.resolve({}); });
+  assert.throws(() => api.mcpCall({ sessionId: 's', name: 'fs', toolName: 'read_file' }), /preload:invalid-arguments/);
+  assert.equal(invoked, 0);
+});
+
+test('MCP preload mcpDisconnect/mcpTools/mcpStatus 只传 sessionId + name', () => {
+  let exposed; const calls = [];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO, 'apps/desktop/preload.cjs'), 'utf8'), {
+    require: () => ({ contextBridge: { exposeInMainWorld: (_name, value) => { exposed = value; } }, ipcRenderer: { invoke: (...args) => { calls.push(args); return Promise.resolve({}); }, on: () => {}, removeListener: () => {} } }),
+  });
+  exposed.mcpDisconnect('s1', 'fs');
+  exposed.mcpTools('s1', 'fs');
+  exposed.mcpStatus('s1', 'fs');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['sacode:mcpDisconnect', { sessionId: 's1', name: 'fs' }],
+    ['sacode:mcpTools', { sessionId: 's1', name: 'fs' }],
+    ['sacode:mcpStatus', { sessionId: 's1', name: 'fs' }],
+  ]);
+});
+
+test('MCP 主进程 mcpCall 非法 JSON argumentsJson 在主进程侧拒绝', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  // 合法 JSON 但不是对象（数组）——应被拒绝
+  await assert.rejects(() => handlers.get('sacode:mcpCall')(null, { sessionId: 's', name: 'fs', toolName: 'read_file', argumentsJson: '[1,2]', approvalId: 1 }), /mcp-bad-arguments/);
+  // 非法 JSON 字符串——应被拒绝
+  await assert.rejects(() => handlers.get('sacode:mcpCall')(null, { sessionId: 's', name: 'fs', toolName: 'read_file', argumentsJson: '{invalid', approvalId: 1 }), /mcp-bad-arguments/);
+  // 合法 JSON 对象——应通过并转发给 Host
+  await handlers.get('sacode:mcpCall')(null, { sessionId: 's', name: 'fs', toolName: 'read_file', argumentsJson: '{"path":"a.txt"}', approvalId: 1 });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'mcp/call');
+  const params = JSON.parse(JSON.stringify(requests[0].params));
+  assert.equal(params.sessionId, 's');
+  assert.equal(params.name, 'fs');
+  assert.equal(params.approvalId, 1);
+  const inner = JSON.parse(params.args);
+  assert.equal(inner.tool, 'read_file');
+  assert.equal(inner.argumentsJson, '{"path":"a.txt"}');
+  assert.equal(inner.timeoutMs, MCP_DEFAULT_TIMEOUT);
+});
+
+test('MCP 主进程 mcpConnect 把扁平参数打包成 Host 期望的嵌套 args', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  await handlers.get('sacode:mcpConnect')(null, { sessionId: 's', name: 'fs', command: 'npx', args: ['-y', 'server'], approvalId: 1, timeoutMs: 5000 });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'mcp/connect');
+  const params = JSON.parse(JSON.stringify(requests[0].params));
+  assert.equal(params.sessionId, 's');
+  assert.equal(params.name, 'fs');
+  assert.equal(params.approvalId, 1);
+  const inner = JSON.parse(params.args);
+  assert.equal(inner.command, 'npx');
+  assert.deepEqual(inner.args, ['-y', 'server']);
+  assert.equal(inner.timeoutMs, 5000);
+  // 不带 timeoutMs 时用默认值
+  await handlers.get('sacode:mcpConnect')(null, { sessionId: 's', name: 'fs', command: 'npx', args: [], approvalId: 1 });
+  const inner2 = JSON.parse(JSON.parse(JSON.stringify(requests[1].params)).args);
+  assert.equal(inner2.timeoutMs, MCP_DEFAULT_TIMEOUT);
+});
+
+test('MCP 主进程 mcpTools 补默认 timeoutMs 后转发', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  await handlers.get('sacode:mcpTools')(null, { sessionId: 's', name: 'fs' });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].method, 'mcp/tools');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0].params)), { sessionId: 's', name: 'fs', timeoutMs: MCP_DEFAULT_TIMEOUT });
+});
+
+test('MCP 主进程 mcpList/mcpDisconnect/mcpStatus 原样转发', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  await handlers.get('sacode:mcpList')(null, { sessionId: 's' });
+  await handlers.get('sacode:mcpDisconnect')(null, { sessionId: 's', name: 'fs' });
+  await handlers.get('sacode:mcpStatus')(null, { sessionId: 's', name: 'fs' });
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0].method, 'mcp/list');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0].params)), { sessionId: 's' });
+  assert.equal(requests[1].method, 'mcp/disconnect');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[1].params)), { sessionId: 's', name: 'fs' });
+  assert.equal(requests[2].method, 'mcp/status');
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[2].params)), { sessionId: 's', name: 'fs' });
+});
+
+test('MCP 主进程拒绝多余字段与缺必填项', async () => {
+  const { handlers, requests } = lspMainHandlers();
+  // mcpList 多余字段
+  await assert.rejects(() => handlers.get('sacode:mcpList')(null, { sessionId: 's', extra: 1 }), /ipc-invalid-arguments/);
+  // mcpConnect 缺 command
+  await assert.rejects(() => handlers.get('sacode:mcpConnect')(null, { sessionId: 's', name: 'fs', args: [], approvalId: 1 }), /ipc-invalid-arguments/);
+  // mcpConnect 缺 approvalId
+  await assert.rejects(() => handlers.get('sacode:mcpConnect')(null, { sessionId: 's', name: 'fs', command: 'npx', args: [] }), /ipc-invalid-arguments/);
+  // mcpCall 缺 toolName
+  await assert.rejects(() => handlers.get('sacode:mcpCall')(null, { sessionId: 's', name: 'fs', approvalId: 1 }), /ipc-invalid-arguments/);
+  // mcpTools 缺 name
+  await assert.rejects(() => handlers.get('sacode:mcpTools')(null, { sessionId: 's' }), /ipc-invalid-arguments/);
+  assert.equal(requests.length, 0);
+});
+
+test('MCP preload 名字校验拒绝非法字符', () => {
+  let invoked = 0;
+  const api = newIpcPreload(() => { invoked++; return Promise.resolve({}); });
+  // 名字含空格和斜杠——不在 [A-Za-z0-9_.-] 范围内
+  assert.throws(() => api.mcpDisconnect('s', 'bad/name'), /preload:invalid-arguments/);
+  assert.throws(() => api.mcpTools('s', 'bad name'), /preload:invalid-arguments/);
+  assert.throws(() => api.mcpStatus('s', ''), /preload:invalid-arguments/);
+  // toolName 含非法字符
+  assert.throws(() => api.mcpCall({ sessionId: 's', name: 'fs', toolName: 'bad/tool', approvalId: 1 }), /preload:invalid-arguments/);
+  assert.equal(invoked, 0);
 });

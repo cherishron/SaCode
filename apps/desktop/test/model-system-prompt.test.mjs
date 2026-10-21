@@ -50,6 +50,8 @@ test('task/start 把系统提示落日志并带进模型请求体', { timeout: 3
   await bridge.start(directory);
   try {
     await bridge.request('initialize');
+    // 文件工具只在已配置工作区时注册；握手不能代替用户选择项目。
+    await bridge.request('workspace/set-directory',{directory});
     await bridge.request('session/submit', { eventType: 'user/message', data: '打招呼' });
     const start = await bridge.request('task/start'); assert.equal(start.provider, 'real');
     let result;

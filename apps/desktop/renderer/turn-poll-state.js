@@ -18,6 +18,12 @@
         try {
           const p = await poll();
           if (!current()) return;
+          // 待答身份随每次轮询返回，不能只依赖可能背压的通知帧发现卡片。
+          if (p.questionId && p.questionId !== turn.value.questionId) {
+            await refresh();
+            if (!current()) return;
+            turn.value.questionId = p.questionId;
+          }
           const context = getApprovalContext();
           if (!context.suppressed) {
             const proposal = selectProposal(p.approvalRequests, context.sessionId, p.running && p.turnRequestId === context.requestId, context.requestId);
@@ -28,14 +34,18 @@
             const kind = i < 0 ? frame : frame.slice(0, i);
             const body = i < 0 ? '' : frame.slice(i + 1);
             if (kind === 'projection' && body === 'todos') await refresh();
+            else if (kind === 'projection' && body === 'tools') await refresh();
+            else if (kind === 'projection' && body === 'questions') await refresh();
+            else if (kind === 'projection' && body === 'plan') await refresh();
             else if (kind === 'projection' && body === 'queue') { await refresh(); await refreshQueue(); }
             else if (kind === 'text') turn.value.text += body;
-            else if (kind === 'usage') turn.value.text += '\n[usage ' + body + ']';
-            else if (kind === 'tool-call-delta') turn.value.text += '\n[tool-call ' + body + ']';
+            // 用量与工具参数属于独立事实，不拼进 Markdown 正文造成收束差异。
+            else if (kind === 'tool-call-delta') (turn.value.toolCallDeltas ||= []).push(body);
           }
           if (!current()) return;
           turn.value.running = p.running;
           if (p.settled) {
+            turn.value.projectionPending = true;
             if (approval.value?.source === 'model') approval.value = null;
             turn.value.settled = true;
             turn.value.finishReason = p.finishReason || '';
@@ -64,12 +74,26 @@
                 }[reason];
                 if (transport) error.value = transport;
                 else if (reason.startsWith('http-status:')) error.value = '模型服务拒绝了这次请求（常见于密钥或模型名不对）：' + reason.slice('http-status:'.length) + '。';
+                else if (reason.startsWith('request-provider-failed')) {
+                  // provider 异常已脱敏分类：request-provider-failed:provider-error:<类目>[:<状态码>]
+                  // 把类目翻成人话，不把原始协议串抛给用户。
+                  const tail = reason.slice('request-provider-failed:'.length);
+                  const providerMessages = {
+                    'rate-limit': '模型服务限流，请稍后重试。',
+                    'server': '模型服务返回错误，请稍后重试或换一个供应商。',
+                    'client': '请求被模型服务拒绝，请检查凭据、模型名与 API 地址。',
+                    'connection': '连不上模型服务，请检查 API 地址与网络。',
+                    'timeout': '模型响应超时（等待首条回复超过 120 秒），请检查网络或更换模型后重试。',
+                  };
+                  const cat = tail.split(':')[1] || '';
+                  error.value = providerMessages[cat] || ('请求模型服务失败：' + tail + '。');
+                }
                 else error.value = '这一轮没能完成：' + reason + '。';
               }
             }
             void showContextTip();
             stop();
-            await refresh();
+            await refresh({settledTurn:true});
             await refreshTools();
             await refreshQueue();
             if (!turn.value.cancelled && queueRows.value.length) {

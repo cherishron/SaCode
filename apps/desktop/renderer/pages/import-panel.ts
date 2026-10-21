@@ -75,7 +75,7 @@ function limitText(limits: Record<string, number>): string {
 export const Page = defineComponent({
   name: 'SaCodeImport',
   props: {
-    // 由 preload.cjs 后续提供；未接通时为 null。
+    // 默认解析 preload.cjs 八通道；也可注入同签名的测试通道。
     channels: { type: Object as PropType<ImportChannels | null>, default: null },
     sessionId: { type: String, default: '' },
     workspaceDirectory: { type: String, default: '' },
@@ -109,7 +109,6 @@ export const Page = defineComponent({
         lastSession = value;
         view.reset();
         void view.loadSources();
-        void view.loadJobs();
       },
     );
 
@@ -127,7 +126,6 @@ export const Page = defineComponent({
 
     onMounted(() => {
       void view.loadSources();
-      void view.loadJobs();
       view.setActive(pageVisible());
       if (typeof document !== 'undefined' && document.addEventListener) {
         visibilityHandler = () => view.setActive(pageVisible());
@@ -240,7 +238,7 @@ export const Page = defineComponent({
           source ? badge('', `来源：${source.displayName}`) : null,
           s.kind ? badge('', `类型：${kindLabel(s.kind)}`) : null,
           s.token && s.phase !== 'applying'
-            ? action('放弃本次导入', () => view.reset(), { title: '释放 token 并回到来源选择；不删除已提交目标' })
+            ? action('放弃本次导入', () => view.reset(), { title: '清除本地预览引用并回到来源选择；不删除已提交目标' })
             : null,
         ]),
       ]);
@@ -264,7 +262,7 @@ export const Page = defineComponent({
           h('p', { class: 'note' }, `来源 ${job.sourceId || '未知'} · 类型 ${kindLabel(job.kind)} · 更新时间 ${job.updatedAt || '未知'}`),
           actions([
             action('查看报告', () => view.openInterruptedReport(job.jobId), { disabled: !s.channelsWired }),
-            action('继续导入', () => void view.resume(job.jobId), { primary: true, disabled: !s.channelsWired || s.busy }),
+            action('继续导入', () => void view.resume(job.jobId), { primary: true, disabled: !s.channelsWired || s.busy || !job.resumable }),
             action('放弃并新建', () => view.reset(), { title: '只结束本页显示；作业日志与已提交目标保留' }),
           ]),
         ])),
@@ -326,7 +324,7 @@ export const Page = defineComponent({
       const source = s.sources.find((entry) => entry.id === s.sourceId) ?? null;
       return h('section', { class: 'import-step-panel', 'aria-label': '选择来源' }, [
         h('h3', {}, '1. 选择来源'),
-        h('p', { class: 'note' }, '来源由主进程固定适配器解析；渲染层只接收 token 与截断摘要，不接收完整正文。'),
+        h('p', { class: 'note' }, '来源由主进程固定适配器解析；面板不接收任意文件路径，候选只用于 Host 预览，不展示完整正文。'),
         s.sourcesLoading ? h('p', { class: 'note', role: 'status' }, '正在读取 Host 来源列表…') : null,
         !s.sources.length
           ? h('p', { class: 'note' }, s.sourcesLoaded ? 'Host 未登记任何可用来源。' : '没有可用来源。')
@@ -336,12 +334,12 @@ export const Page = defineComponent({
           h('p', { class: 'note' }, source
             ? `类型：${source.kinds.map(kindLabel).join(' / ') || '未声明'}；${source.notes.join('；') || '无附加说明'}`
             : '先在来源卡片中选择一项。'),
-          h('p', { class: 'note' }, '文件选择器占位：接线后调用 importPickFile(sourceId)，由主进程打开系统对话框、执行大小上限与固定适配器解析；渲染层不接收完整正文。'),
+          h('p', { class: 'note' }, '调用 importPickFile(sourceId) 获取文件适配结果；仅收到对话框需求说明时会提示“请选择文件”，不会生成预览令牌。实际候选交给 Host 重新校验。'),
           actions([
             action(s.channelsWired ? '选择文件…' : '选择文件…（通道未接通）', () => void view.pickFile(), {
               primary: true,
               disabled: !s.channelsWired || s.busy || !source,
-              title: s.channelsWired ? '打开系统文件对话框' : 'preload.cjs 尚未添加 import* IPC',
+              title: s.channelsWired ? '打开系统文件对话框' : 'preload.cjs 的 import* IPC 不完整',
             }),
             s.busy ? h('span', { class: 'note', role: 'status' }, '处理中…') : null,
           ]),

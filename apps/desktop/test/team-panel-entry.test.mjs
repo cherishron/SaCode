@@ -13,7 +13,7 @@ const empty=()=>({members:[],tasks:[],messages:[]});
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return{promise,resolve};};
 // 直接执行 app 的团队装配段；仅替换 IPC、计时器和既有会话导航，不复制生产逻辑。
 function entry(api={}){
-  const begin=source.indexOf('    const teamSessionId = ref('),end=source.indexOf('    // 通用设置的三个持久化偏好',begin);
+  const begin=source.indexOf('    const teamSessionId = ref('),end=source.indexOf('    const generalPrefs = ref(',begin);
   assert.ok(begin>=0&&end>begin,'app 尚未装配团队状态与事件');
   const timers=new Map(),cleanup=[],calls=[];
   const context={ref:vue.ref,window:{Vue:{...vue,onBeforeUnmount:fn=>cleanup.push(fn)},sacode:{teamDescribe:async()=>empty(),...api}},sideOpen:vue.ref(false),sideTab:vue.ref('inspect'),pluginManagerOpen:vue.ref(false),scrollSession:vue.ref('lead'),catalog:vue.ref({entries:[{id:'lead',current:true}]}),selectedScrollId:'lead',selectSession:async id=>{calls.push(['sessionSelect',id]);context.scrollSession.value=id;context.selectedScrollId=id;},setInterval:fn=>{const id=timers.size+1;timers.set(id,fn);return id;},clearInterval:id=>timers.delete(id)};

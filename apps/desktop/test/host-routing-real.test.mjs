@@ -1,3 +1,4 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真模型验证自定义会话模型路由与待核算账本；凭据只留在后端。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,8 +15,7 @@ const HOST=process.env.SACODE_HOST || join(here,'../dist/host/bin/sacode-host.ex
 // 夹具模型名只写一次：账本断言与登记表用的是同一个字面量，避免改端点时漏掉一处变成假绿
 const MODEL='step-3.7-flash';
 test('真实 StepFun：自定义模型请求完成且进入待核算账本',{timeout:180000},async t=>{
- const keyFile=process.env.SACODE_REAL_KEY_FILE || join(here,'../../../target/step.key');
- const key=process.env.STEPFUN_API_KEY || (existsSync(keyFile)?readFileSync(keyFile,'utf8').trim():'');
+ const key = realProviderCredential();
  if(!key){t.skip('缺少真实模型凭据');return;}
  const dir=mkdtempSync(join(process.env.SACODE_TEST_TMP || tmpdir(),'sacode-route-real-'));
  const settings=join(dir,'settings').replaceAll('\\','/');mkdirSync(settings);

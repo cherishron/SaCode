@@ -1,3 +1,4 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真实 StepFun 工具闭环：模型决定调用、仓颉执行、结果续答及冷进程日志回放。
 // 凭据沿用真实往返测试入口，不写入源码或测试输出。
 import { test } from 'node:test';
@@ -13,9 +14,8 @@ const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
  test('真实 StepFun 调用 todo_write 后续答，冷宿主从日志恢复工具结果', { timeout: 180000 }, async t => {
-  const keyFile = join(repo, 'target', 'step.key');
-  const key = process.env.STEPFUN_API_KEY || (existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : '');
-  if (!key) { t.skip('缺少 STEPFUN_API_KEY 或 target/step.key'); return; }
+  const key = realProviderCredential();
+  if (!key) { t.skip('未显式启用真实模型测试或缺少环境凭据'); return; }
   assert.ok(existsSync(host), '缺少自包含宿主');
   const directory = mkdtempSync(join(tmpdir(), 'sacode-real-tools-'));
   // 环境口径统一到 test-support/real-host-env.mjs：撤掉本地 provider 夹具覆盖，

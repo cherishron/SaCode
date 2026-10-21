@@ -75,7 +75,7 @@ export const TerminalInteractive = defineComponent({
     watch(
       () => [props.sessionId, props.directory, props.configured],
       () => {
-        if (view.state.terminalId) void view.closeView();
+        if (view.state.sessionId) void view.closeView();
         view.reset();
         xterm?.reset();
         closeDialog.value = false;
@@ -209,7 +209,7 @@ export const TerminalInteractive = defineComponent({
       const s = view.state;
       const canStart = !s.busy && props.configured && (s.phase === 'idle' || s.phase === 'exited' || s.phase === 'unknown' || s.phase === 'view-closed');
       const canInterrupt = !interruptBusy.value && s.phase === 'running';
-      const canClose = s.terminalId != null && s.phase !== 'view-closed';
+      const canClose = s.sessionId != null && s.phase !== 'view-closed';
       return h('div', { class: 'term-toolbar' }, [
         h('button', { class: 'btn', type: 'button', disabled: !canStart, onClick: () => void startTerminal() }, '启动终端'),
         h('button', { class: 'btn', type: 'button', disabled: !canInterrupt, onClick: () => void doInterrupt() }, '中断（Ctrl+C）'),

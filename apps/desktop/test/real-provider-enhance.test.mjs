@@ -1,5 +1,6 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真模型增强验收：不打本地桩，直接走 TLS 打给配置面登记的提供商。
-// 凭据只从环境变量或 gitignore 的 target/step.key 读，绝不写进源码、日志或回执。
+// 凭据仅在显式启用测试后从进程环境注入，绝不写进源码、日志或回执。
 // 这一条证的是「增强用的是当前会话那颗模型，并且真拿到了改写」——本地夹具只能证形状，证不了语义。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,16 +24,11 @@ const BASE_URL = 'https://api.stepfun.com/v1';
 const MODEL = 'step-3.7-flash';
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function readKey() {
-  if ((process.env.STEPFUN_API_KEY || '').length > 0) { return process.env.STEPFUN_API_KEY; }
-  const file = join(REPO, 'target', 'step.key');
-  if (!existsSync(file)) { return ''; }
-  return readFileSync(file, 'utf8').trim();
-}
+function readKey() { return realProviderCredential(); }
 
 test('真模型增强：当前会话的模型把草稿改写得更清楚，且不落进会话消息', { timeout: 240000 }, async (t) => {
   const key = readKey();
-  if (key.length === 0) { t.skip('缺少真模型凭据（需 STEPFUN_API_KEY 环境变量或 gitignore 的 target/step.key）'); return; }
+  if (key.length === 0) { t.skip('缺少真模型凭据（需显式启用 SACODE_RUN_REAL_PROVIDER_TESTS=1 并注入 STEPFUN_API_KEY）'); return; }
   assert.ok(existsSync(HOST), '缺少自包含宿主');
 
   const sessionDir = mkdtempSync(join(tmpdir(), 'sacode-enh-real-'));

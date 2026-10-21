@@ -1,6 +1,6 @@
 // F19 数据导入面板状态机。
 // 纯逻辑，不依赖 Vue；对齐 docs/plans/2026-10-20-data-import-design-qoder.md §5.3、§6.3、§9.2。
-// 约束：preload.cjs 尚未增加 import* 通道，本文件只定义通道接口；缺失时进入只读占位态，
+// 仅使用 preload.cjs 的八个固定 import* 通道；缺失时进入只读占位态。
 // 不伪造 Host 计划、不假装文件已读取。真正的校验、指纹、去重与落库都在 Host。
 
 export type ImportKind = 'conversation' | 'knowledge' | 'config';
@@ -122,25 +122,26 @@ export type ImportReport = {
 
 export type ReportSummary = { applied: number; skipped: number; corrupted: number; warnings: number };
 
-// 通道函数（由 preload.cjs 后续提供；命名以设计 §9.10 为准）。
+export type ImportPreviewRequest = {
+  sourceId: string;
+  mapping: ImportMapping;
+  target: ImportTarget;
+} & (
+  | { kind: 'conversation'; candidates: { sourceKey: string; candidateId?: string; title?: string; messages: { role: 'user' | 'assistant'; text: string }[] }[] }
+  | { kind: 'knowledge'; candidates: { sourceKey: string; candidateId?: string; title?: string; content: string }[] }
+  | { kind: 'config'; payload: { kind: 'config'; text: string } }
+);
+
+// 与 preload 八通道逐项对应；仅 pickFile/cancel 接收字符串，其余带参通道接收闭集对象。
 export type ImportChannels = {
   sources: () => Promise<unknown>;
   pickFile: (sourceId: string) => Promise<unknown>;
-  preview: (token: string, mapping: ImportMapping, target: ImportTarget) => Promise<unknown>;
-  apply: (
-    token: string,
-    planHash: string,
-    requestId: string,
-    selection: ImportSelection,
-    mapping: ImportMapping,
-    target: ImportTarget,
-  ) => Promise<unknown>;
-  poll: (jobId: string) => Promise<unknown>;
+  preview: (request: ImportPreviewRequest) => Promise<unknown>;
+  plan: (request: { previewToken: string; mapping?: ImportMapping; target?: ImportTarget }) => Promise<unknown>;
+  confirm: (request: { planHash: string; decisions: Record<string, 'append' | 'overwrite' | 'skip'> }) => Promise<unknown>;
+  apply: (request: { planHash: string; requestId: string; selection?: ImportSelection } | { jobId: string }) => Promise<unknown>;
+  describe: (request: { jobId: string; offset?: number; limit?: number }) => Promise<unknown>;
   cancel: (jobId: string) => Promise<unknown>;
-  resume: (jobId: string) => Promise<unknown>;
-  report: (jobId: string, offset: number, limit: number) => Promise<unknown>;
-  jobs: (limit: number) => Promise<unknown>;
-  discard: (token: string) => Promise<unknown>;
 };
 
 export type ImportTimers = {
@@ -193,13 +194,11 @@ export const ALL_IMPORT_CHANNELS = [
   'importSources',
   'importPickFile',
   'importPreview',
+  'importPlan',
+  'importConfirm',
   'importApply',
-  'importPoll',
+  'importDescribe',
   'importCancel',
-  'importResume',
-  'importReport',
-  'importJobs',
-  'importDiscard',
 ] as const;
 
 export const DESIGN_SOURCES: ImportSource[] = [
@@ -395,17 +394,15 @@ export function resolveImportChannels(host?: unknown): { channels: ImportChannel
   const sources = read('importSources');
   const pickFile = read('importPickFile');
   const preview = read('importPreview');
+  const plan = read('importPlan');
+  const confirm = read('importConfirm');
   const apply = read('importApply');
-  const poll = read('importPoll');
+  const describe = read('importDescribe');
   const cancel = read('importCancel');
-  const resume = read('importResume');
-  const report = read('importReport');
-  const jobs = read('importJobs');
-  const discard = read('importDiscard');
-  if (missing.length > 0 || !sources || !pickFile || !preview || !apply || !poll || !cancel || !resume || !report || !jobs || !discard) {
+  if (missing.length > 0 || !sources || !pickFile || !preview || !plan || !confirm || !apply || !describe || !cancel) {
     return { channels: null, missing };
   }
-  return { channels: { sources, pickFile, preview, apply, poll, cancel, resume, report, jobs, discard }, missing: [] };
+  return { channels: { sources, pickFile, preview, plan, confirm, apply, describe, cancel }, missing: [] };
 }
 
 export function defaultMapping(kind: ImportKind | ''): ImportMapping {
@@ -547,10 +544,50 @@ function normalizeLocalItem(raw: unknown, index: number): LocalPreviewItem | nul
   };
 }
 
+// 文件适配器可返回结构化候选，或已由 Host preview 的 previewToken+摘要。
+// 路径/选择器需求说明不能当候选；不从截断 items/preview 摘要还原正文。
+function pickedPreviewInput(raw: unknown, sourceId: string, kind: ImportKind | ''): ImportPreviewRequest | null {
+  const record = asRecord(raw);
+  if (!record) throw Error('文件选择通道未返回数据。');
+  if (str(record.previewToken)) return null;
+  if (record.sourceId && record.sourceId !== sourceId) throw Error('import-unsupported-source');
+  if (record.kind && record.kind !== kind) throw Error('import-unsupported-source');
+  const common = { sourceId, mapping: defaultMapping(kind), target: { scope: 'user' as const } };
+  const payload = asRecord(record.payload);
+  if (kind === 'config' && sourceId === 'sacode-migrate' && payload?.kind === 'config' && typeof payload.text === 'string') {
+    return { ...common, kind, payload: { kind: 'config', text: payload.text } };
+  }
+  if (!Array.isArray(record.candidates)) throw Error('文件选择通道尚未返回结构化候选或 previewToken，无法预览。');
+  const meta = (item: Record<string, unknown>) => ({
+    sourceKey: str(item.sourceKey),
+    ...(typeof item.candidateId === 'string' ? { candidateId: item.candidateId } : {}),
+    ...(typeof item.title === 'string' ? { title: item.title } : {}),
+  });
+  if (kind === 'conversation' && sourceId === 'chatgpt-export') {
+    return { ...common, kind, candidates: record.candidates.map((value) => {
+      const item = asRecord(value);
+      if (!item || !Array.isArray(item.messages)) throw Error('import-bad-args');
+      return { ...meta(item), messages: item.messages.map((value) => {
+        const message = asRecord(value);
+        if (!message || (message.role !== 'user' && message.role !== 'assistant') || typeof message.text !== 'string') throw Error('import-bad-args');
+        return { role: message.role, text: message.text };
+      }) };
+    }) };
+  }
+  if (kind === 'knowledge' && sourceId === 'text-file') {
+    return { ...common, kind, candidates: record.candidates.map((value) => {
+      const item = asRecord(value);
+      if (!item || typeof item.content !== 'string') throw Error('import-bad-args');
+      return { ...meta(item), content: item.content };
+    }) };
+  }
+  throw Error('import-unsupported-source');
+}
+
 function normalizePicked(raw: unknown, sourceId: string, fallbackKind: ImportKind | ''): { token: string; preview: LocalPreview } {
   const record = asRecord(raw);
-  const token = str(record?.token);
-  if (!token) throw Error('主进程未返回有效的导入 token。');
+  const token = str(record?.previewToken);
+  if (!token) throw Error('主进程未返回有效的 previewToken；文件选择或预览通道尚未完成。');
   const previewRaw = asRecord(record?.preview) ?? record ?? {};
   const kind = isKind(previewRaw.kind) ? previewRaw.kind : fallbackKind;
   if (!kind) throw Error('主进程未返回导入类型。');
@@ -634,7 +671,8 @@ function normalizePlan(
 }
 
 function normalizeJob(raw: unknown, previous: ImportJob | null): ImportJob {
-  const record = asRecord(raw);
+  const envelope = asRecord(raw);
+  const record = asRecord(envelope?.job) ?? envelope;
   if (!record) throw Error('Host 未返回导入作业。');
   const status = str(record.status);
   if (!isJobStatus(status)) throw Error(`Host 返回了无法识别的作业状态：${status || '(空)'}`);
@@ -668,7 +706,7 @@ function normalizeJob(raw: unknown, previous: ImportJob | null): ImportJob {
     createdAt: str(record.createdAt) || previous?.createdAt || '',
     updatedAt: str(record.updatedAt) || previous?.updatedAt || '',
     planHash: str(record.planHash) || previous?.planHash || '',
-    resumable: record.resumable === true || status === 'interrupted',
+    resumable: record.resumable === true,
   };
 }
 
@@ -690,7 +728,8 @@ function normalizeReportItem(raw: unknown, index: number): ImportReportItem | nu
 }
 
 function normalizeReport(raw: unknown, jobId: string): ImportReport {
-  const record = asRecord(raw);
+  const envelope = asRecord(raw);
+  const record = asRecord(envelope?.report) ?? envelope;
   if (!record) throw Error('Host 未返回导入报告。');
   const rawCounts = asRecord(record.counts) ?? {};
   const rawItems = Array.isArray(record.items) ? record.items : [];
@@ -780,6 +819,8 @@ export function createImportPanel(
   let pollTimer: unknown = null;
   let pollDelay = initialPollDelayMs;
   let reportSeq = 0;
+  // 仅保存文件适配器交接的白名单数据供映射变化后重新 preview；不放进展示状态。
+  let previewInput: ImportPreviewRequest | null = null;
 
   const notify = () => { if (!disposed) changed(); };
 
@@ -806,10 +847,9 @@ export function createImportPanel(
   }
 
   function releaseToken(): void {
-    const token = state.token;
     state.token = '';
-    if (!token || !channels) return;
-    try { void Promise.resolve(channels.discard(token)).catch(() => undefined); } catch { /* 释放失败不阻断界面 */ }
+    previewInput = null;
+    // 八通道没有 discard：只释放本地引用，Host 预览状态按其 TTL 回收。
   }
 
   function clearDownstream(): void {
@@ -955,7 +995,21 @@ export function createImportPanel(
         setError('import-session-changed');
         return;
       }
-      const picked = normalizePicked(raw, source.id, state.kind || source.kinds[0] || '');
+      const file = asRecord(raw);
+      if (file?.cancelled === true || file?.canceled === true) { state.notice = '已取消文件选择。'; return; }
+      if (file?.requiresDesktopDialog === true && !str(file.previewToken)
+        && !Array.isArray(file.candidates) && !asRecord(file.payload)) {
+        // Host 只声明文件选择需求，尚未读取文件；不能当作预览成功或铸造 token。
+        state.step = 'source';
+        state.notice = '请选择文件：当前仅收到文件对话框需求说明，尚未取得文件内容。';
+        return;
+      }
+      const input = pickedPreviewInput(raw, source.id, state.kind || source.kinds[0] || '');
+      const preview = input ? await channels.preview(input) : raw;
+      if (disposed || ticket !== epoch) return;
+      if (sid && session() !== sid) { setError('import-session-changed'); return; }
+      const picked = normalizePicked(preview, source.id, state.kind || source.kinds[0] || '');
+      previewInput = input;
       state.token = picked.token;
       state.kind = picked.preview.kind;
       state.localPreview = picked.preview;
@@ -989,7 +1043,7 @@ export function createImportPanel(
     state.step = 'source';
     state.phase = 'idle';
     clearError();
-    state.notice = state.sourceId ? '可重新选择文件；旧 token 已释放。' : '';
+    state.notice = state.sourceId ? '可重新选择文件；本地预览引用已清除。' : '';
     notify();
   }
 
@@ -1068,7 +1122,15 @@ export function createImportPanel(
     state.notice = '正在由 Host 校验、计算指纹并生成计划…';
     notify();
     try {
-      const raw = await channels.preview(state.token, { ...state.mapping }, { ...state.target });
+      if (previewInput) {
+        const preview = await channels.preview({ ...previewInput, mapping: { ...state.mapping }, target: { ...state.target } });
+        if (disposed || ticket !== epoch) return;
+        if (sid && session() !== sid) { setError('import-session-changed'); state.phase = 'idle'; return; }
+        const picked = normalizePicked(preview, state.sourceId, state.kind);
+        state.token = picked.token;
+        state.localPreview = picked.preview;
+      }
+      const raw = await channels.plan({ previewToken: state.token, mapping: { ...state.mapping }, target: { ...state.target } });
       if (disposed || ticket !== epoch) return;
       if (sid && session() !== sid) {
         setError('import-session-changed');
@@ -1184,7 +1246,7 @@ export function createImportPanel(
     const previous = state.job;
     const jobId = previous.jobId;
     try {
-      const raw = await channels.poll(jobId);
+      const raw = await channels.apply({ jobId });
       if (disposed || ticket !== epoch) return;
       const job = normalizeJob(raw, previous);
       if (job.jobId !== jobId) throw Error('Host 返回了不同的 jobId。');
@@ -1249,13 +1311,11 @@ export function createImportPanel(
       notify();
       return;
     }
-    const selected = state.plan.items.filter((item) => itemIds.includes(item.itemId));
-    const mapping: ImportMapping = { ...state.mapping };
-    if (selected.some((item) => item.action === 'conflict' && decisionFor(state, item) === 'append')) {
-      mapping.conflictPolicy = 'new-copy';
-    }
-    if (selected.some((item) => item.action === 'conflict' && decisionFor(state, item) === 'overwrite')) {
-      mapping.updatePolicy = 'allow-updates';
+    const planHash = state.plan.planHash;
+    const decisions: Record<string, 'append' | 'overwrite' | 'skip'> = Object.create(null);
+    for (const item of state.plan.items) {
+      const decision = decisionFor(state, item);
+      decisions[item.itemId] = decision === 'dismiss' ? 'skip' : decision;
     }
     const sid = session();
     const requestId = makeRequestId(options);
@@ -1270,7 +1330,10 @@ export function createImportPanel(
     state.notice = '正在创建导入作业…';
     notify();
     try {
-      const raw = await channels.apply(state.token, state.plan.planHash, requestId, { itemIds }, mapping, { ...state.target });
+      await channels.confirm({ planHash, decisions });
+      if (disposed || ticket !== epoch) return;
+      if (sid && session() !== sid) { setError('import-session-changed'); state.phase = 'idle'; state.step = 'decision'; state.busy = false; return; }
+      const raw = await channels.apply({ planHash, requestId, selection: { itemIds } });
       if (disposed || ticket !== epoch) return;
       if (sid && session() !== sid) {
         setError('import-session-changed');
@@ -1359,6 +1422,11 @@ export function createImportPanel(
     }
     const previous = state.interrupted.find((job) => job.jobId === target)
       ?? (state.job?.jobId === target ? state.job : null);
+    if (!previous?.resumable) {
+      setError('import-bad-args', 'Host 未声明该作业可恢复；请重新预览导入。');
+      notify();
+      return;
+    }
     const ticket = ++epoch;
     stopPoll();
     state.busy = true;
@@ -1370,7 +1438,7 @@ export function createImportPanel(
     state.notice = '正在恢复中断的导入作业…';
     notify();
     try {
-      const raw = await channels.resume(target);
+      const raw = await channels.apply({ jobId: target });
       if (disposed || ticket !== epoch) return;
       const job = normalizeJob(raw, previous);
       state.job = job;
@@ -1397,7 +1465,7 @@ export function createImportPanel(
     state.reportLoading = true;
     notify();
     try {
-      const raw = await channels.report(jobId, Math.max(0, Math.floor(offset)), Math.max(1, Math.min(200, Math.floor(limit))));
+      const raw = await channels.describe({ jobId, offset: Math.max(0, Math.floor(offset)), limit: Math.max(1, Math.min(200, Math.floor(limit))) });
       if (disposed || seq !== reportSeq) return;
       const page = normalizeReport(raw, jobId);
       if (page.jobId !== jobId) throw Error('Host 返回了不同作业的报告。');
@@ -1446,31 +1514,6 @@ export function createImportPanel(
       return;
     }
     void loadReport(0, 100);
-  }
-
-  async function loadJobs(limit = 20): Promise<void> {
-    if (disposed || !wired || !channels) return;
-    try {
-      const raw = await channels.jobs(Math.max(1, Math.min(100, Math.floor(limit))));
-      if (disposed) return;
-      const record = asRecord(raw);
-      const list = Array.isArray(raw) ? raw : (Array.isArray(record?.jobs) ? record?.jobs as unknown[] : null);
-      if (!list) return;
-      const jobs: ImportJob[] = [];
-      for (const entry of list) {
-        try {
-          jobs.push(normalizeJob(entry, null));
-        } catch {
-          // 单条作业损坏不阻断恢复入口。
-        }
-      }
-      state.interrupted = jobs.filter((job) => job.status === 'interrupted' && job.resumable);
-      notify();
-    } catch {
-      // 作业列表失败不阻塞新导入；不把连接错误伪装成“无中断作业”。
-      state.notice = '无法读取历史导入作业；中断恢复入口暂不可用。';
-      notify();
-    }
   }
 
   function openInterruptedReport(jobId: string): void {
@@ -1534,7 +1577,6 @@ export function createImportPanel(
     loadReport,
     loadMoreReport,
     viewReport,
-    loadJobs,
     openInterruptedReport,
     setActive,
     reset,

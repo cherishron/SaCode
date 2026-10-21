@@ -1,3 +1,4 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真实 StepFun 回合必须收到系统提示（缺口一正证）。
 // 修复前 task/start 只从会话日志重建 messages，而没有任何人往日志里写
 // system/message——模型收到的是空系统提示，答不出自己的角色定义。
@@ -15,9 +16,8 @@ const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const host = process.env.SACODE_HOST || fileURLToPath(new URL('../dist/host/bin/sacode-host.exe', import.meta.url));
 
 test('真实 StepFun 回合收到系统提示，并能从冷进程日志重建', { timeout: 180000 }, async t => {
-  const keyFile = join(repo, 'target', 'step.key');
-  const key = process.env.STEPFUN_API_KEY || (existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : '');
-  if (!key) { t.skip('缺少 STEPFUN_API_KEY 或 target/step.key'); return; }
+  const key = realProviderCredential();
+  if (!key) { t.skip('未显式启用真实模型测试或缺少环境凭据'); return; }
   assert.ok(existsSync(host), '缺少自包含宿主');
   const directory = mkdtempSync(join(tmpdir(), 'sacode-real-sysprompt-'));
   // 环境口径统一到 test-support/real-host-env.mjs：撤掉本地 provider 夹具覆盖，

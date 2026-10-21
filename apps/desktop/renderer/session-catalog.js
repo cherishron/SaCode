@@ -14,6 +14,7 @@
       'bad-workspace-directory': '请选择存在的项目文件夹。',
       'session-resources-in-flight': '请先处理审批工单并关闭在途扩展。',
       'turn-in-flight': '请先停止当前执行并等待结算。',
+      'session-revision-conflict': '会话刚有新事件写入，已自动刷新并重试；如仍失败请稍后重试。',
       'already-owned': '会话正在由另一写者使用，请稍后重试。',
       'session-owner-unknown': '无法确认会话写锁的归属，已保留当前会话；请检查其他窗口或存储权限。',
       'session-storage-unavailable': '会话目录无法创建或写入，已保留当前会话和草稿；请检查存储路径及访问权限。',

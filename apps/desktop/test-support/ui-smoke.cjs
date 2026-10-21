@@ -12,6 +12,7 @@ async function uiSmoke(context) {
   if (process.env.SACODE_UI_SMOKE_SUITE === 'acp-history') return require('./acp-history-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'execution-history') return require('./execution-history-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'page-tools') return require('./page-tools-main-smoke.cjs')(context);
+  if (process.env.SACODE_UI_SMOKE_SUITE === 'clear-acceptance') return require('./clear-acceptance-main-smoke.cjs')(context);
   const { app, nativeTheme, HOST, SESSION_DIR, SESSION_LOG, bridge, seedIfNeeded, createWindow } = context;
   let win;
   let bad = 0;
@@ -655,34 +656,38 @@ async function uiSmoke(context) {
   note(userGroupNodes >= 2, `user 组内正文条数=${userGroupNodes}（合并后应 ≥ 2）`);
 
   // 3c) 长消息折叠：超阈值默认折起来，展开与收起都要有真实状态变化。
-  //     正文尾部放一个只在原文里出现的哨兵串，判「有没有被截掉」就不用比长度。
+  //     折叠是行级括住：全文恒在 DOM，视觉由 max-height+overflow 裁掉——判据是
+  //     「文本在 DOM 但 scrollHeight 超出 clientHeight」，不再用「文本被截掉」。
+  //     阈值 600（msgfold.js 全仓唯一出处），正文长度要压过它。
   const tailMark = "TAIL-SENTINEL-9F2C";
   const readFold = () => js(
     "(() => { const n = document.querySelectorAll('#messages .msg-text[data-fold-state]');" +
     " const e = n[n.length - 1]; if (!e) return 'missing';" +
-    " return e.getAttribute('data-fold-state') + '|' + ((e.textContent || '').includes('" + tailMark + "') ? 'has-tail' : 'no-tail'); })()"
+    " const clipped = e.scrollHeight - e.clientHeight > 2;" +
+    " return e.getAttribute('data-fold-state') + '|' + ((e.textContent || '').includes('" + tailMark + "') ? 'has-tail' : 'no-tail') + '|' + (clipped ? 'clipped' : 'fit'); })()"
   );
-  const clickFold = (wantLabel) => js(
+  const clickFold = (wantExpanded) => js(
     "(() => { const n = document.querySelectorAll('#messages .msg-text[data-fold-state]');" +
     " const e = n[n.length - 1]; if (!e) return 'missing-node';" +
     " const b = document.querySelector('#messages [data-fold-toggle=\"' + e.getAttribute('data-msg-id') + '\"]');" +
     " if (!b) return 'no-toggle';" +
-    " if (" + JSON.stringify(wantLabel) + " && b.textContent !== " + JSON.stringify(wantLabel) + ") return 'wrong-label:' + b.textContent;" +
+    " if (" + JSON.stringify(wantExpanded) + " && b.getAttribute('aria-expanded') !== " + JSON.stringify(wantExpanded ? "true" : "false") + ") return 'wrong-state:' + b.getAttribute('aria-expanded');" +
+    " if (!b.querySelector('svg')) return 'no-icon';" +
     " b.click(); return 'ok'; })()"
   );
-  await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("长".repeat(260) + tailMark)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
+  await js(`(() => { const t = document.getElementById('composer'); t.value = ${JSON.stringify("长".repeat(650) + tailMark)}; t.dispatchEvent(new Event('input', { bubbles: true })); return true; })()`);
   note(await click("#send"), "已发一条超阈值的长消息");
-  const foldedShown = await waitFor(async () => (await readFold()) === "folded|no-tail");
-  note(foldedShown, `长消息折叠态=${await readFold()}（默认折起且尾部不可见）`);
+  const foldedShown = await waitFor(async () => (await readFold()) === "folded|has-tail|clipped");
+  note(foldedShown, `长消息折叠态=${await readFold()}（默认折起：全文在 DOM 但被视觉裁剪）`);
   const plainNodes = await count('#messages .msg-text[data-fold-state="plain"]');
   note(plainNodes >= 3, `短正文保持 plain=${plainNodes}（未超阈值不该出现折叠按钮）`);
-  const expandClicked = await clickFold("展开");
+  const expandClicked = await clickFold(false);
   note(expandClicked === "ok", `点展开=${expandClicked}`);
-  const expandedShown = await waitFor(async () => (await readFold()) === "expanded|has-tail");
-  note(expandedShown, `展开态=${await readFold()}（全文回到 DOM）`);
-  const collapseClicked = await clickFold("收起");
+  const expandedShown = await waitFor(async () => (await readFold()) === "expanded|has-tail|fit");
+  note(expandedShown, `展开态=${await readFold()}（全文展开且不再被裁剪）`);
+  const collapseClicked = await clickFold(true);
   note(collapseClicked === "ok", `点收起=${collapseClicked}`);
-  const refolded = await waitFor(async () => (await readFold()) === "folded|no-tail");
+  const refolded = await waitFor(async () => (await readFold()) === "folded|has-tail|clipped");
   note(refolded, `收起后回到折叠态=${await readFold()}`);
 
   // 3b) 组件库不是「装了就算」：类名要真的由 TinyVue 出，色值要真的从我们的令牌桥过去。

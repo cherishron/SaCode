@@ -12,14 +12,33 @@ eval(src);
 
 const { createSendQueueAssembly } = globalThis.SaCodeSendQueue;
 
-test('send 在 sendBusy 时直接跳过', async () => {
+test('send 在 sendBusy 时不静默丢弃：busySend=queue 时入队', async () => {
   const sendBusy = ref(true);
-  const deps = makeDeps({ sendBusy });
+  const draft = ref('第二条消息');
+  const deps = makeDeps({ sendBusy, draft });
   const asm = createSendQueueAssembly(deps);
-  let called = false;
-  deps.api.userSend = async () => { called = true; };
+  let userSent = false, enqueued = false;
+  deps.api.userSend = async () => { userSent = true; };
+  deps.api.queueEnqueue = async () => { enqueued = true; };
   await asm.send();
-  assert.equal(called, false, 'sendBusy 时不应该发送');
+  assert.equal(userSent, false, 'sendBusy 时不应该直接发送');
+  assert.equal(enqueued, true, 'sendBusy + busySend=queue 时应入队而非静默丢弃');
+});
+
+test('send 在 sendBusy 时不静默丢弃：busySend 未读取时给明确提示', async () => {
+  const sendBusy = ref(true);
+  const draft = ref('第二条消息');
+  const error = ref('');
+  const deps = makeDeps({ sendBusy, draft, error });
+  deps.globalAppearance = { value: { busySend: null } };
+  const asm = createSendQueueAssembly(deps);
+  let userSent = false, enqueued = false;
+  deps.api.userSend = async () => { userSent = true; };
+  deps.api.queueEnqueue = async () => { enqueued = true; };
+  await asm.send();
+  assert.equal(userSent, false, '不应直接发送');
+  assert.equal(enqueued, false, 'busySend 未读取时不应入队');
+  assert.ok(error.value.length > 0, '应给明确提示而非静默丢弃');
 });
 
 test('send 空文本时跳过', async () => {
@@ -193,4 +212,107 @@ test('队列更新后切换会话不回读新会话', async()=>{
 });
 test('损坏队列回执不清空条目或待确认消息', async()=>{
  const deps=makeDeps({queueRows:ref([{id:'keep'}]),queuePending:ref([{requestId:'keep'}])});deps.api.queueDescribe=async()=>({nextTurn:{}});await createSendQueueAssembly(deps).refreshQueue();assert.equal(deps.queueRows.value[0].id,'keep');assert.equal(deps.queuePending.value.length,1);assert.match(deps.error.value,/bad-queue-view/);
+});
+
+// —— 发送行为补充测试 ——
+// 以下四组覆盖此前要求：连续两条不丢/不重复/不串序、提交失败后可恢复、
+// 内层不提前释放 sendBusy、区分首次提交 vs 已有回合的 steer 行为。
+
+test('连续两条消息不丢、不重复、不串序', async () => {
+  const sendBusy = ref(false);
+  const draft = ref('第一条');
+  let draftRev = 0;
+  const deps = makeDeps({ sendBusy, draft });
+  deps.getDraftRevision = () => draftRev;
+  const calls = [];
+  let resolveFirst;
+  deps.api.userSend = async () => { calls.push('userSend:第一条'); return new Promise(r => { resolveFirst = r; }); };
+  deps.api.queueEnqueue = async (text) => { calls.push(`queueEnqueue:${text}`); };
+  deps.api.queueDescribe = async () => ({ nextTurn: [] });
+  const asm = createSendQueueAssembly(deps);
+
+  const first = asm.send();
+  await new Promise(r => setTimeout(r, 0)); // 让 userSend 进入，sendBusy 置 true
+  assert.equal(sendBusy.value, true, '第一条发送中 sendBusy 应为 true');
+
+  // 用户输入第二条（draftRevision 递增，避免第一条完成后清空第二条草稿）
+  draftRev = 1;
+  draft.value = '第二条';
+  const second = asm.send();
+  await second;
+  calls.push('second-done');
+
+  resolveFirst();
+  await first;
+  calls.push('first-done');
+
+  // 不丢：两条都触发了对后端的调用
+  assert.equal(calls.filter(c => c.startsWith('userSend:')).length, 1, '第一条应恰好调一次 userSend');
+  assert.equal(calls.filter(c => c.startsWith('queueEnqueue:')).length, 1, '第二条应恰好调一次 queueEnqueue');
+  // 不串序：第一条 userSend 先于第二条 queueEnqueue
+  assert.ok(calls.indexOf('userSend:第一条') < calls.indexOf('queueEnqueue:第二条'), '第一条 userSend 应先于第二条 queueEnqueue');
+  // 第二条入队即返回，第一条待 userSend resolve 后才完成
+  assert.ok(calls.indexOf('second-done') < calls.indexOf('first-done'), '第二条应先完成（入队即返回）');
+  // 第二条文本正确
+  assert.equal(calls[1], 'queueEnqueue:第二条', '第二条入队文本应为"第二条"');
+});
+
+test('提交失败后 sendBusy 释放且草稿保留，第二条可恢复', async () => {
+  const sendBusy = ref(false);
+  const draft = ref('失败消息');
+  const deps = makeDeps({ sendBusy, draft });
+  deps.api.userSend = async () => { throw new Error('network-down'); };
+  const asm = createSendQueueAssembly(deps);
+
+  await asm.send();
+  assert.equal(sendBusy.value, false, '失败后 sendBusy 应被 finally 释放');
+  assert.equal(draft.value, '失败消息', '失败后草稿应保留（未清空）');
+  assert.match(deps.error.value, /消息发送失败/, '应显示失败提示');
+
+  // 第二条可恢复
+  let sent2 = false;
+  deps.api.userSend = async () => { sent2 = true; };
+  draft.value = '重试消息';
+  await asm.send();
+  assert.equal(sent2, true, '失败后第二条应能正常发送');
+  assert.equal(sendBusy.value, false, '第二条完成后 sendBusy 应释放');
+});
+
+test('sendBusy 分支调 submitBusyDraft 不提前释放 sendBusy', async () => {
+  // sendBusy=true 时 send 走 submitBusyDraft 而非 enqueueDraft。
+  // enqueueDraft 的 finally 会把 sendBusy 重置为 false，此处不能调它。
+  const sendBusy = ref(true);
+  const draft = ref('排队消息');
+  const deps = makeDeps({ sendBusy, draft });
+  deps.api.queueEnqueue = async () => {};
+  deps.api.queueDescribe = async () => ({ nextTurn: [] });
+  const asm = createSendQueueAssembly(deps);
+
+  await asm.send();
+  assert.equal(sendBusy.value, true, '内层 submitBusyDraft 不应释放 sendBusy（由外层 send 持有）');
+});
+
+test('区分首次提交尚未完成（sendBusy）与已有运行回合（turn.running）的 steer 行为', async () => {
+  // 场景 A：sendBusy=true（首次提交尚未完成），busySend=steer → submitBusyDraft，sendBusy 不释放
+  const sendBusyA = ref(true);
+  const draftA = ref('steer-while-sending');
+  const depsA = makeDeps({ sendBusy: sendBusyA, draft: draftA });
+  depsA.globalAppearance = ref({ busySend: 'steer' });
+  depsA.api.queueEnqueue = async () => {};
+  depsA.api.queueDescribe = async () => ({ nextTurn: [] });
+  const asmA = createSendQueueAssembly(depsA);
+  await asmA.send();
+  assert.equal(sendBusyA.value, true, 'sendBusy 分支（steer）：submitBusyDraft 不应释放 sendBusy');
+
+  // 场景 B：turn.running=true（已有运行回合），busySend=steer → enqueueDraft，sendBusy 被 finally 释放
+  const sendBusyB = ref(false);
+  const turnB = ref({ running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0 });
+  const draftB = ref('steer-while-turn');
+  const depsB = makeDeps({ sendBusy: sendBusyB, turn: turnB, draft: draftB });
+  depsB.globalAppearance = ref({ busySend: 'steer' });
+  depsB.api.queueEnqueue = async () => {};
+  depsB.api.queueDescribe = async () => ({ nextTurn: [] });
+  const asmB = createSendQueueAssembly(depsB);
+  await asmB.send();
+  assert.equal(sendBusyB.value, false, 'turn.running 分支（steer）：enqueueDraft 的 finally 应释放 sendBusy');
 });

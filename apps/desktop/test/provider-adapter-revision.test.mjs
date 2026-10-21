@@ -1,10 +1,8 @@
 // 排序读面不能将旧提案升级为最新修订，空操作也必须拒绝冲突。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
-const source = readFileSync(new URL('../renderer/pages/model-center-adapter.ts', import.meta.url), 'utf8');
-const { createModelCenterAdapters } = await import('data:text/javascript;base64,' + Buffer.from(stripTypeScriptTypes(source)).toString('base64'));
+import {loadPageModule} from './support/load-page-module.mjs';
+const {createModelCenterAdapters}=loadPageModule(new URL('../renderer/pages/model-center-adapter.ts',import.meta.url));
 
 test('默认模型读面与写入保留宿主身份及提案修订',async()=>{
   const calls=[];
@@ -85,7 +83,7 @@ test('模型金额无效或存在重复币种行时不以最后一行覆盖预�
 test('有效零金额保留，正常同币种合计和模型用量不受影响', async () => {
   const view=await budgetAdapter({usageKindTotals:[{key:'chat',currency:'CNY',usedMicros:0},{key:'chat',currency:'CNY',usedMicros:10}],modelTotals:[{key:'m',currency:'CNY',usedMicros:0}]}).describe();
   assert.equal(view.costs.model.amountMicro,10);
-  assert.deepEqual(view.models[0].used,{micro:0,currency:'CNY'});
+  assert.deepEqual({...view.models[0].used},{micro:0,currency:'CNY'});
 });
 
 test('密钥重试沿部分保存回执修订，仅调用绑定凭据接口', async () => {

@@ -159,7 +159,17 @@
 
     async function send(accelerated) {
       if (fileEditor.state.busy) { error.value = '文件正在读取或保存，请稍后发送。'; return; }
-      if (sendBusy.value) return;
+      if (sendBusy.value) {
+        // 不静默丢弃：发送忙碌时按偏好入队或给明确提示，不能让消息消失无反应。
+        // 直接调 submitBusyDraft 而非 enqueueDraft——enqueueDraft 的 finally 会把 sendBusy
+        // 重置为 false，而此处 sendBusy 由外层 send 持有，不能被内层错误释放。
+        if (globalAppearance.value.busySend === 'queue' || globalAppearance.value.busySend === 'steer') {
+          try { await submitBusyDraft(accelerated); } catch (e) { if (getSessionGeneration() === getSessionGeneration()) error.value = '发送补充失败：' + cleanErr(e); }
+        } else {
+          error.value = '正在发送上一条消息，请稍后。';
+        }
+        return;
+      }
       if (turn.value.running) { await enqueueDraft(accelerated); return; }
       const generation = getSessionGeneration();
       const text = draft.value, revision = getDraftRevision();
@@ -184,7 +194,14 @@
         clearAttachments();
         await refresh();
         await refreshCatalog();
-        await startTask();
+        const outcome = await startTask();
+        // 在途回执不是新轮：本次发送未送达当前轮次，待处理数只作提示，不能当成 delivered。
+        if (outcome === 'in-flight') {
+          const pending = turn.value.pendingTurnCount;
+          error.value = pending > 0
+            ? `目标回合仍在执行，本次发送未开启新轮；有 ${pending} 条补充待处理（尚未送达）。`
+            : '目标回合仍在执行，本次发送未开启新轮；消息已存入会话，尚未送达当前轮次。';
+        }
       } catch (e) {
         if (generation !== getSessionGeneration() || ticket !== getSendTicket()) return;
         const failure = cleanErr(e);
@@ -196,21 +213,39 @@
       } finally { if (generation === getSessionGeneration() && ticket === getSendTicket()) sendBusy.value = false; }
     }
 
+    // Host 的普通成功回执是 {started,limit,epoch,provider,goal}，不带 pendingTurnCount；
+    // 只有 goal 句柄已在跑时的幂等回执才带它（且 limit=0，表示本条 RPC 未开新轮）。
+    function inFlightReceipt(started) {
+      return !!started && started.goal === true && started.limit === 0
+        && typeof started.pendingTurnCount === 'number' && Number.isSafeInteger(started.pendingTurnCount)
+        && started.pendingTurnCount >= 0;
+    }
+
     async function startTask() {
-      if (approval.value || turn.value.running) { error.value = '请先处理当前任务和审批请求。'; return; }
+      if (approval.value || turn.value.running) { error.value = '请先处理当前任务和审批请求。'; return 'skipped'; }
       stopPolling();
       const generation = getSessionGeneration();
       modelApprovalsSuppressed.value = false;
-      modelTurnRequestId.value = null;
       error.value = '';
-      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false };
+      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false, goalInFlight: false, pendingTurnCount: 0 };
       try {
         const started = await api.taskStart(selectedCustomModel.value || undefined);
-        if (generation !== getSessionGeneration()) return;
-        modelTurnRequestId.value = started.turnRequestId;
+        if (generation !== getSessionGeneration()) return 'superseded';
+        const goalInFlight = inFlightReceipt(started);
+        // 在途回执说明已有一轮在执行，本条补充仍待处理：待处理数不是 delivered，
+        // 也不能覆盖 modelTurnRequestId——那是正在执行轮的审批身份，不是这次本地包装的假 id。
+        turn.value = { ...turn.value, goalInFlight, pendingTurnCount: goalInFlight ? started.pendingTurnCount : 0 };
+        if (goalInFlight) {
+          await refreshQueue();
+          if (generation !== getSessionGeneration()) return 'superseded';
+        } else {
+          modelTurnRequestId.value = started.turnRequestId;
+        }
         startPolling();
+        return goalInFlight ? 'in-flight' : 'started';
       } catch (e) {
-        if (generation !== getSessionGeneration()) return;
+        if (generation !== getSessionGeneration()) return 'superseded';
+        modelTurnRequestId.value = null;
         const text = String(cleanErr(e));
         // 保留冒号后的 detail：-32040 route-rejected:credential-unconfigured 这类错误，
         // 只取到「route-rejected」等于把原因全扔了，用户既没法自查也没法自救
@@ -220,6 +255,7 @@
         if (detail === 'custom-model-not-found' || detail.startsWith('route-rejected:custom-model-not-found')) selectedCustomModel.value = '';
         error.value = turnStartFailure(detail, text);
         turn.value.running = false;
+        return 'failed';
       }
     }
 
@@ -227,7 +263,7 @@
       if (fileEditor.state.busy) { error.value = '文件正在读取或保存，请稍后执行。'; return; }
       const generation = getSessionGeneration();
       error.value = '';
-      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false };
+      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false, goalInFlight: false, pendingTurnCount: 0 };
       try {
         await api.turnStart(limit);
         if (generation !== getSessionGeneration()) return;

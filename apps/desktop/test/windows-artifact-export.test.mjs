@@ -12,8 +12,16 @@ const repository = resolve(testDirectory, '../../..');
 const exporter = join(repository, 'scripts', 'export-windows-artifact.mjs');
 const windowsOnly = { skip: process.platform !== 'win32' };
 
+// 导出脚本的 isInside 守卫要求目标在仓库外。当 TEMP 被指到仓内（如本机受限代理
+// 环境把 TEMP 重定向到 target/tmp）时，tmpdir() 会落在仓库内导致守卫误拒。
+// 这里取“仓外中性目录”：tmpdir() 在仓外就用它，否则回退到仓库父目录。
+const outsideRepoTemp = () => {
+  const t = tmpdir();
+  return resolve(t).toLowerCase().startsWith(repository.toLowerCase()) ? resolve(repository, '..') : t;
+};
+
 test('Windows directory delivery copies content and records a verified manifest', windowsOnly, (t) => {
-  const root = mkdtempSync(join(tmpdir(), 'sacode-delivery-tree-'));
+  const root = mkdtempSync(join(outsideRepoTemp(), 'sacode-delivery-tree-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = join(root, 'source');
   const nested = join(source, 'resources', 'app');

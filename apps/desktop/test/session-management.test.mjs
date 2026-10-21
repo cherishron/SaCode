@@ -102,14 +102,19 @@ test('新建与切换隔离消息、主题、预算，结算旧写入并在重�
 });
 
 test('待审批及已允许但未消费工单禁止切换，消费后才可切换', async()=>{
-  const {bridge}=await boot();
+  const {dir,bridge}=await boot();
   try {
+    await bridge.request('workspace/set-directory',{directory:dir});
+    writeFileSync(join(dir,'management.txt'),'原内容');
+    await bridge.request('extension/call',{name:'read',args:JSON.stringify({path:'management.txt'})});
     const {id}=await bridge.request('session/create',{title:'另一会话'});
-    const ticket=await bridge.request('approval/ask',{name:'write'});
+    const args=JSON.stringify({path:'management.txt',content:'正文'});
+    const ticket=await bridge.request('approval/ask',{name:'write',args});
     await assert.rejects(()=>bridge.request('session/select',{sessionId:id}),/session-resources-in-flight/);
     await bridge.request('approval/answer',{approvalId:ticket.approvalId,decision:'allowed-once'});
     await assert.rejects(()=>bridge.request('session/select',{sessionId:id}),/session-resources-in-flight/);
-    await bridge.request('extension/call',{name:'write',args:'management.txt 正文',approvalId:ticket.approvalId});
+    await bridge.request('extension/call',{name:'write',args,approvalId:ticket.approvalId});
+    assert.equal(readFileSync(join(dir,'management.txt'),'utf8'),'正文');
     assert.equal((await bridge.request('session/select',{sessionId:id})).selected,true);
     assert.equal((await bridge.request('approval/answer',{approvalId:ticket.approvalId,decision:'denied'})).accepted,false);
   } finally { await bridge.stop(); }

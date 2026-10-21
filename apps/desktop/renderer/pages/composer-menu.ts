@@ -13,8 +13,8 @@ const COMMAND_ICONS:Record<string,string>={
 };
 export const AddButton=defineComponent({
   name:'SaCodeComposerMenu',
-  props:{disabled:Boolean,goalAvailable:Boolean,workspaceConfigured:Boolean,listFiles:Function as PropType<(path:string)=>Promise<{files:Entry[]}>>,listTools:Function as PropType<()=>Promise<{tools?:{name:string;description:string;needsApproval:boolean}[]}>>,slashTrigger:Number},
-  emits:['add','goal','reference','extensions','command'],
+  props:{disabled:Boolean,goalAvailable:Boolean,planAvailable:Boolean,workspaceConfigured:Boolean,listFiles:Function as PropType<(path:string)=>Promise<{files:Entry[]}>>,listTools:Function as PropType<()=>Promise<{tools?:{name:string;description:string;needsApproval:boolean}[]}>>,slashTrigger:Number},
+  emits:['add','goal','plan','reference','extensions','command'],
   setup(props,{emit}){
     const id='composer-menu-'+(++sequence),root=ref<HTMLElement|null>(null),trigger=ref<HTMLButtonElement|null>(null),input=ref<HTMLInputElement|null>(null);
     const open=ref(false),section=ref(''),query=ref(''),path=ref(''),rows=ref<Entry[]>([]),busy=ref(false),error=ref(''),position=ref({left:'0px',bottom:'0px'});
@@ -55,7 +55,7 @@ export const AddButton=defineComponent({
     };
     const item=(label:string,d:string,action:()=>void,disabled=false,detail='')=>h('button',{type:'button',role:'menuitem',class:'composer-menu-item',disabled,title:detail||undefined,onClick:action},[icon(d),h('span',{},label),detail?h('small',{},detail):null]);
     // 卡片式入口：图标瓷片 + 标题 + 说明，点击即用——选择型交互不该让用户把选项再手打一遍。
-    const card=(label:string,d:string,action:()=>void,detail='',disabled=false)=>h('button',{type:'button',role:'menuitem',class:'composer-card',disabled,title:detail||undefined,onClick:action},[h('span',{class:'composer-card-icon','aria-hidden':'true'},icon(d)),h('span',{class:'composer-card-text'},[h('strong',{},label),detail?h('small',{},detail):null])]);
+    const card=(label:string,d:string,action:()=>void,detail='',disabled=false)=>h('button',{type:'button',role:'menuitem',class:'composer-menu-card',disabled,title:detail||undefined,onClick:action},[h('span',{class:'composer-card-icon','aria-hidden':'true'},icon(d)),h('span',{class:'composer-card-text'},[h('strong',{},label),detail?h('small',{},detail):null])]);
     return()=>h('div',{class:'attachments-picker composer-menu-root',ref:root,onKeydown:key},[
       h('button',{ref:trigger,type:'button',class:'attachments-add','aria-label':'添加内容','aria-haspopup':'menu','aria-expanded':open.value,'aria-controls':id,disabled:props.disabled,onClick:()=>void show()},icon('M12 5v14M5 12h14')),
       h('input',{ref:input,type:'file',multiple:true,hidden:true,disabled:props.disabled,'aria-label':'选择附件',onChange:(e:Event)=>{const node=e.target as HTMLInputElement;if(!props.disabled&&node.files?.length)emit('add',Array.from(node.files),new Set<File>());node.value='';}}),
@@ -66,7 +66,7 @@ export const AddButton=defineComponent({
           card('技能','M12 3l2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6z',()=>enter('skills'),'可引用的技能'),
           card('MCP','M8 3v5H3v8h5v5h8v-5h5V8h-5V3z',()=>enter('mcp'),'外部工具服务'),
           card('设置目标','M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8',()=>{close();emit('goal');},props.goalAvailable?'跨轮持续目标':'需先进入会话',!props.goalAvailable),
-          card('创建计划','M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1',()=>{},'后端未接入',true),
+          card('创建计划','M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1',()=>{close();emit('plan');},props.planAvailable?'进入计划模式，生成计划并审阅':'需先进入会话',!props.planAvailable),
         ]),
         section.value?h('section',{class:'composer-menu-secondary','aria-label':section.value==='files'?'工作区文件选择':section.value==='commands'?'命令列表':'扩展选择'},[
           h('header',{},section.value==='files'?'工作区文件':section.value==='commands'?'可用命令':section.value==='skills'?'技能':'MCP'),

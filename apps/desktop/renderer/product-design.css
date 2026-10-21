@@ -153,12 +153,22 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
 .queue-dock { margin-bottom:8px; }
 .queue-preview { white-space:pre-wrap; overflow-wrap:anywhere; }
 .composer-menu-root { position:relative; }
+.user-question-card { margin:16px 0; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--surface); }
+.question-card-header,.question-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.question-card-header>span { color:var(--text-muted); font-size:12px; }
+.user-question-card fieldset { border:0; padding:12px 0; margin:0; min-width:0; }
+.user-question-card legend { font-weight:600; padding:0; }
+.question-option { display:flex; gap:8px; align-items:flex-start; padding:8px 0; cursor:pointer; }
+.question-option>span { display:flex; flex-direction:column; gap:4px; }
+.question-option small { color:var(--text-muted); }
+.question-custom { display:flex; flex-direction:column; gap:6px; margin:8px 0; }
+.question-custom textarea { min-height:64px; max-height:180px; resize:vertical; color:var(--text); background:var(--input-surface); border:1px solid var(--border); border-radius:6px; padding:8px; font:inherit; }
 .composer-menu-popover { position:fixed; z-index:50; display:flex; width:max-content; max-width:calc(100vw - 24px); max-height:calc(100vh - 100px); border:1px solid var(--border); border-radius:12px; background:var(--panel-surface); color:var(--text); box-shadow:0 8px 30px #0002; overflow:auto; }
 .composer-menu-primary { width:328px; flex:none; padding:8px; display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 /* 卡片式入口：图标瓷片 + 标题 + 说明；两列网格，点击即用，无需手打。 */
-.composer-card { display:flex; align-items:center; gap:10px; min-height:56px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; cursor:pointer; font:13px/18px var(--font-ui); transition:border-color .15s, background .15s; }
-.composer-card:hover:not(:disabled) { border-color:var(--accent); background:var(--surface-3); }
-.composer-card:disabled { opacity:.5; cursor:default; }
+.composer-menu-card { display:flex; align-items:center; gap:10px; min-height:56px; padding:10px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); text-align:left; cursor:pointer; font:13px/18px var(--font-ui); transition:border-color .15s, background .15s; }
+.composer-menu-card:hover:not(:disabled) { border-color:var(--accent); background:var(--surface-3); }
+.composer-menu-card:disabled { opacity:.5; cursor:default; }
 .composer-card-icon { flex:none; display:flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:8px; background:var(--surface-3); color:var(--accent); }
 .composer-card-text { display:flex; flex-direction:column; gap:2px; min-width:0; }
 .composer-card-text>strong { font-weight:600; }
@@ -196,7 +206,7 @@ select:not([multiple]):not([size]) { appearance:none; -webkit-appearance:none; p
   .sacode-dialog { max-width:calc(100vw - 24px); }
 }
 @media(prefers-reduced-motion:reduce) {
-  .composer-card,.sacode-dialog,.nav-item { transition:none; }
+  .composer-menu-card,.sacode-dialog,.nav-item { transition:none; }
 }
 /* 文件编辑沿用工作台表面；差异来自读取版本与待保存草稿。 */
 .file-editor { display:flex; flex-direction:column; gap:14px; padding:16px; min-width:0; }

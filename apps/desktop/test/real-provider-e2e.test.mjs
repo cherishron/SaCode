@@ -1,5 +1,6 @@
+import {realProviderCredential} from './support/real-provider-credential.mjs';
 // 真模型端到端：不打本地桩，直接走 TLS 打给配置面里登记的提供商。
-// 凭据只从环境变量或 gitignore 的 target/step.key 读，绝不写进源码、日志或回执。
+// 凭据仅在显式启用测试后从进程环境注入，绝不写进源码、日志或回执。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, existsSync, readFileSync } from 'node:fs';
@@ -21,16 +22,11 @@ const BASE_URL = 'https://api.stepfun.com/v1';
 const MODEL = 'step-3.7-flash';
 const CRED_REF = 'STEPFUN_API_KEY';
 
-function readKey() {
-  if ((process.env.STEPFUN_API_KEY || '').length > 0) return process.env.STEPFUN_API_KEY;
-  const file = join(REPO, 'target', 'step.key');
-  if (!existsSync(file)) return '';
-  return readFileSync(file, 'utf8').trim();
-}
+function readKey() { return realProviderCredential(); }
 
 test('真实提供商往返：配置面登记的模型能出真答复', { timeout: 180000 }, async (t) => {
   const key = readKey();
-  if (key.length === 0) { t.skip('缺少真模型凭据（需 STEPFUN_API_KEY 环境变量或 gitignore 的 target/step.key）'); return; }
+  if (key.length === 0) { t.skip('缺少真模型凭据（需显式启用 SACODE_RUN_REAL_PROVIDER_TESTS=1 并注入 STEPFUN_API_KEY）'); return; }
   assert.ok(existsSync(HOST), '缺少自包含宿主');
   const dir = mkdtempSync(join(tmpdir(), 'sacode-real-'));
   const bridge = new HostBridge(HOST, realHostEnv(dir, HOST));

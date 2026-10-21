@@ -6,8 +6,9 @@ import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {createRequire} from 'node:module';
 import {fixtureHostEnv} from '../test-support/fixture-env.mjs';
+import {cliEnvSkip} from '../test-support/cli-env-gate.mjs';
 const {HostBridge}=createRequire(import.meta.url)('../host-bridge.cjs');
-test('真实Host持久任务列表经CLI恢复；列举不写日志、不启动、不继承审批',{timeout:30000},async t=>{
+test('真实Host持久任务列表经CLI恢复；列举不写日志、不启动、不继承审批',{timeout:30000,skip:cliEnvSkip()},async t=>{
  assert.ok(process.env.SACODE_HOST);assert.ok(process.env.SACODE_CLI);
  const root=mkdtempSync(join(tmpdir(),'sacode-execution-history-')),env=fixtureHostEnv(root);
  const bridge=new HostBridge(process.env.SACODE_HOST,env);await bridge.start(root);t.after(()=>bridge.stop(10000));

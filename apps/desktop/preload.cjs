@@ -1,7 +1,141 @@
 const { contextBridge, ipcRenderer } = require("electron");
 // 只暴露固定动作：方法名与宿主路径都留在主进程，渲染层拼不出任意方法或参数结构。
 // 没有通用的 request(everything) 通道——那等于把宿主协议面整个交给网页。
+// 新域只接受普通数据对象与逐字段闭集；校验错误不包含请求值。
+const ipcBad = () => { throw new TypeError('preload:invalid-arguments'); };
+const ipcText = (max = 256, min = 1) => value => typeof value === 'string' && value.length >= min && value.length <= max && !value.includes('\0');
+const ipcInt = (min, max = Number.MAX_SAFE_INTEGER) => value => Number.isSafeInteger(value) && value >= min && value <= max;
+const ipcEnum = (...values) => value => values.includes(value);
+const ipcArray = (check, max) => value => Array.isArray(value) && value.length <= max && Array.from(value).every(check);
+const ipcObject = (required, optional = {}) => value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && Object.getPrototypeOf(proto) !== null) return false;
+  const fields = { ...required, ...optional };
+  if (Reflect.ownKeys(value).some(key => typeof key !== 'string' || !Object.hasOwn(fields, key) || !Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), 'value'))) return false;
+  return Object.keys(required).every(key => Object.hasOwn(value, key) && required[key](value[key])) &&
+    Object.keys(optional).every(key => !Object.hasOwn(value, key) || optional[key](value[key]));
+};
+const ipcRecord = (check, max = 256) => value => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && Object.getPrototypeOf(proto) !== null) return false;
+  return Reflect.ownKeys(value).length <= max && Reflect.ownKeys(value).every(key =>
+    typeof key === 'string' && /^[A-Za-z0-9_.:/-]{1,128}$/.test(key) && !['__proto__', 'prototype', 'constructor'].includes(key) &&
+    Object.hasOwn(Object.getOwnPropertyDescriptor(value, key), 'value') && check(value[key]));
+};
+const ipcId = ipcText();
+const ipcSid = { sessionId: ipcId };
+const ipcOwner = { ...ipcSid, projectId: ipcId, browserId: ipcId, tabId: ipcId };
+const ipcDigest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+const ipcFile = ipcObject({ path: value => ipcText(1024)(value) && !/[:\x00-\x1f\x7f]/.test(value) &&
+  value.replace(/\\/g, '/').split('/').every(part => part && part !== '.' && part !== '..' && !/[. ]$/.test(part)), digest: ipcDigest });
+const ipcBinding = { ...ipcSid, workspace: ipcText(32768), workspaceRevision: ipcInt(0) };
+const ipcMapping = ipcObject({}, {
+  titleMode: ipcEnum('keep', 'custom', 'prefix', 'source', 'filename'), displayTitle: ipcText(512, 0),
+  prefix: ipcText(512, 0), titlePrefix: ipcText(512, 0), workspaceMode: ipcEnum('none', 'current'),
+  conflictPolicy: ipcEnum('skip', 'new-copy'), updatePolicy: ipcEnum('new-only', 'allow-updates'),
+  credentialBindings: ipcRecord(ipcId),
+});
+const ipcTarget = ipcObject({ scope: ipcEnum('user', 'project') });
+const ipcPlan = { ...ipcSid, previewToken: ipcId };
+const ipcPlanOptions = { mapping: ipcMapping, target: ipcTarget };
+const ipcSource = ipcEnum('chatgpt-export', 'sacode-migrate', 'text-file');
+const ipcMessage = ipcObject({ role: ipcEnum('user', 'assistant'), text: ipcText(1048576, 0) });
+const ipcCandidateMeta = { candidateId: ipcId, title: ipcText(512, 0) };
+const ipcPreview = value => {
+  const common = { ...ipcSid, sourceId: ipcSource, kind: ipcEnum('conversation', 'knowledge', 'config'), mapping: ipcMapping, target: ipcTarget };
+  if (!value || typeof value !== 'object') return false;
+  // 分支也封闭：配置包不得混入会话候选，知识候选不得携带工具/审批历史。
+  const conversation = ipcObject({ ...common, candidates: ipcArray(ipcObject({ sourceKey: ipcText(512), messages: ipcArray(ipcMessage, 10000) }, ipcCandidateMeta), 2000) });
+  const knowledge = ipcObject({ ...common, candidates: ipcArray(ipcObject({ sourceKey: ipcText(512), content: ipcText(65536, 0) }, ipcCandidateMeta), 200) });
+  const config = ipcObject({ ...common, payload: ipcObject({ kind: ipcEnum('config'), text: ipcText(8388608) }) });
+  // 先校验数据描述符，再读分支字段，不执行来自渲染层的访问器。
+  if (conversation(value) && value.kind === 'conversation' && value.sourceId === 'chatgpt-export') {
+    return value.candidates.reduce((count, item) => count + item.messages.length, 0) <= 10000;
+  }
+  if (knowledge(value) && value.kind === 'knowledge' && value.sourceId === 'text-file') return true;
+  return config(value) && value.kind === 'config' && value.sourceId === 'sacode-migrate' && value.target.scope === 'user';
+};
+const ipcSshArguments = value => {
+  if (!ipcText(131072)(value)) return false;
+  try { return ipcObject({ host: ipcText(253), command: ipcText(65536), user: ipcText(256, 0), port: ipcInt(1, 65535), timeoutMs: ipcInt(1, 300000), connectTimeoutSec: ipcInt(1, 60) })(JSON.parse(value)); } catch { return false; }
+};
+// MCP 服务器名与工具名共用同一套安全字符集（与 Host mcp_rpc.cj 的字节白名单一致）。
+const ipcMcpName = value => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(value);
+// 只把 Electron 的缺 handler 错误转成明确提示；真实拒绝/失败不吞掉、不重试。
+const ipcChecked = (channel, check, payload) => {
+  if (!check(payload)) ipcBad();
+  return ipcRenderer.invoke(channel, payload).catch(error => {
+    if (typeof error?.message === 'string' && error.message.includes(`No handler registered for '${channel}'`)) {
+      throw new Error(`通道未接通：preload.cjs 对应主进程 IPC 尚未接入（${channel}）。`);
+    }
+    throw error;
+  });
+};
 contextBridge.exposeInMainWorld("sacode", {
+  browserNavigate: request => ipcChecked('sacode:browserNavigate', ipcObject({ ...ipcOwner, url: value => {
+    if (!ipcText(8192)(value)) return false;
+    try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
+  } }), request),
+  browserScreenshot: request => ipcChecked('sacode:browserScreenshot', ipcObject(ipcOwner), request),
+  browserClick: request => ipcChecked('sacode:browserClick', ipcObject({ ...ipcOwner, x: ipcInt(0, 32767), y: ipcInt(0, 32767) }), request),
+  browserInput: request => ipcChecked('sacode:browserInput', ipcObject({ ...ipcOwner, text: ipcText(65536, 0) }), request),
+  browserScroll: request => ipcChecked('sacode:browserScroll', ipcObject({ ...ipcOwner, deltaX: ipcInt(-32767, 32767), deltaY: ipcInt(-32767, 32767) }), request),
+  browserClose: request => ipcChecked('sacode:browserClose', ipcObject(ipcOwner), request),
+  databaseConnect: request => ipcChecked('sacode:databaseConnect', ipcObject({ ...ipcSid, projectId: ipcId, spec: ipcObject({
+    engine: ipcEnum('postgresql', 'mysql', 'dm'), host: ipcText(253), port: ipcInt(1, 65535), database: ipcText(256), user: ipcText(256), credentialRef: ipcId,
+    tlsMode: ipcEnum('verify-full'), readonly: ipcEnum(true), connectTimeoutMs: ipcInt(1, 300000), statementTimeoutMs: ipcInt(1, 300000),
+  }) }), request),
+  databaseDisconnect: connectionId => ipcChecked('sacode:databaseDisconnect', ipcObject({ connectionId: ipcId }), { connectionId }),
+  databaseQuery: request => ipcChecked('sacode:databaseQuery', ipcObject({ connectionId: ipcId, sql: ipcText(1048576),
+    params: ipcArray(value => value === null || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value) || ipcText(65536, 0)(value), 1000),
+    opts: ipcObject({ readonly: ipcEnum(true), maxRows: ipcInt(1, 10000), maxBytes: ipcInt(1, 16777216), statementTimeoutMs: ipcInt(1, 300000), cursorBatch: ipcInt(1, 10000) }),
+  }), request),
+  importSources: sessionId => ipcChecked('sacode:importSources', ipcObject(ipcSid), { sessionId }),
+  importPickFile: (sessionId, sourceId) => ipcChecked('sacode:importPickFile', ipcObject({ ...ipcSid, sourceId: ipcSource }), { sessionId, sourceId }),
+  importPreview: request => ipcChecked('sacode:importPreview', ipcPreview, request),
+  importPlan: request => ipcChecked('sacode:importPlan', ipcObject(ipcPlan, ipcPlanOptions), request),
+  importConfirm: request => ipcChecked('sacode:importConfirm', ipcObject({ ...ipcSid, planHash: ipcDigest, decisions: ipcRecord(ipcEnum('append', 'overwrite', 'skip', 'dismiss'), 2000) }), request),
+  importApply: request => ipcChecked('sacode:importApply', value => ipcObject({ ...ipcSid, jobId: ipcId })(value) || ipcObject({ ...ipcSid, planHash: ipcDigest, requestId: ipcText(200) }, { selection: ipcObject({ itemIds: ipcArray(ipcId, 2000) }) })(value), request),
+  importDescribe: request => ipcChecked('sacode:importDescribe', ipcObject({ ...ipcSid, jobId: ipcId }, { offset: ipcInt(0), limit: ipcInt(1, 200) }), request),
+  importCancel: (sessionId, jobId) => ipcChecked('sacode:importCancel', ipcObject({ ...ipcSid, jobId: ipcId }), { sessionId, jobId }),
+  // sessionId 在 terminal 域是 Host 铸造的 PTY 身份，不冒充工作台会话或改写成 terminalId。
+  terminalCreate: request => ipcChecked('sacode:terminalCreate', ipcObject({ cwd: ipcText(32768), env: ipcRecord(ipcText(32768, 0)), cols: ipcInt(1, 32767), rows: ipcInt(1, 32767) }), request),
+  terminalInput: (sessionId, data) => ipcChecked('sacode:terminalInput', ipcObject({ ...ipcSid, data: value => {
+    if (typeof value !== 'string' || value.length > 5464 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) return false;
+    return value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0) <= 4096;
+  } }), { sessionId, data }),
+  terminalResize: (sessionId, cols, rows) => ipcChecked('sacode:terminalResize', ipcObject({ ...ipcSid, cols: ipcInt(1, 32767), rows: ipcInt(1, 32767) }), { sessionId, cols, rows }),
+  terminalInterrupt: sessionId => ipcChecked('sacode:terminalInterrupt', ipcObject(ipcSid), { sessionId }),
+  terminalDescribe: (sessionId, limit) => ipcChecked('sacode:terminalDescribe', ipcObject(ipcSid, { limit: ipcInt(1, 262144) }), { sessionId, ...(limit === undefined ? {} : { limit }) }),
+  terminalClose: sessionId => ipcChecked('sacode:terminalClose', ipcObject(ipcSid), { sessionId }),
+  compactRun: (sessionId, requestId) => ipcChecked('sacode:compactRun', ipcObject({ ...ipcSid, requestId: ipcText(128) }), { sessionId, requestId }),
+  compactDescribe: sessionId => ipcChecked('sacode:compactDescribe', ipcObject(ipcSid), { sessionId }),
+  securityScan: request => ipcChecked('sacode:securityScan', ipcObject({ ...ipcSid, requestId: ipcId, scope: ipcArray(ipcFile, 10000) }), request),
+  securityDescribe: sessionId => ipcChecked('sacode:securityDescribe', ipcObject(ipcSid), { sessionId }),
+  securityFreshness: (sessionId, scanId) => ipcChecked('sacode:securityFreshness', ipcObject({ ...ipcSid, scanId: ipcId }), { sessionId, scanId }),
+  securityFixDraft: (sessionId, scanId, findingIds) => ipcChecked('sacode:securityFixDraft', ipcObject({ ...ipcSid, scanId: ipcId, findingIds: ipcArray(ipcId, 10000) }), { sessionId, scanId, findingIds }),
+  sshExec: request => ipcChecked('sacode:sshExec', ipcObject({ ...ipcSid, arguments: ipcSshArguments, approvalId: ipcInt(1) }), request),
+  sshDescribe: sessionId => ipcChecked('sacode:sshDescribe', ipcObject(ipcSid), { sessionId }),
+  // MCP 桌面 IPC：六个动词对应 Host mcp_rpc.cj 的 list/connect/disconnect/tools/call/status。
+  // connect 与 call 必须携带审批票（approvalId），与 Host 侧 ApprovalDesk.consumeExactForCall 一致。
+  // 渲染层只能给出扁平参数，主进程负责打包成 Host 期望的嵌套 args JSON 字符串。
+  mcpList: sessionId => ipcChecked('sacode:mcpList', ipcObject(ipcSid), { sessionId }),
+  mcpConnect: request => ipcChecked('sacode:mcpConnect', ipcObject({
+    ...ipcSid, name: ipcMcpName, command: ipcText(1024), args: ipcArray(ipcText(32768), 100), approvalId: ipcInt(1),
+  }, { timeoutMs: ipcInt(1, 30000) }), request),
+  mcpDisconnect: (sessionId, name) => ipcChecked('sacode:mcpDisconnect', ipcObject({ ...ipcSid, name: ipcMcpName }), { sessionId, name }),
+  mcpTools: (sessionId, name) => ipcChecked('sacode:mcpTools', ipcObject({ ...ipcSid, name: ipcMcpName }), { sessionId, name }),
+  mcpCall: request => ipcChecked('sacode:mcpCall', ipcObject({
+    ...ipcSid, name: ipcMcpName, toolName: ipcMcpName, approvalId: ipcInt(1),
+  }, { argumentsJson: ipcText(65536) }), request),
+  mcpStatus: (sessionId, name) => ipcChecked('sacode:mcpStatus', ipcObject({ ...ipcSid, name: ipcMcpName }), { sessionId, name }),
+  automationTick: (sessionId, scopeId) => ipcChecked('sacode:automationTick', ipcObject({ ...ipcSid, scopeId: ipcId }), { sessionId, scopeId }),
+  automationDescribeExecution: request => ipcChecked('sacode:automationDescribeExecution', ipcObject({ ...ipcSid, scopeId: ipcId, taskId: ipcText(80) }, { fireId: ipcId }), request),
+  knowledgeIndexBuild: request => ipcChecked('sacode:knowledgeIndexBuild', ipcObject({ ...ipcBinding, indexRevision: ipcInt(0), files: ipcArray(ipcFile, 10000) }), request),
+  knowledgeSearch: request => ipcChecked('sacode:knowledgeSearch', ipcObject({ ...ipcBinding, indexRevision: ipcInt(0), query: ipcText(2048, 0) }, { limit: ipcInt(1, 12) }), request),
+  knowledgeDescribeIndex: request => ipcChecked('sacode:knowledgeDescribeIndex', ipcObject(ipcBinding), request),
   automationList: (sessionId,scope) => ipcRenderer.invoke('sacode:automationList',{sessionId,scope}),
   automationSave: (sessionId,scope,definition,revision) => ipcRenderer.invoke('sacode:automationSave',{sessionId,scope,definition,revision}),
   automationControl: (sessionId,scope,id,action,revision) => ipcRenderer.invoke('sacode:automationControl',{sessionId,scope,id,action,revision}),
@@ -92,12 +226,17 @@ contextBridge.exposeInMainWorld("sacode", {
   globalAppearanceSetFontSize: (fontSize) => ipcRenderer.invoke("sacode:globalAppearanceSetFontSize", { fontSize }),
   globalAppearanceSetBusySend: (busySend) => ipcRenderer.invoke("sacode:globalAppearanceSetBusySend", { busySend }),
   sessionCatalog: () => ipcRenderer.invoke("sacode:sessionCatalog"),
+  sessionRename: (sessionId, title, expectedRevision) => ipcRenderer.invoke("sacode:sessionRename", { sessionId, title, expectedRevision }),
+  sessionArchive: (sessionId, archived, expectedRevision) => ipcRenderer.invoke("sacode:sessionArchive", { sessionId, archived, expectedRevision }),
+  userQuestionAnswer: (sessionId, questionId, answers, cancelled) => ipcRenderer.invoke("sacode:userQuestionAnswer", { sessionId, questionId, answers, cancelled }),
   // 已落盘事件流（轨迹视图）：只回放 durable 事件，cursor 之后 limit 之内。
   terminalOutput: (sessionId, cursor, limit) => ipcRenderer.invoke("sacode:terminalOutput", { sessionId, cursor, limit }),
   sessionEvents: (sessionId, cursor, limit) => ipcRenderer.invoke("sacode:sessionEvents", { sessionId, cursor, limit }),
   requestTrace: (sessionId, beforeSeq, limit) => ipcRenderer.invoke("sacode:requestTrace", { sessionId, beforeSeq, limit }),
   sessionCreate: (title) => ipcRenderer.invoke("sacode:sessionCreate", { title }),
   sessionSelect: (sessionId) => ipcRenderer.invoke("sacode:sessionSelect", { sessionId }),
+  // 清空会话日志真源：只收会话身份，基线（标题/目录/模式/权限/主题）由宿主保留。
+  sessionClear: (sessionId) => ipcRenderer.invoke("sacode:sessionClear", { sessionId }),
   workspaceGet: () => ipcRenderer.invoke("sacode:workspaceGet"),
   workspaceGitStatus: (sessionId, directory) => ipcRenderer.invoke('sacode:workspaceGitStatus', {sessionId,directory}),
   workspaceGitDiff: (sessionId, directory, path, scope) => ipcRenderer.invoke('sacode:workspaceGitDiff', {sessionId,directory,path,scope}),
@@ -174,4 +313,8 @@ contextBridge.exposeInMainWorld("sacode", {
   pageToolCall: (name, args) => ipcRenderer.invoke("sacode:pageToolCall", { name, args }),
   approvalSetMode: (mode) => ipcRenderer.invoke("sacode:approvalSetMode", { mode }),
   approvalGetMode: () => ipcRenderer.invoke("sacode:approvalGetMode"),
+  // 计划模式与计划审阅（方案 B 独立通道）：进/退 + 答复，逐字段在 main.cjs 校验。
+  planSetMode: (active) => ipcRenderer.invoke("sacode:planSetMode", { active }),
+  planGetMode: () => ipcRenderer.invoke("sacode:planGetMode"),
+  planReviewAnswer: (sessionId, planId, decision, feedback, cancelled) => ipcRenderer.invoke("sacode:planReviewAnswer", { sessionId, planId, decision, feedback, cancelled }),
 });

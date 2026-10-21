@@ -1,25 +1,9 @@
 // 断言 31：前端只能比核心更严，不能更宽。断言 60：目录项已添加一份后仍可选（号池）。
-// 构建本地 TypeScript 依赖，Vue 保持 external，不折入第二份 runtime。
+// 编译真实本地依赖，Vue仅从桌面依赖加载一份。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSync } from 'esbuild';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, resolve } from 'node:path';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const testRoot = resolve(here, '../../../target/tmp/models-validate');
-mkdirSync(testRoot, { recursive: true });
-const privateDir = mkdtempSync(resolve(testRoot, 'run-'));
-const output = resolve(privateDir, 'models-page.mjs');
-buildSync({
-  entryPoints: [resolve(here, '../renderer/pages/models-page.ts')],
-  outfile: output,
-  format: 'esm', target: 'es2022', bundle: true, external: ['vue'],
-});
-const { validateDraft, selectableCatalogEntries } = await import(pathToFileURL(output).href);
-
-rmSync(privateDir, { recursive: true, force: true });
+import {loadPageModule} from './support/load-page-module.mjs';
+const {validateDraft,selectableCatalogEntries}=loadPageModule(new URL('../renderer/pages/models-page.ts',import.meta.url));
 
 const base = { id: 'p', name: 'P', protocol: 'openai-completions', key: '', declared: true,
   models: [{ id: 'm', name: '', contextWindow: '', maxTokens: '', image: false }] };

@@ -15,7 +15,14 @@ function checkSetResult(result:unknown):void{
   const value=result as {ok?:unknown;result?:unknown};
   if(value.ok!==true||(value.result!=='committed'&&value.result!=='noop'))throw Error('权限模式设置回执无效');
 }
-const errorText=(error:unknown)=>error&&typeof error==='object'&&'message' in error?String(error.message):'权限模式请求失败';
+const errorText=(error:unknown)=>{
+  const raw=error&&typeof error==='object'&&'message' in error?String(error.message):'权限模式请求失败';
+  // turn 在途时 Host 回 -32001 turn-in-flight；计划模式期间回 plan-mode-active。
+  // IPC 包装后用户只看到原始码；与 send-queue-state / session-catalog 同一套友好说法。
+  if(raw.includes('turn-in-flight'))return '执行中不能切换权限模式，请等待当前任务完成。';
+  if(raw.includes('plan-mode-active'))return '计划模式期间不能切换权限，请先退出计划模式。';
+  return raw;
+};
 
 export const PermissionMenu=defineComponent({setup(){
   const open=ref(false),root=ref<HTMLElement|null>(null),current=ref<ApprovalMode|null>(null),busy=ref(''),error=ref('');
@@ -30,7 +37,9 @@ export const PermissionMenu=defineComponent({setup(){
     finally{if(active(ticket))busy.value='';}
   }
   async function select(mode:ApprovalMode){
-    if(disposed||busy.value||current.value===null||!isMode(mode))return;
+    // 只看 busy：模式读取失败（current 为 null）时也要允许用户手动选择——
+    // 选项点击本身就是一次新的写入请求，不必以读成功为前提。
+    if(disposed||busy.value||!isMode(mode))return;
     const ticket=++serial;busy.value='set';error.value='';let accepted=false;
     try{
       const result=await api().approvalSetMode(mode);if(!active(ticket))return;
@@ -57,7 +66,7 @@ export const PermissionMenu=defineComponent({setup(){
       h('p',{class:'note'},'模式回读不代表持久化或权限策略已生效；工具仍以核心实际审批为准。'),
       busy.value?h('p',{class:'note',role:'status'},busy.value==='read'?'正在读取…':'正在设置并核实…'):null,
       error.value?h('p',{class:'note',role:'alert'},error.value):null,
-      ...modes.map(([name,detail])=>h('button',{type:'button',class:['mode-'+name,current.value===name?'active':''].filter(Boolean).join(' '),disabled:!!busy.value||current.value===null,onClick:()=>select(name)},[h('span',{},[h('strong',{},name),h('small',{},detail)])])),
+      ...modes.map(([name,detail])=>h('button',{type:'button',class:['mode-'+name,current.value===name?'active':''].filter(Boolean).join(' '),disabled:!!busy.value,onClick:()=>select(name)},[h('span',{},[h('strong',{},name),h('small',{},detail)])])),
       h('button',{type:'button',disabled:!!busy.value,onClick:load},'重新读取'),
     ]):null,
   ]);

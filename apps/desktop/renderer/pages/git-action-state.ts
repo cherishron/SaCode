@@ -1,5 +1,5 @@
 export type GitEntry={path:string;oldPath?:string;x:string;y:string};
-export type GitActionKind='stage'|'commit'|'push';
+export type GitActionKind='stage'|'unstage'|'commit'|'push';
 export type GitActionPlan={kind:GitActionKind;title:string;summary:string;executable:'git';argv:string[];timeoutMs:number;outputLimit:number};
 export type GitPushTarget={remote:string;ref:string;commit:string};
 type GitActionInput={entries?:GitEntry[];selectedPaths?:string[];stagedPaths?:string[];conflicts?:string[];branch?:string;commitMessage?:string;pushTarget?:GitPushTarget};
@@ -54,6 +54,22 @@ export function createGitActionPlan(kind:GitActionKind,input:GitActionInput={}):
     if(unique.length>256||unique.reduce((sum,path)=>sum+path.length,0)>16000)throw Error('所选路径过多，请分批创建暂存提案。');
     const pathspecs=unique.map(path=>':(literal)'+path);
     return{kind,title:'暂存所选文件',summary:'仅暂存列出的精确路径；已有索引内容（包括部分暂存）不会被覆盖。Git hooks 若配置可能运行。暂存后请重新检查索引差异，再单独创建提交提案。',executable:'git',argv:['add','--all','--',...pathspecs],timeoutMs:120000,outputLimit:16384};
+  }
+  if(kind==='unstage'){
+    const entries=input.entries||[], selected=[...new Set(input.selectedPaths||[])];
+    if(!selected.length)throw Error('先选择至少一个已暂存文件再创建取消暂存提案。');
+    const stagedEntries=entries.filter(e=>e.x!==' '&&e.x!=='?'&&!e.path.endsWith('/'));
+    const byPath=new Map(stagedEntries.map(entry=>[entry.path,entry]));
+    const paths:string[]=[];
+    for(const path of selected){
+      const entry=byPath.get(path);
+      if(!entry)throw Error('所选路径已不在已暂存列表中；刷新 Git 状态后重试。');
+      paths.push(checkedPath(entry.path));
+      if(entry.oldPath)paths.push(checkedPath(entry.oldPath));
+    }
+    const unique=[...new Set(paths)];
+    if(unique.length>256||unique.reduce((sum,path)=>sum+path.length,0)>16000)throw Error('所选路径过多，请分批创建取消暂存提案。');
+    return{kind,title:'取消暂存所选文件',summary:'将所选路径从索引中移回工作区；文件内容不会被修改，仅撤销暂存标记。Git hooks 若配置可能运行。取消暂存后请重新检查工作区差异。',executable:'git',argv:['reset','HEAD','--',...unique],timeoutMs:120000,outputLimit:16384};
   }
   if(kind==='commit'){
     const staged=[...new Set(input.stagedPaths||[])].map(checkedPath);

@@ -152,6 +152,135 @@ async function withHost(fn) {
 
 const isStr = (v) => typeof v === "string";
 
+// 新域固定 IPC：主进程复核闭集负载，方法名绝不来自渲染层。
+const domainText = (max = 256, min = 1) => v => typeof v === 'string' && v.length >= min && v.length <= max && !v.includes('\0');
+const domainInt = (min, max = Number.MAX_SAFE_INTEGER) => v => Number.isSafeInteger(v) && v >= min && v <= max;
+const domainEnum = (...values) => v => values.includes(v);
+const domainArray = (check, max) => v => Array.isArray(v) && v.length <= max && Array.from(v).every(check);
+const domainObject = (required, optional = {}) => v => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== null && Object.getPrototypeOf(proto) !== null) return false;
+  const fields = { ...required, ...optional };
+  return Reflect.ownKeys(v).every(k => typeof k === 'string' && Object.hasOwn(fields, k) && Object.hasOwn(Object.getOwnPropertyDescriptor(v, k), 'value')) &&
+    Object.keys(required).every(k => Object.hasOwn(v, k) && required[k](v[k])) &&
+    Object.keys(optional).every(k => !Object.hasOwn(v, k) || optional[k](v[k]));
+};
+const domainRecord = (check, max = 256) => v => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return (proto === null || Object.getPrototypeOf(proto) === null) && Reflect.ownKeys(v).length <= max && Reflect.ownKeys(v).every(k =>
+    typeof k === 'string' && /^[A-Za-z0-9_.:/-]{1,128}$/.test(k) && !['__proto__', 'prototype', 'constructor'].includes(k) &&
+    Object.hasOwn(Object.getOwnPropertyDescriptor(v, k), 'value') && check(v[k]));
+};
+const domainId = domainText();
+const domainSid = { sessionId: domainId };
+const domainOwner = { ...domainSid, projectId: domainId, browserId: domainId, tabId: domainId };
+const domainDigest = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+const domainFile = domainObject({ path: v => domainText(1024)(v) && !/[:\x00-\x1f\x7f]/.test(v) &&
+  v.replace(/\\/g, '/').split('/').every(p => p && p !== '.' && p !== '..' && !/[. ]$/.test(p)), digest: domainDigest });
+const domainBinding = { ...domainSid, workspace: domainText(32768), workspaceRevision: domainInt(0) };
+const domainMapping = domainObject({}, {
+  titleMode: domainEnum('keep', 'custom', 'prefix', 'source', 'filename'), displayTitle: domainText(512, 0), prefix: domainText(512, 0), titlePrefix: domainText(512, 0),
+  workspaceMode: domainEnum('none', 'current'), conflictPolicy: domainEnum('skip', 'new-copy'), updatePolicy: domainEnum('new-only', 'allow-updates'), credentialBindings: domainRecord(domainId),
+});
+const domainTarget = domainObject({ scope: domainEnum('user', 'project') });
+const domainSource = domainEnum('chatgpt-export', 'sacode-migrate', 'text-file');
+const domainPreview = v => {
+  const common = { ...domainSid, sourceId: domainSource, kind: domainEnum('conversation', 'knowledge', 'config'), mapping: domainMapping, target: domainTarget };
+  const meta = { candidateId: domainId, title: domainText(512, 0) };
+  const conversation = domainObject({ ...common, candidates: domainArray(domainObject({ sourceKey: domainText(512), messages: domainArray(domainObject({ role: domainEnum('user', 'assistant'), text: domainText(1048576, 0) }), 10000) }, meta), 2000) });
+  const knowledge = domainObject({ ...common, candidates: domainArray(domainObject({ sourceKey: domainText(512), content: domainText(65536, 0) }, meta), 200) });
+  const config = domainObject({ ...common, payload: domainObject({ kind: domainEnum('config'), text: domainText(8388608) }) });
+  if (conversation(v) && v.kind === 'conversation' && v.sourceId === 'chatgpt-export') return v.candidates.reduce((n, c) => n + c.messages.length, 0) <= 10000;
+  if (knowledge(v) && v.kind === 'knowledge' && v.sourceId === 'text-file') return true;
+  return config(v) && v.kind === 'config' && v.sourceId === 'sacode-migrate' && v.target.scope === 'user';
+};
+const domainSshArguments = v => {
+  if (!domainText(131072)(v)) return false;
+  try { return domainObject({ host: domainText(253), command: domainText(65536), user: domainText(256, 0), port: domainInt(1, 65535), timeoutMs: domainInt(1, 300000), connectTimeoutSec: domainInt(1, 60) })(JSON.parse(v)); } catch { return false; }
+};
+// MCP 服务器名与工具名：与 Host mcp_rpc.cj 的字节白名单一致（A-Z a-z 0-9 _ . -）。
+const domainMcpName = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(v);
+const MCP_DEFAULT_TIMEOUT = 15000;
+const domainBase64 = v => typeof v === 'string' && v.length <= 5464 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v) &&
+  v.length / 4 * 3 - (v.endsWith('==') ? 2 : v.endsWith('=') ? 1 : 0) <= 4096;
+const domainUrl = v => {
+  if (!domainText(8192)(v)) return false;
+  try { const url = new URL(v); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
+};
+function domainParams(args, required, optional = {}) {
+  if (!domainObject(required, optional)(args)) throw new TypeError('ipc-invalid-arguments');
+  // 仅从经校验的数据字段构造请求，不补默认值或转写审批/会话身份。
+  return Object.fromEntries(Object.keys(args).map(k => [k, args[k]]));
+}
+function domainChecked(args, check) {
+  if (!check(args)) throw new TypeError('ipc-invalid-arguments');
+  return Object.fromEntries(Object.keys(args).map(k => [k, args[k]]));
+}
+ipcMain.handle('sacode:browserNavigate', async (_e, a) => { const p = domainParams(a, { ...domainOwner, url: domainUrl }); return withHost(() => bridge.request('browser/navigate', p)); });
+ipcMain.handle('sacode:browserScreenshot', async (_e, a) => { const p = domainParams(a, domainOwner); return withHost(() => bridge.request('browser/screenshot', p)); });
+ipcMain.handle('sacode:browserClick', async (_e, a) => { const p = domainParams(a, { ...domainOwner, x: domainInt(0, 32767), y: domainInt(0, 32767) }); return withHost(() => bridge.request('browser/click', p)); });
+ipcMain.handle('sacode:browserInput', async (_e, a) => { const p = domainParams(a, { ...domainOwner, text: domainText(65536, 0) }); return withHost(() => bridge.request('browser/input', p)); });
+ipcMain.handle('sacode:browserScroll', async (_e, a) => { const p = domainParams(a, { ...domainOwner, deltaX: domainInt(-32767, 32767), deltaY: domainInt(-32767, 32767) }); return withHost(() => bridge.request('browser/scroll', p)); });
+ipcMain.handle('sacode:browserClose', async (_e, a) => { const p = domainParams(a, domainOwner); return withHost(() => bridge.request('browser/close', p)); });
+ipcMain.handle('sacode:databaseConnect', async (_e, a) => { const p = domainParams(a, { ...domainSid, projectId: domainId, spec: domainObject({ engine: domainEnum('postgresql', 'mysql', 'dm'), host: domainText(253), port: domainInt(1, 65535), database: domainText(256), user: domainText(256), credentialRef: domainId, tlsMode: domainEnum('verify-full'), readonly: domainEnum(true), connectTimeoutMs: domainInt(1, 300000), statementTimeoutMs: domainInt(1, 300000) }) }); return withHost(() => bridge.request('database/connect', p)); });
+ipcMain.handle('sacode:databaseDisconnect', async (_e, a) => { const p = domainParams(a, { connectionId: domainId }); return withHost(() => bridge.request('database/disconnect', p)); });
+ipcMain.handle('sacode:databaseQuery', async (_e, a) => { const p = domainParams(a, { connectionId: domainId, sql: domainText(1048576), params: domainArray(v => v === null || typeof v === 'boolean' || typeof v === 'number' && Number.isFinite(v) || domainText(65536, 0)(v), 1000), opts: domainObject({ readonly: domainEnum(true), maxRows: domainInt(1, 10000), maxBytes: domainInt(1, 16777216), statementTimeoutMs: domainInt(1, 300000), cursorBatch: domainInt(1, 10000) }) }); return withHost(() => bridge.request('database/query', p)); });
+ipcMain.handle('sacode:importSources', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('import/sources', p)); });
+ipcMain.handle('sacode:importPickFile', async (_e, a) => { const p = domainParams(a, { ...domainSid, sourceId: domainSource }); return withHost(() => bridge.request('import/pick-file', p)); });
+ipcMain.handle('sacode:importPreview', async (_e, a) => { const p = domainChecked(a, domainPreview); return withHost(() => bridge.request('import/preview', p)); });
+ipcMain.handle('sacode:importPlan', async (_e, a) => { const p = domainParams(a, { ...domainSid, previewToken: domainId }, { mapping: domainMapping, target: domainTarget }); return withHost(() => bridge.request('import/plan', p)); });
+ipcMain.handle('sacode:importConfirm', async (_e, a) => { const p = domainParams(a, { ...domainSid, planHash: domainDigest, decisions: domainRecord(domainEnum('append', 'overwrite', 'skip', 'dismiss'), 2000) }); return withHost(() => bridge.request('import/confirm', p)); });
+ipcMain.handle('sacode:importApply', async (_e, a) => { const p = domainChecked(a, v => domainObject({ ...domainSid, jobId: domainId })(v) || domainObject({ ...domainSid, planHash: domainDigest, requestId: domainText(200) }, { selection: domainObject({ itemIds: domainArray(domainId, 2000) }) })(v)); return withHost(() => bridge.request('import/apply', p)); });
+ipcMain.handle('sacode:importDescribe', async (_e, a) => { const p = domainParams(a, { ...domainSid, jobId: domainId }, { offset: domainInt(0), limit: domainInt(1, 200) }); return withHost(() => bridge.request('import/describe', p)); });
+ipcMain.handle('sacode:importCancel', async (_e, a) => { const p = domainParams(a, { ...domainSid, jobId: domainId }); return withHost(() => bridge.request('import/cancel', p)); });
+ipcMain.handle('sacode:terminalCreate', async (_e, a) => { const p = domainParams(a, { cwd: domainText(32768), env: domainRecord(domainText(32768, 0)), cols: domainInt(1, 32767), rows: domainInt(1, 32767) }); return withHost(() => bridge.request('terminal/create', p)); });
+ipcMain.handle('sacode:terminalInput', async (_e, a) => { const p = domainParams(a, { ...domainSid, data: domainBase64 }); return withHost(() => bridge.request('terminal/input', p)); });
+ipcMain.handle('sacode:terminalResize', async (_e, a) => { const p = domainParams(a, { ...domainSid, cols: domainInt(1, 32767), rows: domainInt(1, 32767) }); return withHost(() => bridge.request('terminal/resize', p)); });
+ipcMain.handle('sacode:terminalInterrupt', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('terminal/interrupt', p)); });
+ipcMain.handle('sacode:terminalDescribe', async (_e, a) => { const p = domainParams(a, domainSid, { limit: domainInt(1, 262144) }); return withHost(() => bridge.request('terminal/describe', p)); });
+ipcMain.handle('sacode:terminalClose', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('terminal/close', p)); });
+ipcMain.handle('sacode:compactRun', async (_e, a) => { const p = domainParams(a, { ...domainSid, requestId: domainText(128) }); return withHost(() => bridge.request('compact/run', p)); });
+ipcMain.handle('sacode:compactDescribe', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('compact/describe', p)); });
+ipcMain.handle('sacode:securityScan', async (_e, a) => { const p = domainParams(a, { ...domainSid, requestId: domainId, scope: domainArray(domainFile, 10000) }); return withHost(() => bridge.request('security/scan', p)); });
+ipcMain.handle('sacode:securityDescribe', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('security/describe', p)); });
+ipcMain.handle('sacode:securityFreshness', async (_e, a) => { const p = domainParams(a, { ...domainSid, scanId: domainId }); return withHost(() => bridge.request('security/freshness', p)); });
+ipcMain.handle('sacode:securityFixDraft', async (_e, a) => { const p = domainParams(a, { ...domainSid, scanId: domainId, findingIds: domainArray(domainId, 10000) }); return withHost(() => bridge.request('security/fix-draft', p)); });
+ipcMain.handle('sacode:sshExec', async (_e, a) => { const p = domainParams(a, { ...domainSid, arguments: domainSshArguments, approvalId: domainInt(1) }); return withHost(() => bridge.request('ssh/exec', p)); });
+ipcMain.handle('sacode:sshDescribe', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('ssh/describe', p)); });
+// MCP 六动词：preload 给出扁平参数，主进程在此打包成 Host mcp_rpc.cj 期望的嵌套 args JSON 字符串。
+// connect 与 call 必须携带审批票；argumentsJson 必须可解析为 JSON 对象后才转发。
+// 不回显原始传输异常 message，JSON.parse 失败时只报稳定 failureKind。
+ipcMain.handle('sacode:mcpList', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('mcp/list', p)); });
+ipcMain.handle('sacode:mcpConnect', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, name: domainMcpName, command: domainText(1024), args: domainArray(domainText(32768), 100), approvalId: domainInt(1) }, { timeoutMs: domainInt(1, 30000) });
+  const inner = { command: p.command, args: p.args, timeoutMs: p.timeoutMs ?? MCP_DEFAULT_TIMEOUT };
+  const args = JSON.stringify(inner);
+  return withHost(() => bridge.request('mcp/connect', { sessionId: p.sessionId, name: p.name, args, approvalId: p.approvalId }));
+});
+ipcMain.handle('sacode:mcpDisconnect', async (_e, a) => { const p = domainParams(a, { ...domainSid, name: domainMcpName }); return withHost(() => bridge.request('mcp/disconnect', p)); });
+ipcMain.handle('sacode:mcpTools', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, name: domainMcpName });
+  return withHost(() => bridge.request('mcp/tools', { sessionId: p.sessionId, name: p.name, timeoutMs: MCP_DEFAULT_TIMEOUT }));
+});
+ipcMain.handle('sacode:mcpCall', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, name: domainMcpName, toolName: domainMcpName, approvalId: domainInt(1) }, { argumentsJson: domainText(65536) });
+  const argumentsJson = p.argumentsJson ?? '{}';
+  let parsed;
+  try { parsed = JSON.parse(argumentsJson); } catch { throw new TypeError('mcp-bad-arguments'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new TypeError('mcp-bad-arguments');
+  const inner = { tool: p.toolName, argumentsJson, timeoutMs: MCP_DEFAULT_TIMEOUT };
+  const args = JSON.stringify(inner);
+  return withHost(() => bridge.request('mcp/call', { sessionId: p.sessionId, name: p.name, args, approvalId: p.approvalId }));
+});
+ipcMain.handle('sacode:mcpStatus', async (_e, a) => { const p = domainParams(a, { ...domainSid, name: domainMcpName }); return withHost(() => bridge.request('mcp/status', p)); });
+ipcMain.handle('sacode:automationTick', async (_e, a) => { const p = domainParams(a, { ...domainSid, scopeId: domainId }); return withHost(() => bridge.request('automation/tick', p)); });
+ipcMain.handle('sacode:automationDescribeExecution', async (_e, a) => { const p = domainParams(a, { ...domainSid, scopeId: domainId, taskId: domainText(80) }, { fireId: domainId }); return withHost(() => bridge.request('automation/describe-execution', p)); });
+ipcMain.handle('sacode:knowledgeIndexBuild', async (_e, a) => { const p = domainParams(a, { ...domainBinding, indexRevision: domainInt(0), files: domainArray(domainFile, 10000) }); return withHost(() => bridge.request('knowledge/index-build', p)); });
+ipcMain.handle('sacode:knowledgeSearch', async (_e, a) => { const p = domainParams(a, { ...domainBinding, indexRevision: domainInt(0), query: domainText(2048, 0) }, { limit: domainInt(1, 12) }); return withHost(() => bridge.request('knowledge/search', p)); });
+ipcMain.handle('sacode:knowledgeDescribeIndex', async (_e, a) => { const p = domainParams(a, domainBinding); return withHost(() => bridge.request('knowledge/describe-index', p)); });
+
 require('./team-ipc.cjs').registerTeamIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
 
 // 会话级隔离工作树：进出面 4 个通道（进入/描述/退出/清理）的逐字段校验都在 worktree-ipc.cjs。
@@ -329,6 +458,17 @@ ipcMain.handle("sacode:approvalAnswer", async (_e, args) => {
 	});
 	ipcMain.handle("sacode:approvalGetMode", async () => withHost(() => bridge.request("approval/get-mode")));
 
+	// 计划模式与计划审阅：按动作命名、逐字段校验，不提供任意 method 转发。
+	ipcMain.handle("sacode:planSetMode", async (_e, args) => {
+	  if (!args || typeof args.active !== "boolean") throw Error("bad-plan-mode");
+	  return withHost(() => bridge.request("plan/set-mode", { active: args.active }));
+	});
+	ipcMain.handle("sacode:planGetMode", async () => withHost(() => bridge.request("plan/get-mode")));
+	ipcMain.handle("sacode:planReviewAnswer", async (_e, args) => {
+	  if (!args || !isStr(args.sessionId) || !isStr(args.planId) || !isStr(args.decision) || !isStr(args.feedback) || typeof args.cancelled !== "boolean") throw Error("bad-plan-answer");
+	  return withHost(() => bridge.request("plan/review-answer", { sessionId: args.sessionId, planId: args.planId, decision: args.decision, feedback: args.feedback, cancelled: args.cancelled }));
+	});
+
 
 ipcMain.handle("sacode:turnStart", async (_e, args) => {
   const limit = args ? args.limit : 0;
@@ -499,6 +639,24 @@ ipcMain.handle("sacode:requestTrace", async (_e, args) => {
 ipcMain.handle("sacode:sessionCreate", async (_e, args) => {
   if (!args || !isStr(args.title) || !args.title.trim() || args.title.length>80 || /[\x00-\x1f\x7f]/.test(args.title)) throw new Error("bad arguments");
   return withHost(()=>bridge.request("session/create", {title:args.title}));
+});
+// 清空会话日志真源（会话身份基线保留），渲染层据此刷新投影；参数只收会话身份。
+ipcMain.handle("sacode:sessionClear", async (_e, args) => {
+  if (!args || Object.keys(args).length!==1 || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");
+  return withHost(()=>bridge.request("session/clear", {sessionId:args.sessionId}));
+});
+async function mutateSessionMetadata(action,args) {
+  const field=action==='Rename'?'title':'archived';
+  if(!args || Object.keys(args).length!==3 || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300 ||
+    !Number.isSafeInteger(args.expectedRevision) || args.expectedRevision<0 ||
+    (action==='Rename' ? !isStr(args.title)||!args.title.trim()||args.title.length>80||/[\x00-\x1f\x7f]/.test(args.title) : typeof args.archived!=='boolean')) throw Error('bad-session-mutation');
+  return withHost(()=>bridge.request(action==='Rename'?'session/rename':'session/archive',{sessionId:args.sessionId,[field]:args[field],expectedRevision:args.expectedRevision}));
+}
+ipcMain.handle('sacode:sessionRename', (_event,args)=>mutateSessionMetadata('Rename',args));
+ipcMain.handle('sacode:sessionArchive', (_event,args)=>mutateSessionMetadata('Archive',args));
+ipcMain.handle('sacode:userQuestionAnswer', (_event,args)=>{
+  if(!args||Object.keys(args).length!==4||!isStr(args.sessionId)||!args.sessionId||args.sessionId.length>300||!isStr(args.questionId)||!args.questionId||args.questionId.length>100||typeof args.cancelled!=='boolean'||!Array.isArray(args.answers)||args.answers.length>3||JSON.stringify(args.answers).length>32768)throw Error('question-invalid-answer');
+  return withHost(()=>bridge.request('user-question/answer',{sessionId:args.sessionId,questionId:args.questionId,answers:args.answers,cancelled:args.cancelled}));
 });
 ipcMain.handle("sacode:sessionSelect", async (_e, args) => {
   if (!args || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");

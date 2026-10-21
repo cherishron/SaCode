@@ -25,26 +25,16 @@ test('打包清理仅撤掉输出目录里的Electron诊断日志和演示包', 
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Windows 临时启动入口显式关闭沙箱但不修改默认程序及全局环境', async () => {
+test('Windows 新打包不附带降低沙箱防护的启动入口，默认程序不变', async () => {
   const root = mkdtempSync(resolve(desktop, '../..', 'target/tmp/no-sandbox-launcher-'));
   try {
     mkdirSync(resolve(root, 'resources'));
     writeFileSync(resolve(root, 'SaCode.exe'), '原始程序');
     const pack = createRequire(import.meta.url)(resolve(desktop, manifest.build.afterPack));
     await pack({ appOutDir: root, electronPlatformName: 'win32' });
-    const launcher = readFileSync(resolve(root, 'start-sacode-no-sandbox.cmd'), 'utf8');
-    const source = readFileSync(resolve(desktop, 'start-sacode-no-sandbox.cmd'), 'utf8');
-    assert.equal(launcher, source.replace(/\r?\n/g, '\r\n'));
-    assert.doesNotMatch(source, /[^\x00-\x7f]/);
-    assert.doesNotMatch(launcher, /[^\x00-\x7f]|(?<!\r)\n/);
-    assert.match(launcher, /"%~dp0SaCode\.exe" --no-sandbox %\*/);
-    assert.match(launcher, /setlocal/);
-    assert.match(launcher, /set "ELECTRON_RUN_AS_NODE="/);
-    assert.doesNotMatch(launcher, /\bsetx\b|Set-MpPreference|\breg\s+add|\brunas\b/i);
+    assert.equal(existsSync(resolve(root, 'start-sacode-no-sandbox.cmd')), false);
+    assert.equal(existsSync(resolve(root, 'TEMPORARY-NO-SANDBOX.txt')), false);
     assert.equal(readFileSync(resolve(root, 'SaCode.exe'), 'utf8'), '原始程序');
-    const warning = readFileSync(resolve(root, 'TEMPORARY-NO-SANDBOX.txt'), 'utf8');
-    assert.match(warning, /安全隔离能力降低/);
-    assert.match(warning, /不作为正式发布包/);
     const main = readFileSync(resolve(desktop, manifest.main), 'utf8');
     assert.match(main, /sandbox:\s*true/);
     assert.match(main, /contextIsolation:\s*true/);

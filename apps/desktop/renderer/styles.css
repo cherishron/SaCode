@@ -224,6 +224,12 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
   border-radius:var(--radius-s); font-family:ui-monospace,monospace; font-size:var(--fs-s);
   line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; max-height:320px; overflow:auto; }
 .tool-hint { margin:0; font-size:11px; color:var(--text-muted); }
+.tool-web { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.tool-web-origin { display:flex; align-items:center; gap:10px; min-width:0; }
+.tool-web-sources { margin:8px 0; padding-left:20px; font-size:var(--fs-s); }
+.tool-web-sources li+li { margin-top:10px; }
+.tool-web-url,.tool-web-snippet { margin:3px 0; overflow-wrap:anywhere; white-space:pre-wrap; }
+.tool-web-url { color:var(--text-muted); font-family:ui-monospace,monospace; }
 .tool-node[data-tool-status=error] .tool-label { color:var(--danger); }
 .tool-node[data-tool-status=warning] .tool-label { color:var(--warn); }
 .turn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
@@ -271,7 +277,27 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 .btn-primary:hover:not(:disabled) { background: var(--accent); filter: brightness(.95); }
 .btn-danger { color: var(--danger); border-color: var(--danger); border-width: 1px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn-fold { border-radius: var(--radius-s); min-height: 28px; height: 28px; font-size: var(--fs-s); }
+/* 行级折叠：全文恒在 DOM，折叠态由 max-height + overflow 括住、底部渐变遮罩提示还有下文。
+   遮罩色从气泡底色 --tr-bubble-box-bg 渐到透明（桥接变量由 TinyRobot 色值桥给出），
+   不落硬编码色，深浅模式各自适配。遮罩只在 folded 出现，避免常态正文挂一条灰带。 */
+.msg-node > .msg-text[data-fold-state="folded"] { position: relative; max-height: 13em; overflow: hidden; }
+.msg-node > .msg-text[data-fold-state="folded"]::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3.5em; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--tr-bubble-box-bg));
+}
+/* 图标化的折叠/复制按钮：紧凑无间距，不再走 .btn 的整颗控件高度与内距。 */
+.btn-fold { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-s);
+  background: transparent; color: var(--text-muted); cursor: pointer; margin: 0; }
+.btn-fold:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.btn-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-copy { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-s);
+  background: transparent; color: var(--text-muted); cursor: pointer; margin: 0; }
+.btn-copy:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.btn-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-copy[data-copy-state="copied"] { color: var(--accent); }
+.btn-copy[data-copy-state="failed"] { color: var(--danger); }
 .side { grid-column: 3; grid-row: 2 / -1; display: flex; flex-direction: column; overflow: hidden; border-left: 0.5px solid var(--border); }
 .side-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-1); padding: var(--space-2);
   border-bottom: 0.5px solid var(--border); flex-shrink: 0; }
@@ -296,7 +322,7 @@ h2 { font-size: var(--fs-m); font-weight: 600; line-height: 1.5; }
 /* 会话行第二行元信息：事件条数贴在标题下，不挤占标题的省略空间。 */
 .sidebar-session { display:flex; flex-wrap:wrap; align-items:center; column-gap:var(--space-2); row-gap:0; width:100%; text-align:left; }
 .sidebar-session>span { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.sidebar-session-meta { flex:0 0 100%; margin-left:22px; font-size:10px; line-height:14px; color:var(--text-muted); }
+.sidebar-session-meta { flex:0 0 calc(100% - 22px); min-width:0; margin-left:22px; font-size:10px; line-height:14px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* 会话右键菜单：fixed 定位，菜单外按下/Escape 即收（见 app.js 监听）。 */
 .session-context-menu { position:fixed; z-index:60; min-width:172px; display:flex; flex-direction:column; gap:2px; padding:6px; border:1px solid var(--border); border-radius:10px; background:var(--panel-surface); color:var(--text); box-shadow:0 8px 30px #0002; }
 .session-menu-title { margin:0 0 2px; padding:2px 8px 4px; font-size:10px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border-bottom:1px solid var(--border); }

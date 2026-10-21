@@ -18,7 +18,9 @@ async function poll(b) {
 async function setup(b, url, extra={}, prices={}) {
   const bridge=b;
   b={request:async(method,params)=> {try {return await bridge.request(method,params);} catch(e) {throw Error(method+': '+e.message);} }};
-  await b.request('model/registry/update', {draft:{id:'p',name:'测试供应商',baseUrl:url,protocol:'openai-completions',models:[{id:'upstream',name:'实际模型',contextWindow:'',maxTokens:'',image:false,availability:'available',outputModalities:['text']},{id:'legacy',name:'旧默认模型',contextWindow:'',maxTokens:'',image:false,availability:'available',outputModalities:['text']}]},expectedRevision:0});
+  // 本地提供方确实实现SSE与工具续跑，须显式声明；未知能力不能冒充满足路由要求。
+  const models=[{id:'upstream',name:'实际模型'},{id:'legacy',name:'旧默认模型'}].map(model=>({...model,contextWindow:'',maxTokens:'',image:false,availability:'available',inputModalities:['text'],outputModalities:['text'],supports:['stream','tools'],meterUnit:'token',provenance:'human-confirmed'}));
+  await b.request('model/registry/update', {draft:{id:'p',name:'测试供应商',baseUrl:url,protocol:'openai-completions',models},expectedRevision:0});
   await b.request('model/registry/set-default',{providerId:'p',model:'legacy',expectedRevision:1});
   const v=await b.request('model/registry/describe');
   await b.request('credential/set',{ref:v.providers[0].credentialRef,value:'local-fixture-secret'});
@@ -191,7 +193,10 @@ test('三次上游5xx后同模型进入冷却，第四次不发请求',{timeout:
 test('上游已完成但结算被占用时保留待核算尝试，不冒充传输失败作废',{timeout:20000},async()=>{
  const {b,settings}=await boot();const f=await fixture(200,false,false,()=>writeFileSync(join(settings,'usage-ledger.log.lease'),'writer='+process.pid+'-settlement'));
  try {await setup(b,f.url,{dailyAmountMicro:1000000});await b.request('task/start',{customModelId:'chosen'});
-   const r=await poll(b);assert.equal(r.interrupted,true);assert.match(r.finishReason,/ledger-settlement-rejected/);
+   const r=await poll(b);assert.equal(r.interrupted,true);
+   // 公共请求边界脱敏为固定错误；不能要求它泄露内部异常原文。
+   assert.equal(r.finishReason,'error:request-provider-failed');
+   assert.equal(f.requests.length,1,'结算失败不得自动重发已经完成的上游请求');
    const stats=await b.request('ledger/stats');assert.equal(stats.unsettledAttempts.length,1);assert.equal(stats.pendingReservations.length,1);
    const raw=readFileSync(join(settings,'usage-ledger.log'),'utf8');assert.ok(!raw.includes('attempt/failed'));assert.ok(!raw.includes('ledger/void'));
  } finally {await b.stop();await f.close();}

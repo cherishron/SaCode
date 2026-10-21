@@ -14,6 +14,36 @@ const sandbox = { window: {} };
 runInNewContext(readFileSync(FILE, "utf8"), sandbox);
 const F = sandbox.window.SaCodeMsgFold;
 
+test('网页抓取解析结果信封、HTTP 错误正文与 Unicode 500 字预览',()=>{
+  const body='😀'.repeat(501);
+  const result=F.parseToolResult(JSON.stringify({result:{externalContent:true,url:'https://example.com/a',status:404,body,truncated:true},text:'不可信正文'}));
+  assert.equal(result.kind,'web-fetch');assert.equal(result.httpStatus,404);assert.equal(result.status,'error');
+  assert.equal(result.preview,'😀'.repeat(500)+'…');assert.equal(result.body,body);assert.equal(result.folded,true);assert.equal(result.truncated,true);
+  assert.equal(F.parseToolResult(JSON.stringify({externalContent:true,url:'https://example.com',body:'中'.repeat(500)})).folded,false);
+});
+test('网络搜索保留查询、来源四字段与正文，不把查询缺失补成猜测',()=>{
+  const raw=JSON.stringify({result:{externalContent:true,sources:[{url:'https://example.com',title:'标题',snippet:'摘要',publishedAt:'2026-10-21'},null],content:'合并正文'}});
+  const result=F.parseToolResult(raw,'{"queries":["仓颉","SDK"]}');
+  assert.equal(result.kind,'web-search');assert.equal(result.target,'仓颉 · SDK');assert.equal(result.sources.length,1);
+  assert.equal(result.sources[0].publishedAt,'2026-10-21');assert.equal(result.preview,'合并正文');
+  assert.equal(F.parseToolResult(raw).queries.length,0);
+});
+test('没有严格外部标记、损坏 JSON 或危险抓取 URL 均回落普通工具结果',()=>{
+  for(const value of [{url:'https://example.com',body:'x'},{externalContent:'true',url:'https://example.com'},{externalContent:true,url:'javascript:alert(1)'},{externalContent:true,url:'https://name:secret@example.com'}])assert.equal(F.parseToolResult(JSON.stringify(value)).kind,'generic');
+  assert.equal(F.parseToolResult('{broken').kind,'generic');
+  assert.equal(F.parseToolResult(JSON.stringify({externalContent:true,sources:[],content:''})).kind,'web-search');
+});
+
+test('普通对话按角色隔离内部提示，保留用户同文、助手、工具身份和附件',()=>{
+ const attachment={attachmentId:'fixture-image',kind:'image'};
+ const source=F.toBubbleMessages(['system/message: you are SaCode','developer/message: internal','user/message: you are SaCode','assistant/message: internal','tool/result: result'],[{id:'event-1'},{id:'event-2'},{id:'event-3'},{id:'event-4'},{id:'event-5',attachments:[attachment]}],'session-a');
+ const visible=F.conversationMessages(source);
+ assert.deepEqual(Array.from(visible,m=>m.id),['event-3','event-4','event-5']);
+ assert.equal(visible[0].content,'you are SaCode');assert.equal(visible[2].attachments[0],attachment);
+ assert.equal(source.length,5,'只改变展示，不能删除日志投影');
+ assert.equal(visible[0],source[2],'保持原事件对象及会话身份');
+});
+
 test('附件与事件身份来自对应投影行，重复正文和尾部裁切不混用',()=>{
  const attachment={attachmentId:'sha256:a',kind:'file',name:'说明.txt',bytes:3};
  const rows=[{id:'event-4',attachments:[attachment]},{id:'event-8',attachments:[]}];

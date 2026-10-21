@@ -8,7 +8,11 @@ test('持久任务 IPC 使用实际主进程守卫，拒绝额外字段和范围
   const handlers=new Map(),calls=[],module={exports:{}};
   vm.runInNewContext(source,{Buffer,module});
   module.exports.registerExecutionIpc({handle:(key,handler)=>handlers.set(key,handler)},(method,args)=>{calls.push({method,args});return args;});
-  assert.equal(handlers.size,6);
+  assert.deepEqual([...handlers.keys()].sort(),[
+    'executionPropose','executionAuthorize','executionStart','executionDescribe','executionReviewFile',
+    'executionReviewPrepare','executionReviewApply','executionReviewApplyDescribe','executionReviewApplyStop',
+    'executionOutput','executionStop',
+  ].map(name=>'sacode:'+name).sort());
   const propose=handlers.get('sacode:executionPropose');
   const proposal={sessionId:'current',taskId:'t',requestId:'r',proposal:'{"argv":["中文"]}'};
   await propose(null,proposal);

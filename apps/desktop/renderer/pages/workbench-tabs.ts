@@ -19,6 +19,7 @@ export const resources:Resource[]=[
   {id:'services',label:'技能与 MCP',icon:'M8 3v5M16 3v5M6 8h12v5a6 6 0 0 1-12 0zM12 19v3',available:false},
   {id:'sources',label:'来源',icon:'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l2-2',available:true},
   {id:'artifacts',label:'产物',icon:'M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10',available:true},
+  {id:'lsp',label:'语义查询',icon:'M4 4l4 4M8 8l-4 4M8 8h12M4 4h12v12M16 4l4 4-4 4',available:true},
 ];
 const glyph=(path:string)=>h('svg',{width:15,height:15,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':1.5,'aria-hidden':'true'},[h('path',{d:path})]);
 export const WorkbenchTabs=defineComponent({

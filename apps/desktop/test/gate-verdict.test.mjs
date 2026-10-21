@@ -9,9 +9,9 @@ const root = join(import.meta.dirname, "..", "..", "..");
 // 这条断言钉的是「新写了门禁但没人知道」：磁盘上每一个 scripts/check_*.cjs 都必须落在
 // 接线集或未接线登记表里，两边都不在即静默漏项；登记表里也不能有已经不在磁盘上的条目。
 // 未接线不是Forbidden——但必须带理由，理由为空按漏项处理。
-test("磁盘上的 check_*.cjs 要么接线、要么带理由登记", () => {
+test("磁盘上的 check_*.cjs 与 check-*.cjs 要么接线、要么带理由登记", () => {
   const onDisk = readdirSync(join(root, "scripts"))
-    .filter((f) => /^check_.*\.cjs$/.test(f))
+    .filter((f) => /^check[-_].*\.cjs$/.test(f))
     .sort();
   const unwired = UNWIRED_GATES.map((g) => g.file);
   const accounted = [...GATE_SCRIPTS, ...unwired];

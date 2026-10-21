@@ -7,10 +7,11 @@ import {join,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
+import {electronTestOptions} from '../test-support/electron-env-gate.mjs';
 const require=createRequire(import.meta.url);
 const desktop=dirname(dirname(fileURLToPath(import.meta.url)));
 
-for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自定义'}供应商页面到Host的凭据保存与冲突拒绝`,{timeout:40000},async()=>{
+for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自定义'}供应商页面到Host的凭据保存与冲突拒绝`,electronTestOptions({timeout:40000}),async()=>{
   const host=process.env.SACODE_HOST||join(desktop,'dist/host/bin/sacode-host.exe');
   assert.ok(existsSync(host),'需要本批源码构建的Host');
   const dir=mkdtempSync(join(tmpdir(),'sacode-credential-electron-'));mkdirSync(join(dir,'user-data'));
@@ -73,7 +74,7 @@ for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自�
       }throw Error('renderer-timeout');
     }).catch(e=>{console.error(e);bridge.stop();app.exit(1);});`);
   const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;
-  const child=spawn(require('electron'),['--no-sandbox','--disable-gpu','--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
+  const child=spawn(require('electron'),['--user-data-dir='+join(dir,'user-data'),join(dir,'main.cjs')],{env,windowsHide:true});
   let output='';child.stdout.on('data',v=>output+=v);child.stderr.on('data',v=>output+=v);
   const timer=setTimeout(()=>child.kill(),30000);
   const code=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',resolve);}).finally(()=>clearTimeout(timer));

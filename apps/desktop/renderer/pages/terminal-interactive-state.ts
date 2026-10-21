@@ -14,7 +14,8 @@ export type TerminalPhase = 'idle' | 'creating' | 'running' | 'exiting' | 'exite
 export type TerminalChunk = { seq: number; data: string; truncated: boolean };
 
 export type TerminalState = {
-  terminalId: string | null;
+  // Host PTY 标识，与 create 请求携带的聊天会话 ID 不同。
+  sessionId: string | null;
   phase: TerminalPhase;
   cwd: string;
   workspaceRevision: string;
@@ -34,7 +35,6 @@ export type TerminalState = {
 
 // Host 回执形状（与后端设计文档 §3.1 对齐，实现时冻结 JSON shape）
 export type TerminalReply = {
-  terminalId?: string;
   sessionId?: string;
   phase?: TerminalPhase;
   cwd?: string;
@@ -65,13 +65,13 @@ export type TerminalCreateOpts = {
 // 通道函数类型（由 preload.cjs 后续提供，本文件只定接口）
 export type TerminalChannels = {
   create: (opts: TerminalCreateOpts) => Promise<TerminalReply>;
-  input: (terminalId: string, data: string, bytes: number) => Promise<TerminalReply>;
-  resize: (terminalId: string, cols: number, rows: number) => Promise<TerminalReply>;
-  interrupt: (terminalId: string) => Promise<TerminalReply>;
-  describe: (terminalId: string) => Promise<TerminalReply>;
-  output: (terminalId: string, cursor: number) => Promise<TerminalReply>;
-  close: (terminalId: string) => Promise<TerminalReply>;
-  kill: (terminalId: string) => Promise<TerminalReply>;
+  input: (sessionId: string, data: string, bytes: number) => Promise<TerminalReply>;
+  resize: (sessionId: string, cols: number, rows: number) => Promise<TerminalReply>;
+  interrupt: (sessionId: string) => Promise<TerminalReply>;
+  describe: (sessionId: string) => Promise<TerminalReply>;
+  output: (sessionId: string, cursor: number) => Promise<TerminalReply>;
+  close: (sessionId: string) => Promise<TerminalReply>;
+  kill: (sessionId: string) => Promise<TerminalReply>;
 };
 
 function validPhase(p: unknown): p is TerminalPhase {
@@ -95,7 +95,7 @@ function applyReply(state: TerminalState, reply: TerminalReply): void {
 
 export function createTerminalInteractive(channels: TerminalChannels, session: () => string, changed: () => void) {
   const state: TerminalState = {
-    terminalId: null, phase: 'idle', cwd: '', workspaceRevision: '',
+    sessionId: null, phase: 'idle', cwd: '', workspaceRevision: '',
     cols: 80, rows: 24, pid: null, exitCode: null,
     exitObserved: false, interruptObserved: false, truncated: false,
     ringChunks: [], ringCursor: 0, more: false, busy: false, error: '',
@@ -106,7 +106,7 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
   function reset(): void {
     ++epoch;
     Object.assign(state, {
-      terminalId: null, phase: 'idle', cwd: '', workspaceRevision: '',
+      sessionId: null, phase: 'idle', cwd: '', workspaceRevision: '',
       cols: 80, rows: 24, pid: null, exitCode: null,
       exitObserved: false, interruptObserved: false, truncated: false,
       ringChunks: [], ringCursor: 0, more: false, busy: false, error: '',
@@ -131,9 +131,8 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
       const reply = await channels.create({ sessionId: sid, cwd: directory, cols, rows, workspaceRevision });
       if (disposed || ticket !== epoch) return;
       if (reply.failure) throw Error(reply.failure || reply.diagnostic || 'terminal/create 失败。');
-      if (!reply.terminalId || typeof reply.terminalId !== 'string') throw Error('Host 未返回有效的 terminalId。');
-      if (reply.sessionId && reply.sessionId !== sid) throw Error('终端会话已变更。');
-      state.terminalId = reply.terminalId;
+      if (typeof reply.sessionId !== 'string' || !reply.sessionId.trim()) throw Error('Host 未返回有效的 PTY sessionId。');
+      state.sessionId = reply.sessionId;
       state.phase = 'running';
       state.cwd = reply.cwd || directory;
       state.workspaceRevision = reply.workspaceRevision || workspaceRevision;
@@ -149,13 +148,13 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/input：写入字节（含 Ctrl 字符）。断连不重发，失败不排队。
   async function writeInput(data: string): Promise<void> {
-    if (disposed || !state.terminalId || state.phase !== 'running') return;
+    if (disposed || !state.sessionId || state.phase !== 'running') return;
     if (!data) return;
     // 单帧上限 4 KiB（后端设计文档 §3.3）
     const bytes = new TextEncoder().encode(data).length;
     if (bytes > 4096) { state.error = '单帧输入超过 4 KiB 限制。'; notify(); return; }
     try {
-      const reply = await channels.input(state.terminalId, data, bytes);
+      const reply = await channels.input(state.sessionId, data, bytes);
       if (disposed) return;
       if (reply.failure) { state.error = reply.failure || reply.diagnostic || 'terminal/input 失败。'; notify(); }
     } catch (e) {
@@ -165,11 +164,11 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/resize：cols/rows → 内核 winsize。仅 running 时有效。
   async function resize(cols: number, rows: number): Promise<void> {
-    if (disposed || !state.terminalId || state.phase !== 'running') return;
+    if (disposed || !state.sessionId || state.phase !== 'running') return;
     if (!Number.isInteger(cols) || cols < 1 || cols > 500 || !Number.isInteger(rows) || rows < 1 || rows > 200) return;
     if (cols === state.cols && rows === state.rows) return;
     try {
-      const reply = await channels.resize(state.terminalId, cols, rows);
+      const reply = await channels.resize(state.sessionId, cols, rows);
       if (disposed) return;
       if (reply.failure) { state.error = reply.failure || reply.diagnostic || 'terminal/resize 失败。'; notify(); return; }
       state.cols = cols; state.rows = rows;
@@ -182,9 +181,9 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/interrupt：向进程组发中断。回执是 interrupt-requested，是否退出看后续 describe。
   async function interrupt(): Promise<void> {
-    if (disposed || !state.terminalId || state.phase !== 'running') return;
+    if (disposed || !state.sessionId || state.phase !== 'running') return;
     try {
-      const reply = await channels.interrupt(state.terminalId);
+      const reply = await channels.interrupt(state.sessionId);
       if (disposed) return;
       if (reply.failure) { state.error = reply.failure || reply.diagnostic || 'terminal/interrupt 失败。'; notify(); return; }
       state.interruptObserved = true;
@@ -197,9 +196,9 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/describe：查 cwd、尺寸、相位、pid、exit 事实
   async function describe(): Promise<void> {
-    if (disposed || !state.terminalId) return;
+    if (disposed || !state.sessionId) return;
     try {
-      const reply = await channels.describe(state.terminalId);
+      const reply = await channels.describe(state.sessionId);
       if (disposed) return;
       if (reply.failure) { state.error = reply.failure || reply.diagnostic || 'terminal/describe 失败。'; notify(); return; }
       applyReply(state, reply);
@@ -211,11 +210,11 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/output：直播环分页（cursor=字节或序号）。与 turn/poll 同构，防 notify 丢。
   async function pollOutput(): Promise<void> {
-    if (disposed || !state.terminalId || state.phase !== 'running') return;
+    if (disposed || !state.sessionId || state.phase !== 'running') return;
     if (state.busy) return;
     const ticket = epoch;
     try {
-      const reply = await channels.output(state.terminalId, state.ringCursor);
+      const reply = await channels.output(state.sessionId, state.ringCursor);
       if (disposed || ticket !== epoch) return;
       if (reply.failure) return; // poll 失败不报错，下次重试
       if (!Array.isArray(reply.chunks)) return;
@@ -242,8 +241,8 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/close：只拆订阅/渲染，不 kill。phase → view-closed
   async function closeView(): Promise<void> {
-    if (disposed || !state.terminalId) return;
-    const id = state.terminalId;
+    if (disposed || !state.sessionId) return;
+    const id = state.sessionId;
     try {
       const reply = await channels.close(id);
       if (disposed) return;
@@ -257,9 +256,9 @@ export function createTerminalInteractive(channels: TerminalChannels, session: (
 
   // terminal/kill：停自有进程树。phase → exiting，等 describe 确认 exited。
   async function kill(): Promise<void> {
-    if (disposed || !state.terminalId) return;
+    if (disposed || !state.sessionId) return;
     if (state.phase === 'exited' || state.phase === 'view-closed') return;
-    const id = state.terminalId;
+    const id = state.sessionId;
     state.phase = 'exiting';
     notify();
     try {

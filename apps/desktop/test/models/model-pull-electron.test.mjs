@@ -7,10 +7,11 @@ import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
 import {spawn} from 'node:child_process';
+import {electronTestOptions} from '../../test-support/electron-env-gate.mjs';
 const require=createRequire(import.meta.url),host=process.env.SACODE_HOST;
-test('Electron默认沙箱：页面→生产preload→IPC→Host取消与丢回执结果找回',{
+test('Electron默认沙箱：页面→生产preload→IPC→Host取消与丢回执结果找回',electronTestOptions({
   timeout:40000,skip:!host&&'须显式提供当前源码构建的中性 SACODE_HOST',
-},async()=>{
+}),async()=>{
   const desktop=fileURLToPath(new URL('../../',import.meta.url));
   const base=fileURLToPath(new URL('../../../../target/tmp/model-pull-electron/',import.meta.url));mkdirSync(base,{recursive:true});
   const dir=mkdtempSync(join(base,'run-'));mkdirSync(join(dir,'user-data'));
