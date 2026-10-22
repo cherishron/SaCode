@@ -1,0 +1,107 @@
+手机工程源码归并记录（sa-app → apps/mobile）
+=================================================
+日期：2026-10-23
+取证态：未提交工作区，Windows x64
+性质：源码归并与路径/治理适配 + 离线构建读数。不含真机安装、鸿蒙构建、真实 daemon 远程任务验收。
+
+一、授权与边界
+--------------
+用户明确批准：把 D:/Project/sa/saai/sa-app 手机工程复制到 sa-code 的 apps/mobile 根，
+旧位置保留（不移动、不删除），不复制 .git，统一由 SaCode 同一 Git 仓库管理。
+本轮未暂存、未提交、未推送、未安装、未发布。
+
+二、源与目标
+------------
+源：D:/Project/sa/saai/sa-app（自有 Git，HEAD 384a914d3da3，32 个已跟踪修改、19 个未跟踪条目；
+    父目录 D:/Project/sa/saai/saai 另以普通文件方式重复跟踪其中 235 个条目，本轮不动任何一层 Git）
+目标：D:/Project/sa/saai/sa-code/apps/mobile（根置，不套 sa-app 子目录）
+
+三、导入读数
+------------
+- 白名单复制 276 个文件（含源工作树未跟踪的远程接入、账号、测试源码，非 git archive）。
+  复制时逐文件 SHA256 与源工作树一致；审计根 target/tmp/mobile-import-20261023/
+  （approved-files.json / copied-files.json / source-baseline.json / scan-findings.json /
+  scan-review.json / excluded-files.json）。
+- 目标原有 9 个 JVM 协议文件（kotlin/ 8 个、kotlin-test/ 1 个）原字节保留，
+  git status 对这两个目录为空，即未改动；daemon 测试 apps/daemon/test/remote-mobile-client.test.mjs
+  的引用路径仍然成立。
+- 当前 apps/mobile 共 285 个文件：androidApp 33、shared 109、framework 11、ohosApp 27、
+  gradle 4、docs 82、kotlin 8、kotlin-test 1，其余为根配置。
+- 顶层结构：AGENTS.md、README.md、build.gradle.kts、settings.gradle.kts、
+  settings.ohos.gradle.kts、gradle.properties、gradlew、gradlew.bat、gradle/、
+  androidApp/、shared/、framework/、ohosApp/、docs/、kotlin/、kotlin-test/。
+- 确认未混入：.git、.gradle、.kotlin、build、node_modules、local.properties、签名库。
+
+四、排除项（只从副本排除，源未删改）
+------------------------------------
+文件 5 个：
+- local.properties（本机 SDK 绝对路径）
+- sioc-release.keystore（真实签名库）
+- skills-lock.json（非工程白名单/会话导出）
+- 评估_sacode_移动端方案_2026-10-09_19-27.md（会话导出）
+- androidApp/build.gradle.kts（原文件含硬编码默认签名口令，见下节）
+目录 11 类：.git、.gradle、.kotlin、.workbuddy、.codegraph、.codeartsdoer、build、oh_modules、
+.hvigor、构建/缓存/IDE/会话目录等（不遍历，故不虚报其内部文件数）。
+
+五、签名配置处理（非逐字节复制）
+--------------------------------
+源 androidApp/build.gradle.kts 的 release 签名口令以源码字面量作为默认值存在（回退值形式）。
+处理：不在目标复制该字面量，目标文件由主会话重建为「仅从环境变量取值、无默认口令」的等价配置：
+- SACODE_ANDROID_KEYSTORE / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD；
+- 四个变量不全时**不创建** release 签名配置，release 不静默降级为 debug 签名；
+- 其余 plugins、dependencies、namespace、SDK 级别、applicationId、版本、buildTypes、
+  compileOptions、viewBinding、proguardFiles 逻辑与原文件一致（已按源码逐项比对）。
+风险提示：该口令曾以明文存在于源工程，建议后续独立评估轮换；本记录不保存其值，源文件未改。
+
+六、工程治理适配（sa-code 侧，非手机源码）
+------------------------------------------
+- scripts/check_artifact_placement.cjs：apps/mobile 允许集扩为
+  dirs = kotlin, kotlin-test, androidApp, framework, shared, ohosApp, gradle, docs, .gradle, .kotlin, build；
+  files = AGENTS.md, README.md, .gitattributes, .gitignore, build.gradle.kts, settings.gradle.kts,
+  settings.ohos.gradle.kts, gradle.properties, gradlew, gradlew.bat, local.properties。
+  新增 3 条自证探针（两条违规注入 + 一条合法源码不误伤），--selftest 结果为
+  SELFTEST: PASS (probes=13, missed=0, baseline=green)。
+- scripts/verify-remote-product.mjs：把假定的 `:app:assembleDebug` 更正为 `:androidApp:assembleDebug`，
+  并把「缺 Android SDK」的旧断言改为「本轮未执行手机工程构建、源码导入不等于运行验收」。
+- 文档同批更新：README.md 目录表、AGENTS.md 模块边界、PRD.md 移动端归属补记、
+  platform-and-distribution.md §3.1、PRD-tracking.md 条目、integration/README.md 远程/移动端行、
+  docs/README.md 与 evidence/README.md 索引；plans/2026-10-22-web-deployment-design.md
+  更正「apps/mobile/kotlin 是 Android 端」的错误描述。
+- apps/mobile/.gitignore 覆盖 local.properties、*.jks/*.keystore、build、.gradle、.kotlin、
+  ohos 构建目录；实测 check-ignore：上述产物全部 IGNORED，
+  而 settings.gradle.kts、androidApp/build.gradle.kts、shared/.../App.kt、
+  gradle/wrapper/gradle-wrapper.jar 全部 VISIBLE（源码未被误忽略）。
+
+七、构建读数（真实执行，离线）
+------------------------------
+工具链：JDK 17.0.2（JAVA_HOME 已设）、Gradle Wrapper 8.9（dists 缓存已在位）、
+Android SDK D:/Android/Sdk（ANDROID_HOME / ANDROID_SDK_ROOT 按进程注入，未改系统 PATH）。
+命令均在 apps/mobile 下执行，加 --offline --no-daemon，未下载、未安装依赖。
+
+1) ./gradlew --offline --no-daemon :shared:compileDebugKotlinAndroid
+   → BUILD SUCCESSFUL in 18s（7 actionable tasks: 7 from cache）
+2) ./gradlew --offline --no-daemon :androidApp:assembleDebug
+   → BUILD SUCCESSFUL in 34s（76 actionable tasks: 42 executed, 27 from cache, 7 up-to-date）
+   产物：androidApp/build/outputs/apk/debug/androidApp-debug.apk
+        8,822,998 字节
+        SHA256 244f6717eda7e17d618e97bfc671f7397d4d6de031844beb3ff7f2c7bffd08da
+   该产物按 apps/mobile/.gitignore:104 的 build 规则被忽略，不入库。
+
+判读边界：第 1 步多数任务命中 Gradle 构建缓存，只能证明工程配置、SDK 定位与依赖解析可用；
+第 2 步有 42 个任务实际执行且真实产出了 APK，才可作为「可构建 Debug 包」的读数。
+两者都不等于「应用可运行」。
+
+八、未验证项（不得据上表升级为完成）
+------------------------------------
+- 未安装到真机/模拟器，未启动应用，未走登录/会话/流式/审批任何界面路径；
+- 未构建 ohosApp（鸿蒙工具链、hvigor 未执行），未验证 ArkTS 侧；
+- 未验证手机 App 与 daemon 的真实远程接入（授权、取消、恢复、结算、TLS 指纹绑定）；
+- 未执行 :shared:testDebugUnitTest 等单元测试；
+- 未验证 release 签名（签名材料故意不入库，缺少时按设计不产出已签名 release）；
+- 未做提交、候选打包、安装态验收；桌面候选身份与主阻塞不变。
+
+九、结论
+--------
+代码已真实落到 apps/mobile：285 个文件、工程入口齐备、原 9 个 JVM 协议文件未改、无 Git/秘密/缓存/
+产物混入；离线 Debug APK 可真实构建。**这不是手机端可运行或远程任务已接通的证据**，
+真机、鸿蒙与远程链路另立验收。

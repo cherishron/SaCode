@@ -40,6 +40,7 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用�
 - `apps/host/` — 仓颉 NDJSON/JSON-RPC 宿主，由桌面端 spawn；**stdout 只走协议帧，诊断走 stderr**。
 - `apps/daemon/` — 仓颉服务入口，属于根 workspace；远程身份、会话归属、真实请求与部署须独立验收。旧未接线的 `DaemonScheduler` 已删除，不能据 core 调度存储存在宣称无人值守执行完成。
 - `apps/desktop/` — Electron 壳（`main.cjs`/`preload.cjs`/`host-bridge.cjs`/`paths.cjs` + `renderer/`）。渲染层是**纯 JS + Vue runtime，运行时无模块加载器、无模板编译器、无 TypeScript**；第三方组件由 `scripts/pack-tinyvue.mjs` 与 `scripts/pack-tinyrobot.mjs` 在**构建期**各折叠成一个经典脚本进 `renderer/vendor/`，esbuild 与组件库都只是 `apps/desktop` 的 devDependency，**产物运行时零 npm 依赖**。消息面经 `BubbleProvider + BubbleList`（`groupStrategy: "consecutive"`）渲染，正文由本仓自定义内容渲染器出（默认链会把 `role==="tool"` 交给只渲染注释节点的 ToolRole，正文会隐身），折叠阈值只在 `renderer/msgfold.js` 一处。
+- `apps/mobile/` — 2026-10-23 从 `sa-app` 复制导入的 KMP / KuiklyUI 手机工程，与 SaCode 同一 Git 仓库管理；原项目保留、不复制其 `.git`。Android Gradle 入口为 `:androidApp:assembleDebug`，非 `:app:assembleDebug`；鸿蒙壳独立验证。`kotlin/`、`kotlin-test/` 是原 JVM 协议客户端与 daemon 测试夹具，不能当 Android 工程或覆盖删除。手机本机 SDK 配置、凭据、签名库、缓存及产物不入库；源码导入不等于构建或真机任务通过。
 - `extjs/` — 独立 Node JS 扩展宿主（NDJSON JSON-RPC），被 core 以子进程驱动。
 - `npm/sacode-cli` — npm 主包（`@stand-alone/sacode`），`bin/cli.js`、`bin/daemon.js` 是入库源码；现有 `npm/sacode-cli-win32-x64` 平台包的二进制与 DLL 为生成产物，**不入库**。其他平台包及发布状态分别验证，不默认已实现。
 - `scripts/pack-*.mjs` — 打包脚本（CLI / 宿主 / Vue vendor）。

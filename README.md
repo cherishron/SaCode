@@ -30,6 +30,7 @@ SaCode 采用仓颉共享核心、CLI 与桌面入口，并提供独立 daemon �
 | `apps/host/` | 桌面使用的仓颉 NDJSON / JSON-RPC 宿主，通过路径依赖引用 `core` |
 | `apps/daemon/` | 独立仓颉 daemon 项目；远程转发与会话归属须独立验收 |
 | `apps/desktop/` | Electron 桌面项目，含主进程、有限 IPC、页面源码与 Node 测试 |
+| `apps/mobile/` | 从 sa-app 导入的 KMP / KuiklyUI 手机工程（Android 应用与鸿蒙壳）；同一 Git 仓库管理，构建与真机接入另验；`kotlin/`、`kotlin-test/` 是保留的独立 JVM 协议测试 |
 | `extjs/` | 独立 Node.js 扩展宿主与测试 |
 | `npm/sacode-cli/` | npm CLI / daemon 启动包装源码；无需依赖桌面进程 |
 | `npm/sacode-cli-win32-x64/` | 现有 Windows x64 平台包配置；二进制与 DLL 为生成产物，其他平台待接入 |

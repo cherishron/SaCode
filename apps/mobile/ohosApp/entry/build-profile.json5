@@ -1,0 +1,22 @@
+{
+    "apiType": "stageMode",
+    "buildOption": {
+        "externalNativeOptions": {
+            "path": "./src/main/cpp/CMakeLists.txt",
+            "arguments": "",
+            "cppFlags": ""
+        }
+    },
+    "targets": [
+        {
+            "name": "default",
+            "runtimeOS": "HarmonyOS"
+        }
+    ],
+    "module": {
+        "name": "entry",
+        "type": "entry",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "targetSdkVersion": "5.0.0(12)"
+    }
+}

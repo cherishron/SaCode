@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 使用基础主题避免 Material Design 覆盖 Kuikly 组件样式 -->
+    <style name="Theme.SaApp" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#07C160</item>
+        <item name="colorPrimaryVariant">#06AD56</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#07C160</item>
+        <item name="colorSecondaryVariant">#059A4B</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+
+        <!-- ★ 核心：强制移除 Material Design 对 EditText 的蓝色背景覆盖 -->
+        <!-- MaterialComponents 会注入蓝色 tint 到所有 EditText -->
+        <item name="editTextStyle">@style/KuiklyEditTextStyle</item>
+        <item name="android:editTextStyle">@style/KuiklyEditTextStyle</item>
+    </style>
+
+    <!-- Kuikly Input/EditText 样式：完全透明背景 + 无下划线 -->
+    <!-- KRTextFieldView.resetDefaultStyle() 中已设置 background=null,
+         但 Material Design 库会在 inflate 时重新注入蓝色背景，
+         因此必须在 theme 层面彻底禁用 -->
+    <style name="KuiklyEditTextStyle" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@null</item>
+        <item name="android:padding">0dp</item>
+        <item name="android:minHeight">0dp</item>
+        <item name="android:maxHeight">9999dp</item>
+    </style>
+
+    <!-- 覆盖 MaterialComponents 的默认 EditText 样式 -->
+    <style name="Widget.MaterialComponents.TextInputLayout.EditText" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@null</item>
+    </style>
+
+    <style name="Widget.MaterialComponents.TextInputEditText" parent="Widget.AppCompat.EditText">
+        <item name="android:background">@null</item>
+    </style>
+</resources>

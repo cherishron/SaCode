@@ -1,0 +1,7 @@
+{
+    "modelVersion": "5.0.0",
+    "description": "TDesign Demo Entry Module",
+    "dependencies": {
+        "@kuikly-open/render": "2.6.0"
+    }
+}

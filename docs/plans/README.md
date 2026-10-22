@@ -41,6 +41,7 @@
 | [`2026-10-20-ssh-backend-design.md`](2026-10-20-ssh-backend-design.md) | F15 SSH 后端设计：ssh.cj 仅日志登记状态不建真实连接，ssh_exec.cj 有单次执行器但关主机密钥校验/输出无界；设计 ssh/connect\|exec\|disconnect\|describe 受审动作提案，首次指纹独立确认变化即阻断，不走 execution/review-apply | 设计（纯调研，未实施） |
 | [`2026-10-20-voice-enhancement-design.md`](2026-10-20-voice-enhancement-design.md) | F18 语音与提示词增强设计：录音/转写未接 Host 但增强已有 prompt/enhance\|poll\|cancel 通路；设计 voice/record\|transcribe\|enhance\|describe，转写只回填可编辑草稿不自动发送，复用 draftRevision+sessionGeneration 保护，麦克风权限与云上传分别授权 | 设计（纯调研，未实施） |
 | [`2026-10-20-context-compression-design.md`](2026-10-20-context-compression-design.md) | F06 上下文压缩设计：D03 缺陷“压缩仅记录”的修复方案，CompactionLedger 现状盘点，摘要执行器与请求投影接线设计，一期截断+标记不引入外部 LLM | 设计（纯调研，未实施） |
+| [`2026-10-22-web-deployment-design.md`](2026-10-22-web-deployment-design.md) | Web 部署方案：现状盘点（只有 CLI/Desktop，无 Web）+ 方案对比（A 改桌面 renderer vs B WS 桥+独立前端）+ 推荐方案 B 架构（复用 HostBridge 逻辑、pack-service 底座、WS 桥透传 NDJSON、独立 Vite SPA）+ 方法面映射表 + 分阶段工作量估算（17-28 人天，S1-S2 即证“Web 部署有了”）+ 验收出口与风险边界 | 设计（待评审） |
 
 ## C. 详细设计（接口 / 契约 / 模块级）
 
@@ -126,6 +127,7 @@
 | 压缩 / 审批 / 斜杠 / Hooks | `../superpowers/specs/2026-10-09-*-design.md` | 规格（待实施） |
 | Git 写操作 | `2026-10-12-git-write-integration` | 待批准 |
 | 能力契约（机器可读） | `host-capabilities.json`、`remote-capability-contract.json` | 数据契约 |
+| Web 部署 | `2026-10-22-web-deployment-design` | 设计（待评审；方案 B：WS 桥 + 独立前端，复用 HostBridge 与 pack-service） |
 
 > 缺口登记规则：新发现"某主题无专文"时，先在此表标「缺（待补）」，补文后改为实际文件。
 

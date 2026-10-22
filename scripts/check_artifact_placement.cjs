@@ -52,7 +52,12 @@ const MODULES = [
     dirs: ["data", "dist", "import-adapters", "node_modules", "renderer", "scan-adapters", "target", "test", "test-support"],
     files: null,
   },
-  { path: "apps/mobile", dirs: ["kotlin", "kotlin-test"], files: [] },
+  {
+    path: "apps/mobile",
+    // KMP / Kuikly 源码与 Wrapper；缓存/构建目录仅登记工具原生落点，仍须被忽略。
+    dirs: ["kotlin", "kotlin-test", "androidApp", "framework", "shared", "ohosApp", "gradle", "docs", ".gradle", ".kotlin", "build"],
+    files: [".gitattributes", ".gitignore", "AGENTS.md", "README.md", "build.gradle.kts", "settings.gradle.kts", "settings.ohos.gradle.kts", "gradle.properties", "gradlew", "gradlew.bat", "local.properties"],
+  },
   { path: "extjs", dirs: ["computer-use", "example", "node_modules", "providers", "test"], files: ["host.cjs", "server.cjs"] },
   {
     path: "npm",
@@ -267,6 +272,16 @@ function selftest() {
     ["retired-string", (b) => writeFileSync(join(b, "scripts", "old-writer.mjs"), "const p = 'apps/desktop/.tmp-test/x';\n")],
     ["retired-dirs", (b) => mkdirSync(join(b, "apps", "desktop", ".tmp-test"))],
     ["retired-dirs", (b) => mkdirSync(join(b, "apps", "desktop", "test", ".tmp-test"), { recursive: true })],
+    ["module-allowset:apps/mobile", (b) => writeFileSync(join(b, "apps", "mobile", "stray.keystore"), "synthetic")],
+    ["module-allowset:apps/mobile", (b) => mkdirSync(join(b, "apps", "mobile", ".git"))],
+    ["mobile-source-negative", (b) => {
+      for (const d of ["androidApp", "framework", "shared", "ohosApp", "gradle", "docs", ".gradle", ".kotlin", "build"]) {
+        mkdirSync(join(b, "apps", "mobile", d), { recursive: true });
+      }
+      for (const f of [".gitattributes", ".gitignore", "AGENTS.md", "README.md", "build.gradle.kts", "settings.gradle.kts", "settings.ohos.gradle.kts", "gradle.properties", "gradlew", "gradlew.bat", "local.properties"]) {
+        writeFileSync(join(b, "apps", "mobile", f), "");
+      }
+    }, "mobile-absent"],
     ["retired-string-negative", (b) => writeFileSync(
       join(b, "apps", "desktop", "test", "new-writer.test.mjs"),
       "const root = join(REPO, 'target', 'tmp', 'dualtest');\n"), "absent"],
@@ -280,7 +295,10 @@ function selftest() {
       checks.length = 0;
       audit(base, "fixture");
       const hit = checks.filter((c) => !c.ok).map((c) => c.name);
-      if (expectation === "absent") {
+      if (expectation === "mobile-absent") {
+        if (!hit.includes("module-allowset:apps/mobile")) console.log(`CAUGHT ${target} (手机工程合法源码与工具落点未被误伤)`);
+        else { console.log(`MISSED ${target} -> 手机目录误伤: [${hit.join(",")}]`); missed++; }
+      } else if (expectation === "absent") {
         if (!hit.includes(target)) console.log(`CAUGHT ${target} (合法新形态未被误伤)`);
         else { console.log(`MISSED ${target} -> 误伤: FAIL 集含 [${hit.join(",")}]`); missed++; }
       } else if (hit.includes(target)) {

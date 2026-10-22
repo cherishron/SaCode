@@ -1,0 +1,133 @@
+# ===========================================
+# Kotlin / Gradle / Android
+# ===========================================
+
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Gradle files
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ===========================================
+# Android
+# ===========================================
+
+*.apk
+*.ap_
+*.dex
+*.class
+gen/
+bin/
+out/
+navigation-collapsed.xml
+navigation-merged.xml
+
+# ===========================================
+# IntelliJ IDEA
+# ===========================================
+
+*.iws
+*.ipr
+.idea/
+.codeartsdoer/
+.arts/
+.vscode/
+.opencode/
+.planning/
+.codebuddy/
+.trae/
+.agents/
+.claude/
+.continue/
+.iflow/
+.qwen/
+.sisyphus/
+.Kotlin/
+temp_kuikly_demo/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# ===========================================
+# Kotlin / KMP
+# ===========================================
+
+shared/build/
+androidApp/build/
+ohosApp/build/
+
+# SQLDelight generated
+**/sqldelight/**/*.db
+**/generated/
+
+# ===========================================
+# OS files
+# ===========================================
+
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+
+# ===========================================
+# Secrets & sensitive data
+# ===========================================
+
+*.jks
+*.keystore
+secrets.properties
+google-services.json
+
+# Release builds
+androidApp/release/
+*.aab
+*.dm
+
+# Heap dumps
+*.hprof
+
+# Keystore files without extension
+docs/keystores/
+
+# Ignore Gradle build output directory
+build
+
+# Kotlin compiler session dir (lowercase variant of .Kotlin/)
+.kotlin/
+
+# Code graph index (local tool database, regenerable)
+.codegraph/
+
+# 会话导出记录（opencode 导出的对话全文，非项目内容，可随时重新导出）
+评估_*.md
+
+# 单仓库移动工程：本机配置、工具会话与运行产物不得入库
+.git/
+.workbuddy/
+node_modules/
+target/
+dist/
+oh_modules/
+.hvigor/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.hap
+*.har
+*.aar
+*.log
+androidApp/debug/

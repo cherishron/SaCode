@@ -44,6 +44,12 @@ Windows/Linux/macOS 的 x64、arm64，以及 OHOS 的 arm64/x64 均按实际工�
 
 Linux 的最新构建成功不等于真实任务支持完成：上述 `2c56c76` 的非 Windows 信号注册、其他进程判死/租约接管、持久追加与原子替换尚未实现。2026-10-14 本批新增对应源码、桌面/npm/CI 入口，但目标环境未验；当前步骤与限制见 [构建指南](../build-platforms.md)。状态随固定源码及实际验收更新，不把这张表当永久结论。Windows 侧三层依赖清单、特有问题与普通用户环境降级策略见 [Windows 依赖与兼容性评估](../plans/windows-dependency-and-compatibility-2026-10-16.md)。
 
+### 3.1 移动工程单仓库归并（2026-10-23）
+
+用户批准从 `D:/Project/sa/saai/sa-app` 复制手机工程到 `apps/mobile/` 根，旧项目保留，不带 `.git`，与 SaCode 同仓管理。真实工程为 KMP / KuiklyUI，含 `androidApp`、`shared`、`framework` 与 `ohosApp`；Android 任务名为 `:androidApp:assembleDebug`。既有 `kotlin/`、`kotlin-test/` 是 JVM 协议代码及测试，不是 Android 应用。
+
+本批仅源码归并与路径/治理适配；上方带日期的平台读数保留历史，鸿蒙 CLI 与移动应用壳是不同角色，不据目录存在修改为运行通过。Android/鸿蒙工具链、签名、真机与真实远程任务另行验收。记录见[手机源码导入](../evidence/2026-10-23-mobile-source-import.txt)。
+
 ## 4. 平台后端要求
 
 跨平台不只是给 electron-builder 加目标。核心和壳层必须满足以下契约：

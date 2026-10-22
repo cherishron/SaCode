@@ -318,12 +318,12 @@ async function main() {
   const hasAdb = adbVer !== null;
   const deviceList = hasAdb ? (probe(['adb', 'devices']) || '').split('\n').slice(1).filter(l => /\t(device|emulator)/.test(l)).length : 0;
   record('Kuikly 移动工程与三平台真实运行（任务 10）', 'BLOCKED', {
-    tree: 'n/a', command: 'cd apps/mobile && gradle :app:assembleDebug 等',
+    tree: 'apps/mobile（KMP/Kuikly 工程；源码导入不等于运行验收）', command: 'cd apps/mobile && ./gradlew :androidApp:assembleDebug；另验 Android/鸿蒙真机',
     detail: `gradle=${gradleLine || '缺失'}；ANDROID_HOME=[${process.env.ANDROID_HOME || '未设'}] `
       + `ANDROID_SDK_ROOT=[${process.env.ANDROID_SDK_ROOT || '未设'}]；adb=${hasAdb ? '在位' : '缺失'}；已连设备 ${deviceList} 台`,
-    missing: '缺 Android SDK（含 platform-tools 与 build-tools）与真机/模拟器，iOS 与鸿蒙工具链也没有；'
-      + '安装 SDK 属系统依赖，不在本次授权范围。解锁动作：授权安装 Android SDK 或提供 sdk.dir 路径。'
-      + 'JVM 侧 18 条接入逻辑读数不代替这条（计划 §11 第 3 条与批次 I 的告诫）。',
+    missing: '此处只探测了全局 Gradle、adb 与环境变量，未执行手机工程构建或真机任务；'
+      + '源码已纳入 apps/mobile 不等于 Android SDK、签名或鸿蒙工具链已验证。请配置本机 SDK 并另行执行 Wrapper 构建与设备验收；'
+      + '缺依赖时须明确报前置条件，不擅自安装。JVM 侧协议用例不代替手机工程及三平台真实运行。',
   });
   // 打包交付链需要构建产物，只能在**工作区态**取；副本没有 target/，不是它失败。
   const pack = await run('node', ['--test', 'scripts/pack-service.test.mjs'], { cwd: root, timeoutMs: 180000 });
