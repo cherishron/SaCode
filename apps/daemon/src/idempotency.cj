@@ -14,12 +14,14 @@ import stdx.encoding.json.*
 // 超时按 §5「返回结果未知及查询标识，不当作业务失败，不自动再次执行」记成 unknown，
 // 之后同键同内容重试拿到的仍是那份 unknown 回执。
 //
-// 账本必须有界：每个写请求留一条记录，长跑 daemon 就是内存泄漏。超限按插入序淘汰最早的
-// 一条——被淘汰的键会重新执行。这是有界账本明写的代价，不是「幂等」的破口被忽略。
+// 账本必须有界：终态按插入序淘汰，淘汰后的旧键可重执行。
+// 执行中/未知占位不淘汰；容量全被未知占用时拒绝新执行。
 
 public let LEDGER_KIND_EXECUTE: String = "execute"
 public let LEDGER_KIND_REPLAY: String = "replay"
 public let LEDGER_KIND_CONFLICT: String = "conflict"
+public let LEDGER_KIND_UNAVAILABLE: String = "unavailable"
+let LEDGER_RELEASED = "{\"idempotency\":\"released\"}"
 
 // unknown 回执是账本自己的记录形态，不是 JSON-RPC 信封：分派层靠它决定
 // 「重试时仍然只给结果未知 + 查询标识」，而不是把它当原回执重放给客户端。
@@ -92,6 +94,7 @@ public class IdempotencyLedger {
     var storePath: String
     var journalLines: Int64 = 0
     var writeFailures: Int64 = 0
+    var storeReadable = true
 
     public init(cap!: Int64 = 4096, storePath!: String = "") {
         this.cap = if (cap > Int64(0)) { cap } else { Int64(4096) }
@@ -159,6 +162,52 @@ public class IdempotencyLedger {
         return outcome
     }
 
+    // 原子领取：持锁完成检查、占位和持久化，成功后才可执行副作用。
+    public func claim(instanceId!: String, principalId!: String, workspaceId!: String,
+                      sessionId!: String, method!: String, operationId!: String,
+                      contentDigest!: String): LedgerOutcome {
+        let key = IdempotencyLedger.keyOf(instanceId: instanceId, principalId: principalId,
+            workspaceId: workspaceId, sessionId: sessionId, method: method, operationId: operationId)
+        synchronized(lock) {
+            if (operationId.size == 0) { return LedgerOutcome(kind: LEDGER_KIND_UNAVAILABLE, receipt: "") }
+            if (!storeReadable) { return LedgerOutcome(kind: LEDGER_KIND_UNAVAILABLE, receipt: "") }
+            if (let Some(entry) <- entries.get(key)) {
+                return if (entry.digest == contentDigest) {
+                    LedgerOutcome(kind: LEDGER_KIND_REPLAY, receipt: entry.receipt)
+                } else { LedgerOutcome(kind: LEDGER_KIND_CONFLICT, receipt: "") }
+            }
+            if (!evictToMakeRoomLocked()) {
+                return LedgerOutcome(kind: LEDGER_KIND_UNAVAILABLE, receipt: "")
+            }
+            let intent = LedgerEntry(digest: contentDigest, receipt: ledgerUnknownReceipt(operationId))
+            entries.add(key, intent)
+            order.add(key)
+            let failures = writeFailures
+            persistLocked(key, intent)
+            if (failures != writeFailures) {
+                // 盘写失败也保留内存未知占位，但绝不执行该请求。
+                return LedgerOutcome(kind: LEDGER_KIND_UNAVAILABLE, receipt: "")
+            }
+            return LedgerOutcome(kind: LEDGER_KIND_EXECUTE, receipt: "")
+        }
+    }
+
+    // 仅用于确证未到达业务端的请求；先持久化释放，再移除占位。
+    public func release(instanceId!: String, principalId!: String, workspaceId!: String,
+                        sessionId!: String, method!: String, operationId!: String,
+                        contentDigest!: String): Unit {
+        let key = IdempotencyLedger.keyOf(instanceId: instanceId, principalId: principalId,
+            workspaceId: workspaceId, sessionId: sessionId, method: method, operationId: operationId)
+        synchronized(lock) {
+            if (let Some(entry) <- entries.get(key)) {
+                if (entry.digest != contentDigest || !ledgerIsUnknown(entry.receipt)) { return }
+                let failures = writeFailures
+                persistLocked(key, LedgerEntry(digest: contentDigest, receipt: LEDGER_RELEASED))
+                if (failures == writeFailures) { entries.remove(key); forgetOrderLocked(key) }
+            }
+        }
+    }
+
     public func recordDone(instanceId!: String, principalId!: String, workspaceId!: String,
                            sessionId!: String, method!: String, operationId!: String,
                            contentDigest!: String, receipt!: String): Unit {
@@ -179,12 +228,20 @@ public class IdempotencyLedger {
             workspaceId: workspaceId, sessionId: sessionId, method: method, operationId: operationId)
         lock.lock()
         if (!entries.contains(key)) {
-            evictToMakeRoomLocked()
+            if (!evictToMakeRoomLocked()) { lock.unlock(); return }
             order.add(key)
         }
+        let previous = entries.get(key)
         let entry = LedgerEntry(digest: contentDigest, receipt: receipt)
         entries.add(key, entry)
+        let failures = writeFailures
         persistLocked(key, entry)
+        if (failures != writeFailures) {
+            if (let Some(prior) <- previous) {
+                // 终态落盘失败时仍保留不可淘汰的意图。
+                if (ledgerIsUnknown(prior.receipt)) { entries.add(key, prior) }
+            }
+        }
         lock.unlock()
     }
 
@@ -198,15 +255,22 @@ public class IdempotencyLedger {
             var text = ""
             for (k in order) {
                 if (let Some(live) <- entries.get(k)) {
-                    text += "${IdempotencyLedger.journalLine(key: k, digest: live.digest, receipt: live.receipt)}\n"
+                    let value = if (k == key) { entry } else { live }
+                    text += "${IdempotencyLedger.journalLine(key: k, digest: value.digest, receipt: value.receipt)}\n"
                 }
             }
-            let rewrote = try { File.writeTo(p, text.toArray()); true } catch (_: Exception) { false }
+            // 压实先写旁路文件再替换，失败不能截断仍在保护副作用的旧账。
+            let staged = Path("${storePath}.staging")
+            let rewrote = try {
+                File.writeTo(staged, text.toArray())
+                rename(staged, to: p, overwrite: true)
+                true
+            } catch (_: Exception) { false }
             if (rewrote) { journalLines = Int64(entries.size) } else { writeFailures += 1 }
             return
         }
         let line = IdempotencyLedger.journalLine(key: key, digest: entry.digest, receipt: entry.receipt)
-        let ok = try { File.appendTo(p, "${line}\n".toArray()); true } catch (_: Exception) { false }
+        let ok = try { File.appendTo(p, "\n${line}\n".toArray()); true } catch (_: Exception) { false }
         if (ok) { journalLines += 1 } else { writeFailures += 1 }
     }
 
@@ -232,7 +296,7 @@ public class IdempotencyLedger {
         var text = ""
         let readable = try { text = String.fromUtf8(File.readFrom(p)); true }
             catch (_: Exception) { false }
-        if (!readable) { return }
+        if (!readable) { storeReadable = false; return }
         var rest = text
         while (rest.size > Int64(0)) {
             let idx = rest.indexOf("\n") ?? Int64(-1)
@@ -248,35 +312,45 @@ public class IdempotencyLedger {
             if (line.size == Int64(0)) { continue }
             if (let Some(rec) <- IdempotencyLedger.recordFromLine(line)) {
                 if (!entries.contains(rec.key)) { order.add(rec.key) }
-                // 同键后写覆盖先写：盘上就是 append-only 的日志序。
-                entries.add(rec.key, LedgerEntry(digest: rec.digest, receipt: rec.receipt))
+                // 释放记录只用于确证未到达业务端的操作。
+                if (rec.receipt == LEDGER_RELEASED) { entries.remove(rec.key); forgetOrderLocked(rec.key) }
+                else { entries.add(rec.key, LedgerEntry(digest: rec.digest, receipt: rec.receipt)) }
             }
         }
         journalLines = Int64(entries.size)
-        // 载入后仍要按 cap 收口（比如历史里留着淘汰前的旧行）：按插入序从头部裁。
+        // 重启也不得丢弃未知占位；若旧账中的未知数已超限，保留并拒绝新执行。
         while (Int64(entries.size) > cap) {
-            if (head >= Int64(order.size)) { break }
-            let stale = order[head]
-            head += 1
-            if (entries.contains(stale)) { entries.remove(stale) }
+            if (!evictToMakeRoomLocked()) { break }
         }
         compactLocked()
     }
 
-    // 须持锁调用。entries 的每个键都来自 order，所以走到尽头一定能腾出位；
-    // 真腾不出时宁可保留旧账并拒收新账，也不让 size 越过 cap。
-    func evictToMakeRoomLocked(): Unit {
-        if (Int64(entries.size) < cap) { return }
+    // 须持锁调用。只能淘汰确定终态，不能为新请求移走仍在保护副作用的占位。
+    func evictToMakeRoomLocked(): Bool {
+        if (Int64(entries.size) < cap) { return true }
         var removed = false
-        while (!removed && head < Int64(order.size)) {
-            let key = order[head]
-            head += 1
-            if (entries.contains(key)) {
-                entries.remove(key)
-                removed = true
+        let rebuilt = ArrayList<String>()
+        for (i in head..Int64(order.size)) {
+            let key = order[i]
+            if (let Some(entry) <- entries.get(key)) {
+                if (!removed && !ledgerIsUnknown(entry.receipt)) {
+                    entries.remove(key)
+                    removed = true
+                } else { rebuilt.add(key) }
             }
         }
-        compactLocked()
+        order = rebuilt
+        head = 0
+        return removed
+    }
+
+    func forgetOrderLocked(key: String): Unit {
+        let rebuilt = ArrayList<String>()
+        for (i in head..Int64(order.size)) {
+            if (order[i] != key) { rebuilt.add(order[i]) }
+        }
+        order = rebuilt
+        head = 0
     }
 
     func compactLocked(): Unit {

@@ -471,7 +471,8 @@ public class McpClient {
             return McpOpResult(false, "tools/call", "bad-args", "mcp-empty-tool", elapsedOf(started))
         }
         let params = "{\"name\":\"${name}\",\"arguments\":${argumentsJson}}"
-        let reply = requestWithReconnect("tools/call", params, token, timeoutMs, started)
+        // tools/call 可能已在对端产生副作用。传输失败只收束，禁止自动重连重放。
+        let reply = request("tools/call", params, token, timeoutMs, started)
         if (!reply.result.ok) {
             closeProcess()
             logCall("tools/call", "err")

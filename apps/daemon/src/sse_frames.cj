@@ -110,6 +110,15 @@ public class SseResume {
 
     // 只补「游标之后」的持久事件，且只补一次一页（limit 由调用方给，越界即不补）。
     // 补读失败/会话不存在/游标坏掉都回空结果：建流路径上没有任何一条分支能抛。
+    static func buildAuthorized(root!: String, lastEventId!: String, limit!: Int64,
+                                gate!: RemoteRequestGate, context!: AuthenticationContext): SseResume {
+        let cursor = SseFrame.parseLastEventId(lastEventId)
+        if (!cursor.valid || !gate.streamAllows(context, "session/events", gate.streamWorkspace(), cursor.sessionId)) {
+            return SseResume.empty()
+        }
+        return SseResume.build(root: root, lastEventId: lastEventId, limit: limit)
+    }
+
     static func build(root!: String, lastEventId!: String, limit!: Int64): SseResume {
         if (lastEventId.size == Int64(0)) { return SseResume.empty() }
         if (limit < Int64(1) || limit > Int64(200)) { return SseResume.empty() }

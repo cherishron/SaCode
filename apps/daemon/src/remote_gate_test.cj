@@ -353,15 +353,17 @@ func ledgerDispositionRoutesTimeoutToUnknownAndNeverReachedToUnrecorded() {
     // 会卡的宿主才能验。三类各一条：
     //   record   —— 结果确定（成功，或宿主自己返回的业务错误）
     //   unknown  —— 请求可能已经落到宿主，副作用不确定（超时/宿主中途退出/分派异常）
-    //   none     —— 请求确证没到宿主（未配置/转发前置失败/正在关停）：不建账，
+    //   none     —— 请求确证没到宿主（未配置/正在关停）：释放占位，
     //               同一条操作在宿主配好之后必须还能真跑一次。
     @Expect(ledgerDisposition(okRpc("1", "{\"a\":1}")), "record")
     @Expect(ledgerDisposition(errRpc("1", -32601, "method not found")), "record")
+    @Expect(ledgerDisposition("not-json"), "unknown")
+    @Expect(ledgerDisposition("{}"), "unknown")
     @Expect(ledgerDisposition(errRpc("1", -32011, "host request timed out")), "unknown")
     @Expect(ledgerDisposition(errRpc("1", -32012, "host exited")), "unknown")
     @Expect(ledgerDisposition(errRpc("1", -32003, "dispatch exception")), "unknown")
     @Expect(ledgerDisposition(errRpc("1", -32010, "host not configured")), "none")
-    @Expect(ledgerDisposition(errRpc("1", -32013, "pre-forward failure")), "none")
+    @Expect(ledgerDisposition(errRpc("1", -32013, "proxy failure with uncertain send")), "unknown")
     @Expect(ledgerDisposition(errRpc("1", -32002, "daemon is shutting down")), "none")
 }
 

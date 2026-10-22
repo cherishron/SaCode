@@ -1,5 +1,14 @@
 package core
 
+// 通用 session/append、session/submit 不得写入这些内部事实。
+// 知识上下文与权限/计划事件都只能由专用接口落盘。
+public func isReservedSessionEventType(eventType: String): Bool {
+    return eventType == "knowledge/context" || eventType == "knowledge/context/clear" ||
+        eventType == "knowledge/retrieval" || eventType == "mode/mode" ||
+        eventType == "plan/mode" || eventType == "plan/permission" ||
+        eventType == "permission/preset"
+}
+
 public class ModeController {
     let log: SessionLog
 

@@ -91,11 +91,6 @@ func fromBytes(bs: ArrayList<Byte>): String {
     return String.fromUtf8(bs.toArray())
 }
 
-func isReservedKnowledgeEventType(eventType: String): Bool {
-    return eventType == "knowledge/context" || eventType == "knowledge/context/clear" ||
-        eventType == "knowledge/retrieval"
-}
-
 func requestStringParam(body: String, key: String): String {
     try {
         return JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
@@ -734,30 +729,39 @@ func providerSurfaceRequest(method: String, body: String, idText: String): Unit 
         }
         if (method == "model/list") {
             // 「测试连接」与「拉取模型清单」是同一次动作：真的发一个 GET /models，只回报事实。
-            let record = ProviderRegistry.forUser().describe().providers
+            let params = JsonValue.fromStr(body).asObject().get("params").getOrThrow().asObject()
             var baseUrl = ""
-            var reference = ""
             var secret = ""
-            let wanted = jsonStr(body, "providerId")
-            for (p in record) {
-                if (wanted.size == 0 || p.id == wanted) {
-                    baseUrl = p.baseUrl
-                    reference = p.credentialRef
+            let wanted = requestStringParam(body, "providerId")
+            if (wanted.size > 0) {
+                // 本机凭据只能和注册表中同一条记录的目标共同解析，禁止请求覆盖其中任一半。
+                if (params.get("baseUrl").isSome() || params.get("apiKey").isSome() || params.get("credentialRef").isSome()) {
+                    emit(errFrame(idText, -32602, "provider-target-override-forbidden"))
+                    return
                 }
-            }
-            if (baseUrl.size == 0) {
-                // 「获取可用模型」发生在保存之前：草稿里的地址与刚敲进的密钥直接去问远端。
-                // 内联明文只活在这一次调用里——不进注册表、不进会话日志、不进回执。
-                let inlineUrl = jsonStr(body, "baseUrl")
-                if (inlineUrl.size == 0) {
+                for (p in registry.describe().providers) {
+                    if (p.id == wanted) {
+                        baseUrl = p.baseUrl
+                        secret = resolveCredentialKey(p.credentialRef)
+                        break
+                    }
+                }
+                if (baseUrl.size == 0) {
                     emit(errFrame(idText, -32020, "provider-not-found"))
                     return
                 }
-                baseUrl = inlineUrl
-                let inlineKey = jsonStr(body, "apiKey")
-                secret = if (inlineKey.size > 0) { inlineKey } else { resolveCredentialKey(jsonStr(body, "credentialRef")) }
             } else {
-                secret = resolveCredentialKey(reference)
+                // 本机未保存草稿只使用调用者这次提供的密钥，不替任意地址解析本机引用。
+                if (params.get("credentialRef").isSome()) {
+                    emit(errFrame(idText, -32602, "credential-target-not-bound"))
+                    return
+                }
+                baseUrl = requestStringParam(body, "baseUrl")
+                secret = requestStringParam(body, "apiKey")
+                if (baseUrl.size == 0) {
+                    emit(errFrame(idText, -32020, "provider-not-found"))
+                    return
+                }
             }
             let ids = ModelCatalog().fetch(baseUrl, secret)
             var arr = "["
@@ -1954,7 +1958,8 @@ class HostRuntime {
 
     func handleRpc17(method: String, body: String, idText: String): Bool {
         if (method == "session/append") {
-            if (isReservedKnowledgeEventType(requestStringParam(body, "eventType"))) {
+            let eventType = requestStringParam(body, "eventType")
+            if (isReservedSessionEventType(eventType)) {
                 emit(errFrame(idText, -32602, "reserved-session-event-type"))
                 return true
             }
@@ -1985,7 +1990,7 @@ class HostRuntime {
             }
             if (receiptIds.size == 0) {
                 // 没有凭证的调用方走原路：报文形态与这次改动之前逐字相同
-                shared.append(jsonStr(body, "eventType"), jsonStr(body, "data"))
+                shared.append(eventType, jsonStr(body, "data"))
             } else {
                 let att = AttachmentStore(attDir, shared, AttachmentLimits.localBackend())
                 let refs = ArrayList<AttachmentRef>()
@@ -2021,7 +2026,8 @@ class HostRuntime {
 
     func handleRpc18(method: String, body: String, idText: String): Bool {
         if (method == "session/submit") {
-            if (isReservedKnowledgeEventType(requestStringParam(body, "eventType"))) {
+            let eventType = requestStringParam(body, "eventType")
+            if (isReservedSessionEventType(eventType)) {
                 emit(errFrame(idText, -32602, "reserved-session-event-type"))
                 return true
             }
@@ -2037,7 +2043,7 @@ class HostRuntime {
                 }
                 leaseHeld = true
             }
-            shared.append(jsonStr(body, "eventType"), jsonStr(body, "data"))
+            shared.append(eventType, jsonStr(body, "data"))
             emit(okFrame(idText, "{\"events\":${shared.eventCount()},\"durable\":${shared.durableCount()}}"))
             return true
         }

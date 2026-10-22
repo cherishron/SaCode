@@ -215,13 +215,13 @@ public class ModelToolRuntime {
                 explicitMode = true
             }
         }
-        let decision = if (explicitMode) {
-            // 技能正文加载与 read 同为只读；复用各权限档的既有只读策略。
-            PermissionPolicy().decide(ModeController(modeLog).current(), if (call.name == "skill_load") {
-                "read"
-            } else {
-                call.name
-            })
+        // 计划态恒定只读：即使新会话没有 mode/mode 历史，只要 plan/mode 为真就按 plan 档否决写入。
+        // 不能先看 ModeController.current()——伪造的 mode/mode=yolo 若排在 plan/mode 之后会盖掉只读。
+        let policyName = if (call.name == "skill_load") { "read" } else { call.name }
+        let decision = if (PlanModeController(modeLog).active()) {
+            PermissionPolicy().decide("plan", policyName)
+        } else if (explicitMode) {
+            PermissionPolicy().decide(ModeController(modeLog).current(), policyName)
         } else {
             "allow"
         }

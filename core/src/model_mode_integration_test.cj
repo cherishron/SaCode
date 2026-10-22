@@ -36,6 +36,39 @@ func modelModeCancellationAfterApprovalDoesNotConsumeTicket() {
     @Expect(desk.stateOf(counters.ticket), "allowed-once")
 }
 
+@Test
+func securityPlanFlagAloneRejectsSideEffectsBeforeApproval() {
+    for (laterMode in ["", "yolo"]) {
+        let log = SessionLog("security-plan-flag.log")
+        log.append("plan/mode", "true")
+        if (laterMode.size > 0) { log.append("mode/mode", laterMode) }
+        let counters = ModeIntegrationCounters()
+        let runtime = ModelToolRuntime(log, false, files: true, approval: { _ => counters.asks += 1; Int64(0) })
+        for (name in ["write", "edit", "bash", "pwsh", "run_code"]) {
+            let result = runtime.execute(modeIntegrationCall(name, "{}"))
+            @Expect(result.allowed, false)
+            @Expect(result.why, "approval-mode-denied")
+        }
+        @Expect(counters.asks, 0)
+    }
+}
+
+@Test
+func securityPlanFlagAllowsReadOnlyToolsAndNoModeKeepsLegacyPolicy() {
+    let log = SessionLog("security-plan-read.log")
+    log.append("plan/mode", "true")
+    let counters = ModeIntegrationCounters()
+    let runtime = ModelToolRuntime(log, false, files: true, approval: { _ => counters.asks += 1; Int64(0) })
+    let result = runtime.execute(modeIntegrationCall("read", "{}"))
+    @Expect(result.why == "approval-mode-denied", false)
+    @Expect(counters.asks, 0)
+    let legacy = ModelToolRuntime(SessionLog("security-no-mode.log"), false,
+        approval: { _ => counters.asks += 1; Int64(0) })
+    legacy.registry.register(ToolSpec("plugin/custom", "unknown", "{}", false))
+    legacy.execute(modeIntegrationCall("plugin/custom", "{}"))
+    @Expect(counters.asks, 0)
+}
+
 func modeIntegrationCall(name: String, args: String): ModelToolCall {
     let call = ModelToolCall(0)
     call.id = "mode-call"; call.name = name; call.args = args

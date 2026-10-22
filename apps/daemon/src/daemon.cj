@@ -47,8 +47,9 @@ func readBody(stream: InputStream): String {
 
 let INIT_CAPS = "[\"initialize\",\"session/catalog\",\"session/events\"]"
 let bus = EventBus()
-let teamHost = TeamHostBridge(bus)
+// 先有代理再有团队面：两者共用同一个宿主进程，团队桥只持代理引用。
 let hostProxy = HostProxyBridge(bus)
+let teamHost = TeamHostBridge(hostProxy)
 let daemonStopping = AtomicBool(false)
 // 限额只在接入启用（gate 在位）时 consult；未启用时它是空的，也不会有人抢槽。
 let remoteLimiter = RemoteConcurrencyLimiter()
@@ -94,11 +95,12 @@ let LEDGER_DISPOSITION_UNKNOWN: String = "unknown"
 let LEDGER_DISPOSITION_NONE: String = "none"
 // 这几条码意味着「请求可能已经落到宿主」，副作用不确定，只能记 unknown：
 // 超时、宿主中途退出、以及分派支自己抛的异常都可能是做了一半。
-let LEDGER_UNCERTAIN_ERRORS: Array<Int64> = [-32003, -32011, -32012]
-// 这几条确证请求没到宿主（正在关停、宿主未配置、转发前置失败）：不建账，
+let LEDGER_UNCERTAIN_ERRORS: Array<Int64> = [-32003, -32011, -32012, -32013]
+// 这几条确证请求没到宿主（正在关停、宿主未配置）：释放占位。
+// -32013 也可能来自写管道之后的解析异常，不能据此证明未执行。
 // 同一条操作在宿主配好之后必须还能真跑一次——把「没配宿主」永久钉进账里，
 // 等于让客户端的重试永远拿到一条过期错误。
-let LEDGER_NEVER_REACHED_ERRORS: Array<Int64> = [-32002, -32010, -32013]
+let LEDGER_NEVER_REACHED_ERRORS: Array<Int64> = [-32002, -32010]
 
 // 一条写请求的六元组键。放在一个持有者里是为了让「执行后记账」这一步
 // 只传一个对象，而不是把六个裸串按位置传来传去。
@@ -122,16 +124,16 @@ func ledgerDisposition(response: String): String {
     var obj = JsonObject()
     let parsed = try { obj = JsonValue.fromStr(response).asObject(); true }
         catch (_: Exception) { false }
-    // 读不出信封按「结果确定」记：宁可留一条可重放的回执，
-    // 也不把一次可能已经发生的副作用标成 unknown。
-    if (!parsed) { return LEDGER_DISPOSITION_RECORD }
+    // 读不出完整信封无法证明结果确定：保留未知占位，
+    // 防止把一次可能已经发生的副作用再次执行。
+    if (!parsed) { return LEDGER_DISPOSITION_UNKNOWN }
     if (obj.get("result").isSome()) { return LEDGER_DISPOSITION_RECORD }
     var code = Int64(0)
     let coded = try {
         code = obj.get("error").getOrThrow().asObject().get("code").getOrThrow().asInt().getValue()
         true
     } catch (_: Exception) { false }
-    if (!coded) { return LEDGER_DISPOSITION_RECORD }
+    if (!coded) { return LEDGER_DISPOSITION_UNKNOWN }
     if (errorCodePresent(LEDGER_UNCERTAIN_ERRORS, code)) { return LEDGER_DISPOSITION_UNKNOWN }
     if (errorCodePresent(LEDGER_NEVER_REACHED_ERRORS, code)) { return LEDGER_DISPOSITION_NONE }
     return LEDGER_DISPOSITION_RECORD
@@ -166,7 +168,12 @@ func ledgerAfterExecution(response: String, idText: String, ledgerOn: Bool,
                           k: LedgerKeyOf, contentDigest: String): String {
     if (!ledgerOn) { return response }
     let disposition = ledgerDisposition(response)
-    if (disposition == LEDGER_DISPOSITION_NONE) { return response }
+    if (disposition == LEDGER_DISPOSITION_NONE) {
+        idempotencyLedger.release(instanceId: k.instanceId, principalId: k.principalId,
+            workspaceId: k.workspaceId, sessionId: k.sessionId, method: k.method,
+            operationId: k.operationId, contentDigest: contentDigest)
+        return response
+    }
     if (disposition == LEDGER_DISPOSITION_UNKNOWN) {
         // queryId 就用客户端自己的 operationId：§5 要求「通过状态核实」，而核实面
         // （session/projection、task/describe）认的是这些既有标识符，
@@ -331,6 +338,7 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
     let k = LedgerKeyOf()
     var ledgerOn = false
     var contentDigest = ""
+    var ledgerClaimed = false
     if (let Some(gate) <- currentRemoteGate()) {
         let outcome = gate.check(authHeader, method, workspaceId, sessionId, operationId)
         if (!outcome.allowed) {
@@ -365,14 +373,20 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
             k.sessionId = RemoteRequestGate.sanitizeId(sessionId)
             if (let Some(c) <- authCtx) { k.principalId = c.principalId }
             contentDigest = canonicalDigest(JsonValue.fromStr(params))
-            let prior = idempotencyLedger.consult(instanceId: k.instanceId, principalId: k.principalId,
+            let prior = idempotencyLedger.claim(instanceId: k.instanceId, principalId: k.principalId,
                 workspaceId: k.workspaceId, sessionId: k.sessionId, method: k.method,
                 operationId: k.operationId, contentDigest: contentDigest)
             if (prior.kind == LEDGER_KIND_REPLAY) { return replayReceipt(prior.receipt, idText) }
             if (prior.kind == LEDGER_KIND_CONFLICT) { return errRpc(idText, LEDGER_ERR_CONFLICT, "idempotency-conflict") }
+            if (prior.kind == LEDGER_KIND_UNAVAILABLE) { return errRpc(idText, -32020, "idempotency-unavailable") }
+            ledgerClaimed = true
         }
         return ledgerAfterExecution(dispatchBusiness(method, params, idText, mgmtView: authView), idText, ledgerOn, k, contentDigest)
-    } catch (e: Exception) { return errRpc(idText, -32003, e.message) }
+    } catch (e: Exception) {
+        // 已领取后抛错可能发生在副作用之后：保留预写的未知占位，禁止重执行。
+        if (ledgerClaimed) { return errRpc(idText, LEDGER_ERR_UNKNOWN, "idempotency-unknown:${k.operationId}") }
+        return errRpc(idText, -32003, e.message)
+    }
     finally {
         // 早退（业务分支里的 return）也必须归还槽位，否则跑几轮就把 8 个槽吃干。
         if (slotDevice.size > 0) { remoteLimiter.releaseRpc(slotDevice) }
@@ -381,16 +395,27 @@ func dispatchRpcWithAuth(body: String, authHeader: String): String {
 
 // 业务分派支：认证与限额都过了才走到这里。整段是从 dispatchRpcWithAuth
 // 原样搬出来的，一条分支都没改——搬出来只为了让幂等账能在它前后各插一步
-// （执行前 consult，执行后按去向记账），不是为了顺手重写这段分派。
+// （执行前原子 claim，执行后按去向记账），不是为了顺手重写这段分派。
 func dispatchBusiness(method: String, params: String, idText: String,
                       mgmtView!: Option<DeviceAuthzView> = None): String {
         if (daemonStopping.load()) { return errRpc(idText, -32002, "daemon is shutting down") }
         if (method == "initialize") {
             var capabilities = INIT_CAPS
             if (teamHost.configured()) {
-                teamHost.ensureStarted()
+                // 宿主起不来/握手超时仍然整体失败（客户端必须知道宿主不可用）；
+                // 但「宿主能握手、只是没声明团队能力」不拦会话面：initialize 照常成功，
+                // 只是不宣称 team/*，后续团队请求按能力清单拒绝。
+                var teamReady = true
+                try {
+                    teamHost.ensureStarted()
+                } catch (e: Exception) {
+                    if (e.message != "team-host-capability-unavailable") { throw e }
+                    teamReady = false
+                }
                 let caps = JsonValue.fromStr(INIT_CAPS).asArray()
-                for (name in teamHost.capabilities()) { caps.add(JsonString(name)) }
+                if (teamReady) {
+                    for (name in teamHost.capabilities()) { caps.add(JsonString(name)) }
+                }
                 caps.add(JsonString("daemon/shutdown"))
                 capabilities = caps.toString()
             }
@@ -466,7 +491,8 @@ func dispatchBusiness(method: String, params: String, idText: String,
             // 这里显式还原，不另发明第三种 id 表示。
             return hostProxy.forward(method, params, JsonValue.fromStr(idText))
         } else if (method == "daemon/shutdown") {
-            teamHost.shutdown()
+            // 团队面与会话面共用一个宿主，收束只走代理一次；再调团队 shutdown
+            // 会把同一进程的结算做第二遍。
             hostProxy.shutdown()
             // Host 确已退出且读线程已 join 才允许 daemon 结束。
             // 短有界延迟留出 HTTP 响应写出窗口，不在处理器内直接 exit。
@@ -682,6 +708,7 @@ main(args: Array<String>): Int64 {
         }
         var streamDevice = ""
         var streamAuth = ""
+        var streamContext: Option<AuthenticationContext> = None
         var resumeCursor = ""
         let gateForStream = currentRemoteGate()
         if (let Some(g) <- gateForStream) {
@@ -701,6 +728,7 @@ main(args: Array<String>): Int64 {
                     return
                 }
                 streamDevice = c.deviceId
+                streamContext = Some(c)
             }
         }
         ctx.responseBuilder
@@ -716,7 +744,15 @@ main(args: Array<String>): Int64 {
         try {
             writer.write((": connected\n\n").toArray())
             // 带 Last-Event-ID 才补读：首订阅的客户端要的是直播，不是整本历史。
-            let resume = SseResume.build(root: ".", lastEventId: resumeCursor, limit: Int64(200))
+            var resume = SseResume.empty()
+            if (let Some(g) <- gateForStream) {
+                if (let Some(c) <- streamContext) {
+                    resume = SseResume.buildAuthorized(root: ".", lastEventId: resumeCursor,
+                        limit: Int64(200), gate: g, context: c)
+                }
+            } else {
+                resume = SseResume.build(root: ".", lastEventId: resumeCursor, limit: Int64(200))
+            }
             var k: Int64 = 0
             while (k < Int64(resume.frames.size)) {
                 writer.write(resume.frames[k].toArray())
@@ -725,6 +761,16 @@ main(args: Array<String>): Int64 {
             }
             while (!ctx.isClosed() && !sub.isClosed()) {
                 if (let Some(frame) <- sub.poll(1 * Duration.second)) {
+                    if (let Some(g) <- gateForStream) {
+                        let endReason = g.revalidateStreamEndReason(streamAuth, deviceId: streamDevice)
+                        if (endReason.size > 0) {
+                            bus.closeFor(device: streamDevice, reason: endReason)
+                            continue
+                        }
+                        if (let Some(c) <- streamContext) {
+                            if (!g.streamAllowsLive(c, frame)) { continue }
+                        } else { continue }
+                    }
                     // 补读交付过的游标，缓冲里再取到同一条就丢：顺序保证了「只多不少」。
                     if (SseFrame.delivered(ids: delivered, id: SseFrame.idOf(frame))) { continue }
                     writer.write(SseFrame.renderLive(frame).toArray())

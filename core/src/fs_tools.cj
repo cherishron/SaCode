@@ -175,9 +175,10 @@ func relativizePath(fullPath: String, base: String): String {
 // grep：在文件或目录中搜索内容子串。
 // path: 要搜索的文件或目录；pattern: 要搜索的子串。
 // 返回匹配行的列表，格式 "文件路径:行号:行内容"。
-public func grepFiles(pattern: String, path: String): ArrayList<String> {
+public func grepFiles(pattern: String, path: String, workspaceRoot!: String = ""): ArrayList<String> {
     let results = ArrayList<String>()
     if (pattern.size == 0) { return results }
+    if (workspaceRoot.size > 0 && !lspPathInsideWorkspace(path, workspaceRoot)) { return results }
     
     let info = FileInfo(path)
     if (info.isRegular()) {
@@ -185,7 +186,7 @@ public func grepFiles(pattern: String, path: String): ArrayList<String> {
         grepFile(path, pattern, results)
     } else if (info.isDirectory()) {
         // 递归搜索目录
-        grepRecursive(path, pattern, results, Int64(0))
+        grepRecursive(path, pattern, results, Int64(0), workspaceRoot)
     }
     return results
 }
@@ -207,14 +208,16 @@ func grepFile(filePath: String, pattern: String, results: ArrayList<String>): Un
 }
 
 // 递归搜索目录
-func grepRecursive(dir: String, pattern: String, results: ArrayList<String>, depth: Int64): Unit {
+func grepRecursive(dir: String, pattern: String, results: ArrayList<String>, depth: Int64, workspaceRoot: String): Unit {
     if (depth > Int64(20)) { return }
     
     for (info in Directory.readFrom(dir)) {
         let name = info.path.fileName
+        // 入口在工作区内不代表递归子项也在内：链接可能指向外部目录或文件。
+        if (workspaceRoot.size > 0 && !lspPathInsideWorkspace(dir + "/" + name, workspaceRoot)) { continue }
         if (info.isDirectory()) {
             let subDir = dir + "/" + name
-            grepRecursive(subDir, pattern, results, depth + 1)
+            grepRecursive(subDir, pattern, results, depth + 1, workspaceRoot)
         } else {
             let fullPath = dir + "/" + name
             grepFile(fullPath, pattern, results)

@@ -382,6 +382,18 @@ public class ToolRuntime {
         return Path(base).join(path).toString()
     }
 
+    // 与 read 同口径：会话工作区非空时拒绝越界路径。base 为空（CLI 手工面 /
+    // fs_test 未绑会话）保持既有放行语义。审批通过也不能越过这条边界。
+    private func refuseIfOutsideWorkspace(path: String): Option<ApprovalOutcome> {
+        let workspaceBase = SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()
+        if (workspaceBase.size > 0 && !lspPathInsideWorkspace(path, workspaceBase)) {
+            lastDetail.stage = "outside-workspace"
+            recordResult("outside-workspace:${path}")
+            return Some(ApprovalOutcome(false, "outside-workspace:${path}"))
+        }
+        return None
+    }
+
     // 固定序：注册表查询 → 审批 → guard → pre-execute → snapshot → execute → post-execute（无损校验）
     public func execute(name: String, args: String, answer: String, allowedByGuard: Bool): ApprovalOutcome {
         lastDetail = ToolDetail()
@@ -578,6 +590,7 @@ public class ToolRuntime {
             return ApprovalOutcome(false, "bad-args")
         }
         let path = workingPath(parsed.path)
+        if (let Some(denied) <- refuseIfOutsideWorkspace(path)) { return denied }
         lastDetail.snapshotBefore = priorSize(path)
         lastDetail.snapshotExpected = parsed.content.toArray().size
         // snapshot 段顺手取当前那份字节的状态。观察过且状态已变＝第三方动过手，
@@ -782,6 +795,7 @@ public class ToolRuntime {
             recordResult( "bad-args")
             return ApprovalOutcome(false, "bad-args")
         }
+        if (let Some(denied) <- refuseIfOutsideWorkspace(path)) { return denied }
         // 检查观察状态（与 write 一致：已存在文件必须已读）
         var key = fileObservationKey(path)
         if (exists(path)) {
@@ -895,7 +909,9 @@ public class ToolRuntime {
         lastDetail.argsAfterPre = parsed.norm
         lastDetail.preRewrote = (parsed.norm != args)
         let path = if (parsed.path.size > 0) { workingPath(parsed.path) } else { workingPath("") }
-        let results = grepFiles(parsed.pattern, path)
+        if (let Some(denied) <- refuseIfOutsideWorkspace(path)) { return denied }
+        let results = grepFiles(parsed.pattern, path,
+            workspaceRoot: SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory())
         var json = "["
         var first = true
         for (r in results) {
@@ -994,7 +1010,7 @@ public class ToolRuntime {
         // workspace/directory），不是构造期那份常量——进入/退出 worktree 之后 node 子进程
         // 必须跟着换地方，这一点和 read/write/glob/grep/bash 走的是同一个口径。
         let result = ptcExecutor.runCode(code, timeoutMs: 30000, sandboxMode: "workspace-write",
-            cwd: workingPath(""), cancelled: { => lspToken.cancelled() })
+            cwd: workingPath(""), cancelled: { => lspToken.cancelled() }, startToken: lspToken)
         if (result.isSome()) {
             if (let Some(r) <- result) {
                 lastDetail.stage = "ran"
@@ -1086,6 +1102,7 @@ public class ToolRuntime {
         lastDetail.argsAfterPre = parsed.norm
         lastDetail.preRewrote = (parsed.norm != args)
         let path = workingPath(parsed.path)
+        if (let Some(denied) <- refuseIfOutsideWorkspace(path)) { return denied }
         let symbols = lspSymbols(path)
         var json = "["
         var first = true

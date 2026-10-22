@@ -3,6 +3,8 @@ package daemon
 import core.*
 import std.sync.*
 import std.time.*
+import std.env.*
+import stdx.encoding.json.*
 
 // 远程接入的门面：把 RemoteIdentityStore / RemoteAccessAuthorizer /
 // RemoteAuditLog 三块拼成「一句请求 → 一条决定」，daemon.cj 只在 /rpc
@@ -163,6 +165,37 @@ public class RemoteRequestGate {
         }
         recordDenied("", "", "sse/subscribe", "", "", op, "unauthenticated-invalid")
         return GateOutcome(false, "invalid-token", None)
+    }
+
+    // 与 RPC 共用同一张方法表和设备视图；游标不是授权凭证。
+    public func streamAllows(context: AuthenticationContext, method: String,
+                             workspaceId: String, sessionId: String): Bool {
+        let decision = authorizer.check(DeviceAuthzView(context), method, workspaceId, sessionId)
+        return decision.allowed && (boundWorkspace.size == 0 || workspaceId == boundWorkspace)
+    }
+
+    public func streamWorkspace(): String {
+        if (boundWorkspace.size > 0) { return boundWorkspace }
+        return getWorkingDirectory().toString()
+    }
+
+    // 未知通知默认不交付，禁止用通知名绕过已登记的读取/审批权限。
+    public func streamAllowsLive(context: AuthenticationContext, frame: String): Bool {
+        try {
+            let obj = JsonValue.fromStr(frame).asObject()
+            let method = obj.get("method").getOrThrow().asString().getValue()
+            let params = obj.get("params").getOrThrow().asObject()
+            var permissionMethod = ""
+            if (method == "approval/asked") { permissionMethod = "approval/ask" }
+            if (method == "session/event" || method == "session/notify") { permissionMethod = "session/subscribe" }
+            if (permissionMethod.size == 0) { return false }
+            let sid = params.get("sessionId").getOrThrow().asString().getValue()
+            let ws = streamWorkspace()
+            if (let Some(value) <- params.get("workspaceId")) {
+                if (value.asString().getValue() != ws) { return false }
+            }
+            return streamAllows(context, permissionMethod, ws, sid)
+        } catch (_: Exception) { return false }
     }
 
     // 在途流的重新校验（设计 §4「撤销先更新服务端版本，再关闭匹配设备的全部 SSE」）。

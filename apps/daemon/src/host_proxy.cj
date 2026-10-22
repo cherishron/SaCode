@@ -32,7 +32,8 @@ import stdx.encoding.json.*
 // 白名单是「远程面能打到的方法」这一有限集合，不提供任意 Host 方法通道。
 // 名单按固定推导生成：契约表（docs/plans/remote-capability-contract.json）
 // ∩ 宿主 initialize 声明的能力（docs/plans/host-capabilities.json）
-// − daemon 自有 − 代理自留长连接 − team/*（团队面走 TeamHostBridge 另一条分派支）。
+// − daemon 自有 − 代理自留长连接 − team/*（团队面由 TeamHostBridge 复用本代理的
+//   同一个宿主进程，只负责能力过滤与在途上限，不再自起第二个宿主）。
 // 三方一致性由 apps/daemon/test/remote-capability-contract.test.mjs 与
 // remote-method-surface.test.mjs 钉住：漏一条远程消费的方法会红，
 // 转发一条宿主本人不认的名字也会红。
@@ -294,6 +295,32 @@ class HostProxy {
         } finally { table.untrack(id) }
     }
 
+    // 握手失败时收束一个刚起、尚未承担任何业务请求的宿主：强杀并 join 读线程。
+    // 不复用 close() 的优雅阶梯——这个宿主连 initialize 都没答上来，再等它自己退没有意义。
+    public func abort(): Unit {
+        synchronized(lifecycle) {
+            if (settledFlag.load()) { return }
+            if (let Some(p) <- proc) {
+                forcedFlag.store(true)
+                shutdownVia = "terminate"
+                try { p.terminate(force: true) } catch (_: Exception) {
+                    getStdErr().writeln("宿主强杀失败")
+                }
+                try { exitCode.store(p.wait(timeout: 3000 * Duration.millisecond)) } catch (_: Exception) {
+                    getStdErr().writeln("宿主等待失败")
+                }
+            }
+            table.stop()
+            if (let Some(f) <- reader) {
+                try { f.get(2000 * Duration.millisecond) } catch (_: Exception) {
+                    getStdErr().writeln("宿主读线程未收束")
+                }
+                reader = None
+            }
+            settledFlag.store(true)
+        }
+    }
+
     // 收手：先有界等宿主自己退出，超时才强杀并如实标 forced；然后 join 读线程。
     private func settleLocked(timeoutMs: Int64): Unit {
         if (let Some(p) <- proc) {
@@ -412,16 +439,66 @@ func hostParamsOk(params: String): Bool {
 }
 
 // 桥：把「懒起进程 + 白名单 + 失败归因」收在一处，daemon.cj 只认四个入口。
+func copyNames(values: ArrayList<String>): ArrayList<String> {
+    let out = ArrayList<String>()
+    for (value in values) { out.add(value) }
+    return out
+}
+
 class HostProxyBridge {
     let bus: EventBus
     let gate = Mutex()
+    // 与 gate 分开：握手要等宿主应答，不能把 instance() 的短锁拉长成秒级。
+    let initLock = Mutex()
     var proxy: Option<HostProxy> = None
+    var hostCaps: Option<ArrayList<String>> = None
     var shuttingDown = false
 
     public init(bus: EventBus) { this.bus = bus }
 
     public func configured(): Bool {
         return HostProxy.configured()
+    }
+
+    // 起一次宿主并完成 initialize 握手，能力清单按原样缓存。缺 capabilities 字段
+    // 视为空表：夹具宿主可以只回裸 result，能力够不够由调用方按名字判。
+    // 握手失败（起不来、超时、回错）立即强杀本次启动的宿主，不留半开进程。
+    public func ensureInitialized(): ArrayList<String> {
+        synchronized(initLock) {
+            if (let Some(caps) <- hostCaps) { return copyNames(caps) }
+            let proxyRef = instance()
+            var reply = ""
+            try {
+                reply = proxyRef.requestBounded("initialize", "{}", JsonNull(), 3000)
+            } catch (e: Exception) {
+                proxyRef.abort()
+                throw Exception("host-initialize-failed")
+            }
+            var caps = ArrayList<String>()
+            try {
+                let frame = JsonValue.fromStr(reply).asObject()
+                if (frame.get("error").isSome()) { throw Exception("host-initialize-error") }
+                let result = frame.get("result").getOrThrow().asObject()
+                if (let Some(list) <- result.get("capabilities")) {
+                    let names = list.asArray()
+                    for (i in 0..names.size()) {
+                        caps.add(names.get(i).getOrThrow().asString().getValue())
+                    }
+                }
+            } catch (e: Exception) {
+                proxyRef.abort()
+                throw Exception("host-initialize-failed")
+            }
+            hostCaps = Some(caps)
+            return copyNames(caps)
+        }
+    }
+
+    // 团队面与远程面共用同一个宿主进程：方法准入由团队桥按命中能力判，
+    // 这里只负责整帧写出与按 id 配对，避免第二条持久阻塞的 stdout 读线程。
+    public func requestTeam(method: String, params: String, clientId: String, waitMs: Int64): String {
+        let proxyRef = instance()
+        return proxyRef.requestBounded(method, params, JsonValue.fromStr(clientId), waitMs)
     }
 
     private func instance(): HostProxy {
@@ -448,6 +525,18 @@ class HostProxyBridge {
         if (!forwarded(method)) { return errRpc(idText, hostErrMethod, "方法未开放") }
         if (!hostParamsOk(params)) { return errRpc(idText, hostErrParams, "参数必须是 JSON 对象") }
         try {
+            if (method == "model/list") {
+                // read 只能选可信提供商；远程草稿测试不在这个权限面。
+                let obj = JsonValue.fromStr(params).asObject()
+                var providerId = ""
+                try {
+                    providerId = obj.get("providerId").getOrThrow().asString().getValue()
+                } catch (_: Exception) {}
+                if (providerId.size == 0 || obj.get("baseUrl").isSome() ||
+                    obj.get("apiKey").isSome() || obj.get("credentialRef").isSome()) {
+                    return errRpc(idText, hostErrParams, "remote-model-list-requires-provider-id")
+                }
+            }
             let proxyRef = instance()
             return proxyRef.request(method, params, clientId)
         } catch (e: Exception) {
