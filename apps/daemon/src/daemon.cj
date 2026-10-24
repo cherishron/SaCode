@@ -506,6 +506,27 @@ func dispatchBusiness(method: String, params: String, idText: String,
 // §4「设备列表、确认、撤销只能通过本机受保护管理入口或具有显式管理权限的认证 RPC」）。
 // 走 CLI 而不是网络端口：网络面仍然只有 /auth/enroll 与 /auth/token。
 // 形状不合一律 64（EX_USAGE），改盘失败一律 78——「打印了成功但盘上没变」最难诊断。
+// 可授予的 scope 闭集。read/write 由授权层默认放行，只有这三项需要显式授予。
+// CLI 先在这里挡一次，core 的 RemoteIdentityStore.grantScope 再挡一次：
+// 本机入口的拼写错误不能落成一条永远匹配不上的权限记录。
+func grantableScope(scope: String): Bool {
+    return scope == AUTHZ_SCOPE_EXECUTE || scope == AUTHZ_SCOPE_APPROVAL || scope == AUTHZ_SCOPE_MANAGEMENT
+}
+
+// scopes 列固定按 management/execute/approval 输出。HashSet 的遍历顺序不稳定，
+// 直接拼会把同一份快照打出两种清单，脚本与人工比对都不可复现。
+func scopesCell(scopes: HashSet<String>): String {
+    var out = ""
+    var comma = ""
+    for (scope in [AUTHZ_SCOPE_MANAGEMENT, AUTHZ_SCOPE_EXECUTE, AUTHZ_SCOPE_APPROVAL]) {
+        if (scopes.contains(scope)) {
+            out += "${comma}${scope}"
+            comma = ","
+        }
+    }
+    return if (out.size == 0) { "-" } else { out }
+}
+
 func manageCommand(args: Array<String>): Int64 {
     let verb = args[1]
     if (verb == "list-devices") {
@@ -514,9 +535,56 @@ func manageCommand(args: Array<String>): Int64 {
         listing.loadSnapshot(args[2])
         let listed = listing.listDevices()
         for (d in listed) {
-            println("${d.deviceId}\t${d.principalId}\t${d.kind}\t${if (d.revoked) { "revoked" } else { "active" }}")
+            let status = if (d.revoked) { "revoked" } else { "active" }
+            println("${d.deviceId}\t${d.principalId}\t${d.kind}\t${status}\t${scopesCell(d.scopes)}")
         }
         println("device-count ${listed.size}")
+        getStdOut().flush()
+        return 0
+    }
+    if (verb == "grant-scope") {
+        // 形状：--manage grant-scope <snapshot> <deviceId> <scope>
+        if (args.size != 5) { return 64 }
+        let storePath = args[2]
+        let deviceId = args[3]
+        let scope = args[4]
+        if (!grantableScope(scope)) {
+            getStdErr().writeln("manage-denied: scope-not-grantable")
+            getStdErr().flush()
+            return 64
+        }
+        let manageStore = RemoteIdentityStore()
+        manageStore.loadSnapshot(storePath)
+        // 先分辨「不存在」与「已撤销」：两者都拒绝，但排障时不能混成一句。
+        var found = false
+        var revoked = false
+        for (d in manageStore.listDevices()) {
+            if (d.deviceId == deviceId) {
+                found = true
+                revoked = d.revoked
+            }
+        }
+        if (!found) {
+            getStdErr().writeln("manage-denied: device-not-found")
+            getStdErr().flush()
+            return 78
+        }
+        if (revoked) {
+            getStdErr().writeln("manage-denied: device-revoked")
+            getStdErr().flush()
+            return 78
+        }
+        if (!manageStore.grantScope(deviceId: deviceId, scope: scope)) {
+            getStdErr().writeln("manage-denied: scope-not-granted")
+            getStdErr().flush()
+            return 78
+        }
+        if (!manageStore.saveSnapshot(storePath)) {
+            getStdErr().writeln("manage-failed: snapshot-unwritable")
+            getStdErr().flush()
+            return 78
+        }
+        println("granted ${deviceId} ${scope}")
         getStdOut().flush()
         return 0
     }

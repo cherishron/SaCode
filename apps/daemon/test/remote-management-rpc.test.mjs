@@ -7,13 +7,11 @@ import path from 'node:path';
 
 // 认证 RPC 管理面（auth/devices / auth/revoke）在真实 HTTP 上的读数。
 //
-// 本批只建了处理器与它的授权检查，**没建 scope 的来源**（HEAD 里 DeviceRecord 没有
-// scopes 字段，记录级 scope 那条线由并发会话持有）。所以 wire 侧能取的诚实读数是
-// 「这条面存在，且默认一步都走不通」：
-//   - 方法存在性用错误码区分：未登记的方法回 -32601，登记了但缺管理权回 -32001
-//     authz-denied:scope-required。把这两者钉开，才能证明「拒」来自授权而不是拼错方法名。
-//   - 放行半的正向证据在 cj 单测里（apps/daemon/src/remote_management_test.cj 用
-//     DeviceAuthzView.withScope 直接驱动处理器），不在这里冒充端到端通过。
+// scope 的来源是本机受保护管理入口的 `--manage grant-scope`：CLI 写快照，
+// 运行中的 daemon 在下一次 gate.check 通过 refreshFromDisk 吸收，不需要重启。
+// 这里同时钉住两件事：
+//   - 未授予时这条面存在但一步都走不通，拒因是 -32001 scope-required 而不是 -32601；
+//   - 授予后同一令牌立即可达管理面，且授予只作用于目标设备。
 const root = path.resolve(import.meta.dirname, '../../..');
 const daemonExe = process.env.SACODE_DAEMON || path.join(root, 'apps/daemon/target/release/bin/main.exe');
 const policyFile = path.join(root, 'docs/plans/remote-capability-contract.json');
@@ -62,6 +60,20 @@ async function createTicket(snapshot, principal) {
   const ticket = lines[lines.length - 1].trim();
   assert.match(ticket, /^[0-9a-f]{32}$/, `票据形状不对：${JSON.stringify(lines)}`);
   return ticket;
+}
+
+// 本机管理入口的通用调用：返回 code/out/err，授予与列清单都用它，
+// 避免每个动作各写一份进程等待逻辑而漏掉超时。
+async function runManage(args) {
+  const proc = spawn(daemonExe, args, { env: baseEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  proc.stdout.on('data', d => { out += d; });
+  proc.stderr.on('data', d => { err += d; });
+  const end = Date.now() + 15000;
+  while (proc.exitCode === null && proc.signalCode === null && Date.now() < end) await delay(25);
+  assert.notEqual(proc.exitCode, null, `管理子进程没在 15 秒内退出：${args.join(' ')}`);
+  return { code: proc.exitCode, out: out.replace(/\r/g, ''), err: err.replace(/\r/g, '') };
 }
 
 async function boot(dir) {
@@ -188,6 +200,39 @@ test('管理权缺失时目标不可枚举：存在与不存在的目标应答�
     assert.ok(plain.includes(d.devA.deviceId) && plain.includes(d.devB.deviceId),
       `两台设备都该还在清单里：${plain}`);
     assert.ok(!/revoked/.test(plain), `没有一次撤销被放行：\n${plain}`);
+  });
+});
+
+test('本机 grant-scope 授予 management：运行中的 daemon 下一次请求即放行管理面', async () => {
+  await withDaemon(async (d) => {
+    // 授予前：认证通过但缺 scope，管理面不可达。
+    const before = await d.rpc('auth/devices', {}, d.devA.bearer);
+    assert.ok(before.text.includes('scope-required'), `授予前必须是 scope-required：${before.text}`);
+
+    const granted = await runManage(['--manage', 'grant-scope', d.snapshot, d.devA.deviceId, 'management']);
+    assert.equal(granted.code, 0, `本机授予失败：${granted.err}`);
+    assert.match(granted.out, new RegExp(`granted ${d.devA.deviceId} management`));
+
+    // 不重启 daemon：refreshFromDisk 在下一次 gate.check 吸收新快照。
+    // 旧令牌仍有效，且 authenticate 每次都从设备记录复制当前 scopes。
+    const after = await d.rpc('auth/devices', {}, d.devA.bearer);
+    assert.equal(after.status, 200, `授予后管理面应放行：${after.text}`);
+    const doc = JSON.parse(after.text);
+    assert.ok(Array.isArray(doc.result.devices), `设备清单形状不对：${after.text}`);
+    assert.ok(doc.result.devices.some(x => x.deviceId === d.devA.deviceId),
+      `清单里必须包含被授予设备：${after.text}`);
+
+    // 授予只作用于目标设备，不是整机开关。
+    const other = await d.rpc('auth/devices', {}, d.devB.bearer);
+    assert.ok(other.text.includes('scope-required'), `另一台设备仍是零权限：${other.text}`);
+
+    // 管理 scope 也真的能执行管理动作，而不只是“能看清单”。
+    const revoked = await d.rpc('auth/revoke', { deviceId: d.devB.deviceId, operationId: 'mg-revoke-B' }, d.devA.bearer);
+    assert.equal(revoked.status, 200, revoked.text);
+    assert.equal(JSON.parse(revoked.text).result.revoked, true, revoked.text);
+    const revokedDev = await d.rpc('auth/devices', {}, d.devB.bearer);
+    assert.ok(revokedDev.text.includes('invalid-token') || revokedDev.text.includes('-32001'),
+      `被撤销设备的令牌必须立刻失效：${revokedDev.text}`);
   });
 });
 

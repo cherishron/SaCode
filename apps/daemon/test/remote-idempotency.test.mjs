@@ -151,9 +151,15 @@ test('同 operationId 只换了字段顺序：重放原回执，宿主的事件�
     const made = await rpc(d, bearer, 'session/create',
       { workspaceId: d.ws, title: 'replay-session', operationId: 'op-new-1' }, 'k-3');
     const sid = made.result.id;
+    // 宿主是单活动会话模型：远程提交前必须显式选中目标会话，
+    // 否则带别的 sessionId 的写会被 Host 以 session-mismatch 拒绝（P0-3）。
+    const sel = await rpc(d, bearer, 'session/select', { workspaceId: d.ws, sessionId: sid }, 'k-3s');
+    assert.ok(sel.result?.selected, JSON.stringify(sel));
     const first = await rpc(d, bearer, 'session/submit',
       { workspaceId: d.ws, sessionId: sid, operationId: 'op-sub-1', text: '同一条消息' }, 'k-4');
-    assert.equal(first.result.events, 1, `首次提交应只追加一条：${JSON.stringify(first)}`);
+    // create 已写入 session/title（1 条），select 不写目标会话，submit 再追加 1 条 → 共 2 条。
+    // P0-3 之前 submit 落到默认空会话故基数为 1；现在 submit 真写进 sid，基数变为 2。
+    assert.equal(first.result.events, 2, `首次提交应追加到 2 条（title+message）：${JSON.stringify(first)}`);
     // 同一份内容，params 里键的顺序换了：规范化摘要相同，必须算重放而不是冲突。
     const again = await rpc(d, bearer, 'session/submit',
       { text: '同一条消息', sessionId: sid, workspaceId: d.ws, operationId: 'op-sub-1' }, 'k-5');
@@ -162,7 +168,7 @@ test('同 operationId 只换了字段顺序：重放原回执，宿主的事件�
     // 阳性对照：换一个 operationId 就真再加一条——证明「events 仍是 1」是幂等而不是卡住。
     const other = await rpc(d, bearer, 'session/submit',
       { workspaceId: d.ws, sessionId: sid, operationId: 'op-sub-2', text: '同一条消息' }, 'k-6');
-    assert.equal(other.result.events, 2, `换 operationId 必须真执行：${JSON.stringify(other)}`);
+    assert.equal(other.result.events, 3, `换 operationId 必须真执行：${JSON.stringify(other)}`);
   } finally {
     await d.stop();
     await rmBounded(cwd);
@@ -177,9 +183,11 @@ test('同 operationId 换内容按冲突拒，且不落第二次副作用', asyn
     const made = await rpc(d, bearer, 'session/create',
       { workspaceId: d.ws, title: 'conflict-session', operationId: 'op-conf-new' }, 'k-7');
     const sid = made.result.id;
+    const sel = await rpc(d, bearer, 'session/select', { workspaceId: d.ws, sessionId: sid }, 'k-7s');
+    assert.ok(sel.result?.selected, JSON.stringify(sel));
     const first = await rpc(d, bearer, 'session/submit',
       { workspaceId: d.ws, sessionId: sid, operationId: 'op-conf-1', text: '第一版' }, 'k-8');
-    assert.equal(first.result.events, 1, JSON.stringify(first));
+    assert.equal(first.result.events, 2, JSON.stringify(first));
     const second = await rpc(d, bearer, 'session/submit',
       { workspaceId: d.ws, sessionId: sid, operationId: 'op-conf-1', text: '第二版' }, 'k-9');
     assert.equal(second.error.code, -32018, `同键不同内容必须拒而不是返回旧回执：${JSON.stringify(second)}`);
@@ -188,7 +196,7 @@ test('同 operationId 换内容按冲突拒，且不落第二次副作用', asyn
       { workspaceId: d.ws, sessionId: sid, operationId: 'op-conf-1', text: '第一版' }, 'k-10');
     // 被拒的那次没进账：同键同内容的第三次仍应拿到第一次的回执（事件计数不变）。
     assert.deepEqual(third.result, first.result, JSON.stringify(third));
-    assert.equal(third.result.events, 1, `冲突拒掉的那次不能已经把事件加到 2：${JSON.stringify(third)}`);
+    assert.equal(third.result.events, 2, `冲突拒掉的那次不能已经把事件加到 3：${JSON.stringify(third)}`);
   } finally {
     await d.stop();
     await rmBounded(cwd);
@@ -225,9 +233,12 @@ test('账本跨进程重启仍在：同一条 operationId 换一个新 daemon �
   const made = await rpc(d, (await device(d, cwd, 'p-restart', 'r1')).bearer,
     'session/create', { workspaceId: ws, title: 'restart-session', operationId: 'op-r-new' }, 'k-30');
   const sid = made.result.id;
+  const sel = await rpc(d, (await device(d, cwd, 'p-restart', 'r1s')).bearer,
+    'session/select', { workspaceId: ws, sessionId: sid }, 'k-30s');
+  assert.ok(sel.result?.selected, JSON.stringify(sel));
   const first = await rpc(d, (await device(d, cwd, 'p-restart', 'r1b')).bearer,
     'session/submit', { workspaceId: ws, sessionId: sid, operationId: 'op-r-1', text: '只该出现一次' }, 'k-31');
-  assert.equal(first.result.events, 1, JSON.stringify(first));
+  assert.equal(first.result.events, 2, JSON.stringify(first));
   await d.stop();
 
   d = await boot(cwd);
@@ -235,11 +246,11 @@ test('账本跨进程重启仍在：同一条 operationId 换一个新 daemon �
     const again = await rpc(d, (await device(d, cwd, 'p-restart', 'r2')).bearer,
       'session/submit', { workspaceId: ws, sessionId: sid, operationId: 'op-r-1', text: '只该出现一次' }, 'k-32');
     assert.deepEqual(again.result, first.result, `换进程后仍要拿到原回执：${JSON.stringify(again)}`);
-    assert.equal(again.result.events, 1, `重启后的重试不能把事件加到 2：${JSON.stringify(again)}`);
-    // 真源核对：回执说是 1 条，磁盘上的会话日志也得真是 1 条。
+    assert.equal(again.result.events, 2, `重启后的重试不能把事件加到 3：${JSON.stringify(again)}`);
+    // 真源核对：回执说是 2 条，磁盘上的会话日志也得真是 2 条。
     const proj = await rpc(d, (await device(d, cwd, 'p-restart', 'r3')).bearer,
       'session/projection', { workspaceId: ws, sessionId: sid }, 'k-33');
-    assert.equal(proj.result.events, 1, `会话日志里的事件数才是最终判据：${JSON.stringify(proj)}`);
+    assert.equal(proj.result.events, 2, `会话日志里的事件数才是最终判据：${JSON.stringify(proj)}`);
   } finally {
     await d.stop();
     await rmBounded(cwd);

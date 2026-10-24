@@ -4,12 +4,23 @@
 // build-output bin/ so the freshly built binary is directly runnable
 // (no 0xC0000135 STATUS_DLL_NOT_FOUND at startup).
 //
-// Locates the output bin by walking up to the workspace root (cjpm.toml with
-// [workspace]) and creates target/release/bin if cjpm has not done so yet.
-// Works for both workspace members (apps/<m>) and single-package builds.
+// 路径一律「环境变量优先，仓库布局与旧本机路径兜底」：
+//   SACODE_STDX_DLL_DIR      stdx 动态库目录（优先）
+//   SACODE_STDX_LIB_DIR      编译期 stdx 目录；Windows 发行布局里与 DLL 同目录
+//   SACODE_RUNTIME_DLL_DIR   仓颉运行期库目录
+//   CANGJIE_HOME             SDK 根目录（runtime/lib 与 tools/bin 都由它派生）
+// 源目录不存在时只 WARN 并继续：钩子不能把「换一台机器」变成链接成功后的构建失败。
+// 真正的 IO 错误（目录在但读不了）仍然返回非 0。
+//
+// 输出 bin 同时支持两种布局：
+//   (a) 单成员 `cd apps/<m> && cjpm build` → cwd/target/release/bin
+//   (b) 工作区根 `cjpm build`            → <root>/target/release/bin
+// 以及 build-platform.mjs 使用的 `cjpm build --target-dir <dir>`：钩子拿不到
+// 命令行参数，由 SACODE_BUILD_TARGET_DIR 传入，递归找本轮 main.exe 所在目录。
 import std.process.*
 import std.fs.*
 import std.env.*
+import std.collection.ArrayList
 
 // Runtime libs that are test/compile-time only and must NOT ship.
 let RUNTIME_DENY: Array<String> = [
@@ -42,7 +53,12 @@ func stdxPredicate(name: String): Bool {
 }
 
 // Copy every .dll in srcDir whose name passes `predicate` into dstDir.
+// 缺失目录是「本机没装/CI 没铺」而不是构建逻辑失败：WARN 后继续。
 func copyIfDll(srcDir: String, dstDir: String, predicate: (String) -> Bool): Int64 {
+  if (srcDir.isEmpty() || !exists(srcDir)) {
+    eprintln("WARN: DLL source dir missing, skip: " + (if (srcDir.isEmpty()) { "<unresolved>" } else { srcDir }))
+    return 0
+  }
   try {
     let src = Path(srcDir).normalize()
     let dst = Path(dstDir).normalize()
@@ -142,26 +158,88 @@ func ensureDirFrom(base: String, rel: String): Unit {
   }
 }
 
-// Resolve ALL plausible build-output bin dirs and make sure each exists.
-// Two layouts: (a) member-local `cwd/target/release/bin` — single-member build
-// `cd apps/<m> && cjpm build`, the exe lands here; (b) workspace-root bin
-// `<root>/target/release/bin` — workspace build `cjpm build` at root, all exes
-// land here. Copy to both (deduped) so the exe is always co-located with DLLs.
-func resolveBins(): Array<String> {
-  let root = findRoot()
-  let rootBin = Path(root).join("target").join("release").join("bin").toString()
-  let localBin = Path(".").join("target").join("release").join("bin").toString()
-  ensureDirFrom(root, "target/release/bin")
-  ensureDirFrom(".", "target/release/bin")
-  let rn = Path(rootBin).normalize().toString()
-  let ln = Path(localBin).normalize().toString()
-  if (ln == rn) {
-    return [rn]
+func pickExistingDir(candidates: Array<String>): String {
+  for (c in candidates) {
+    if (!c.isEmpty() && exists(c) && FileInfo(c).isDirectory()) {
+      return c
+    }
   }
-  return [ln, rn]
+  return ""
 }
 
-// Copy the full runtime DLL set into one target bin. Returns non-zero on failure.
+func resolveSdkRoot(): String {
+  let fromEnv = getVariable("CANGJIE_HOME") ?? ""
+  if (!fromEnv.isEmpty() && exists(fromEnv)) {
+    return fromEnv
+  }
+  return "D:/Program Files/HuaWei/Cangjie"
+}
+
+// stdx 的 Windows 发行布局是 windows_x86_64_cjnative/dynamic/stdx；
+// SACODE_STDX_LIB_DIR 在 Windows CI 上正是指向这里（编译接口与 DLL 同目录）。
+func resolveStdxDir(root: String): String {
+  return pickExistingDir([
+    getVariable("SACODE_STDX_DLL_DIR") ?? "",
+    getVariable("SACODE_STDX_LIB_DIR") ?? "",
+    Path(root).join(".deps").join("stdx").join("windows_x86_64_cjnative").join("dynamic").join("stdx").toString(),
+    "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"
+  ])
+}
+
+func resolveRuntimeDir(sdkRoot: String): String {
+  return pickExistingDir([
+    getVariable("SACODE_RUNTIME_DLL_DIR") ?? "",
+    Path(sdkRoot).join("runtime").join("lib").join("windows_x86_64_cjnative").toString(),
+    "D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative"
+  ])
+}
+
+func sameDir(a: String, b: String): Bool {
+  return Path(a).normalize().toString().toAsciiLower() == Path(b).normalize().toString().toAsciiLower()
+}
+
+func addUnique(out: ArrayList<String>, dir: String): Unit {
+  if (dir.isEmpty()) { return }
+  let norm = Path(dir).normalize().toString()
+  for (d in out) {
+    if (sameDir(d, norm)) { return }
+  }
+  out.add(norm)
+}
+
+// `cjpm build --target-dir` 的落点由 cjpm 决定，钩子只认「本轮 main.exe 在哪」。
+func collectMainExeDirs(dir: String, out: ArrayList<String>): Unit {
+  try {
+    for (f in Directory.readFrom(Path(dir))) {
+      let child = Path(dir).join(f.name).toString()
+      if (f.isDirectory()) {
+        collectMainExeDirs(child, out)
+      } else if (f.name == "main.exe") {
+        addUnique(out, Path(dir).normalize().toString())
+      }
+    }
+  } catch (e: Exception) { }
+}
+
+// Resolve ALL plausible build-output bin dirs and make sure each exists.
+// 显式 target-dir 优先；没有传入（或还没产出 main.exe）时回退旧的两套布局。
+func resolveBins(): Array<String> {
+  let root = findRoot()
+  let out = ArrayList<String>()
+  let explicit = getVariable("SACODE_BUILD_TARGET_DIR") ?? ""
+  if (!explicit.isEmpty() && exists(explicit)) {
+    collectMainExeDirs(explicit, out)
+  }
+  if (out.size == 0) {
+    ensureDirFrom(root, "target/release/bin")
+    ensureDirFrom(".", "target/release/bin")
+    addUnique(out, Path(root).join("target").join("release").join("bin").toString())
+    addUnique(out, Path(".").join("target").join("release").join("bin").toString())
+  }
+  return out.toArray()
+}
+
+// Copy the full runtime DLL set into one target bin. Returns non-zero on IO failure.
 func copyRuntimeSet(target: String, stdxDir: String, runtimeDir: String, sdkRoot: String): Int64 {
   var rc = 0
   // 1) runtime libs (boundscheck + libcangjie-runtime* + libcangjie-std-* minus DENY)
@@ -204,11 +282,38 @@ func copyRuntimeSet(target: String, stdxDir: String, runtimeDir: String, sdkRoot
   return 0
 }
 
+// 钩子补抄的是 Windows 运行期 DLL（上游 cjpm issue #725）。其他平台既不产出
+// DLL，也没有对应的 SDK/stdx 目录，不能因为 Windows 路径不存在就判构建失败。
+@When[os == "Windows"]
+func needsDllStaging(): Bool {
+  return true
+}
+
+@When[os != "Windows"]
+func needsDllStaging(): Bool {
+  return false
+}
+
 func stagePostBuild(): Int64 {
-  let stdxDir = "C:/Users/jingg/stdx-work/stdx-1.1.3.1/windows_x86_64_cjnative/dynamic/stdx"
-  let runtimeDir = "D:/Program Files/HuaWei/Cangjie/runtime/lib/windows_x86_64_cjnative"
-  let sdkRoot = "D:/Program Files/HuaWei/Cangjie"
+  if (!needsDllStaging()) {
+    println("[build.cj] skip: runtime DLL staging is Windows-only")
+    return 0
+  }
+  let root = findRoot()
+  let sdkRoot = resolveSdkRoot()
+  let stdxDir = resolveStdxDir(root)
+  let runtimeDir = resolveRuntimeDir(sdkRoot)
+  if (stdxDir.isEmpty()) {
+    eprintln("WARN: stdx DLL dir unresolved; set SACODE_STDX_DLL_DIR (build continues, runtime may miss libstdx.*)")
+  }
+  if (runtimeDir.isEmpty()) {
+    eprintln("WARN: Cangjie runtime DLL dir unresolved; set SACODE_RUNTIME_DLL_DIR or CANGJIE_HOME (build continues)")
+  }
   let targets = resolveBins()
+  if (targets.size == 0) {
+    eprintln("WARN: no build-output bin resolved; runtime DLLs not staged")
+    return 0
+  }
   for (target in targets) {
     println("[build.cj] target bin = " + target)
     let rc = copyRuntimeSet(target, stdxDir, runtimeDir, sdkRoot)

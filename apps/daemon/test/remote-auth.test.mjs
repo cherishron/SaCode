@@ -417,13 +417,38 @@ test('管理入口列设备与撤销对在跑的 daemon 生效，且 stdout 不�
     const listed = await manage(['--manage', 'list-devices', snapshot]);
     assert.equal(listed.code, 0, listed.err);
     const listing = listed.out.replace(/\r/g, '');
-    assert.match(listing, new RegExp(`^${dev.deviceId}\\s+p-rev\\s+mobile\\s+active$`, 'm'),
+    // 第五列是 scopes；默认零权限显示 "-"，不能让“没授过”与“字段漏打”看起来一样。
+    assert.match(listing, new RegExp(`^${dev.deviceId}\\s+p-rev\\s+mobile\\s+active\\s+-$`, 'm'),
       `设备行形状不对：${listing}`);
     assert.match(listing, /device-count 1/);
     // 列表不得泄漏凭据原文或校验摘要。
     assert.ok(!listing.includes(dev.credential), '不得打印凭据原文');
     assert.ok(!listing.includes(dev.credential.slice(0, 16)), '不得打印凭据片段');
     assert.doesNotMatch(listing, /[0-9a-f]{64}/, '不得出现 64 位 hex（摘要或凭据）');
+
+    // scope 授予面：拼错/越界的 scope 是用法错误（64），不能落盘成一条匹配不上的记录。
+    const badScope = await manage(['--manage', 'grant-scope', snapshot, dev.deviceId, 'root']);
+    assert.equal(badScope.code, 64, `未知 scope 必须退出码 64：${badScope.err}`);
+    assert.match(badScope.err, /scope-not-grantable/);
+    const noDevice = await manage(['--manage', 'grant-scope', snapshot, 'no-such-device', 'management']);
+    assert.equal(noDevice.code, 78, '未知设备必须如实报错，不能假装授予成功');
+    assert.match(noDevice.err, /device-not-found/);
+
+    const granted = await manage(['--manage', 'grant-scope', snapshot, dev.deviceId, 'management']);
+    assert.equal(granted.code, 0, granted.err);
+    assert.match(granted.out, new RegExp(`granted ${dev.deviceId} management`));
+    const grantedExec = await manage(['--manage', 'grant-scope', snapshot, dev.deviceId, 'execute']);
+    assert.equal(grantedExec.code, 0, grantedExec.err);
+    const grantedApproval = await manage(['--manage', 'grant-scope', snapshot, dev.deviceId, 'approval']);
+    assert.equal(grantedApproval.code, 0, grantedApproval.err);
+
+    const relisted = await manage(['--manage', 'list-devices', snapshot]);
+    assert.equal(relisted.code, 0, relisted.err);
+    const relisting = relisted.out.replace(/\r/g, '');
+    assert.match(relisting, new RegExp(`^${dev.deviceId}\\s+p-rev\\s+mobile\\s+active\\s+management,execute,approval$`, 'm'),
+      `scopes 列顺序必须稳定且可复现：${relisting}`);
+    assert.ok(!relisting.includes(dev.credential), '授予后仍不得打印凭据');
+    assert.doesNotMatch(relisting, /[0-9a-f]{64}/, '授予后仍不得出现 64 位 hex');
 
     const before = await d.rpc('initialize', {}, {
       headers: { authorization: `Bearer ${tok.accessToken}` },
@@ -443,6 +468,11 @@ test('管理入口列设备与撤销对在跑的 daemon 生效，且 stdout 不�
     const again = await manage(['--manage', 'revoke-device', snapshot, 'no-such-device']);
     assert.equal(again.code, 78, '敲错 id 必须如实报错，不能假装撤销成功');
     assert.match(again.err, /device-not-found/);
+
+    // 已撤销的设备不能被「顺手授权」复活：撤销是终态，授予面必须承认这一点。
+    const grantRevoked = await manage(['--manage', 'grant-scope', snapshot, dev.deviceId, 'management']);
+    assert.equal(grantRevoked.code, 78, '已撤销设备必须拒绝再次授予');
+    assert.match(grantRevoked.err, /device-revoked/);
   } finally {
     await d.stop();
     await rm(dir, { recursive: true, force: true });

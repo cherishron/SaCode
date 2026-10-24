@@ -147,6 +147,10 @@ func scopeGrantRejectsUnknownRevokedAndEmptyScope() {
     // 空 scope 名不配拥有：授予它等于给设备加一条永远匹配不上的记录。
     let d2 = enrollDevice(store, "grantme2", "p-g2")
     @Expect(store.grantScope(deviceId: d2.deviceId, scope: ""), false)
+    // 闭集之外的名字同样不能落库：read/write 默认放行，其余只有三项。
+    @Expect(store.grantScope(deviceId: d2.deviceId, scope: "root"), false)
+    @Expect(store.grantScope(deviceId: d2.deviceId, scope: "read"), false)
+    @Expect(store.listDevices()[0].scopes.size, Int64(0))
 }
 
 @Test

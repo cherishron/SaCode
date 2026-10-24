@@ -22,6 +22,7 @@ env[pathKey] = [process.env.SACODE_STDX_DLL_DIR || 'C:/Users/jingg/stdx-work/std
 const fixtureSource = `const readline = require('node:readline');
 const fs = require('node:fs');
 const mode = process.argv[2] || 'host';
+fs.appendFileSync('宿主进程.txt', process.pid + '\\n');
 const out = x => process.stdout.write(JSON.stringify(x) + '\\n');
 const received = [];
 let strayArmed = false;
@@ -40,6 +41,10 @@ line.on('line', text => {
       return;
     }
     out({ jsonrpc: '2.0', id: r.id, error: { code: -32601, message: 'method not found' } });
+    return;
+  }
+  if (r.method === 'initialize' && process.argv[3] === 'caps') {
+    out({ jsonrpc: '2.0', id: r.id, result: { capabilities: ['session/create', 'worktree/describe', 'team/describe'] } });
     return;
   }
   const name = r.params && r.params.name;
@@ -73,7 +78,7 @@ async function runningDaemon(cwd, body, options = {}) {
   await writeFile(fixture, fixtureSource);
   const extra = {
     SACODE_HOST: process.execPath,
-    SACODE_HOST_ARGS: JSON.stringify([fixture.replace(/\\/g, '/'), options.mode || 'host']),
+    SACODE_HOST_ARGS: JSON.stringify([fixture.replace(/\\/g, '/'), options.mode || 'host', ...(options.caps ? ['caps'] : [])]),
     ...(options.timeoutMs === undefined ? {} : { SACODE_HOST_TIMEOUT_MS: String(options.timeoutMs) }),
   };
   if (options.withoutHost) { extra.SACODE_HOST = ''; extra.SACODE_HOST_ARGS = ''; }
@@ -164,6 +169,19 @@ test('initialize 能力登记六个 worktree 方法', async () => temporary(asyn
     assert.ok(reply.result.capabilities.includes(method), `能力清单缺 ${method}`);
   }
 })));
+
+// initialize 与转发若各起一个宿主，两条持久阻塞的 stdout 读线程会各占一个
+// 原生调度线程；2 vCPU 上两条一起阻塞就把 HTTP 处理器饿死（应答已读到却发不出去）。
+// 这条断言只看进程数：一次 daemon 生命周期里，宿主只能被启动一次。
+test('initialize 与转发共用同一个宿主进程', async () => temporary(async cwd => runningDaemon(cwd, async url => {
+  const initialized = await rpc(url, 1, 'initialize', {});
+  assert.equal(initialized.error, undefined, JSON.stringify(initialized));
+  const forwarded = await rpc(url, 2, 'worktree/describe', { sessionId: 's-1' });
+  assert.equal(forwarded.error, undefined, JSON.stringify(forwarded));
+  const pids = (await readFile(path.join(cwd, '宿主进程.txt'), 'utf8')).trim().split('\n').filter(Boolean);
+  assert.ok(pids.length > 0, '夹具没有记录宿主进程号');
+  assert.equal(new Set(pids).size, 1, `宿主被启动了 ${pids.length} 次：${pids.join(',')}`);
+}, { caps: true })));
 
 test('白名单外一律 -32601，宿主没收到过那一帧', async () => temporary(async cwd => runningDaemon(cwd, async (url, p) => {
   // 正对照：白名单内的方法必须真的通得了，否则「白名单外被拒」是旧产物的默认行为蒙的。

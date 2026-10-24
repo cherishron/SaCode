@@ -9,7 +9,8 @@ const root = path.resolve(import.meta.dirname, '../../..');
 const rows = JSON.parse(readFileSync(path.join(root, 'docs/plans/remote-capability-contract.json'), 'utf8'));
 
 const validPermissions = new Set(['read', 'write', 'execute', 'approval', 'management']);
-const validConsumers = new Set(['desktop', 'mobile', 'cli']);
+// clientConsumers 是消费登记，不替代 daemon runtime 的 token/scope/resource 校验。
+const validConsumers = new Set(['desktop', 'mobile', 'cli', 'web']);
 const scopePermissions = new Set(['execute', 'approval', 'management']);
 
 test('契约非空', () => {
@@ -69,6 +70,16 @@ test('requiredScope 只允许 execute/approval/management 三种', () => {
 test('mobile 客户端方法面 >50 条', () => {
   const mobileMethods = rows.filter(r => r.clientConsumers.includes('mobile'));
   assert.ok(mobileMethods.length > 50, `mobile must have >50 methods, got ${mobileMethods.length}`);
+});
+
+test('web 仅登记首批三个原生只读动作，不包含写入或管理', () => {
+  const web = rows.filter(row => row.clientConsumers.includes('web'));
+  assert.deepEqual(web.map(row => row.method).sort(), ['initialize', 'session/catalog', 'session/events'].sort());
+  for (const row of web) {
+    assert.equal(row.permission, 'read');
+    assert.equal(row.durable, false);
+    assert.equal(row.requiredScope, null);
+  }
 });
 
 test('至少一条 durable 方法（会话日志真源）', () => {
