@@ -28,6 +28,7 @@ function bindApproval(ctx) {
   }));
 }
 function bindSend(ctx) {
+  vm.runInNewContext(pollSource,ctx);
   vm.runInNewContext(sendSource,ctx);
   Object.assign(ctx,ctx.SaCodeSendQueue.createSendQueueAssembly({
     api:ctx.window.sacode,approval:ctx.approval,error:ctx.error,

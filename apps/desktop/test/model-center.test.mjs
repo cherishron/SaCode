@@ -110,7 +110,7 @@ test('模型调用日志按 last-active 覆盖最活跃会话（目录序≠活�
 test('供应商新增表单提交自定义标记及用户填写的模型目录',async()=>{
   const result=await build({entryPoints:[join(pages,'provider-settings.ts')],bundle:true,write:false,format:'cjs',external:['vue']});
   const mounted=[];
-  const vue={defineComponent:v=>v,ref:value=>({value}),onMounted:fn=>mounted.push(fn),onBeforeUnmount:()=>{},h:(tag,props,children)=>({tag,props,children})};
+  const vue={defineComponent:v=>v,ref:value=>({value}),onMounted:fn=>mounted.push(fn),onBeforeUnmount:()=>{},h:(tag,props,children)=>({tag,props,children:typeof children==='function'?children():children})};
   const ctx={module:{exports:{}},require:()=>vue,URL};
   vm.runInNewContext(result.outputFiles[0].text,ctx);
   let saved;

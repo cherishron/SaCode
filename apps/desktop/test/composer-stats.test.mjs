@@ -47,6 +47,19 @@ test('会话切换立即清空且拒绝迟到累计用量',async()=>{
   await new Promise(resolve=>setImmediate(resolve));assert.equal(render().children[1].props.usage.total,12);
   resolveOld({used:900});await new Promise(resolve=>setImmediate(resolve));assert.equal(render().children[1].props.usage.total,12);
 });
+for(const used of [0,1200])test(`新建空会话隐藏统计，进入对话后恢复宿主读数 ${used}`,async()=>{
+  const props=vue.reactive({empty:true,sessionId:'new',modelKey:'m',settled:false,api:{usageStatus:async()=>({used}),ledgerStats:async()=>null}});
+  const scope=vue.effectScope();
+  try{
+    const render=scope.run(()=>ComposerStats.setup(props));
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(render(),null,'空会话不显示零计数，也不带入累计用量');
+    props.empty=false;
+    assert.equal(render().children[1].props.usage.total,used,'已有对话保留宿主真实用量');
+    props.empty=true;
+    assert.equal(render(),null,'回到新建状态立即隐藏统计');
+  }finally{scope.stop();}
+});
 test('装配位于输入框上方，ContextMeter 留在尾部且模型变化清空活动',()=>{
   const app=readFileSync(new URL('../renderer/app.js',import.meta.url),'utf8');
   assert.ok(app.indexOf('h(window.SaCodeComposerStats.ComposerStats')<app.indexOf('el("label", "composer-label"'));

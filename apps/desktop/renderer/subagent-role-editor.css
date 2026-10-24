@@ -1,35 +1,35 @@
 /* subagent-role-editor：角色列表与编辑器；视觉令牌沿用 subagent-settings 同一套设计变量。 */
-.subagent-role-form { display: flex; flex-direction: column; gap: 14px; padding: 0 16px 16px; }
+.subagent-role-form { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 16px 16px; }
 .subagent-role-section { display: flex; flex-direction: column; gap: 12px; }
-.subagent-role-heading { margin: 0; font-size: 14px; line-height: 22px; font-weight: 500; }
+.subagent-role-heading { margin: 0; font-size: var(--fs-ui); line-height: 22px; font-weight: 500; }
 .subagent-role-field { display: flex; flex-direction: column; gap: 4px; }
-.subagent-role-label { font-size: 13px; line-height: 20px; }
-.subagent-role-notice { margin: 0; font-size: 12px; line-height: 18px; color: var(--text-muted); }
-.subagent-role-invalid { margin: 0; font-size: 12px; line-height: 18px; color: var(--danger, #c33); }
-.subagent-role-input { box-sizing: border-box; width: 100%; height: 32px; padding: 0 10px; border: .5px solid var(--border); border-radius: 8px; font: inherit; font-size: 13px; background: var(--panel-surface); color: var(--text); }
-.subagent-role-input[aria-invalid="true"] { border-color: var(--danger, #c33); }
-.subagent-role-prompt { height: auto; min-height: 120px; padding: 8px 10px; line-height: 20px; resize: vertical; }
+.subagent-role-label { font-size: var(--fs-m); line-height: 20px; }
+.subagent-role-notice { margin: 0; font-size: var(--fs-s); line-height: 18px; color: var(--text-muted); }
+.subagent-role-invalid { margin: 0; font-size: var(--fs-s); line-height: 18px; color: var(--danger); }
+.subagent-role-input { box-sizing: border-box; width: 100%; height: 32px; padding: 0 var(--space-2); border: .5px solid var(--border); border-radius: var(--radius-s); font: inherit; font-size: var(--fs-m); background: var(--panel-surface); color: var(--text); }
+.subagent-role-input[aria-invalid="true"] { border-color: var(--danger); }
+.subagent-role-prompt { height: auto; min-height: 120px; padding: 8px var(--space-2); line-height: 20px; resize: vertical; }
 .subagent-role-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.subagent-role-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: .5px solid var(--border); border-radius: 8px; }
-.subagent-role-open { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.subagent-role-item { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: .5px solid var(--border); border-radius: var(--radius-s); }
+.subagent-role-open { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--radius-s); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .subagent-role-open[aria-current="true"] { background: var(--panel-surface); }
-.subagent-role-itemName { font-size: 13px; line-height: 18px; }
-.subagent-role-itemMeta { font-size: 11px; line-height: 16px; color: var(--text-muted); overflow-wrap: anywhere; }
-.subagent-role-badge { flex: none; font-size: 11px; color: var(--text-muted); border: .5px solid var(--border); border-radius: 6px; padding: 1px 6px; }
-.subagent-role-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 10px; margin: 0; border: .5px solid var(--border); border-radius: 8px; }
-.subagent-role-tools legend { padding: 0 6px; font-size: 12px; color: var(--text-muted); }
+.subagent-role-itemName { font-size: var(--fs-m); line-height: 18px; }
+.subagent-role-itemMeta { font-size: var(--fs-xs); line-height: 16px; color: var(--text-muted); overflow-wrap: anywhere; }
+.subagent-role-badge { flex: none; font-size: var(--fs-xs); color: var(--text-muted); border: .5px solid var(--border); border-radius: var(--radius-s); padding: 1px 6px; }
+.subagent-role-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: var(--space-2); margin: 0; border: .5px solid var(--border); border-radius: var(--radius-s); }
+.subagent-role-tools legend { padding: 0 6px; font-size: var(--fs-s); color: var(--text-muted); }
 .subagent-role-tool { display: flex; gap: 8px; align-items: flex-start; padding: 4px; }
 .subagent-role-toolText { display: flex; flex-direction: column; min-width: 0; }
-.subagent-role-toolName { font-size: 13px; line-height: 18px; }
-.subagent-role-toolHint { font-size: 11px; line-height: 16px; color: var(--text-muted); }
+.subagent-role-toolName { font-size: var(--fs-m); line-height: 18px; }
+.subagent-role-toolHint { font-size: var(--fs-xs); line-height: 16px; color: var(--text-muted); }
 .subagent-role-toggle { display: flex; align-items: center; gap: 8px; }
 .subagent-role-toggle .subagent-role-switch { margin-left: auto; }
-.subagent-role-budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.subagent-role-footer { display: flex; align-items: center; gap: 10px; padding-top: 8px; }
-.subagent-role-revision { margin-right: auto; font-size: 11px; color: var(--text-muted); }
-.subagent-role-action { padding: 4px 10px; border: .5px solid var(--border); border-radius: 8px; background: transparent; font: inherit; font-size: 12px; color: var(--text); cursor: pointer; }
-.subagent-role-danger { padding: 4px 10px; border: .5px solid var(--danger, #c33); border-radius: 8px; background: transparent; font: inherit; font-size: 12px; color: var(--danger, #c33); cursor: pointer; }
-.subagent-role-save { padding: 5px 14px; border: 1px solid transparent; border-radius: 8px; font: inherit; font-size: 13px; background: var(--text); color: var(--panel-surface); cursor: pointer; }
+.subagent-role-budget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.subagent-role-footer { display: flex; align-items: center; gap: var(--space-2); padding-top: 8px; }
+.subagent-role-revision { margin-right: auto; font-size: var(--fs-xs); color: var(--text-muted); }
+.subagent-role-action { padding: 4px var(--space-2); border: .5px solid var(--border); border-radius: var(--radius-s); background: transparent; font: inherit; font-size: var(--fs-s); color: var(--text); cursor: pointer; }
+.subagent-role-danger { padding: 4px var(--space-2); border: .5px solid var(--danger); border-radius: var(--radius-s); background: transparent; font: inherit; font-size: var(--fs-s); color: var(--danger); cursor: pointer; }
+.subagent-role-save { padding: var(--space-1) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-s); font: inherit; font-size: var(--fs-m); background: var(--text); color: var(--panel-surface); cursor: pointer; }
 .subagent-role-save:disabled, .subagent-role-action:disabled, .subagent-role-danger:disabled, .subagent-role-open:disabled { opacity: .4; cursor: default; }
 .subagent-role-input:disabled, .subagent-role-checkbox:disabled, .subagent-role-switch:disabled { opacity: .4; }
-.subagent-role-form button:focus-visible, .subagent-role-form input:focus-visible, .subagent-role-form textarea:focus-visible, .subagent-role-form select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.subagent-role-form button:focus-visible, .subagent-role-form input:focus-visible, .subagent-role-form textarea:focus-visible, .subagent-role-form select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

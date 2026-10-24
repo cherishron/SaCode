@@ -152,7 +152,7 @@ export function createModelCenterAdapters(api: any) {
             currency: chatGroup.single ? chatGroup.single.currency : null,
             meterSource: '上游用量',
             note: stats === null
-              ? '宿主尚未提供 ledger/stats，等接口变更单 §6 接线后本列自动点亮。'
+              ? '本次未取到宿主账本统计（ledger/stats）；读取失败或通道暂不可用，重试后本列会自动显示。'
               : (chatGroup.invalid ? '账本金额无效或超出安全整数范围，当前费用待核算。'
                 : chatGroup.parts.length === 0
                 ? '账本里没有已结算的 chat 记录；在途预留与待核算不计入本列。'

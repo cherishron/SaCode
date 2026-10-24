@@ -78,8 +78,18 @@ export const Page=defineComponent({
 
     const copyExport=async()=>{
       if(!exportText.value)return;
-      try{await navigator.clipboard.writeText(exportText.value);copied.value=true;setTimeout(()=>copied.value=false,2000);}
+      let ok=false;
+      try{if(navigator.clipboard&&typeof navigator.clipboard.writeText==='function'){await navigator.clipboard.writeText(exportText.value);ok=true;}}
       catch{}
+      if(!ok){
+        // 与 tool-card/app.js 同构：Clipboard API 不可用时用临时 textarea + execCommand，节点必在 finally 移除。
+        const ta=document.createElement('textarea');ta.value=exportText.value;ta.style.position='fixed';ta.style.opacity='0';
+        document.body.appendChild(ta);
+        try{ta.select();ok=document.execCommand('copy');}
+        finally{document.body.removeChild(ta);}
+      }
+      if(ok){copied.value=true;setTimeout(()=>copied.value=false,2000);}
+      else{error.value='复制失败，请手动选择导出内容后复制。';}
     };
 
     onMounted(()=>{off=props.adapter?.subscribe?.(()=>{void load();});void load();});

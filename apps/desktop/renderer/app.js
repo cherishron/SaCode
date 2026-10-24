@@ -45,6 +45,20 @@ const el = (tag, cls, children, extra) => {
 const verdictName = (verdict) => ({ recorded: "已计量", "over-budget": "超出预算", absent: "未收到用量", "bad-usage": "用量格式异常" }[verdict] || "未计量");
 const navIcon = (path) => h("svg", { class: "nav-symbol", viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" }, [h("path", { d: path })]);
 
+// 交互终端通道：把 terminal-interactive.ts 期望的 8 个函数映射到 preload 固定动作。
+// create 显式传空 env——Host 端不继承进程环境，壳层固定走 System32 cmd.exe（设计稿 §5.2）。
+// output 是 Host 侧直播环（terminalPtyOutput），与只读回放的 terminalOutput 不同名、不同车道。
+const terminalPtyChannels = {
+  create: opts => window.sacode.terminalCreate({ cwd: opts.cwd, env: {}, cols: opts.cols, rows: opts.rows }),
+  input: (sessionId, data) => window.sacode.terminalInput(sessionId, data),
+  resize: (sessionId, cols, rows) => window.sacode.terminalResize(sessionId, cols, rows),
+  interrupt: sessionId => window.sacode.terminalInterrupt(sessionId),
+  describe: sessionId => window.sacode.terminalDescribe(sessionId),
+  output: (sessionId, cursor) => window.sacode.terminalPtyOutput(sessionId, cursor),
+  close: sessionId => window.sacode.terminalClose(sessionId),
+  kill: sessionId => window.sacode.terminalKill(sessionId),
+};
+
 // 状态段的取值直接抄核心目录投影发的那三个 status，界面不另立一套状态词。
 
 // 目录树递归渲染：目录在前文件在后，展开目录递归取下一层；数据每次都从宿主取，
@@ -184,8 +198,16 @@ const TextBubble = {
       // 折叠是行级括住：全文恒在 DOM（user 走 p、assistant 恒走 Markdown，收起不换渲染器），
       // 视觉裁剪交给 CSS 的 max-height + overflow + 渐变遮罩（styles.css 里 [data-fold-state="folded"]）。
       const markdown = m.role === "assistant";
+      // 发送后到首字到达之间，live 助手气泡正文为空：给一块明确的等待占位，
+      // 否则回复位只剩空白，用户看不出「已在等待」还是「没发出去」。
+      const waiting = !!m.live && m.role === "assistant" && !text;
       const children = [
-        m.role === 'tool' ? h(window.SaCodeSlots.ToolCard, { message:m }) : markdown
+        waiting
+          ? h("div", { class: "msg-waiting", role: "status", "aria-live": "polite" }, [
+              h("span", { class: "msg-waiting-dots", "aria-hidden": "true" }, [h("span"), h("span"), h("span")]),
+              h("span", { class: "msg-waiting-text" }, "正在等待模型响应…"),
+            ])
+          : m.role === 'tool' ? h(window.SaCodeSlots.ToolCard, { message:m }) : markdown
           ? h(window.SaCodeMarkdown.Body, { text, "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state })
           : h("p", { class: "msg-text", "data-msg-id": id, "data-source-role": m.sourceRole || "", "data-fold-state": state }, text),
       ];
@@ -328,7 +350,7 @@ createApp({
     const sessionMenuKey=(e)=>{if(e.key==='Escape'&&sessionMenu.value){e.stopPropagation();closeSessionMenu();}};
     onMounted(()=>{document.addEventListener('pointerdown',sessionMenuOutside,true);document.addEventListener('keydown',sessionMenuKey,true);});
     onBeforeUnmount(()=>{document.removeEventListener('pointerdown',sessionMenuOutside,true);document.removeEventListener('keydown',sessionMenuKey,true);});
-    const sideTab = ref("files"), workbenchExpanded = ref(false);
+    const sideTab = ref("files"), workbenchExpanded = ref(false), browserResourceOpen = ref(false);
     const filePreviewRevision = ref(0);
     const fileEditorRevision = ref(0);
     function editorRead(path){
@@ -666,7 +688,9 @@ createApp({
     const approval = ref(null);
     const outcome = ref("");
     const outcomeKind = ref("");
-    const turn = ref({ running: false, settled: false, text: "", finishReason: "", cancelled: false, interrupted: false, delivered: 0 });
+    const turn = ref({});
+    const turnState = window.SaCodeTurnPoll.createTurnState(turn);
+    turnState.reset();
     // 计量读数只留一处真源：值全部来自核心的 usage/status 或 turn/poll 结算帧。
     // 界面不累加、不换算、也不在核心没回话时编一个 0 出来（0/0 看起来像「花光了」）。
     const usage = ref({ used: null, budget: null, over: false, verdict: "" });
@@ -682,6 +706,17 @@ createApp({
     const { enhance, clickEnhance, startEnhance, cancelEnhance, undoEnhance, clearEnhance, userEditDraft } = enhanceAssembly;
     window.Vue.onBeforeUnmount(() => enhanceAssembly.stopEnhancePoll());
 
+    // 语音输入：委托给 voice.js（经典脚本，CSP 兼容）。录制在桌面采集层完成，宿主只做导入登记与转写；
+    // 结果只写入草稿（可 Ctrl+Z 撤销），永不自动发送；转写授权走工具审批卡片（认工单号，不认自报字符串）。
+    const voiceAssembly = window.SaCodeVoice.createVoiceAssembly({
+      ref, getSessionId: () => String(scrollSession.value), getSessionGeneration: () => sessionGeneration,
+      focusComposerCaret, error,
+      announceApproval: (info) => { approval.value = info; openSide('tools-panel'); },
+    });
+    const { voice, clickVoice } = voiceAssembly;
+    window.SaCodeVoiceCurrent = voiceAssembly;
+    window.Vue.onBeforeUnmount(() => voiceAssembly.dispose());
+
     let pollGeneration = 0, modelApprovalsSuppressed = false, modelTurnRequestId = null;
     let disposeDesktopKeys;
     onMounted(() => { disposeDesktopKeys = window.SaCodeSettings.bindDesktopKeys({ target: window, document, settingsOpen, enhance, undoEnhance, openSide }); });
@@ -690,7 +725,7 @@ createApp({
     async function refresh(options) {
       const generation=sessionGeneration, result=await window.sacode.projection();
       if (generation===sessionGeneration) {
-        if(options?.settledTurn) turn.value.projectionPending=false;
+        if(options?.settledTurn) turnState.projectionReady();
         proj.value=result;scrollSession.value=selectedScrollId;
       }
     }
@@ -816,13 +851,13 @@ createApp({
         if (!current()) return;
         // 真源已清空：上一轮若被取消/中断，turn 里仍留着部分正文，投影刷新后会再叠一颗
         // live 气泡。与切换会话同一口径把轮次状态归零，再按真源刷新投影。
-        turn.value = { running: false, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0 };
+        turnState.reset();
         // 投影以真源为准刷新，不在这里手拼 messages:[] 冒充清空。
         await refresh();
         if (!current()) return;
-        self.cancelReview();
-        self.reviewNotice=null;
-        self.reviewCards=[];
+        cancelReview();
+        reviewNotice.value=null;
+        reviewCards.value=[];
         notice('对话已清空，会话标题与设置保留');
       } catch (e) { notice('清空失败：'+String(e?.message||e)); }
       finally { clearBusy.value=false; }
@@ -1148,23 +1183,9 @@ createApp({
     // 发送入口的自定义模型候选只从核心读（custom/describe 的 models），
     // 未启用的条目不给选；空选中态表示「不指定」，Host 沿用注册表默认指针。
     const customModels = ref([]), selectedCustomModel = ref("");
-    async function loadCustomModels() {
-      try {
-        const view = await window.sacode.customsDescribe();
-        customModels.value = (view.models || []).filter((m) => m.enabled === true);
-        if (selectedCustomModel.value && !customModels.value.some((m) => m.id === selectedCustomModel.value)) selectedCustomModel.value = "";
-      } catch (e) { customModels.value = []; }
-    }
+    const modelSelection = window.SaCodeModelDirectory.createModelSelection({api:window.sacode,directory:modelDirectory,customModels,selectedCustomModel});
+    const {loadCustomModels,composerDirectory} = modelSelection;
     void loadCustomModels();
-    // 输入区只有一个模型入口，但它背后有两种来源：注册表默认指针与自定义模型。
-    // 两个指针同时生效时界面显示的那颗不一定是真正被发送的那颗，所以选中注册表模型
-    // 时顺手清掉自定义指针，让「显示 = 发送」恒等；反向则由选择器回调负责。
-    const composerDirectory = {
-      getSnapshot: () => modelDirectory.getSnapshot(),
-      subscribe: (invalidate) => modelDirectory.subscribe(invalidate),
-      load: () => Promise.all([modelDirectory.load(),loadCustomModels()]),
-      select: async (value) => { await modelDirectory.select(value); selectedCustomModel.value = ''; },
-    };
     const settingsAssembly = window.SaCodeSettings.createSettingsAssembly({
       api: window.sacode, globalAppearance, fontBusy, fontNote, appearanceBusy, appearanceNote,
       budgetDraft, budgetNote, budgetBusy, usage, generalPrefs, generalPrefsBusy, generalPrefsNote,
@@ -1193,8 +1214,10 @@ createApp({
       draft, error, selectedScrollId: selectedScrollIdRef, scrollSession,
       turn, approval, sendBusy, budgetBusy, appearanceBusy, workspaceBusy,
       sessionDrafts, getSessionGeneration: () => sessionGeneration, incrementSessionGeneration: () => { sessionGeneration += 1; },
-      catalogError, clearEnhance, clearAttachments, stopPolling,
-      foldOpen, loadCustomModels, fileEditor,
+      catalogError, clearEnhance, clearAttachments,
+      resetExecution: () => sendQueue.resetSession(),
+      resetModelSelection: () => { modelSelection.resetSession(); void loadCustomModels(); },
+      foldOpen, fileEditor,
       worktreeController, resetWorktreePanel,
       refresh, refreshTools, refreshUsage,
       refreshWorkspace: () => workspaceAssembly.refreshWorkspace(),
@@ -1202,9 +1225,9 @@ createApp({
       invalidateTrace: () => workspaceAssembly.invalidateTrace(),
       refreshTrace: (reset, sessionId) => workspaceAssembly.refreshTrace(reset, sessionId),
       refreshQueue, refreshGlobalAppearance,
-      selectedCustomModel, previewFloating, detailName,
+      previewFloating, detailName,
       budgetDraft, budgetNote, appearanceNote, workspaceNote,
-      queuePending, focusComposer: focusComposerCaret,
+      focusComposer: focusComposerCaret,
       tipsPressure, tips, refreshTips,
       outcome, outcomeKind, enhance,
     });
@@ -1223,20 +1246,7 @@ createApp({
       refresh, refreshTools, refreshCatalog,
     });
     const { refreshWorkspace, refreshWorkspaceFiles, toggleTreeDir, refreshTrace, openWorkspace, chooseWorkspace, selectRecentWorkspace } = workspaceAssembly;
-    const modelCenterAdapters = window.SaCodeSlots.createModelCenterAdapters(window.sacode);
-    // 供应商写动作之后刷新输入区的模型目录：同一份注册表的两份投影必须同步走。
-    for (const verb of ["save", "saveCredential", "createInstance", "setDefault", "remove", "reorder", "pullModels", "refreshPull", "cancelPull"]) {
-      const inner = modelCenterAdapters["provider-settings"][verb].bind(modelCenterAdapters["provider-settings"]);
-      modelCenterAdapters["provider-settings"][verb] = async (...args) => {
-        try { return await inner(...args); } finally { void modelDirectory.load(); }
-      };
-    }
-    for (const verb of ["upsert", "remove", "bindingUpsert", "bindingRemove", "bindingReorder"]) {
-      const inner = modelCenterAdapters["custom-models"][verb].bind(modelCenterAdapters["custom-models"]);
-      modelCenterAdapters["custom-models"][verb] = async (...args) => {
-        try { return await inner(...args); } finally { void loadCustomModels(); }
-      };
-    }
+    const modelCenterAdapters = modelSelection.bindAdapters(window.SaCodeSlots.createModelCenterAdapters(window.sacode));
     modelCenterOwner.value = { adapters: modelCenterAdapters };
 
     const modelApprovalsSuppressedRef = { get value() { return modelApprovalsSuppressed; }, set value(v) { modelApprovalsSuppressed = v; } };
@@ -1380,7 +1390,7 @@ createApp({
       clearBusy, clearNotice, clearConversation,
       reviewBusy, reviewNotice, reviewCards, reviewWorkspace, cancelReview,
       projectInitBusy, projectInitNotice, initializeProject,
-      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, sendBusy, error, canRetryLastTurn, retryLastTurn, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
+      proj, scrollSession, followingTail, tools, detailName, detailTool, sideTab, workbenchExpanded, browserResourceOpen, filePreview, filePreviewRevision, openWorkspaceFile, sideSplit, sideRatio, beginResize, openSide, toolCounters, draft, updateDraft, userEditDraft, enhance, clickEnhance, voice, clickVoice, sendBusy, error, canRetryLastTurn, retryLastTurn, approval, outcome, outcomeKind, turn, attachments, uploads, addAttachments, removeAttachment, retryAttachment,
       worktreeState, worktreeController, worktreeLocked,
       activityStats, composerModelKey, invalidReferencePrompt, decideInvalidReferences,
       usage, budgetDraft, budgetNote, budgetBusy, setBudget, bubbleMessages, readPreview, previewFloating, settingsOpen, settingsTab, managementPage, managementDraft, pluginManagerOpen, pluginManagerAdapter,
@@ -1587,8 +1597,10 @@ createApp({
     const sidePanels = window.SaCodeSidePanels.renderPanels(self, { h, el, navIcon, turnBar, renderTreeEntries, verdictName });
     const { sideTabs, inspection, filesPage, tracePage, guide, previewBody } = sidePanels;
     const searchPage = el('div','side-page',[h(window.SaCodeSlots.WorkspaceSearch,{key:'search-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='search'&&!self.pluginManagerOpen&&!self.managementPage,configured:!!self.workspace?.configured,directory:self.workspace?.directory||'',listFiles:path=>window.sacode.workspaceFiles(path),onOpen:self.openWorkspaceFile,onChoose:self.openWorkspace})],{id:'side-page-search',role:'tabpanel','aria-labelledby':'side-tab-search',hidden:self.sideTab!=='search'});
+    const browserPage=el('div','side-page browser-side-page',[self.browserResourceOpen?h(window.SaCodeSlots.BrowserPanel,{api:window.sacode,sessionId:String(self.scrollSession),projectId:self.workspace?.configured?self.workspace.directory:'unbound',active:self.sideOpen&&self.sideTab==='browser'&&!self.pluginManagerOpen&&!self.managementPage&&self.frameColumns.rightbar>0}):null],{id:'side-page-browser',role:'tabpanel','aria-labelledby':'side-tab-browser',hidden:self.sideTab!=='browser'});
     const editorPage=el('div','side-page',[h(window.SaCodeSlots.FileEditor,{editor:self.fileEditor,revision:self.fileEditorRevision})],{id:'side-page-editor',role:'tabpanel','aria-labelledby':'side-tab-editor',hidden:self.sideTab!=='editor'});
-    const terminalPage=el('div','side-page',[h(window.SaCodeSlots.TerminalOutput,{key:'terminal-'+self.scrollSession,executionApi:window.sacode,sessionId:String(self.scrollSession),active:self.sideOpen&&self.sideTab==='terminal'&&!self.pluginManagerOpen&&!self.managementPage,read:cursor=>window.sacode.terminalOutput(String(self.scrollSession),cursor,16)})],{id:'side-page-terminal',role:'tabpanel','aria-labelledby':'side-tab-terminal',hidden:self.sideTab!=='terminal'});
+    const terminalActive=self.sideOpen&&self.sideTab==='terminal'&&!self.pluginManagerOpen&&!self.managementPage;
+    const terminalPage=el('div','side-page',[h(window.SaCodeSlots.TerminalInteractive,{key:'term-int-'+self.scrollSession,active:terminalActive,sessionId:String(self.scrollSession),directory:self.workspace?.directory||'',configured:!!self.workspace?.configured,workspaceRevision:'',channels:terminalPtyChannels,onChoose:self.openWorkspace}),el('details','term-replay',[el('summary',null,'历史回放（已落盘输出）'),h(window.SaCodeSlots.TerminalOutput,{key:'terminal-'+self.scrollSession,executionApi:window.sacode,sessionId:String(self.scrollSession),active:terminalActive,read:cursor=>window.sacode.terminalOutput(String(self.scrollSession),cursor,16)})])],{id:'side-page-terminal',role:'tabpanel','aria-labelledby':'side-tab-terminal',hidden:self.sideTab!=='terminal'});
     const testsPage=el('div','side-page',[h(window.SaCodeSlots.BuildTestPage,{key:'tests-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='tests'&&!self.pluginManagerOpen&&!self.managementPage,sessionId:String(self.scrollSession),api:window.sacode})],{id:'side-page-tests',role:'tabpanel','aria-labelledby':'side-tab-tests',hidden:self.sideTab!=='tests'});
     const artifactsPage=el('div','side-page',[h(window.SaCodeSlots.ArtifactsPage,{key:'artifacts-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='artifacts'&&!self.pluginManagerOpen&&!self.managementPage,sessionId:String(self.scrollSession),api:window.sacode})],{id:'side-page-artifacts',role:'tabpanel','aria-labelledby':'side-tab-artifacts',hidden:self.sideTab!=='artifacts'});
     const lspPage=el('div','side-page',[h(window.SaCodeSlots.LspResults,{key:'lsp-'+self.scrollSession,active:self.sideOpen&&self.sideTab==='lsp'&&!self.pluginManagerOpen&&!self.managementPage,directory:self.workspace?.directory||'',configured:!!self.workspace?.configured,api:window.sacode,onOpen:self.openWorkspaceFile})],{id:'side-page-lsp',role:'tabpanel','aria-labelledby':'side-tab-lsp',hidden:self.sideTab!=='lsp'});
@@ -1597,7 +1609,7 @@ createApp({
     const preview = el("div", "side-page", previewBody("preview"), { id: "side-page-preview", role: "tabpanel", "aria-labelledby": "side-tab-preview", hidden: self.sideTab !== "preview" });
     const teamPage=el('div','side-page',[self.teamSnapshot?h(window.SaCodeSlots.TeamPanel,{key:self.teamSessionId,snapshot:self.teamSnapshot,busy:self.teamBusy,error:self.teamError,onAddMember:self.addTeamMember,onSendMessage:self.sendTeamMessage,onCreateTask:self.createTeamTask,onAssignTask:self.assignTeamTask,onStopMember:self.stopTeamMember,onSelectSession:self.selectTeamSession,onRefresh:self.refreshTeam}):el('section','team-panel',[el('h2',null,'智能体团队'),self.teamBusy?el('p','note','正在读取团队…',{role:'status'}):null,self.teamError?el('div','resource-error',[el('strong',null,'团队读取失败'),el('p','note',self.teamError.includes('timeout')?'请求超时，未取得团队状态。可重试读取。':'未取得团队状态。请检查连接后重试。'),el('details',null,[el('summary',null,'错误详情'),el('pre',null,self.teamError)])],{role:'alert'}):null,el('button','btn','刷新',{disabled:self.teamBusy,onClick:self.refreshTeam})]),h(window.SaCodeSlots.AcpHistoryPanel,{key:'acp-'+self.scrollSession,sessionId:typeof self.scrollSession==='string'?self.scrollSession:'',api:window.sacode,active:!!self.catalog?.entries?.some(entry=>entry.current&&entry.id===self.scrollSession)&&self.sideOpen&&self.sideTab==='agents'&&!self.pluginManagerOpen&&!self.managementPage})],{id:'side-page-agents',role:'tabpanel','aria-labelledby':'side-tab-agents',hidden:self.sideTab!=='agents'});
     const side = el("aside", "pane side", [sideTabs, el("div", "side-content" + (self.sideSplit ? " side-split" : ""), [
-      el("div", "side-primary", [!self.sideTab?el("div","empty-card",[el("h3",null,"暂无打开的资源"),el("p","note","使用右上角 ＋ 添加工作台标签。")]):null,inspection, filesPage, searchPage, editorPage, diffPage, gitPage, terminalPage, testsPage, artifactsPage, lspPage, teamPage, tracePage, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
+      el("div", "side-primary", [!self.sideTab?el("div","empty-card",[el("h3",null,"暂无打开的资源"),el("p","note","使用右上角 ＋ 添加工作台标签。")]):null,inspection, filesPage, searchPage, browserPage, editorPage, diffPage, gitPage, terminalPage, testsPage, artifactsPage, lspPage, teamPage, tracePage, preview, guide], { style: { flex: self.sideSplit ? self.sideRatio : 1 } }),
       self.sideSplit ? el("div", "pane-divider", null, { id: "pane-divider", role: "separator", tabindex: 0,
         "aria-label": "调整右侧窗格高度", "aria-orientation": "horizontal", "aria-valuemin": 25, "aria-valuemax": 75, "aria-valuenow": self.sideRatio,
         onKeydown: (e) => {
@@ -1626,7 +1638,7 @@ createApp({
       self.scrollSession!=='initial' && self.scrollSession!==0 ? h(window.SaCodeGoal.GoalBar,{key:'goal-'+self.scrollSession,hideCreate:true,editRequest:self.goalEditorRequest,adapter:{describe:()=>window.sacode.goalDescribe(String(self.scrollSession)),create:text=>window.sacode.goalCreate(String(self.scrollSession),text).then(g=>{startPolling();return g;}),edit:(revision,text)=>window.sacode.goalEdit(String(self.scrollSession),revision,text),pause:revision=>window.sacode.goalPause(String(self.scrollSession),revision),resume:revision=>window.sacode.goalResume(String(self.scrollSession),revision).then(g=>{startPolling();return g;}),clear:revision=>window.sacode.goalClear(String(self.scrollSession),revision)}}):null,
       // 使用提醒条：贴在输入区上方，与会话正文分开——它不是消息，也不进投影。
       h(window.SaCodeTips.TipsBar,{key:'tips-'+self.scrollSession,entry:self.tips,busy:self.tipsBusy,onDismiss:self.dismissTips}),
-      h(window.SaCodeComposerStats.ComposerStats,{key:'stats-'+self.scrollSession,sessionId:String(self.scrollSession),modelKey:self.composerModelKey,activity:self.activityStats,settled:self.turn.settled,api:window.sacode}),
+      h(window.SaCodeComposerStats.ComposerStats,{key:'stats-'+self.scrollSession,sessionId:String(self.scrollSession),modelKey:self.composerModelKey,activity:self.activityStats,settled:self.turn.settled,empty:emptyConversation,api:window.sacode}),
       el("label", "composer-label", "发送消息", { for: "composer" }),
       el("div", "composer-card", [withDirectives(h("textarea", {
         class: "input",
@@ -1652,7 +1664,7 @@ createApp({
         disabled:!self.enhance.busy && !self.enhance.undo && !self.draft.trim(),
         tooltip:{label:self.enhance.busy?'取消增强':(self.enhance.undo?'回退增强（Ctrl+Z）':'用当前模型把这条说得更清楚'),side:'top',delayMs:500},
         // 与发送按钮一样不把焦点从输入框挪走：增强完还要接着改草稿。
-        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el('button','composer-voice',[navIcon('M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8')],{type:'button',disabled:true,'aria-label':'语音输入待接入',title:'当前版本尚未支持语音输入'}),h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,pressure:(()=>{void self.modelDirectoryRevision;const v=self.modelDirectory.getSnapshot();const s=self.tipsPressure;return {contextWindow:parseCapacity(v&&v.contextWindow)||undefined,projectedTokens:(s&&Number.isFinite(s.projectedTokens))?s.projectedTokens:undefined};})()}),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
+        onMousedown:e=>e.preventDefault(),onClick:()=>self.clickEnhance() }),el('button','composer-voice',[navIcon(self.voice.status==='recording'?'M6 6h12v12H6z':'M9 4a3 3 0 0 1 6 0v7a3 3 0 0 1-6 0zM5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8')],{id:'composer-voice',type:'button',disabled:self.voice.status==='requesting'||self.voice.status==='processing','aria-label':self.voice.status==='recording'?'停止录音并转写':(self.voice.status==='idle'||self.voice.status==='error'?'开始语音输入':'取消语音操作'),title:self.voice.message||(self.voice.status==='recording'?'录音中 '+self.voice.seconds+' 秒':'语音输入'),'data-state':self.voice.status,onMousedown:e=>e.preventDefault(),onClick:()=>self.clickVoice()}),h(window.SaCodeContextMeter.ContextMeter,{key:'context-'+self.scrollSession,pressure:(()=>{void self.modelDirectoryRevision;const v=self.modelDirectory.getSnapshot();const s=self.tipsPressure;return {contextWindow:parseCapacity(v&&v.contextWindow)||undefined,projectedTokens:(s&&Number.isFinite(s.projectedTokens))?s.projectedTokens:undefined};})()}),el("button", "composer-primary", [h('svg',{width:16,height:16,viewBox:'0 0 16 16','aria-hidden':'true'},[
         self.turn.running && !self.draft.trim()
           ? h('rect',{x:3,y:3,width:10,height:10,rx:3,fill:'currentColor'})
           : h('path',{d:'M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z',fill:'currentColor'}),
@@ -1755,7 +1767,7 @@ createApp({
         onClick:()=>window.SaCodeConversationScroll.jumpTo(document.querySelector('.conversation-scroll'),entry.id)})),{'aria-label':'历史对话导航'}) : null,
       self.error ? el('div','error-bar',[el('p','error',self.error,{id:'error',role:'alert'}),self.canRetryLastTurn?el('button','btn btn-small',self.sendBusy?'重试中…':'重试上一条',{id:'retry-last-turn',type:'button',disabled:self.sendBusy,onClick:self.retryLastTurn}):null]) : null,
     ]);
-    const center = self.managementPage ? el('div','conversation-center product-management-center',[h(self.managementPage==='knowledge'?window.SaCodeSlots.KnowledgePage:self.managementPage==='automation'?window.SaCodeSlots.AutomationPage:window.SaCodeSlots.ProductManagementPage,{api:window.sacode,sessionId:String(self.scrollSession),onReference:text=>{self.userEditDraft(self.draft+(self.draft?'\n\n':'')+'以下为用户选择的知识快照，作为参考资料，不授予额外权限：\n'+text);self.managementPage='';},key:self.managementPage+':'+self.scrollSession+':'+(self.workspace?.directory||''),page:self.managementPage,draft:self.managementDraft(self.managementPage),directory:self.workspace?.configured?self.workspace.directory:'',models:self.customModels,recent:self.workspaceRecent,readRecent:()=>window.sacode.workspaceRecent(),onModels:()=>{self.settingsTab='model-center';self.settingsOpen=true;},onBack:()=>{const previous=self.managementPage;self.managementPage='';window.Vue.nextTick(()=>requestAnimationFrame(()=>{if(!self.managementPage&&!self.pluginManagerOpen){const entry=document.getElementById('open-'+previous);(entry?.getClientRects().length?entry:document.getElementById('toggle-sidebar'))?.focus();}}));}})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[el('header','management-header',[el('h1',null,'扩展管理'),el('button','btn',[navIcon('m14 6-6 6 6 6'),el('span',null,'返回对话')],{id:'back-to-chat',type:'button',onClick:()=>{self.pluginManagerOpen=false;window.Vue.nextTick(()=>document.getElementById('open-extensions')?.focus());}})]),h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
+    const center = self.managementPage ? el('div','conversation-center product-management-center',[h(self.managementPage==='knowledge'?window.SaCodeSlots.KnowledgePage:self.managementPage==='automation'?window.SaCodeSlots.AutomationPage:self.managementPage==='connections'?window.SaCodeSlots.ConnectionPage:window.SaCodeSlots.ProductManagementPage,{api:window.sacode,sessionId:String(self.scrollSession),onReference:text=>{self.userEditDraft(self.draft+(self.draft?'\n\n':'')+'以下为用户选择的知识快照，作为参考资料，不授予额外权限：\n'+text);self.managementPage='';},key:self.managementPage+':'+self.scrollSession+':'+(self.workspace?.directory||''),page:self.managementPage,draft:self.managementDraft(self.managementPage),directory:self.workspace?.configured?self.workspace.directory:'',models:self.customModels,recent:self.workspaceRecent,readRecent:()=>window.sacode.workspaceRecent(),onModels:()=>{self.settingsTab='model-center';self.settingsOpen=true;},onBack:()=>{const previous=self.managementPage;self.managementPage='';window.Vue.nextTick(()=>requestAnimationFrame(()=>{if(!self.managementPage&&!self.pluginManagerOpen){const entry=document.getElementById('open-'+previous);(entry?.getClientRects().length?entry:document.getElementById('toggle-sidebar'))?.focus();}}));}})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : self.pluginManagerOpen ? el('div','conversation-center plugin-manager-center',[el('header','management-header',[el('h1',null,'扩展管理'),el('button','btn',[navIcon('m14 6-6 6 6 6'),el('span',null,'返回对话')],{id:'back-to-chat',type:'button',onClick:()=>{self.pluginManagerOpen=false;window.Vue.nextTick(()=>document.getElementById('open-extensions')?.focus());}})]),h(window.SaCodePluginManager.Page,{adapter:self.pluginManagerAdapter?.adapter||undefined,unwired:self.pluginManagerAdapter?.unwired||undefined})],{style:{'--conversation-width':self.frameColumns.center+'px'}}) : el('div','conversation-center'+(emptyConversation?' is-empty':''),[head,main],{style:{'--conversation-width':self.frameColumns.center+'px'}});
     return el("div", "app", [el('div','window-caption',null,{'aria-hidden':'true'}),nav,center,side,
       !self.workbenchExpanded&&!self.sidebarCollapsed?frameHandle('sidebar',self.frameColumns.sidebar,self.sidebarWidth,264,420):null,
       !self.workbenchExpanded&&self.sideOpen&&self.frameColumns.rightbar>0?frameHandle('rightbar',self.frameColumns.sidebar+self.frameColumns.center,self.frameColumns.rightbar,300,Math.round(innerWidth*.7)):null,

@@ -55,5 +55,30 @@
       },
     };
   }
-  root.SaCodeModelDirectory = { createModelDirectory };
+  function createModelSelection({api,directory,customModels,selectedCustomModel}) {
+    let sequence=0;
+    async function loadCustomModels() {
+      const current=++sequence;
+      try {
+        const view=await api.customsDescribe();
+        if(current!==sequence)return;
+        customModels.value=(view.models||[]).filter(model=>model.enabled===true);
+        if(selectedCustomModel.value&&!customModels.value.some(model=>model.id===selectedCustomModel.value))selectedCustomModel.value='';
+      } catch (_) { if(current===sequence)customModels.value=[]; }
+    }
+    const composerDirectory={
+      getSnapshot:()=>directory.getSnapshot(), subscribe:fn=>directory.subscribe(fn),
+      load:()=>Promise.all([directory.load(),loadCustomModels()]),
+      select:async value=>{await directory.select(value);selectedCustomModel.value='';},
+    };
+    function bindAdapters(adapters) {
+      const bind=(adapter,verbs,refresh)=>Object.fromEntries(Object.entries(adapter).map(([name,action])=>[name,verbs.includes(name)?async(...args)=>{try{return await action.apply(adapter,args);}finally{void refresh();}}:action]));
+      return {...adapters,
+        'provider-settings':bind(adapters['provider-settings'],['save','saveCredential','createInstance','setDefault','remove','reorder','pullModels','refreshPull','cancelPull'],()=>directory.load()),
+        'custom-models':bind(adapters['custom-models'],['upsert','remove','bindingUpsert','bindingRemove','bindingReorder'],loadCustomModels),
+      };
+    }
+    return {composerDirectory,loadCustomModels,bindAdapters,resetSession(){sequence++;selectedCustomModel.value='';}};
+  }
+  root.SaCodeModelDirectory = { createModelDirectory, createModelSelection };
 })(globalThis);

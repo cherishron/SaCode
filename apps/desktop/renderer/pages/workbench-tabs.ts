@@ -10,6 +10,7 @@ export const resources:Resource[]=[
   {id:'inspect',label:'工具与审批',icon:'M8 3h8v5h5v8h-5v5H8v-5H3V8h5z',available:true},
   {id:'trace',label:'会话轨迹',icon:'M5 5h14M5 12h14M5 19h14',available:true},
   {id:'guide',label:'使用指南',icon:'M3 4h8l1 2 1-2h8v16h-8l-1 1-1-1H3zM12 6v15',available:true},
+  {id:'browser',label:'内置浏览器',icon:'M3 5h18v14H3zM3 9h18M7 7h1',available:true},
   {id:'terminal',label:'终端',icon:'M4 5l6 7-6 7M13 19h7',available:true},
   {id:'agents',label:'智能体团队',icon:'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5',available:true},
   {id:'tests',label:'构建测试',icon:'M9 3h6M10 3v7l-6 9h16l-6-9V3M8 15h8',available:true},

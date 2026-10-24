@@ -1,4 +1,4 @@
-// DSH Tooltip 的经典脚本适配；Vue 指令保持锚点不变，提示只持有派生展示状态。
+// 基线 Tooltip 的经典脚本适配；Vue 指令保持锚点不变，提示只持有派生展示状态。
 "use strict";
 window.SaCodeTooltip = (function () {
   const states=new WeakMap(),visible=new Set();let sequence=0,pointer=false,listening=false;

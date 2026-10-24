@@ -46,7 +46,7 @@ export function createGeneralSettingsAssembly() {
       },
     }));
   }));
-  // —— 11 个缺失行（上游 DSH 12 行，当前仅 busy-send）——
+  // —— 11 个缺失行（上游基线 12 行，当前仅 busy-send）——
   install('ui-settings-extra',child=>{
     child.inject('settings.general.row',row=>{
       row.register({name:'settings.general.row',id:'permission',order:10,label:'权限'},defineComponent({

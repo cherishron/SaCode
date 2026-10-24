@@ -38,12 +38,15 @@ app.whenReady().then(async()=>{
       const remove=[...root.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='删除 '+row.name);
       check(title+'编辑删除只读护栏 '+writable,!!edit&&!!remove&&edit.disabled===!writable&&remove.disabled===!writable);
       if(writable&&edit){edit.click();await settle();check(title+'点击编辑打开字段',!!root.querySelector('input[aria-label="'+(title==='供应商'?'显示名称':'名称')+'"]'));}
+      if(title==='供应商'&&writable)check('供应商编辑表单位于弹窗内且列表不再内联',!!root.querySelector('dialog.sacode-dialog[open] .ps-editor')&&!root.querySelector('ul .ps-editor'));
       if(writable){check(title+'编辑表单字段不越界',[...root.querySelectorAll('input,select,fieldset')].every(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1;}));check(title+'表单样式实际加载',getComputedStyle(root.querySelector('input')).borderTopStyle==='solid');}
       if(writable)await capture(title==='供应商'?'provider-edit':'custom-edit');
       const cancel=[...root.querySelectorAll('button')].find(b=>b.textContent==='取消');if(cancel){cancel.click();await settle();}
+      if(title==='供应商'&&writable)check('供应商取消后弹窗关闭且列表恢复',!root.querySelector('dialog.sacode-dialog[open]')&&!root.querySelector('.ps-editor'));
       const add=[...root.querySelectorAll('button')].find(b=>b.textContent.includes('+ 添加'));
       check(title+'添加入口只读护栏 '+writable,!!add&&add.disabled===!writable);
       if(writable&&add){add.click();await settle();check(title+'新增表单打开',!!root.querySelector('input[aria-label="'+(title==='供应商'?'Provider ID':'ID')+'"]'));}
+      if(title==='供应商'&&writable&&add)check('供应商新增表单位于弹窗内',!!root.querySelector('dialog.sacode-dialog[open] .ps-editor input[aria-label="Provider ID"]'));
       if(writable)await capture(title==='供应商'?'provider-create':'custom-create');
       ui.unmount();await settle();
     }
@@ -59,11 +62,13 @@ app.whenReady().then(async()=>{
     check('供应商显示名称并保留身份',root.querySelector('select[aria-label="供应商"]').selectedOptions[0].textContent===provider.name&&root.querySelector('select[aria-label="供应商"]').value===provider.id);
     check('长模型名有完整悬浮说明',root.querySelector('select[aria-label="模型"]').title===longModel);
     check('长模型名称与价格字段不越界',[...root.querySelectorAll('input,select,fieldset,.cm-binding')].every(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1;}));
-    check('价格与币种来自绑定',root.querySelectorAll('input[aria-label="输入价格（微）"]')[0].value==='1200000'&&root.querySelectorAll('input[aria-label="货币"]')[0].value==='CNY');
+    // 价格字段的 aria-label 会随文案补单位说明而变，按 .cm-pricings 内位置取，避免驱动与文案耦合。
+    const priceInputs=()=>[...root.querySelectorAll('.cm-binding .cm-pricings')].map(p=>p.querySelector('input'));
+    check('价格与币种来自绑定',priceInputs()[0].value==='1200000'&&root.querySelectorAll('input[aria-label="货币"]')[0].value==='CNY');
     const firstSelect=()=>root.querySelector('select[aria-label="模型"]');
     root.querySelector('button[aria-label="下移"]').click();await settle();check('绑定重排保留模型身份',firstSelect().value==='second');
-    const price=root.querySelector('input[aria-label="输入价格（微）"]');price.value='2400000';price.dispatchEvent(new Event('input',{bubbles:true}));await settle();
-    root.querySelectorAll('button[aria-label="上移"]')[1].click();await settle();check('重排后价格仍绑定原模型',root.querySelectorAll('input[aria-label="输入价格（微）"]')[1].value==='2400000'&&firstSelect().value==='first');
+    const price=priceInputs()[0];price.value='2400000';price.dispatchEvent(new Event('input',{bubbles:true}));await settle();
+    root.querySelectorAll('button[aria-label="上移"]')[1].click();await settle();check('重排后价格仍绑定原模型',priceInputs()[1].value==='2400000'&&firstSelect().value==='first');
     await capture('custom-multi-bindings');
     root.querySelector('button[aria-label="删除绑定"]').click();await settle();check('删除单个绑定保留其他绑定',root.querySelectorAll('.cm-binding').length===1&&firstSelect().value==='second');
     multiUi.unmount();await settle();
@@ -82,10 +87,16 @@ app.whenReady().then(async()=>{
     const nameInput=root.querySelector('input[aria-label="名称"]');nameInput.value='保留的保存草稿';nameInput.dispatchEvent(new Event('input',{bubbles:true}));await settle();
     const saveButton=[...root.querySelectorAll('button')].find(b=>b.textContent==='保存');saveButton.click();saveButton.click();await settle();
     check('保存并发仅调用一次',saveCalls===1);
-    check('保存期间锁定编辑页',root.querySelector('.cm-editor').hasAttribute('inert')&&root.querySelector('.cm-editor').getAttribute('aria-busy')==='true'&&root.querySelector('button[aria-label="刷新自定义模型目录"]').disabled);
+    check('保存期间锁定编辑页',root.querySelector('.cm-editor').disabled&&root.querySelector('.cm-editor').getAttribute('aria-busy')==='true'&&root.querySelector('button[aria-label="刷新自定义模型目录"]').disabled);
+    root.querySelector('.cm-editor-dialog .dialog-close').click();await settle();
+    check('保存期间关闭按钮不能丢弃弹窗',!!root.querySelector('dialog.cm-editor-dialog[open]'));
+    root.querySelector('dialog.cm-editor-dialog').dispatchEvent(new Event('cancel',{cancelable:true}));await settle();
+    check('保存期间原生取消请求不能关闭弹窗',!!root.querySelector('dialog.cm-editor-dialog[open]'));
+    check('保存期间原生字段实际禁用',root.querySelector('input[aria-label="名称"]').matches(':disabled'));
     saveReject(Error('fixture-save-rejected'));await settle();
+    check('保存失败原因位于弹窗内且不重复',root.querySelector('dialog.cm-editor-dialog [role="alert"]')?.textContent==='fixture-save-rejected'&&root.querySelectorAll('[role="alert"]').length===1);
     check('保存失败保留草稿并显示原因',root.querySelector('input[aria-label="名称"]').value==='保留的保存草稿'&&root.textContent.includes('fixture-save-rejected'));
-    check('保存失败解除提交锁',!root.querySelector('.cm-editor').hasAttribute('inert')&&[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').disabled===false);
+    check('保存失败解除提交锁',!root.querySelector('.cm-editor').disabled&&[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').disabled===false);
     await capture('custom-save-failure');
     failCustomRead=true;root.querySelector('button[aria-label="刷新自定义模型目录"]').click();await settle();check('目录刷新失败禁止旧草稿提交',root.querySelector('.cm-editor button.cm-primary').disabled);check('目录刷新失败保留草稿并允许重试',root.textContent.includes('fixture-custom-read-failed')&&root.querySelector('input[aria-label="名称"]').value==='保留的保存草稿'&&!root.querySelector('button[aria-label="刷新自定义模型目录"]').disabled);failCustomRead=false;root.querySelector('button[aria-label="刷新自定义模型目录"]').click();await settle();check('目录读取重试恢复并保留原绑定',!root.textContent.includes('fixture-custom-read-failed')&&root.querySelector('select[aria-label="模型"]').value==='first');
     writeAllowed=false;invalidate();await settle();check('权限撤回后禁止保存',root.querySelector('.cm-editor button.cm-primary').disabled);
@@ -97,7 +108,7 @@ app.whenReady().then(async()=>{
     const confirm=[...root.querySelectorAll('button')].find(b=>b.textContent==='确认删除');confirm.click();confirm.click();await settle();check('删除重复提交仅调用一次',deleteCalls===1);check('刷新不提升删除提案修订',deleteSentRevision==='delete-r1');deleteReject(Error('fixture-delete-rejected'));await settle();check('删除失败保留确认与原因',!!root.querySelector('[role="alertdialog"]')&&root.textContent.includes('fixture-delete-rejected'));deleteUi.unmount();await settle();
     let builtinWrites=0,builtinSent;
     const builtinUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Providers,{adapter:{describe:async()=>({providers:[{...provider,declared:true}],catalog:[],revision:'builtin-r1',writable:true}),save:async d=>{builtinWrites++;builtinSent=d;}}})});builtinUi.config.errorHandler=e=>errors.push(String(e));builtinUi.mount(root);await settle();root.querySelector('button[aria-label="编辑 '+provider.name+'"]').click();await settle();
-    check('内置供应商目录字段只读且说明保存范围',['显示名称','API 地址','API 协议','传输方式','排序'].every(label=>root.querySelector('[aria-label="'+label+'"]').disabled)&&root.textContent.includes('此处仅保存启停'));
+    check('内置供应商目录字段只读且说明保存范围',['显示名称','API 地址','API 协议','传输方式','排序'].every(label=>root.querySelector('[aria-label="'+label+'"]').disabled)&&root.textContent.includes('此处可保存启停'));
     const builtinEnabled=root.querySelector('input[aria-label="启用"]');check('内置供应商启停仍可修改',!builtinEnabled.disabled);builtinEnabled.checked=false;builtinEnabled.dispatchEvent(new Event('change',{bubbles:true}));await settle();await capture('provider-builtin-edit');[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').click();await settle();check('内置供应商启停保存保留目录字段',builtinWrites===1&&builtinSent.enabled===false&&builtinSent.baseUrl===provider.baseUrl&&builtinSent.name===provider.name);builtinUi.unmount();
     let invalidProviderWrites=0;
     const invalidProviderUi=Vue.createApp({setup:()=>()=>Vue.h(ModelPages.Providers,{adapter:{describe:async()=>({providers:[provider],catalog:[],revision:'invalid-r1',writable:true}),save:async()=>{invalidProviderWrites++;}}})});invalidProviderUi.config.errorHandler=e=>errors.push(String(e));invalidProviderUi.mount(root);await settle();root.querySelector('button[aria-label="编辑 '+provider.name+'"]').click();await settle();[...root.querySelectorAll('button')].find(b=>b.textContent==='保存').click();await settle();check('无模型供应商保存显示原因且不调用适配器',invalidProviderWrites===0&&root.textContent.includes('请配置 1–128 个模型')&&!!root.querySelector('fieldset'));invalidProviderUi.unmount();

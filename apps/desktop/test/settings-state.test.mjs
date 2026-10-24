@@ -156,6 +156,14 @@ test('上下文压力无可靠读数时清除旧值', async () => {
   assert.equal(deps.tipsPressure.value, undefined);
 });
 
+// 分母缺失只影响比例，不影响分子：真实用量照样要留下来给容量条显示。
+test('容量未知时仍保留真实用量，不因换算不出比例而清空', async () => {
+  const { deps, assembly } = fixture({ tipsGet: async () => ({ reliable: false, used: 12659, window: -1, percent: -1 }) });
+  deps.tipsPressure.value = undefined;
+  await assembly.refreshTips();
+  assert.equal(deps.tipsPressure.value.projectedTokens, 12659);
+});
+
 // 新会话默认权限：只认核心 PermissionPolicy 的四档（plan/build/auto/yolo），
 // 宿主返回未预期的值一律回落最保守的 build，不把未知串当设置生效。
 test('新会话默认权限只接受四档，未知值回落最保守的 build', async () => {

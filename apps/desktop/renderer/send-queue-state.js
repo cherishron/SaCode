@@ -23,7 +23,17 @@
       updateDraft, refresh, refreshCatalog, projectQueueRow,
     } = deps;
 
+    const turnState = root.SaCodeTurnPoll.createTurnState(turn);
     let queueReadSequence = 0;
+    function resetSession() {
+      queueReadSequence++;
+      stopPolling();
+      turnState.reset();
+      approval.value=null;
+      queuePending.value=[];
+      modelApprovalsSuppressed.value=false;
+      modelTurnRequestId.value=null;
+    }
     async function refreshQueue() {
       const generation = getSessionGeneration(), sequence = ++queueReadSequence;
       const current = () => generation === getSessionGeneration() && sequence === queueReadSequence;
@@ -227,14 +237,14 @@
       const generation = getSessionGeneration();
       modelApprovalsSuppressed.value = false;
       error.value = '';
-      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false, goalInFlight: false, pendingTurnCount: 0 };
+      turnState.start();
       try {
         const started = await api.taskStart(selectedCustomModel.value || undefined);
         if (generation !== getSessionGeneration()) return 'superseded';
         const goalInFlight = inFlightReceipt(started);
         // 在途回执说明已有一轮在执行，本条补充仍待处理：待处理数不是 delivered，
         // 也不能覆盖 modelTurnRequestId——那是正在执行轮的审批身份，不是这次本地包装的假 id。
-        turn.value = { ...turn.value, goalInFlight, pendingTurnCount: goalInFlight ? started.pendingTurnCount : 0 };
+        turnState.started(goalInFlight,started.pendingTurnCount);
         if (goalInFlight) {
           await refreshQueue();
           if (generation !== getSessionGeneration()) return 'superseded';
@@ -254,7 +264,7 @@
         const detail = code ? code[1] : text;
         if (detail === 'custom-model-not-found' || detail.startsWith('route-rejected:custom-model-not-found')) selectedCustomModel.value = '';
         error.value = turnStartFailure(detail, text);
-        turn.value.running = false;
+        turnState.running(false);
         return 'failed';
       }
     }
@@ -263,7 +273,7 @@
       if (fileEditor.state.busy) { error.value = '文件正在读取或保存，请稍后执行。'; return; }
       const generation = getSessionGeneration();
       error.value = '';
-      turn.value = { running: true, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0, used: null, budget: null, verdict: '', over: false, goalInFlight: false, pendingTurnCount: 0 };
+      turnState.start();
       try {
         await api.turnStart(limit);
         if (generation !== getSessionGeneration()) return;
@@ -271,7 +281,7 @@
       } catch (e) {
         if (generation !== getSessionGeneration()) return;
         error.value = String(e.message || e);
-        turn.value.running = false;
+        turnState.running(false);
       }
     }
 
@@ -287,7 +297,7 @@
       }
     }
 
-    return { send, enqueueDraft, submitBusyDraft, startTask, runTurn, cancelTurn, imageDraftAllowed, turnStartFailure, cleanErr, refreshQueue, updateQueue };
+    return { resetSession, send, enqueueDraft, submitBusyDraft, startTask, runTurn, cancelTurn, imageDraftAllowed, turnStartFailure, cleanErr, refreshQueue, updateQueue };
   }
 
   root.SaCodeSendQueue = { createSendQueueAssembly };

@@ -27,6 +27,23 @@ test('会话元信息预加载只传明确会话身份与修订号',()=>{
   assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['sacode:sessionRename',{sessionId:'s1',title:'新标题',expectedRevision:7}],['sacode:sessionArchive',{sessionId:'s2',archived:true,expectedRevision:8}]]);
 });
 
+test('人工浏览 preload 只暴露隔离视图固定动作与几何参数',async()=>{
+  let api;const calls=[];
+  require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
+    URL, require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{api=value}},ipcRenderer:{invoke:(...args)=>{calls.push(args);return Promise.resolve({ok:true});},on:()=>{},removeListener:()=>{}}}),
+  });
+  const owner={sessionId:'s1',projectId:'project-one'};
+  assert.equal(typeof api.browserViewOpen,'function');
+  for(const action of ['Open','Describe','Back','Forward','Reload','Close'])await api['browserView'+action](owner);
+  await api.browserViewNavigate({...owner,url:'https://one.test/'});
+  await api.browserViewLayout({...owner,visible:true,bounds:{x:1,y:2,width:300,height:200}});
+  assert.equal(calls.length,8);
+  assert.equal(calls[6][0],'sacode:browserViewNavigate');
+  assert.throws(()=>api.browserViewOpen({...owner,approved:true}),/preload:invalid-arguments/);
+  assert.throws(()=>api.browserViewLayout({...owner,visible:true,bounds:{x:-1,y:0,width:1,height:1}}),/preload:invalid-arguments/);
+  assert.throws(()=>api.browserViewNavigate({...owner,url:'file:///private'}),/preload:invalid-arguments/);
+});
+
 test('清空对话 preload 只传会话身份，不带任何额外字段',()=>{
   let exposed;const calls=[];
   require('node:vm').runInNewContext(readFileSync(jj(REPO,'apps/desktop/preload.cjs'),'utf8'),{
@@ -418,10 +435,13 @@ test("宿主退出前结算未 flush 的写入并归还租约", async () => {
 test("桌面入口的 extension/list 与 CLI 内置注册表一致", async () => {
   const { b } = await boot();
   const l = await b.request("extension/list", {});
-  assert.deepEqual(l.tools.map((t) => t.name), ["write", "read"]);
-  assert.equal(l.tools[0].needsApproval, true, "内置写文件工具必须默认要审批");
+  // 内置集含另一会话在 core 新增的 project_init；这里钉住的是「桌面入口与 CLI 共用同一真源」，
+  // 不把顺序当契约，属性断言按名字取，避免再被新增内置工具掀翻。
+  assert.deepEqual(l.tools.map((t) => t.name).sort(), ["project_init", "read", "write"]);
+  const byName = Object.fromEntries(l.tools.map((t) => [t.name, t]));
+  assert.equal(byName.write.needsApproval, true, "内置写文件工具必须默认要审批");
   // 读不改盘，所以它不带审批要求；这条断言同时钉住「内置工具集」这两个入口一致
-  assert.equal(l.tools[1].needsApproval, false, "只读工具不应要求审批");
+  assert.equal(byName.read.needsApproval, false, "只读工具不应要求审批");
   await b.stop();
 });
 
@@ -505,13 +525,14 @@ test("extension/dispose 逐个卸载后注册表清空且二次卸载失败", as
   try {
     const d = await b.request("extension/dispose", { name: "write" });
     assert.equal(d.disposed, true);
-    // 内置集里还剩只读的 read：逐个卸，不许把「没卸完」当成已清空
-    assert.deepEqual((await b.request("extension/list", {})).tools.map((t) => t.name), ["read"]);
+    // 内置集里还剩只读的 read 与另一会话在 core 新增的 project_init：逐个卸，不许把「没卸完」当成已清空
+    assert.deepEqual((await b.request("extension/list", {})).tools.map((t) => t.name).sort(), ["project_init", "read"]);
     const again = await b.request("extension/dispose", { name: "write" });
     assert.equal(again.disposed, false, "句柄一次性，不得重复撤销凑数");
     await assert.rejects(() => b.request("extension/call", { name: "write", args: "x.txt y", approval: "allowed-once" }), /unregistered-tool:write/);
     assert.equal((await b.request("extension/dispose", { name: "read" })).disposed, true);
-    assert.deepEqual((await b.request("extension/list", {})).tools, []);
+    // 只剩另一会话在 core 新增的 project_init，仍不许把「没卸完」当成已清空
+    assert.deepEqual((await b.request("extension/list", {})).tools.map((t) => t.name).sort(), ["project_init"]);
   } finally {
     await b.stop();
   }
@@ -1488,17 +1509,25 @@ test('审批模式宿主失败原样拒绝，不伪造读取或设置成功', as
 const newIpcDigest = 'a'.repeat(64);
 const newIpcOwner = { sessionId: 's', projectId: 'p', browserId: 'b', tabId: 't' };
 const newIpcBinding = { sessionId: 's', workspace: 'D:/project', workspaceRevision: 1 };
+const browserViewIpcCalls = {
+  ...Object.fromEntries(['Open','Describe','Back','Forward','Reload','Close'].map(action=>['browserView'+action,[{sessionId:'s',projectId:'p'}]])),
+  browserViewNavigate:[{sessionId:'s',projectId:'p',url:'https://example.test/'}],
+  browserViewLayout:[{sessionId:'s',projectId:'p',visible:true,bounds:{x:0,y:0,width:300,height:200}}],
+};
 const newIpcCalls = {
   browserNavigate: [{ ...newIpcOwner, url: 'https://example.test/' }],
   browserScreenshot: [newIpcOwner], browserClick: [{ ...newIpcOwner, x: 1, y: 2 }],
   browserInput: [{ ...newIpcOwner, text: '测试' }], browserScroll: [{ ...newIpcOwner, deltaX: 0, deltaY: -1 }], browserClose: [newIpcOwner],
   databaseConnect: [{ sessionId: 's', projectId: 'p', spec: { engine: 'postgresql', host: 'localhost', port: 5432, database: 'test', user: 'test', credentialRef: 'ref', tlsMode: 'verify-full', readonly: true, connectTimeoutMs: 10000, statementTimeoutMs: 30000 } }],
   databaseDisconnect: ['c'], databaseQuery: [{ connectionId: 'c', sql: 'select 1', params: [null, 1, true, 'x'], opts: { readonly: true, maxRows: 100, maxBytes: 1024, statementTimeoutMs: 30000, cursorBatch: 100 } }],
+  connectionList: [{ sessionId: 's', scope: 'user' }],
+  connectionSave: [{ sessionId: 's', scope: 'project', revision: 0, definition: { id: 'db-local', title: '本地只读库', kind: 'database', enabled: false, spec: { engine: 'postgresql', host: 'localhost', port: 5432, database: 'demo', user: 'tester', credentialRef: 'DB_TEST_PASSWORD', tlsMode: 'verify-full' } } }],
+  connectionControl: [{ sessionId: 's', scope: 'user', revision: 1, id: 'db-local', action: 'enable' }],
   importSources: ['s'], importPickFile: ['s', 'text-file'],
   importPreview: [{ sessionId: 's', sourceId: 'text-file', kind: 'knowledge', mapping: {}, target: { scope: 'user' }, candidates: [{ sourceKey: 'doc', title: '文档', content: '内容' }] }],
   importPlan: [{ sessionId: 's', previewToken: 'pv' }], importConfirm: [{ sessionId: 's', planHash: newIpcDigest, decisions: { item: 'dismiss' } }],
   importApply: [{ sessionId: 's', planHash: newIpcDigest, requestId: 'r', selection: { itemIds: ['item'] } }], importDescribe: [{ sessionId: 's', jobId: 'j', offset: 0, limit: 100 }], importCancel: ['s', 'j'],
-  terminalCreate: [{ cwd: 'D:/project', env: {}, cols: 80, rows: 24 }], terminalInput: ['pty', 'YQ=='], terminalResize: ['pty', 80, 24], terminalInterrupt: ['pty'], terminalDescribe: ['pty', 8192], terminalClose: ['pty'],
+  terminalCreate: [{ cwd: 'D:/project', env: {}, cols: 80, rows: 24 }], terminalInput: ['pty', 'YQ=='], terminalResize: ['pty', 80, 24], terminalInterrupt: ['pty'], terminalDescribe: ['pty', 8192], terminalClose: ['pty'], terminalPtyOutput: ['pty', 0], terminalKill: ['pty'],
   compactRun: ['s', 'r'], compactDescribe: ['s'], securityScan: [{ sessionId: 's', requestId: 'r', scope: [{ path: 'src/a.cj', digest: newIpcDigest }] }],
   securityDescribe: ['s'], securityFreshness: ['s', 'scan'], securityFixDraft: ['s', 'scan', ['f']],
   sshExec: [{ sessionId: 's', arguments: JSON.stringify({ host: 'example.test', command: 'pwd', user: 'test', port: 22, timeoutMs: 1000, connectTimeoutSec: 1 }), approvalId: 1 }], sshDescribe: ['s'],
@@ -1532,19 +1561,20 @@ function newIpcPreload(invoke) {
 const newIpcMethods = {
   browserNavigate: 'browser/navigate', browserScreenshot: 'browser/screenshot', browserClick: 'browser/click', browserInput: 'browser/input', browserScroll: 'browser/scroll', browserClose: 'browser/close',
   databaseConnect: 'database/connect', databaseDisconnect: 'database/disconnect', databaseQuery: 'database/query',
+  connectionList: 'connection/list', connectionSave: 'connection/save', connectionControl: 'connection/control',
   importSources: 'import/sources', importPickFile: 'import/pick-file', importPreview: 'import/preview', importPlan: 'import/plan', importConfirm: 'import/confirm', importApply: 'import/apply', importDescribe: 'import/describe', importCancel: 'import/cancel',
-  terminalCreate: 'terminal/create', terminalInput: 'terminal/input', terminalResize: 'terminal/resize', terminalInterrupt: 'terminal/interrupt', terminalDescribe: 'terminal/describe', terminalClose: 'terminal/close',
+  terminalCreate: 'terminal/create', terminalInput: 'terminal/input', terminalResize: 'terminal/resize', terminalInterrupt: 'terminal/interrupt', terminalDescribe: 'terminal/describe', terminalClose: 'terminal/close', terminalPtyOutput: 'terminal/output', terminalKill: 'terminal/kill',
   compactRun: 'compact/run', compactDescribe: 'compact/describe', securityScan: 'security/scan', securityDescribe: 'security/describe', securityFreshness: 'security/freshness', securityFixDraft: 'security/fix-draft',
   sshExec: 'ssh/exec', sshDescribe: 'ssh/describe',
   mcpList: 'mcp/list', mcpConnect: 'mcp/connect', mcpDisconnect: 'mcp/disconnect', mcpTools: 'mcp/tools', mcpCall: 'mcp/call', mcpStatus: 'mcp/status',
   automationTick: 'automation/tick', automationDescribeExecution: 'automation/describe-execution',
   knowledgeIndexBuild: 'knowledge/index-build', knowledgeSearch: 'knowledge/search', knowledgeDescribeIndex: 'knowledge/describe-index',
 };
-test('新域主进程 42 个 handler 固定映射并保留实际回执和错误', async () => {
+test('新域主进程 44 个 handler 固定映射并保留实际回执和错误', async () => {
   const reply = { actual: true };
   const { handlers, requests } = lspMainHandlers(async () => reply);
   const api = newIpcPreload((channel, payload) => handlers.get(channel)(null, payload));
-  assert.equal(Object.keys(newIpcMethods).length, 42);
+  assert.equal(Object.keys(newIpcMethods).length, 44);
   for (const [key, args] of Object.entries(newIpcCalls)) {
     let expected;
     const capture = newIpcPreload((_channel, payload) => { expected = payload; return Promise.resolve(); });
@@ -1598,17 +1628,17 @@ test('新域主进程保留可选字段缺省和导入分支', async () => {
   assert.equal(requests[3].params.kind, 'conversation');
   assert.equal(requests[4].params.kind, 'config');
 });
-test('新域 preload 42 个固定动作逐项转发合法负载且不伪造响应', async () => {
+test('新域 preload 44 个固定动作逐项转发合法负载且不伪造响应', async () => {
   const calls = [], reply = { actual: true };
   const api = newIpcPreload((...args) => { calls.push(args); return Promise.resolve(reply); });
-  assert.equal(Object.keys(newIpcCalls).length, 42);
+  assert.equal(Object.keys(newIpcCalls).length, 44);
   for (const [key, args] of Object.entries(newIpcCalls)) {
     assert.equal(await api[key](...args), reply);
     assert.equal(calls.at(-1)[0], `sacode:${key}`);
     const expected = args.length === 1 && typeof args[0] === 'object' ? args[0] : undefined;
     if (expected) assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1)[1])), expected);
   }
-  assert.equal(calls.length, 42);
+  assert.equal(calls.length, 44);
 });
 test('新域 preload 拒绝缺字段、未知字段与非法类型且不触达 IPC', () => {
   let invoked = 0;
@@ -1712,9 +1742,11 @@ test('预加载 IPC 面的有限动作白名单，且没有发任意方法的口
     'webSettingsApply', 'webSettingsDescribe', 'webSettingsSetCredential',
     'workspaceChoose', 'workspaceFiles', 'workspaceGet', 'workspaceGitDiff', 'workspaceGitPushTarget', 'workspaceGitStatus', 'workspaceRecent', 'workspaceSelectRecent', 'worktreeCleanup',
     'worktreeDescribe', 'worktreeEnter', 'worktreeExit',
+    'voiceDescribe', 'voiceRecord', 'voiceTranscribe', 'voiceTranscribeCancel',
+    ...Object.keys(browserViewIpcCalls),
     ...Object.keys(newIpcCalls),
   ].sort());
-  assert.equal(Object.keys(exposed).length, 198, 'IPC 通道计数须与 preload.cjs 同步更新');
+  assert.equal(Object.keys(exposed).length, 212, 'IPC 通道计数须与 preload.cjs 同步更新');
   // 万能通道不该存在：既没有「发任意 method」的口子，也没有把四个动作打包成一个转发口的余地。
   for (const forbidden of ['request', 'call', 'invoke', 'send', 'hostRequest', 'worktree', 'worktreeRequest', 'worktreeCall']) {
     assert.equal(forbidden in exposed, false, `预加载暴露了通用转发 ${forbidden}`);
@@ -1729,6 +1761,7 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
   const { handlers } = lspMainHandlers();
   let api;
   const invoked = [];
+  const voiceCalls = {voiceDescribe:['s'],voiceRecord:['s','request','recording','UklGRg==',1],voiceTranscribe:['s','request','recording','zh',1],voiceTranscribeCancel:['s','operation']};
   vm.runInNewContext(readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8'), {
     URL,
     require: () => ({
@@ -1737,10 +1770,10 @@ test('预加载调用的通道集合与主进程注册的 handler 集合完全�
     }),
   });
   // 新动作使用真实合法字段，旧动作保留原有占位调用；不为未接入的主进程伪造 handler。
-  for (const [key, action] of Object.entries(api)) action(...(newIpcCalls[key] ?? ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']));
+  for (const [key, action] of Object.entries(api)) action(...(browserViewIpcCalls[key] ?? voiceCalls[key] ?? newIpcCalls[key] ?? ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']));
   assert.equal(invoked.length, Object.keys(api).length, '有一条通道没把 invoke 发出去');
   assert.deepEqual([...new Set(invoked)].sort(), [...handlers.keys()].sort());
-  assert.equal(handlers.size, 198, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含模型拉取控制及会话交互）');
+  assert.equal(handlers.size, 212, 'IPC 面计数须与 preload.cjs 的顶层 key 同步（含模型拉取控制及会话交互）');
   for (const action of ['sacode:worktreeDescribe', 'sacode:worktreeEnter', 'sacode:worktreeExit', 'sacode:worktreeCleanup']) {
     assert.equal(typeof handlers.get(action), 'function', `主进程缺少 ${action}`);
   }
@@ -1875,4 +1908,68 @@ test('MCP preload 名字校验拒绝非法字符', () => {
   // toolName 含非法字符
   assert.throws(() => api.mcpCall({ sessionId: 's', name: 'fs', toolName: 'bad/tool', approvalId: 1 }), /preload:invalid-arguments/);
   assert.equal(invoked, 0);
+});
+
+// P0-2：turn/poll 的游标是“按位置读”，不是“取走”。两个客户端从同一游标出发
+// 必须看到同一组帧；重复读同一游标不得把帧读没。旧的无游标路径另有兼容用例。
+test("turn/poll 游标支持多客户端同轮重复读，取消后两端拿到同一终态", async () => {
+  const { b } = await bootFresh();
+  try {
+    const s = await b.request("turn/start", { limit: 2 });
+    assert.equal(s.started, true);
+    // 等第一帧出现；游标读不消费，所以这里读到多少都不会影响后面的客户端。
+    let first = { frames: [] };
+    for (let i = 0; i < 60; i++) {
+      first = await b.request("turn/poll", { cursor: 0 });
+      if (first.frames.length >= 2) break;
+      await nap(10);
+    }
+    assert.ok(first.frames.length >= 2, `应看到流式帧：${JSON.stringify(first)}`);
+    assert.equal(typeof first.turnId, "number");
+    assert.equal(typeof first.nextCursor, "number");
+    assert.ok(first.nextCursor > 0, "游标必须单调向前");
+    assert.equal(first.reset, undefined, "同一轮首次读取不应 reset");
+
+    // 第二个客户端从同一游标出发：page 不消费，帧集合必须逐字相同。
+    const second = await b.request("turn/poll", { cursor: 0, turnId: first.turnId });
+    assert.deepEqual(second.frames, first.frames, "第二个客户端必须看到同一组帧");
+    assert.equal(second.nextCursor, first.nextCursor);
+    const replay = await b.request("turn/poll", { cursor: 0, turnId: first.turnId });
+    assert.deepEqual(replay.frames, first.frames, "重复读同一游标不得把帧读没");
+
+    const cancel = await b.request("turn/cancel", {});
+    assert.equal(cancel.cancelRequested, true);
+
+    async function drain(state, tag) {
+      const seen = [];
+      for (let i = 0; i < 120; i++) {
+        const p = await b.request("turn/poll", state.turnId === null ? { cursor: state.cursor } : { cursor: state.cursor, turnId: state.turnId });
+        seen.push(...p.frames);
+        if (p.reset === true) {
+          state.cursor = p.nextCursor;
+          state.turnId = p.turnId > 0 ? p.turnId : null;
+        } else {
+          if (typeof p.nextCursor === "number") state.cursor = p.nextCursor;
+          if (typeof p.turnId === "number") state.turnId = p.turnId > 0 ? p.turnId : null;
+        }
+        if (p.settled) return { seen, terminal: p };
+        await nap(10);
+      }
+      assert.fail(`${tag} 在 120 次轮询后仍未结算`);
+    }
+
+    // 两端都从 0 读：都该拿到完整帧序列与同一个取消终态。
+    const a = await drain({ cursor: 0, turnId: first.turnId }, "客户端A");
+    const c = await drain({ cursor: 0, turnId: first.turnId }, "客户端B");
+    assert.deepEqual(c.seen, a.seen, "两端读到的帧序列必须一致");
+    assert.ok(a.seen.includes("text:你好，") && a.seen.includes("text:world"), `帧内容不对：${JSON.stringify(a.seen)}`);
+    for (const [tag, r] of [["A", a], ["B", c]]) {
+      assert.equal(r.terminal.settled, true, `${tag} 必须收到 settled`);
+      assert.equal(r.terminal.cancelled, true, `${tag} 必须收到同一个取消终态`);
+      assert.equal(r.terminal.text, "你好，world", `${tag} 终态正文不得丢`);
+      assert.equal(r.terminal.dropped, 0, `${tag} 不应有被丢弃的帧`);
+    }
+  } finally {
+    await b.stop();
+  }
 });

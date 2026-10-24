@@ -1,17 +1,17 @@
 #management-knowledge .management-body { max-width: 1000px; width: 100%; box-sizing: border-box; margin: 0 auto; }
-#management-knowledge .management-search { max-width: 100%; padding: 5px 8px; }
+#management-knowledge .management-search { max-width: 100%; padding: var(--space-1) 8px; }
 #management-knowledge .management-search input { flex: 1; }
 #management-knowledge .management-scope button { background: transparent; font: inherit; cursor: pointer; }
 #management-knowledge article.management-editor { padding: 20px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
-#management-knowledge article h3 { margin: 0 0 6px; font-size: 15px; overflow-wrap: anywhere; }
+#management-knowledge article h3 { margin: 0 0 6px; font-size: var(--fs-l); overflow-wrap: anywhere; }
 #management-knowledge article .management-button + .management-button { margin-left: 8px; }
 #management-knowledge section[aria-label="知识文档编辑"] { margin-top: 24px; }
 #management-knowledge .management-field { margin-top: 16px; }
 #management-knowledge .management-project { overflow-wrap: anywhere; }
-#management-knowledge [role="alert"] { border-left: 2px solid var(--text-muted); padding: 10px 14px; overflow-wrap: anywhere; }
+#management-knowledge [role="alert"] { border-left: 2px solid var(--text-muted); padding: var(--space-2) var(--space-4); overflow-wrap: anywhere; }
 @media(max-width:600px) {
  #management-knowledge .management-intro { align-items: flex-start; flex-direction: column; gap: 12px; }
  #management-knowledge .management-search { flex-wrap: wrap; }
  #management-knowledge .management-search input { flex-basis: 100%; padding: 6px 0; }
- #management-knowledge .management-body { padding: 20px 18px; }
+ #management-knowledge .management-body { padding: 20px var(--space-4); }
 }

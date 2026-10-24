@@ -13,14 +13,14 @@
       draft, error, selectedScrollId, scrollSession,
       turn, approval, sendBusy, budgetBusy, appearanceBusy, workspaceBusy,
       sessionDrafts, getSessionGeneration, incrementSessionGeneration,
-      catalogError, clearEnhance, clearAttachments, stopPolling,
-      foldOpen, loadCustomModels, fileEditor,
+      catalogError, clearEnhance, clearAttachments, resetExecution, resetModelSelection,
+      foldOpen, fileEditor,
       worktreeController, resetWorktreePanel,
       refresh, refreshTools, refreshUsage, refreshWorkspace, refreshWorkspaceFiles,
       refreshQueue, refreshGlobalAppearance,
-      selectedCustomModel, previewFloating, detailName,
+      previewFloating, detailName,
       budgetDraft, budgetNote, appearanceNote, workspaceNote,
-      queuePending, focusComposer,
+      focusComposer,
       outcome, outcomeKind,
     } = deps;
 
@@ -66,15 +66,13 @@
       if (deps.enhance?.value?.busy) { api.promptCancel?.().catch(() => {}); }
       clearEnhance();
       draft.value = sessionDrafts.get(id) || '';
-      stopPolling(); foldOpen.ids.clear();
-      turn.value = { running: false, settled: false, text: '', finishReason: '', cancelled: false, interrupted: false, delivered: 0 };
-      approval.value = null; error.value = '';
+      resetExecution(); foldOpen.ids.clear();
+      error.value = '';
       if (outcome) outcome.value = '';
       if (outcomeKind) outcomeKind.value = '';
       previewFloating.value = false; detailName.value = ''; budgetDraft.value = ''; budgetNote.value = ''; appearanceNote.value = '';
       catalogNote.value = '已切换，正在加载会话…';
-      queuePending.value = [];
-      clearAttachments(); selectedCustomModel.value = ''; void loadCustomModels();
+      clearAttachments(); resetModelSelection();
       await refresh(); await refreshTools(); await refreshUsage(); await refreshWorkspace(); await refreshWorkspaceFiles(); await refreshQueue();
       // 换会话=换绑定：上一个会话的名称草稿与状态都必须收起，面板重新读这一条会话的绑定。
       resetWorktreePanel(); await worktreeController.restore();

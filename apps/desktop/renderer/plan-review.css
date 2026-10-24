@@ -1,20 +1,20 @@
 /* 计划审阅面板：贴在输入区上方，与待办面板同层。
    颜色全部走令牌变量（styles.css / product-design.css 的亮暗两套定义），
    不留 var() 兜底字面量——兜底会掩盖「变量没定义」的回归。 */
-.plan-review { margin: 6px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-surface); }
+.plan-review { margin: 6px 0; padding: var(--space-2) 12px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--panel-surface); }
 .plan-review-header { display: flex; align-items: center; gap: 8px; }
 .plan-review-title { font-weight: 600; }
-.plan-review-status { margin-left: auto; font-size: 12px; opacity: .8; }
-.plan-review-note { font-size: 12px; opacity: .72; margin: 4px 0; }
+.plan-review-status { margin-left: auto; font-size: var(--fs-s); opacity: .8; }
+.plan-review-note { font-size: var(--fs-s); opacity: .72; margin: 4px 0; }
 .plan-review-body { margin-top: 6px; }
-.plan-review-toggle { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
-.plan-review-text { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); margin: 6px 0; }
+.plan-review-toggle { font-size: var(--fs-s); padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-s); background: transparent; color: var(--text); cursor: pointer; }
+.plan-review-text { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-s); line-height: 1.5; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); margin: 6px 0; }
 .plan-review-actions { margin-top: 6px; }
 .plan-review-feedback { display: block; }
-.plan-review-feedback > span { display: block; font-size: 12px; opacity: .72; margin-bottom: 4px; }
-.plan-review-feedback textarea { width: 100%; min-height: 48px; resize: vertical; font: inherit; font-size: 12px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.plan-review-feedback > span { display: block; font-size: var(--fs-s); opacity: .72; margin-bottom: 4px; }
+.plan-review-feedback textarea { width: 100%; min-height: 48px; resize: vertical; font: inherit; font-size: var(--fs-s); padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--surface-2); color: var(--text); }
 .plan-review-buttons { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-.plan-btn { padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font-size: 12px; }
+.plan-btn { padding: 4px var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-s); background: transparent; color: var(--text); cursor: pointer; font-size: var(--fs-s); }
 .plan-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .plan-btn:disabled { opacity: .55; cursor: default; }
-.plan-review-error { color: var(--danger); font-size: 12px; margin: 4px 0; }
+.plan-review-error { color: var(--danger); font-size: var(--fs-s); margin: 4px 0; }

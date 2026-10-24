@@ -145,11 +145,11 @@ export const Page=defineComponent({
           el('h2',null,'模型'),
           el('p','intro','创建自定义模型（路由/权重/预算），绑定上游供应商的模型。'),
           btn('刷新',()=>void reload(),'btn',{'aria-label':'刷新自定义模型目录',disabled:loading.value||saving.value}),
-          btn('+ 添加模型',startAdd,'primary',{disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
+          btn('+ 添加模型',startAdd,'primary',{'aria-label':'添加模型',disabled:!readReady.value||!writable.value||loading.value||saving.value||isEditing}),
         ]),
         !readReady.value&&!loading.value?el('p','notice','当前目录尚未核实，修改操作已暂停。请刷新后继续。',{role:'status'}):null,
         loading.value?el('p','loading','正在加载…'):null,
-        error.value?el('p','error',error.value,{role:'alert'}):null,
+        error.value&&!isEditing?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
         !writable.value?el('p','notice','当前部署的设置文档为只读。',{role:'status'}):null,
 
@@ -170,8 +170,13 @@ export const Page=defineComponent({
         ],{key:c.id}))),
         !customs.value.length&&!loading.value?el('p','empty','暂无自定义模型，点击「+ 添加模型」开始配置。'):null,
 
-        isEditing?el('div','editor',[
-          el('h3',null,adding.value?'添加模型':'编辑 '+(d.name||d.id)),
+        isEditing?h((globalThis as any).SaCodeDialog,{
+          open:true,
+          title:adding.value?'添加模型':'编辑 '+(d.name||d.id),
+          class:'cm-editor-dialog',
+          onClose:()=>{if(!saving.value)closeEdit();},
+        },()=>[
+          el('fieldset','editor',[
 
           // 基本信息
           el('fieldset','section',[el('legend',null,'基本信息'),
@@ -196,11 +201,11 @@ export const Page=defineComponent({
 
           // 预算
           el('fieldset','section',[el('legend',null,'预算（-1 = 未设置）'),
-            numInp('每日 Token 上限',d.dailyTokens,v=>d.dailyTokens=v,{min:'-1'}),
-            numInp('每月 Token 上限',d.monthlyTokens,v=>d.monthlyTokens=v,{min:'-1'}),
-            numInp('每日金额（微单位）',d.dailyAmountMicro,v=>d.dailyAmountMicro=v,{min:'-1'}),
-            numInp('每月金额（微单位）',d.monthlyAmountMicro,v=>d.monthlyAmountMicro=v,{min:'-1'}),
-            numInp('最大输出 Token',d.maxOutputTokens,v=>d.maxOutputTokens=v,{min:'-1'}),
+            numInp('每日 Token 上限（-1=不限制）',d.dailyTokens,v=>d.dailyTokens=v,{min:'-1'}),
+            numInp('每月 Token 上限（-1=不限制）',d.monthlyTokens,v=>d.monthlyTokens=v,{min:'-1'}),
+            numInp('每日金额上限（百万分之一货币，100万=1元/美元，-1=不限制）',d.dailyAmountMicro,v=>d.dailyAmountMicro=v,{min:'-1'}),
+            numInp('每月金额上限（同上，-1=不限制）',d.monthlyAmountMicro,v=>d.monthlyAmountMicro=v,{min:'-1'}),
+            numInp('最大输出 Token（-1=用模型默认）',d.maxOutputTokens,v=>d.maxOutputTokens=v,{min:'-1'}),
           ]),
 
           // 探测
@@ -225,10 +230,10 @@ export const Page=defineComponent({
                 btn('×',()=>removeBinding(i),'icon danger',{'aria-label':'删除绑定'}),
               ]),
               el('div','pricings',[
-                numInp('输入价格（微）',b.priceInMicro,v=>b.priceInMicro=v,{min:'-1'}),
-                numInp('输出价格（微）',b.priceOutMicro,v=>b.priceOutMicro=v,{min:'-1'}),
-                numInp('缓存读（微）',b.priceCacheReadMicro,v=>b.priceCacheReadMicro=v,{min:'-1'}),
-                numInp('缓存写（微）',b.priceCacheWriteMicro,v=>b.priceCacheWriteMicro=v,{min:'-1'}),
+                numInp('输入价格（百万分之一货币/Token，-1=未设置）',b.priceInMicro,v=>b.priceInMicro=v,{min:'-1'}),
+                numInp('输出价格（同上，-1=未设置）',b.priceOutMicro,v=>b.priceOutMicro=v,{min:'-1'}),
+                numInp('缓存读（同上，-1=未设置）',b.priceCacheReadMicro,v=>b.priceCacheReadMicro=v,{min:'-1'}),
+                numInp('缓存写（同上，-1=未设置）',b.priceCacheWriteMicro,v=>b.priceCacheWriteMicro=v,{min:'-1'}),
                 el('input','ipt',null,{value:b.currency,'aria-label':'货币',placeholder:'货币（如 CNY）',onInput:(e:Event)=>b.currency=(e.target as HTMLInputElement).value}),
               ]),
               el('p','hint',(()=>{const m=modelChoices(providers.value,b.providerId).find(m=>m.id===b.modelId);if(b.providerId&&!providers.value.some(p=>p.id===b.providerId))return '原供应商不在当前目录中，已保留绑定。请重新读取目录或选择其他供应商。';if(b.modelId&&!m)return '原模型不在当前供应商目录中，已保留绑定。请拉取模型目录或重新选择。';return m?modelCapabilitySummary(m)+'。能力未确认时请到供应商 → 编辑 → 上游模型能力声明完成确认。':'请选择已登记的上游模型。';})()),
@@ -237,9 +242,11 @@ export const Page=defineComponent({
             btn('+ 添加绑定',addBinding,'secondary',{disabled:!writable.value}),
           ]),
 
+          error.value?el('p','error',error.value,{role:'alert'}):null,
           // 操作
           el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
-        ],{'aria-busy':saving.value,inert:saving.value?'':undefined}):null,
+        ],{disabled:saving.value,'aria-busy':saving.value}),
+        ]):null,
 
         // 删除确认
         deleting.value?h('div',{class:'cm-dialog',role:'alertdialog','aria-label':'确认删除'},[

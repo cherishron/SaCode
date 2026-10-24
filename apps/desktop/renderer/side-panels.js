@@ -64,7 +64,7 @@
       ? [renderApprovalCard(self, { el })] : [];
 
     const sideTabs = h(window.SaCodeSlots.WorkbenchTabs,{active:self.sideTab,pendingApproval:!!self.approval,expanded:self.workbenchExpanded,split:self.sideSplit,
-      onSelect:id=>{self.sideTab=id;if(id==='sources')refreshSources();},onClose:id=>{if(id==='preview')self.filePreview.close();},
+      onSelect:id=>{self.sideTab=id;if(id==='browser')self.browserResourceOpen=true;if(id==='sources')refreshSources();},onClose:id=>{if(id==='preview')self.filePreview.close();if(id==='browser')self.browserResourceOpen=false;},
       onExpand:()=>{self.workbenchExpanded=!self.workbenchExpanded;window.Vue.nextTick(()=>document.getElementById('expand-workbench')?.focus());},
       onSplit:()=>{self.sideSplit=!self.sideSplit;},
       onClosePanel:()=>{self.workbenchExpanded=false;self.sideOpen=false;window.Vue.nextTick(()=>document.getElementById('toggle-side')?.focus());},

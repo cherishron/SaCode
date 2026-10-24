@@ -1,0 +1,10 @@
+.browser-side-page { height: 100%; }
+.browser-panel { display: flex; flex-direction: column; gap: var(--space-2); min-height: 100%; padding: var(--space-3); box-sizing: border-box; }
+.browser-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.browser-heading h2 { margin: 0; font-size: var(--fs-l); }
+.browser-navigation { display: flex; flex-wrap: wrap; align-items: end; gap: var(--space-2); }
+.browser-address { display: flex; flex: 1 1 100%; flex-direction: column; gap: var(--space-1); min-width: 0; font-size: var(--fs-s); }
+.browser-address input { width: 100%; min-width: 0; box-sizing: border-box; }
+.browser-page-status { margin: 0; font-size: var(--fs-s); overflow-wrap: anywhere; }
+.browser-viewport { flex: 1 0 240px; min-height: 240px; background: var(--surface-2); border: 1px solid var(--border); }
+.browser-panel > .note { margin: 0; overflow-wrap: anywhere; }

@@ -4,9 +4,10 @@
   "private": true,
   "license": "MulanPSL-2.0",
   "author": "SaCode",
+  "homepage": "https://gitee.com/cherishron/SaCode",
   "main": "main.cjs",
   "scripts": {
-    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs && node ../../scripts/pack-pages.mjs && node ../../scripts/pack-next-sdk.mjs",
+    "vendor": "node ../../scripts/pack-vendor.mjs && node ../../scripts/pack-tinyvue.mjs && node ../../scripts/pack-tinyrobot.mjs && node ../../scripts/pack-xterm.mjs && node ../../scripts/pack-pages.mjs && node ../../scripts/pack-next-sdk.mjs",
     "prestart": "npm run vendor",
     "start": "electron .",
     "presmoke": "npm run vendor",
@@ -29,6 +30,7 @@
       "main.cjs",
       "stdio-guard.cjs",
       "window-visibility.cjs",
+      "browser-view.cjs",
       "preload.cjs",
       "knowledge-ipc.cjs",
       "automation-ipc.cjs",
@@ -75,12 +77,20 @@
     },
     "linux": {
       "icon": "renderer/assets/sacode-icon.png",
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "category": "Development",
+      "executableName": "sacode",
+      "maintainer": "SaCode Team",
       "artifactName": "SaCode-${version}-linux-${arch}.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
       "artifactName": "SaCode-${version}-mac-${arch}.${ext}"
     },
@@ -94,14 +104,16 @@
     }
   },
   "devDependencies": {
+    "@opentiny/next-sdk": "^0.4.11",
     "@opentiny/tiny-robot": "^0.5.1",
     "@opentiny/vue": "^3.32.0",
     "@opentiny/vue-button": "^3.32.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
     "electron": "^33.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "shiki": "4.3.1",
-    "vue": "^3.5.43",
-    "@opentiny/next-sdk": "^0.4.11"
+    "vue": "^3.5.43"
   }
 }

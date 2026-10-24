@@ -314,8 +314,13 @@ export const createPluginManagerAdapter = (faces: PluginFaces, unwired: string[]
     startPolling();
   };
   const readRegistries = async (): Promise<void> => {
-    try { install = { ...install, registries: mapRegistries(normalizeRegistries(await faces.registries())) }; }
-    catch { /* 安装源读不到不致命：选择器退化成「默认安装源」，不伪造源列表 */ }
+    try {
+      install = { ...install, registries: mapRegistries(normalizeRegistries(await faces.registries())) };
+    } catch (e) {
+      // 安装源读不到不再静默退化成「默认安装源」：明确告知失败并保留重试入口，仍不伪造源列表。
+      install = { ...install, registries: mapRegistries({ registry: null, fallbackRegistries: [], resolved: null }) };
+      notice = '安装源清单读取失败（' + failureOf(e).reason + '）；当前仅显示默认安装源，可返回重试。';
+    }
   };
   const setEnabled = async (name: string, enabled: boolean): Promise<void> => {
     if (unwired.includes('enable')) missing('enable');

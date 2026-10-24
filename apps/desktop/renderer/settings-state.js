@@ -71,9 +71,9 @@
       catch (e) { tipsError.value = true; tipsNote.value = catalogError(e); }
     }
     let pressureReadSequence = 0;
-    function acceptPressure(r, reliable) {
-      tipsPressure.value = reliable && r && Number.isFinite(r.window) && r.window > 0 && Number.isFinite(r.used) && r.used >= 0
-        ? { projectedTokens: r.used, contextWindow: r.window } : undefined;
+    // 只要有真实用量就留下；容量在模型目录侧单独回读，缺容量不该连带把用量也清掉。
+    function acceptPressure(r) {
+      tipsPressure.value = r && Number.isFinite(r.used) && r.used >= 0 ? { projectedTokens: r.used } : undefined;
     }
     async function showContextTip() {
       const generation = getSessionGeneration(), sequence = ++pressureReadSequence;
@@ -81,8 +81,8 @@
       try {
         const r = await api.tipsAfterReply();
         if (!current()) return;
-        acceptPressure(r, !!r && Number.isFinite(r.percent) && r.percent >= 0);
-        if (r && r.id && r.text) tips.value = { kind: 'context', text: r.text, reliable: Number.isFinite(r.percent) };
+        acceptPressure(r);
+        if (r && r.id && r.text) tips.value = { kind: 'context', text: r.text, reliable: Number.isFinite(r.percent) && r.percent >= 0 };
       } catch (e) { if (current()) { tipsPressure.value = undefined; tipsError.value = true; tipsNote.value = catalogError(e); } }
     }
     async function refreshTips() {
@@ -92,7 +92,7 @@
         const r = await api.tipsGet();
         if (!current()) return;
         tipsHidden.value = !!r.hidden; tipsError.value = false;
-        acceptPressure(r, r.reliable === true);
+        acceptPressure(r);
       } catch (e) { if (current()) { tipsPressure.value = undefined; tipsError.value = true; } }
     }
     async function setTipsHidden(value) {

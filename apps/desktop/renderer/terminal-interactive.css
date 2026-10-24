@@ -1,0 +1,19 @@
+/* 交互终端：工作台「终端」标签内的实时视图（设计稿 §13.1）。
+   与「历史回放」（terminal-output.ts）并存；这里只管交互终端与 xterm 挂载点布局。 */
+.terminal-interactive{display:flex;flex-direction:column;gap:8px;min-height:0}
+.terminal-interactive-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.term-subtabs{display:flex;gap:6px}
+.term-status-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:var(--fs-xs);color:var(--text-muted)}
+.term-phase-badge{padding:1px 6px;border:1px solid var(--border);border-radius:var(--radius-s);color:var(--text-muted)}
+.term-phase-running{color:var(--accent);border-color:var(--accent)}
+.term-phase-exited,.term-phase-closed{color:var(--text-muted)}
+.term-phase-exiting,.term-phase-unknown{color:var(--danger)}
+.term-cwd,.term-pid,.term-exit{font-family:var(--font-code)}
+.term-toolbar{display:flex;gap:8px;flex-wrap:wrap}
+.term-xterm-container{flex:1;min-height:320px;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-s);background:var(--panel-surface)}
+.term-xterm-placeholder{border:1px dashed var(--border);border-radius:var(--radius-s);padding:12px}
+.term-close-dialog{border:1px solid var(--border);border-radius:var(--radius-s);padding:12px;background:var(--surface-2)}
+.term-close-buttons{display:flex;gap:8px;flex-wrap:wrap}
+.term-history-placeholder{margin-top:8px;color:var(--text-muted)}
+.term-replay{margin-top:8px;border-top:1px solid var(--border);padding-top:8px}
+.term-replay>summary{cursor:pointer;color:var(--text-muted)}

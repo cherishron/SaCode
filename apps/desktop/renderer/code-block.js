@@ -1,4 +1,4 @@
-// 冻结 DSH CodeToolbar / CodeBlock 的 Vue runtime 适配，图形沿用其 MIT 授权。
+// 冻结基线 CodeToolbar / CodeBlock 的 Vue runtime 适配，图形沿用其 MIT 授权。
 "use strict";
 window.SaCodeCodeBlock = (function () {
   const {h,ref,onBeforeUnmount}=window.Vue;

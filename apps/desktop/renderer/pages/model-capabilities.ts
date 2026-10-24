@@ -21,7 +21,7 @@ export function modelCapabilitySummary(model: ModelCapabilities): string {
 }
 export function renderModelCapabilities(model: ModelCapabilities & { image: boolean }, index: number, disabled: boolean, changed: () => void) {
   const prefix = `模型 ${index + 1} `;
-  const mark = () => { model.provenance = 'human-confirmed'; changed(); };
+  const mark = () => { model.provenance = 'human-confirmed'; if (model.availability === 'unknown' || !model.availability) model.availability = 'available'; changed(); };
   const checkbox = (label: string, field: 'inputModalities' | 'outputModalities' | 'supports', value: string) => h('label', { class: 'model-capability-check' }, [
     h('input', { type: 'checkbox', checked: (model[field] || (field === 'inputModalities' && model.image ? ['image'] : [])).includes(value), disabled,
       'aria-label': prefix + label, onChange: (event: Event) => {

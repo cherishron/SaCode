@@ -1,4 +1,4 @@
-// 对照冻结 DSH ui-settings-models 的提供商列表与编辑流程；业务数据只经宿主适配器读写。
+// 对照冻结基线 ui-settings-models 的提供商列表与编辑流程；业务数据只经宿主适配器读写。
 import { defineComponent, h, ref, onMounted, onBeforeUnmount, type PropType } from 'vue';
 import {cloneModel,renderModelCapabilities,type ModelCapabilities} from './model-capabilities';
 

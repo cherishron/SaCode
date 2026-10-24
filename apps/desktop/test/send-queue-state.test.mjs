@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import '../renderer/turn-poll-state.js';
 import assert from 'node:assert/strict';
 
 function ref(val) { return { value: val }; }

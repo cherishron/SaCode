@@ -1,0 +1,36 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { build } from 'esbuild';
+const require = createRequire(import.meta.url), desktop = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+test('真实 Electron 人工浏览导航、隔离、遮挡、尺寸与资源收尾', { timeout: 60000 }, async () => {
+  const parent = process.env.SACODE_BROWSER_TEST_ROOT || resolve(desktop, '../../target/tmp/browser-view-electron');
+  mkdirSync(parent, { recursive: true });
+  const dir = mkdtempSync(join(parent, 'run-'));
+  mkdirSync(join(dir, 'test-support')); mkdirSync(join(dir, 'renderer'));
+  for (const name of ['browser-view.cjs', 'preload.cjs']) copyFileSync(join(desktop, name), join(dir, name));
+  copyFileSync(join(desktop, 'test-support/browser-view-smoke.cjs'), join(dir, 'test-support/browser-view-smoke.cjs'));
+  for (const name of ['styles.css', 'browser-panel.css', 'dialog.js']) copyFileSync(join(desktop, 'renderer', name), join(dir, 'renderer', name));
+  copyFileSync(join(desktop, 'node_modules/vue/dist/vue.runtime.global.prod.js'), join(dir, 'vue.js'));
+  await build({ stdin: { contents: `import {BrowserPanel} from './browser-panel'; import {h,ref,createApp} from 'vue';
+    const active=ref(true),project=ref('p1'),open=ref(true);
+    createApp({setup:()=>()=>h('main',{},[h('h1',{},'内置浏览器验收'),open.value?h(BrowserPanel,{api:window.sacode,active:active.value,sessionId:'s1',projectId:project.value}):null,h('dialog',{id:'modal'},[h('h2',{},'设置弹窗'),h('button',{id:'modal-close',onClick:()=>document.querySelector('#modal').close()},'关闭设置')])])}).mount('#app');
+    globalThis.browserTest={navigate:async url=>{const input=document.querySelector('input');input.value=url;input.dispatchEvent(new Event('input',{bubbles:true}));await new Promise(r=>setTimeout(r,0));document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},click:label=>[...document.querySelectorAll('button')].find(b=>b.textContent===label)?.click(),modal:value=>{const el=document.querySelector('#modal');value?el.showModal():el.close();},active:value=>active.value=value,project:value=>project.value=value,close:()=>open.value=false};`, resolveDir: join(desktop, 'renderer/pages'), loader: 'ts' }, bundle: true, format: 'iife', outfile: join(dir, 'fixture.js'), plugins: [{ name: 'vue-runtime', setup(b) { b.onResolve({ filter: /^vue$/ }, () => ({ path: 'vue', namespace: 'runtime' })); b.onLoad({ filter: /.*/, namespace: 'runtime' }, () => ({ contents: 'module.exports=globalThis.Vue;', loader: 'js' })); } }] });
+  writeFileSync(join(dir, 'fixture.html'), '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'self\'; script-src \'self\'; style-src \'self\'"><link rel="stylesheet" href="renderer/styles.css"><link rel="stylesheet" href="renderer/browser-panel.css"><div id="app"></div><script src="vue.js"></script><script src="fixture.js"></script>');
+  const env = { ...process.env, TEMP: dir, TMP: dir }; delete env.ELECTRON_RUN_AS_NODE;
+  const result = await new Promise((resolveResult, reject) => {
+    const child = spawn(require('electron'), [join(dir, 'test-support/browser-view-smoke.cjs'), dir], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: false });
+    let out = '', err = ''; const timer = setTimeout(() => { child.kill(); reject(Error('Electron 未在时限内退出：' + out + err)); }, 55000);
+    child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { err += d; });
+    child.on('error', e => { clearTimeout(timer); reject(e); }); child.on('close', code => { clearTimeout(timer); resolveResult({ code, out, err }); });
+  });
+  writeFileSync(join(dir, 'result.json'), JSON.stringify(result, null, 2));
+  assert.equal(result.code, 0, result.out + '\n' + result.err);
+  const report = JSON.parse(result.out.trim().split(/\r?\n/).at(-1));
+  assert.ok(report.checks.length >= 15); assert.deepEqual(report.errors, []);
+  console.log(JSON.stringify({ directory: dir, ...report }));
+});

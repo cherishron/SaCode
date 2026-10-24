@@ -43,10 +43,10 @@ export const UsagePill=defineComponent({name:'SaCodeUsagePill',props:{usage:Obje
   const fmt=(v:number|null)=>v===null?'—':compactTokens(v);
   return h(StatPill,{label:compactTokens(u.total),title:'累计 token 用量',resetKey:props.resetKey},{default:()=>[row('缓存命中率',u.hit===null?'—':`${(u.hit*100).toFixed(1)}%`),row('未缓存输入',fmt(u.input)),row('缓存读取',fmt(u.cacheRead)),row('缓存写入',fmt(u.cacheWrite)),row('输出',fmt(u.output)),u.input===null?h('p',{class:'composer-stat-note'},'宿主尚未提供 token 明细；不从总量反推缓存命中率。'):null]});
 }}});
-export const ComposerStats=defineComponent({name:'SaCodeComposerStats',props:{sessionId:String,modelKey:String,activity:Object as PropType<Activity>,settled:Boolean,api:Object},setup(props){
+export const ComposerStats=defineComponent({name:'SaCodeComposerStats',props:{sessionId:String,modelKey:String,activity:Object as PropType<Activity>,settled:Boolean,empty:Boolean,api:Object},setup(props){
   const usage=ref<ReturnType<typeof usageOf>>(null);let generation=0,disposed=false;
   const load=async()=>{const ticket=++generation;usage.value=null;const api=props.api as any;if(!api?.usageStatus)return;try{const [status,ledger]=await Promise.all([api.usageStatus(),typeof api.ledgerStats==='function'?api.ledgerStats().catch(()=>null):null]);if(!disposed&&ticket===generation)usage.value=usageOf(status,ledger);}catch{/* 读失败保持未知，不回填旧会话。 */}};
   watch(()=>props.sessionId,()=>void load(),{immediate:true,flush:'sync'});watch(()=>props.settled,settled=>{if(settled)void load();});
   onBeforeUnmount(()=>{disposed=true;generation++;});
-  return()=>!activityOf(props.activity)&&!usage.value?null:h('div',{class:'composer-stats-row','aria-label':'活动与用量统计'},[h(ActivityPill,{key:props.modelKey,activity:props.activity,resetKey:props.sessionId+':'+props.modelKey}),h(UsagePill,{usage:usage.value,resetKey:props.sessionId})]);
+  return()=>props.empty||(!activityOf(props.activity)&&!usage.value)?null:h('div',{class:'composer-stats-row','aria-label':'活动与用量统计'},[h(ActivityPill,{key:props.modelKey,activity:props.activity,resetKey:props.sessionId+':'+props.modelKey}),h(UsagePill,{usage:usage.value,resetKey:props.sessionId})]);
 }});

@@ -4,6 +4,10 @@ import { StateDot } from './state-dot';
 export type ToolCall = {id:string;callId:string;name:string;arguments:string;status:string;resultMessageId?:string;result?:string};
 export type ToolMessage = {id?:string;content?:string;toolCall?:ToolCall};
 const toolNames:Record<string,string>={web_fetch:'网页抓取',web_search:'网络搜索'};
+// 折叠状态图标：与 app.js 消息折叠按钮同构的 16×16 线形 chevron（currentColor 随按钮态变色）。
+const foldIcon=(up:boolean)=>h('svg',{width:14,height:14,viewBox:'0 0 16 16',fill:'none','stroke-width':1.4,'aria-hidden':'true'},[
+  h('path',{d:up?'M3.5 10.5L8 6L12.5 10.5':'M3.5 6L8 10.5L12.5 6',stroke:'currentColor'}),
+]);
 const names:Record<string,string>={running:'运行中',completed:'已完成',denied:'已拒绝',cancelled:'已取消',failed:'失败',unknown:'结果未知'};
 export function argumentSummary(raw:string):string {
   try {
@@ -74,13 +78,13 @@ export const ToolCard=defineComponent({
           h('span',{class:'tool-label'},toolNames[call?.name||'']||call?.name||web?.label||'历史工具结果'),
           h('span',{class:'tool-meta',role:'status'},call?names[status]||'结果未知':'缺少调用关联'),
           call?h('span',{class:'tool-target',title:argumentSummary(call.arguments)},argumentSummary(call.arguments)):null,
-          h('button',{type:'button',class:'tool-toggle','aria-expanded':expanded.value,'aria-controls':detailId,onClick:()=>{expanded.value=!expanded.value;}},expanded.value?'收起':'展开'),
+          h('button',{type:'button',class:'tool-toggle','aria-label':expanded.value?'收起':'展开','aria-expanded':expanded.value,'aria-controls':detailId,onClick:()=>{expanded.value=!expanded.value;}},[foldIcon(expanded.value)]),
         ]),
         expanded.value?h('div',{id:detailId,class:'tool-details'},[
           call?h('div',{class:'tool-arguments'},[h('strong',{},'参数'),h('pre',{class:'tool-body'},call.arguments)]):h('p',{class:'tool-hint'},'该历史记录没有可核对的调用身份与参数。'),
           h('strong',{},'结果'),
           web?webView():h('pre',{class:'tool-body'},body||(status==='running'?'等待工具返回结果':'尚无可核对的结果正文')),
-          // 结果正文区底部操作：复制结果文本。与 DSH 工具卡对齐——至少能复制结果。
+          // 结果正文区底部操作：复制结果文本。与基线工具卡对齐——至少能复制结果。
           h('div',{class:'tool-actions'},[h('button',{type:'button',class:'btn btn-copy','data-copy-state':copied.value?'copied':copyFailed.value?'failed':'idle',onClick:copyResult},copied.value?'已复制':copyFailed.value?'复制失败':'复制结果')]),
         ]):web?webView():body?h('p',{class:'tool-hint'},body.slice(0,120)+(body.length>120?'…':'')):null,
       ]);

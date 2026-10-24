@@ -70,6 +70,7 @@ module.exports = async function clearAcceptanceMainSmoke({ app, HOST, SESSION_DI
       note(await wait("document.querySelectorAll('#messages [data-msg-id]').length===2"),
         `启动后种子消息进入消息面（实际 ${await domCount()} 条，应为 assistant+user 各一）`);
 
+      const baseline = await bridge.request('session/projection');
       for (let i = 1; i <= 8; i++) {
         await sendFromUi(`清空验收第 ${i} 条消息`);
         // 第 1 条的双份完成信号：计数到位（refresh 已重投影）+ .error 出现起轮失败回执。
@@ -81,7 +82,10 @@ module.exports = async function clearAcceptanceMainSmoke({ app, HOST, SESSION_DI
       }
       note((await domCount()) === 10, `种子 2 条 + 界面真实发送 8 条凑满消息面 10 条（实际 ${await domCount()} 条）`);
       const before = await bridge.request('session/projection');
-      note(before.projection === 11, `核心投影 surface 计数为 11（种子 3 条含 system + 新发 8 条，实际 ${before.projection}）`);
+      note(Number.isSafeInteger(baseline.projection) && before.projection === baseline.projection + 8,
+        `核心投影新增 8 条消息（发送前 ${baseline.projection}，发送后 ${before.projection}）`);
+      note(Array.isArray(before.messageRows) && Array.from({length:8},(_,i)=>`清空验收第 ${i+1} 条消息`).every(text=>
+        before.messageRows.filter(row=>row.eventType==='user/message' && row.text===text).length===1), '核心投影逐条包含 8 条新消息且不重复');
 
       // 命令菜单的真实入口：输入 “/” 触发 slashTrigger，菜单直接开到「可用命令」分区。
       // 先等附件按钮可用：catalogBusy 在飞时 show() 会静默返回，菜单永远不开。
@@ -130,7 +134,7 @@ module.exports = async function clearAcceptanceMainSmoke({ app, HOST, SESSION_DI
       note(readFileSync(SESSION_LOG, 'utf8').includes('清空之后的新消息'), '新消息真实落盘');
     }
 
-    console.log('CLEAR_UI_ACCEPTANCE PASS');
+    console.log(bad === 0 ? 'CLEAR_UI_ACCEPTANCE PASS' : `CLEAR_UI_ACCEPTANCE FAIL ${bad} 项检查失败`);
     try { await bridge.stop(); } catch (_) {}
     app.exit(bad === 0 ? 0 : 1);
   } catch (error) {

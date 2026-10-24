@@ -1,4 +1,4 @@
-// 承接 DSH 66e10182 / b88b6c24 的多行编辑与输入法防护契约，沿用唯一 Vue runtime。
+// 承接基线 66e10182 / b88b6c24 的多行编辑与输入法防护契约，沿用唯一 Vue runtime。
 import { defineComponent, h, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 
 export const InlineEditor = defineComponent({

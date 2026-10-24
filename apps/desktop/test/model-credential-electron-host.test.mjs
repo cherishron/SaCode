@@ -16,8 +16,9 @@ for(const builtin of [false,true])test(`真实Electron ${builtin?'内置':'自�
   assert.ok(existsSync(host),'需要本批源码构建的Host');
   const dir=mkdtempSync(join(tmpdir(),'sacode-credential-electron-'));mkdirSync(join(dir,'user-data'));
   copyFileSync(join(desktop,'renderer/vendor/vue.runtime.global.prod.js'),join(dir,'vue.js'));
+  copyFileSync(join(desktop,'renderer/dialog.js'),join(dir,'dialog.js'));
   await build({stdin:{contents:`export {Page} from './provider-settings.ts'; export {createModelCenterAdapters} from './model-center-adapter.ts';`,resolveDir:join(desktop,'renderer/pages'),loader:'ts'},bundle:true,format:'iife',globalName:'ModelPage',outfile:join(dir,'page.js'),plugins:[{name:'vue-runtime',setup(b){b.onResolve({filter:/^vue$/},()=>({path:'vue',namespace:'runtime'}));b.onLoad({filter:/.*/,namespace:'runtime'},()=>({contents:'module.exports=globalThis.Vue;',loader:'js'}));}}]});
-  writeFileSync(join(dir,'fixture.html'),`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'"><div id="fixture"></div><script src="vue.js"></script><script src="page.js"></script><script src="checks.js"></script>`);
+  writeFileSync(join(dir,'fixture.html'),`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'"><div id="fixture"></div><script src="vue.js"></script><script src="dialog.js"></script><script src="page.js"></script><script src="checks.js"></script>`);
   writeFileSync(join(dir,'checks.js'),`(async()=>{
     try {
       const wait=async(predicate)=>{for(let i=0;i<100;i++){await Vue.nextTick();if(predicate())return;await new Promise(r=>setTimeout(r,20));}throw Error('page-state-timeout');};

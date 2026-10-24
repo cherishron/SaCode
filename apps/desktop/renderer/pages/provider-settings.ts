@@ -200,7 +200,7 @@ export const Page=defineComponent({
         ]),
         !readReady.value&&!loading.value?el('p','notice','当前目录尚未核实，修改操作已暂停。请刷新后继续。',{role:'status'}):null,
         loading.value?el('p','loading','正在加载…'):null,
-        error.value?el('p','error',error.value,{role:'alert'}):null,
+        error.value&&!isEditing?el('p','error',error.value,{role:'alert'}):null,
         message.value?el('p','saved',message.value,{role:'status','aria-live':'polite'}):null,
         operation?el('section','notice',[
           el('p',null,pullStateText(operation),{role:'status','aria-live':'polite'}),
@@ -245,31 +245,38 @@ export const Page=defineComponent({
         ],{key:p.id}))),
         !providers.value.length&&!loading.value?el('p','empty','暂无供应商，点击"添加供应商"开始配置。'):null,
 
-        // 编辑表单
-        isEditing?el('fieldset','editor',[
-          el('h3',null,adding.value?'添加供应商':'编辑 '+(d.name||d.id)),
-          d.declared?el('p','hint','内置供应商的名称、接口和协议由目录定义；此处可保存启停和密钥，排序请使用列表中的上移或下移。'):null,
-          adding.value?el('label','field',[el('span','lbl','Provider ID'),el('input','ipt',null,{value:d.id,'aria-label':'Provider ID',placeholder:'my-provider',onInput:(e:Event)=>d.id=(e.target as HTMLInputElement).value})]):null,
-          el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,disabled:d.declared,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
-          el('label','field',[el('span','lbl','API 地址'),el('input','ipt',null,{value:d.baseUrl,disabled:d.declared,'aria-label':'API 地址',type:'url',placeholder:'https://gateway.example/v1',onInput:(e:Event)=>d.baseUrl=(e.target as HTMLInputElement).value})]),
-          el('label','field',[el('span','lbl','API 协议'),h('select',{class:'ipt',value:d.protocol,disabled:d.declared,'aria-label':'API 协议',onChange:(e:Event)=>d.protocol=(e.target as HTMLSelectElement).value as Protocol},Object.entries(protoLabels).map(([v,label])=>h('option',{value:v},label)))]),
-          el('label','field',[el('span','lbl','传输方式'),h('select',{class:'ipt',value:d.transport,disabled:d.declared,'aria-label':'传输方式',onChange:(e:Event)=>d.transport=(e.target as HTMLSelectElement).value as Transport},[h('option',{value:'direct'},'直连'),h('option',{value:'relay'},'中继')])]),
-          el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),disabled:d.declared,'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
-          d.credentialWritable!==false?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
-          editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
-          !d.declared?el('section','model-catalog',[
-            ...(d.models||[]).map((m,i)=>el('div','model-entry',[
-              inp('模型 ID '+(i+1),m.id,v=>{m.id=v;}),
-              inp('模型名称 '+(i+1),m.name,v=>{m.name=v;}),
-              renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}),
-              btn('删除模型',()=>{d.models!.splice(i,1);}),
-            ])),
-            btn('添加模型',()=>{(d.models ||= []).push({id:'',name:'',contextWindow:'',maxTokens:'',image:false});}),
-          ]):null,
-          el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
-          credentialRetry.value?btn('仅重试密钥',()=>void retryCredential(),'primary',{disabled:saving.value||loading.value||!writable.value||!props.adapter?.saveCredential}):null,
-          el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
-        ],{disabled:saving.value,'aria-busy':saving.value}):null,
+        // 编辑表单：独立模态弹窗，模型目录再长也只滚弹窗体，不把列表顶出视野。
+        isEditing?h((globalThis as any).SaCodeDialog,{
+          open:true,
+          title:adding.value?'添加供应商':'编辑 '+(d.name||d.id),
+          class:'ps-editor-dialog',
+          onClose:()=>{if(!saving.value)closeEdit();},
+        },()=>[
+          el('fieldset','editor',[
+            d.declared?el('p','hint','内置供应商的名称、接口和协议由目录定义；此处可保存启停和密钥，排序请使用列表中的上移或下移。'):null,
+            adding.value?el('label','field',[el('span','lbl','Provider ID'),el('input','ipt',null,{value:d.id,'aria-label':'Provider ID',placeholder:'my-provider',onInput:(e:Event)=>d.id=(e.target as HTMLInputElement).value})]):null,
+            el('label','field',[el('span','lbl','显示名称'),el('input','ipt',null,{value:d.name,disabled:d.declared,'aria-label':'显示名称',placeholder:'显示名称',onInput:(e:Event)=>d.name=(e.target as HTMLInputElement).value})]),
+            el('label','field',[el('span','lbl','API 地址'),el('input','ipt',null,{value:d.baseUrl,disabled:d.declared,'aria-label':'API 地址',type:'url',placeholder:'https://gateway.example/v1',onInput:(e:Event)=>d.baseUrl=(e.target as HTMLInputElement).value})]),
+            el('label','field',[el('span','lbl','API 协议'),h('select',{class:'ipt',value:d.protocol,disabled:d.declared,'aria-label':'API 协议',onChange:(e:Event)=>d.protocol=(e.target as HTMLSelectElement).value as Protocol},Object.entries(protoLabels).map(([v,label])=>h('option',{value:v},label)))]),
+            el('label','field',[el('span','lbl','传输方式'),h('select',{class:'ipt',value:d.transport,disabled:d.declared,'aria-label':'传输方式',onChange:(e:Event)=>d.transport=(e.target as HTMLSelectElement).value as Transport},[h('option',{value:'direct'},'直连'),h('option',{value:'relay'},'中继')])]),
+            el('label','field',[el('span','lbl','排序'),el('input','ipt',null,{type:'number',min:'0',value:String(d.sortOrder),disabled:d.declared,'aria-label':'排序',onInput:(e:Event)=>d.sortOrder=parseInt((e.target as HTMLInputElement).value)||0})]),
+            d.credentialWritable!==false?el('label','field',[el('span','lbl','API 密钥'),el('input','ipt',null,{type:'password',value:d.key,'aria-label':'API 密钥',placeholder:adding.value?'输入 API 密钥':'',autocomplete:'off',spellcheck:false,onInput:(e:Event)=>d.key=(e.target as HTMLInputElement).value})]):null,
+            editing.value&&d.credentialWritable===false?el('p','hint','此供应商密钥由启动环境提供（只读）。'):null,
+            !d.declared?el('section','model-catalog',[
+              ...(d.models||[]).map((m,i)=>el('div','model-entry',[
+                inp('模型 ID '+(i+1),m.id,v=>{m.id=v;}),
+                inp('模型名称 '+(i+1),m.name,v=>{m.name=v;}),
+                renderModelCapabilities(m,i,saving.value||!writable.value,()=>{}),
+                btn('删除模型',()=>{d.models!.splice(i,1);}),
+              ])),
+              btn('添加模型',()=>{(d.models ||= []).push({id:'',name:'',contextWindow:'',maxTokens:'',image:false});}),
+            ]):null,
+            el('label','check',[h('input',{type:'checkbox',checked:d.enabled,'aria-label':'启用',onChange:(e:Event)=>d.enabled=(e.target as HTMLInputElement).checked}),'启用此供应商']),
+            error.value?el('p','error',error.value,{role:'alert'}):null,
+            credentialRetry.value?btn('仅重试密钥',()=>void retryCredential(),'primary',{disabled:saving.value||loading.value||!writable.value||!props.adapter?.saveCredential}):null,
+            el('div','actions',[btn('取消',closeEdit,'btn',{disabled:saving.value}),btn(saving.value?'保存中…':'保存',()=>void save(),'primary',{disabled:!readReady.value||loading.value||saving.value||!writable.value})]),
+          ],{disabled:saving.value,'aria-busy':saving.value}),
+        ]):null,
 
         // 删除确认弹窗
         deleting.value?h('div',{class:'ps-dialog',role:'alertdialog','aria-label':'确认删除'},[

@@ -128,3 +128,20 @@ test('降级异常时 textarea 在 finally 中移除',async()=>{
   assert.equal(removed.length,1,'应 removeChild 一次（finally 保证，即使 select 抛异常）');
   assert.equal(appended[0],removed[0],'移除的应是同一个 textarea');
 });
+
+test('工具调用展开控件是折叠图标而非中文文字，随状态切换 chevron',()=>{
+  const{setup}=fixture();
+  const find=()=>flatten(setup()).find(n=>n.props?.class==='tool-toggle');
+  const path=()=>flatten(find()).find(n=>n.type==='path')?.props?.d;
+  const folded=find();
+  assert.ok(flatten(folded).some(n=>n.type==='svg'),'控件应是 svg 折叠图标');
+  assert.equal(text(folded),'','控件不应再有中文文字节点');
+  assert.equal(folded.props['aria-label'],'展开');
+  assert.equal(folded.props['aria-expanded'],false);
+  assert.equal(path(),'M3.5 6L8 10.5L12.5 6','折叠态为 chevron-down');
+  folded.props.onClick();
+  const expanded=find();
+  assert.equal(expanded.props['aria-label'],'收起');
+  assert.equal(expanded.props['aria-expanded'],true);
+  assert.equal(path(),'M3.5 10.5L8 6L12.5 10.5','展开态为 chevron-up');
+});

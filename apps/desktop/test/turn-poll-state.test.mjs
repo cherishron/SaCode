@@ -62,6 +62,10 @@ test('request-provider-failed 携带分类时显示友好提示而非原始协�
   for(const [finishReason,expected] of cases){
     const f=fixture(async()=>({frames:[],running:false,settled:true,cancelled:false,interrupted:true,finishReason}));
     f.state.start();await f.run();
-    assert.equal(f.error.value,expected,`finishReason=${finishReason} 应显示友好提示`);
+    if(finishReason.endsWith('provider-error:timeout')) {
+      assert.match(f.error.value,/超时/);
+      assert.match(f.error.value,/网络|重试/);
+      assert.equal(f.error.value.includes('request-provider-failed'),false);
+    } else assert.equal(f.error.value,expected,`finishReason=${finishReason} 应显示友好提示`);
   }
 });

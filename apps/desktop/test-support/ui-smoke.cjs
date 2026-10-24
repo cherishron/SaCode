@@ -8,6 +8,7 @@ const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 // 桌面黄金路径的运行时验收：真窗口里的 Vue 渲染层 → preload → IPC → 仓颉宿主 → 会话日志 → 再投影。
 // 只看 DOM 里有 JSON 不算数——必须证明点击真的被核心落盘，且投影、流式、审批、取消各自有终态。
 async function uiSmoke(context) {
+  if (process.env.SACODE_UI_SMOKE_SUITE === 'browser') return require('./browser-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'model-center') return require('./model-center-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'acp-history') return require('./acp-history-main-smoke.cjs')(context);
   if (process.env.SACODE_UI_SMOKE_SUITE === 'execution-history') return require('./execution-history-main-smoke.cjs')(context);
@@ -189,7 +190,8 @@ async function uiSmoke(context) {
       '原型首屏导航不常驻日志完整性筛选，仍保留搜索与会话树');
     await js("document.querySelector('#open-catalog').click()");
     await waitFor(() => js("!!document.querySelector('.catalog-dialog[open] [data-catalog-status]') && !document.querySelector('#refresh-catalog').disabled"));
-    const statusSegs = await js("JSON.stringify([...document.querySelectorAll('.catalog-dialog[open] .catalog-filter button')].map(b=>b.dataset.catalogStatus))");
+    // 存档切换按钮不是日志状态段的一格：它不带 data-catalog-status，也不禁用会话切换。
+    const statusSegs = await js("JSON.stringify([...document.querySelectorAll('.catalog-dialog[open] .catalog-filter button[data-catalog-status]')].map(b=>b.dataset.catalogStatus))");
     note(statusSegs === JSON.stringify(['all', 'ready', 'truncated-tail', 'replay-rejected']),
       `状态筛选段控件覆盖核心目录发出的全部状态（实际 ${statusSegs}）`);
     await clickStatus('replay-rejected');
@@ -251,9 +253,16 @@ async function uiSmoke(context) {
   note(trReady, `TinyRobot 折叠产物已加载=${await trShape()}`);
 
   // 1) 渲染层必须由 Vue 挂出来，且消息只来自核心投影。
-  //    消息面换成 BubbleList 后按「组」计：种子是 system/developer/assistant/user 四个角色，各成一组。
-  const mounted = await waitFor(() => count("#messages .tr-bubble").then((n) => n >= 4));
-  note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出）`);
+  //    system/developer 只进模型上下文、不进普通对话气泡（msgfold.conversationMessages），
+  //    种子里真正上屏的是 assistant 与 user 两组，正文要逐字对得上。
+  const mounted = await waitFor(() => js(
+    "(() => { const m = [...document.querySelectorAll('#messages .tr-bubble')];" +
+    " const roles = m.map((e) => e.getAttribute('data-role'));" +
+    " const t = m.map((e) => e.textContent || '').join('|');" +
+    " return m.length >= 2 && roles.includes('assistant') && roles.includes('user')" +
+    " && t.includes('欢迎使用 SaCode。') && t.includes('你好，SaCode。'); })()"
+  ));
+  note(mounted, `Vue 挂载后气泡组数=${await count("#messages .tr-bubble")}（核心投影给出；system/developer 不进普通对话）`);
 
   async function pluginManagerChecks() {
     const source = join(SESSION_DIR, '本地插件 验收源');
@@ -363,6 +372,8 @@ async function uiSmoke(context) {
   // 2026-10-17 补齐滞后清单：这些通道早已在 preload.cjs 里，只是 UI 侧清单没跟上
   // （清单滞后是登记问题，不是产品问题——本条检查存在的意义就是把滞后报出来）。
   PRELOAD_API.push('automationList','automationSave','automationControl','knowledgeList','knowledgeImport','knowledgeReference','knowledgeSave','knowledgeRemove','acpDelegationList','acpDelegationDescribe','acpDelegationCreate','acpDelegationPoll','acpDelegationAnswer','acpDelegationCancel','acpDelegationClose','acpSettingsDescribe','acpSettingsSetEnabled','acpProviderProbe','acpDiagnosticsDescribe','acpDiagnosticsKeep','executionList','workspaceGitPushTarget');
+  // 2026-10-23 补齐滞后清单：这 49 条通道早已在 preload.cjs 里（与 IPC parity 门禁同源），只是 UI 侧清单没跟上。
+  PRELOAD_API.push('browserNavigate','browserScreenshot','browserClick','browserInput','browserScroll','browserClose','databaseConnect','databaseDisconnect','databaseQuery','importSources','importPickFile','importPreview','importPlan','importConfirm','importApply','importDescribe','importCancel','terminalCreate','terminalInput','terminalResize','terminalInterrupt','terminalDescribe','terminalClose','compactRun','compactDescribe','securityScan','securityDescribe','securityFreshness','securityFixDraft','sshExec','sshDescribe','mcpList','mcpConnect','mcpDisconnect','mcpTools','mcpCall','mcpStatus','automationTick','automationDescribeExecution','knowledgeIndexBuild','knowledgeSearch','knowledgeDescribeIndex','sessionRename','sessionArchive','userQuestionAnswer','sessionClear','planSetMode','planGetMode','planReviewAnswer');
   const apiShape = await js(`${JSON.stringify(PRELOAD_API)}.map(k => typeof (window.sacode||{})[k]).join(',')`);
   note(apiShape === Array(PRELOAD_API.length).fill("function").join(","), `preload 暴露面=${apiShape}`);
   // 暴露面必须是「恰好这些」：多出一个泛化 request 通道就等于把宿主协议面交给网页
@@ -584,13 +595,16 @@ async function uiSmoke(context) {
   bridge.request=async(method,params,...rest)=>{if(method==='session/append' && params?.eventType==='user/message'){sendRequests++;await nap(200);}return sendRequest(method,params,...rest);};
   try {
     await setDraftForSize('回执前保留的原始消息');
-    const pendingSend=await js("(()=>{document.querySelector('#send').click();document.querySelector('#send').click();return Vue.nextTick().then(()=>({locked:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),draft:document.querySelector('#composer').value,sessionLocked:document.querySelector('#sidebar-new-session').disabled,searchLocked:document.querySelector('#sidebar-search').disabled,filterCount:document.querySelectorAll('.catalog-filter button').length,filterLocked:[...document.querySelectorAll('.catalog-filter button')].every(b=>b.disabled)}));})()");
+    const pendingSend=await js("(()=>{document.querySelector('#send').click();document.querySelector('#send').click();return Vue.nextTick().then(()=>({locked:document.querySelector('#send').disabled,busy:document.querySelector('#send').getAttribute('aria-busy'),draft:document.querySelector('#composer').value,sessionLocked:document.querySelector('#sidebar-new-session').disabled,searchLocked:document.querySelector('#sidebar-search').disabled,filterCount:document.querySelectorAll('.catalog-filter [data-catalog-status]').length,filterLocked:[...document.querySelectorAll('.catalog-filter [data-catalog-status]')].every(b=>b.disabled)}));})()");
     note(pendingSend.locked && pendingSend.busy==='true' && pendingSend.draft==='回执前保留的原始消息' && pendingSend.sessionLocked, "消息等待真实回执时保留草稿并阻止重复发送和会话切换");
     // 会话检索/筛选会改导航里「点一下就切会话」的那批控件，所以必须跟新建会话吃同一条锁。
     note(pendingSend.searchLocked && pendingSend.filterCount===4 && pendingSend.filterLocked, "消息等待真实回执时侧栏搜索与弹窗日志筛选一并禁用");
     await setDraftForSize('请求期间继续编辑的新草稿');
     note(await waitFor(()=>js("document.querySelector('#messages').textContent.includes('回执前保留的原始消息') && !document.querySelector('#send').disabled && document.querySelector('#composer').value==='请求期间继续编辑的新草稿'")), "成功回执不会清空请求期间新编辑的草稿");
-    note(sendRequests===1 && Number((await text('#count-events')).split(' ')[1])===beforeEvents+1, "同帧重复点击仅写入一条真实用户消息");
+    // 队列路径除 user/message 外还会写 agent/inbox/spliced，事件总数不能当「发了几条」的证据；
+    // 这里数的是真实 append 调用与对话面上该正文出现的次数。
+    const echoOnce = await js("(() => { const s = document.querySelector('#messages').textContent || ''; return s.split('回执前保留的原始消息').length - 1; })()");
+    note(sendRequests===1 && echoOnce===1, `同帧重复点击仅写入一条真实用户消息（append 调用 ${sendRequests} 次，对话面正文 ${echoOnce} 条）`);
   } finally {bridge.request=sendRequest;await setDraftForSize('');}
   beforeEvents=Number((await text('#count-events')).split(' ')[1]);
   const typed = "第一行\n第二行 带\"引号\"";
@@ -621,25 +635,25 @@ async function uiSmoke(context) {
   const roleSpread = await js(
     "(() => { const m = document.querySelectorAll('#messages .tr-bubble'); const r = {};" +
     " m.forEach((e) => { const k = e.getAttribute('data-role') || '?'; r[k] = (r[k] || 0) + 1; });" +
-    " return r['system'] + '/' + r['developer'] + '/' + r['assistant'] + '/' + r['user'] + '|组' + m.length; })()"
+    " return JSON.stringify({ user: r['user'] || 0, assistant: r['assistant'] || 0, system: r['system'] || 0, developer: r['developer'] || 0, groups: m.length }); })()"
   );
-  note(roleSpread === "1/1/1/1|组4", `种子角色分布=${roleSpread}`);
-  // developer/message 是不变量 7 里第五类进模型历史的事件：核心认它之后，界面不许把它
-  // 并入 system 显示，正文与原始前缀都要可按条追问。
-  const devBubble = await js(
-    "(() => { const e = document.querySelector('#messages .tr-bubble[data-role=\"developer\"]');" +
-    " if (!e) return 'no-developer-group';" +
-    " const t = e.querySelector('.msg-text[data-source-role]');" +
-    " return ((t ? (t.textContent || '').trim() : '') === '请用中文协助完成项目任务。' ? 'visible' : 'text:' + (t ? t.textContent : ''))" +
-    " + '|' + (t ? t.getAttribute('data-source-role') : 'no-source-role'); })()"
+  const roleShape = JSON.parse(roleSpread);
+  note(roleShape.user >= 1 && roleShape.assistant >= 1 && roleShape.system === 0 && roleShape.developer === 0,
+    `种子角色分布=${roleSpread}（system/developer 只进日志与模型上下文，不上普通对话面）`);
+  // system/message 与 developer/message 都是进模型历史的事件：界面按产品决策不把它们混进
+  // 普通对话气泡，但事件本身必须仍在会话日志里，不能被「看不见」当成丢了。
+  const ctxBubble = await js(
+    "(() => document.querySelectorAll('#messages .tr-bubble[data-role=\"developer\"],#messages .tr-bubble[data-role=\"system\"]').length)()"
   );
-  note(devBubble === "visible|developer/message", `developer 气泡=${devBubble}`);
+  const seedLog = require('node:fs').readFileSync(SESSION_LOG, 'utf8');
+  note(ctxBubble === 0 && /developer\/message\t请用中文协助完成项目任务。/.test(seedLog) && /system\/message\t/.test(seedLog),
+    `system/developer 气泡=${ctxBubble}，两类事件仍在会话日志里`);
   const placementPair = await js(
     "(() => { const q = (r) => { const e = document.querySelector('#messages .tr-bubble[data-role=\"' + r + '\"]');" +
     " return e ? e.getAttribute('data-placement') : 'missing'; };" +
-    " return q('user') + '|' + q('assistant') + '|' + q('system') + '|' + q('developer'); })()"
+    " return q('user') + '|' + q('assistant'); })()"
   );
-  note(placementPair === "end|start|start|start", `角色定位=${placementPair}（user 在右，其余在左）`);
+  note(placementPair === "end|start", `角色定位=${placementPair}（user 在右，assistant 在左）`);
   // 2026-10-16 用户裁决：气泡不再显示「角色 · N 条消息」组标签——断言翻转为「不存在」。
   const roleLabels = await count("#messages .msg-role");
   note(roleLabels === 0, `气泡组标签数=${roleLabels}（应为 0；角色只由气泡形态与定位区分）`);
@@ -649,9 +663,9 @@ async function uiSmoke(context) {
   note(await click("#send"), "已再发一条 user 消息");
   // 「组数不变」必须带非零前提，否则 0 === 0 会把「一个组都没渲染」喂成绿。
   const mergedIntoGroup = await waitFor(
-    async () => groupsBeforeMerge >= 3 && (await count("#messages .tr-bubble")) === groupsBeforeMerge && (await text('#messages')).includes('第二条 user 消息')
+    async () => groupsBeforeMerge >= 2 && (await count("#messages .tr-bubble")) === groupsBeforeMerge && (await text('#messages')).includes('第二条 user 消息')
   );
-  note(mergedIntoGroup, `连续 user 合并：组数 ${groupsBeforeMerge} → ${await count("#messages .tr-bubble")}（应不变且 ≥ 3）`);
+  note(mergedIntoGroup, `连续 user 合并：组数 ${groupsBeforeMerge} → ${await count("#messages .tr-bubble")}（应不变且 ≥ 2）`);
   const userGroupNodes = await count('#messages .tr-bubble[data-role="user"] .msg-text');
   note(userGroupNodes >= 2, `user 组内正文条数=${userGroupNodes}（合并后应 ≥ 2）`);
 
@@ -757,13 +771,25 @@ async function uiSmoke(context) {
   note(await click("#send"), "输入区停止动作已派发核心取消");
   const cancelled = await waitFor(async () => (await text("#turn-state")) === "状态 已取消");
   note(cancelled, `取消终态=${await text("#turn-state")}`);
-  // 取消的一轮不落 assistant/message：半截正文只能继续由流式回显框呈现，
+  // 取消的一轮不落 assistant/message：半截正文只能由 BubbleList 里那条 live 气泡呈现，
   // 且不许多出一个助手气泡冒充「助手说过完整的话」。
-  const partialEcho = await text("#stream");
-  note(await js("(()=>{const n=document.querySelector('#stream');return !!n && getComputedStyle(n).fontSize==='14px' && getComputedStyle(n).lineHeight==='24px';})()"), "流式正文与助手消息共享字号和行高");
-  note(await js("!!document.querySelector('#stream .stream-content > .markdown-body')"), "取消后的流式正文使用共享 Markdown 组件");
-  note(await js("!document.querySelector('#stream .stream-status')"), "取消后撤去流式执行提示");
-  note(partialEcho.includes("你好，world"), `取消轮回显保留半截正文=${JSON.stringify(partialEcho.slice(0, 40))}`);
+  const liveProbe = await js(
+    "(() => { const live = document.querySelector('#messages .msg-node[data-live-message=\"true\"]');" +
+    " if (!live) return JSON.stringify({ live: false });" +
+    " const body = live.querySelector('.markdown-body');" +
+    " const persisted = [...document.querySelectorAll('#messages .msg-node:not([data-live-message]) .markdown-body')].pop();" +
+    " const cs = getComputedStyle(body || live);" +
+    " const ref = persisted ? getComputedStyle(persisted) : null;" +
+    " return JSON.stringify({ live: true, text: (live.textContent || '').trim(), markdown: !!body," +
+    " fontSize: cs.fontSize, lineHeight: cs.lineHeight, refFont: ref ? ref.fontSize : '', refLine: ref ? ref.lineHeight : ''," +
+    " busy: live.getAttribute('aria-busy') }); })()"
+  );
+  const live = JSON.parse(liveProbe);
+  note(live.live && live.markdown && live.fontSize === live.refFont && live.lineHeight === live.refLine,
+    `流式正文与助手消息共享字号和行高（live=${live.fontSize}/${live.lineHeight} 投影=${live.refFont}/${live.refLine}）`);
+  note(live.live && live.markdown, `取消后的流式正文使用共享 Markdown 组件（live=${live.live} 节点=${live.markdown}）`);
+  note(live.live && live.busy === 'false', `取消后撤去流式执行提示（live aria-busy=${live.busy}）`);
+  note(live.live && String(live.text || '').includes("你好，world"), `取消轮回显保留半截正文=${JSON.stringify(String(live.text || '').slice(0, 40))}`);
   const assistantGroupsAfterCancel = await count('#messages .tr-bubble[data-role="assistant"]');
   note(
     assistantGroupsAfterCancel === assistantGroupsAfterFull,
@@ -794,6 +820,10 @@ async function uiSmoke(context) {
   note(await click("#tool-write"), "已点开需审批工具");
   note(await waitFor(() => text("#approval").then((t) => t.includes("工单 #"))), "审批浮层出现且带工单号（一次性放行，无永久授权按钮）");
   const pendingApproval = await text('#approval');
+  // 渲染层重载后标签列表只剩默认两项；click 辅助会像用户那样先从资源面板把标签加回来，
+  // 待审批圆点才有挂载点（产品不会凭空常驻该标签）。
+  await click('#side-tab-inspect');
+  note(await waitFor(() => js("!!document.querySelector('#side-tab-inspect')")), "工作台资源面板可添加工具与审批标签");
   await click('#side-tab-guide');
   note(await js(`!!document.querySelector('#guide-approval') && !!document.querySelector('#side-tab-inspect .pending-dot[aria-label="待审批"]')`), "指南页保留待审批提示与返回入口");
   await click('#guide-approval');
@@ -903,18 +933,26 @@ async function uiSmoke(context) {
   note(await js("!document.querySelector('#app')._vnode.component.proxy.budgetBusy"), "预算回执完成后恢复状态层");
   note((await usageSummary()).includes('/90'), "预算变更同步更新核心用量投影");
 
-  // tool/ 行的正文必须真的在气泡里，且原始角色前缀可按条追问：默认内容渲染器链把
-  // role==="tool" 交给 ToolRole，而 ToolRole 只往 provider store 登记 tool_call_results、
-  // 渲染一个注释节点——照默认链走，tool 正文会直接隐身。
+  // 工具正文必须以结构化卡片上屏，且逐条消息可追溯：默认内容渲染器链把 role==="tool" 交给
+  // ToolRole，而 ToolRole 只登记 provider store、渲染注释节点——照默认链走正文会隐身。
+  // 内置工具面板走 extension/call 旧通道，日志只有纯文本调用/结果；核心投影按冻结不变量
+  // 不从正文猜调用身份，因此这些卡片必须如实标出「缺少调用关联 / 结果未知」，不得伪造完成态。
   const toolProbe = await js(
     "(() => { const m = document.querySelectorAll('#messages .tr-bubble[data-role=\"tool\"]');" +
     " if (!m.length) return 'no-tool-group';" +
     " const e = m[m.length - 1];" +
-    " const src = e.querySelector('.msg-text[data-source-role]');" +
-    " return ((e.textContent || '').trim().length > 0 ? 'visible' : 'empty')" +
-    " + '|' + (src ? src.getAttribute('data-source-role') : 'no-source-role'); })()"
+    " const cards = [...e.querySelectorAll('.tool-node')];" +
+    " const msgIds = cards.map((c) => c.getAttribute('data-msg-id')).filter(Boolean);" +
+    " const statuses = cards.map((c) => c.getAttribute('data-tool-status'));" +
+    " const text = e.textContent || ''; " +
+    " return ((text.trim().length > 0 ? 'visible' : 'empty')" +
+    " + '|cards=' + cards.length + '|msgIds=' + msgIds.length" +
+    " + '|unknown=' + statuses.filter((s) => s === 'unknown').length" +
+    " + '|linkMissing=' + (text.split('缺少调用关联').length - 1)" +
+    " + '|body=' + (text.includes('hello-from-renderer') ? 'yes' : 'no')); })()"
   );
-  note(/^visible\|tool\//.test(toolProbe), `tool 气泡=${toolProbe}`);
+  note(/^visible\|cards=([1-9]\d*)\|msgIds=\1\|unknown=\1\|linkMissing=\1\|body=yes$/.test(toolProbe),
+    `tool 气泡=${toolProbe}（结构化卡片逐条可追溯，缺调用身份时如实标注）`);
 
   // 超档必须当场拦得住：把档位收到低于一次消耗，再跑一轮就该失效。
   // 这段在 bridge.stop() 之前——stop 之后宿主已死，IPC 会超时。
@@ -953,7 +991,13 @@ async function uiSmoke(context) {
   note(await waitFor(async()=>(await text('#workspace-note')).includes('已保存')), "项目目录经核心落盘后显示已保存");
   note(workspacePickerContract && (await js("window.sacode.workspaceGet().then(w=>w.directory)")).includes('工作区 UI 项目'), "中文工作区和无预填路径的文件夹选择契约一致");
   context.chooseWorkspaceDirectory=workspacePickerBefore;
-  await click('#open-workspace');
+  // changeWorkspace 在 finally 才清 busy，而「已保存」文案在它之前就写好了：
+  // 不等这一拍落定，紧接着的 toggle 点击会被 workspaceBusy 直接 return 吞掉。
+  await waitFor(()=>js("document.querySelector('#app')._vnode.component.proxy.workspaceBusy===false && !document.querySelector('#project-picker').matches(':popover-open')"));
+  // 程序化 click 不产生聚焦；ProjectPicker 关闭时把焦点还给打开时的 activeElement，
+  // 所以必须先像键盘用户那样把焦点放到入口按钮上。
+  await js("document.querySelector('#open-workspace').focus(); document.querySelector('#open-workspace').click()");
+  await waitFor(()=>js("document.querySelector('#project-picker').matches(':popover-open')"));
   win.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'}); win.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
   note(await waitFor(()=>js("!document.querySelector('#project-picker').matches(':popover-open') && document.activeElement.id==='open-workspace'")), "项目菜单 Escape 关闭并恢复导航焦点");
   await click('#tool-write'); await waitFor(()=>count('#allow-once').then(n=>n===1)); await click('#allow-once');
@@ -1202,6 +1246,11 @@ async function uiSmoke(context) {
   note(/approval\/asked\t\d+:write/.test(log2) && /approval\/decided\t\d+:denied/.test(log2), "审批的 asked/decided 已进同一份会话日志");
 
   await bridge.start(SESSION_DIR);
+  // 切会话会按产品设计清空提醒条（session-state 只重读 hidden 状态，不重放启动提醒），
+  // 所以这里走真实启动路径：重载渲染层等价于重新打开工作台，启动提醒应重新出现。
+  win.reload();
+  const tipsBarBack = await waitFor(() => js("!!document.querySelector('.tips-bar-hide')"), 200);
+  note(tipsBarBack, `重开工作台后启动提醒条重新出现=${tipsBarBack}`);
   // 使用提醒的收尾验收：界面「不再提醒」必须落到核心，两个入口一起停；重新打开立刻恢复。
   const ctxGate = await bridge.request('tips/get', { accessibility: false });
   const ctxReply = await bridge.request('tips/after-reply', { accessibility: false });

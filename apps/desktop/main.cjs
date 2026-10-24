@@ -4,9 +4,15 @@ require('./stdio-guard.cjs').installStdioGuard();
 const { installWindowVisibility } = require('./window-visibility.cjs');
 const modelApproval = require('./renderer/model-approval.js');
 let modelTurnRequestId = null;
-const { app, BrowserWindow, ipcMain, nativeTheme, dialog } = require("electron");
+// turn/poll 的会话内游标：只对当前活动会话有效，起轮/切会话时归零。
+// 0 表示「从帧日志头开始读」；turnPollTurnId 为 null 表示不带 turnId（首次或已重置），
+// 这样带游标的新路径与旧 Host 的 take 路径都能工作。
+let turnPollCursor = 0;
+let turnPollTurnId = null;
+const { app, BrowserWindow, WebContentsView, session, ipcMain, nativeTheme, dialog } = require("electron");
 const { join } = require("node:path");
 const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const { HostBridge } = require("./host-bridge.cjs");
 const { hostExePath, computerUsePaths, caBundleSidecar, hostEnvWithCaBundle } = require("./paths.cjs");
 
@@ -64,6 +70,8 @@ const bridge = new HostBridge(
   hostEnvWithCaBundle(hostEnvironment, { sidecarPath: caBundleSidecar(HOST), exists: existsSync })
 );
 let win = null;
+const { registerBrowserViewIpc } = require('./browser-view.cjs');
+registerBrowserViewIpc({ ipcMain, WebContentsView, session, getWindow: () => win });
 // 关闭守卫的两次闸门：worktreeGuardRunning 防重入（连点关闭只走一次确认），
 // worktreeClosed 是「已结算」标记——只有守卫放行后自己重开关闭时才不再拦。
 let worktreeGuardRunning = false;
@@ -202,9 +210,26 @@ const domainSshArguments = v => {
 };
 // MCP 服务器名与工具名：与 Host mcp_rpc.cj 的字节白名单一致（A-Z a-z 0-9 _ . -）。
 const domainMcpName = v => typeof v === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(v);
+// 连接定义：只持久化非秘密配置 + 凭据引用；凭据引用必须以字母或下划线开头，
+// 与 core ConnectionDefinitionStore 的 credential 校验保持一致，阻止明文密码进入配置存储。
+const domainCredentialRef = v => typeof v === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(v);
+const domainConnectionTarget = { host: domainText(253), port: domainInt(1, 65535), user: domainText(256), credentialRef: domainCredentialRef };
+const domainConnectionDefinition = v => {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const common = { id: x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(x), title: domainText(600), enabled: x => typeof x === 'boolean' };
+  const ssh = domainObject({ ...common, kind: domainEnum('ssh'), spec: domainObject(domainConnectionTarget) });
+  const database = domainObject({ ...common, kind: domainEnum('database'), spec: domainObject({ ...domainConnectionTarget, engine: domainEnum('postgresql', 'mysql', 'dm'), database: domainText(256), tlsMode: domainEnum('verify-full') }) });
+  const envRef = domainObject({ key: domainCredentialRef, credentialRef: domainCredentialRef });
+  const stdio = domainObject({ ...common, kind: domainEnum('mcp'), spec: domainObject({ transport: domainEnum('stdio'), command: domainText(4096), args: domainArray(domainText(4096, 0), 100), envRefs: domainArray(envRef, 128) }) });
+  const http = domainObject({ ...common, kind: domainEnum('mcp'), spec: domainObject({ transport: domainEnum('http'), endpoint: domainText(4096), credentialRef: domainCredentialRef }) });
+  return ssh(v) || database(v) || stdio(v) || http(v);
+};
 const MCP_DEFAULT_TIMEOUT = 15000;
 const domainBase64 = v => typeof v === 'string' && v.length <= 5464 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v) &&
   v.length / 4 * 3 - (v.endsWith('==') ? 2 : v.endsWith('=') ? 1 : 0) <= 4096;
+// 语音录音身份与音频载荷：录音 id 只接受安全字符集；WAV 以有界 base64 传入（≤8 MiB 解码）。
+const domainVoiceId = v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+const domainAudioBase64 = v => typeof v === 'string' && v.length <= 11800000 && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v);
 const domainUrl = v => {
   if (!domainText(8192)(v)) return false;
   try { const url = new URL(v); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
@@ -225,6 +250,11 @@ ipcMain.handle('sacode:browserInput', async (_e, a) => { const p = domainParams(
 ipcMain.handle('sacode:browserScroll', async (_e, a) => { const p = domainParams(a, { ...domainOwner, deltaX: domainInt(-32767, 32767), deltaY: domainInt(-32767, 32767) }); return withHost(() => bridge.request('browser/scroll', p)); });
 ipcMain.handle('sacode:browserClose', async (_e, a) => { const p = domainParams(a, domainOwner); return withHost(() => bridge.request('browser/close', p)); });
 ipcMain.handle('sacode:databaseConnect', async (_e, a) => { const p = domainParams(a, { ...domainSid, projectId: domainId, spec: domainObject({ engine: domainEnum('postgresql', 'mysql', 'dm'), host: domainText(253), port: domainInt(1, 65535), database: domainText(256), user: domainText(256), credentialRef: domainId, tlsMode: domainEnum('verify-full'), readonly: domainEnum(true), connectTimeoutMs: domainInt(1, 300000), statementTimeoutMs: domainInt(1, 300000) }) }); return withHost(() => bridge.request('database/connect', p)); });
+// 连接定义管理：只持久化非秘密配置 + 凭据引用，不发起真实连接/信任/执行；
+// 启用定义不等于启动连接，连接检查与执行仍走各自独立审批通道（ssh/exec、mcp/connect、database/connect）。
+ipcMain.handle('sacode:connectionList', async (_e, a) => { const p = domainParams(a, { sessionId: domainId, scope: domainEnum('user', 'project') }); return withHost(() => bridge.request('connection/list', p)); });
+ipcMain.handle('sacode:connectionSave', async (_e, a) => { const p = domainParams(a, { sessionId: domainId, scope: domainEnum('user', 'project'), revision: domainInt(0), definition: domainConnectionDefinition }); return withHost(() => bridge.request('connection/save', p)); });
+ipcMain.handle('sacode:connectionControl', async (_e, a) => { const p = domainParams(a, { sessionId: domainId, scope: domainEnum('user', 'project'), revision: domainInt(0), id: domainText(80), action: domainEnum('enable', 'disable', 'remove') }); return withHost(() => bridge.request('connection/control', p)); });
 ipcMain.handle('sacode:databaseDisconnect', async (_e, a) => { const p = domainParams(a, { connectionId: domainId }); return withHost(() => bridge.request('database/disconnect', p)); });
 ipcMain.handle('sacode:databaseQuery', async (_e, a) => { const p = domainParams(a, { connectionId: domainId, sql: domainText(1048576), params: domainArray(v => v === null || typeof v === 'boolean' || typeof v === 'number' && Number.isFinite(v) || domainText(65536, 0)(v), 1000), opts: domainObject({ readonly: domainEnum(true), maxRows: domainInt(1, 10000), maxBytes: domainInt(1, 16777216), statementTimeoutMs: domainInt(1, 300000), cursorBatch: domainInt(1, 10000) }) }); return withHost(() => bridge.request('database/query', p)); });
 ipcMain.handle('sacode:importSources', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('import/sources', p)); });
@@ -241,6 +271,8 @@ ipcMain.handle('sacode:terminalResize', async (_e, a) => { const p = domainParam
 ipcMain.handle('sacode:terminalInterrupt', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('terminal/interrupt', p)); });
 ipcMain.handle('sacode:terminalDescribe', async (_e, a) => { const p = domainParams(a, domainSid, { limit: domainInt(1, 262144) }); return withHost(() => bridge.request('terminal/describe', p)); });
 ipcMain.handle('sacode:terminalClose', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('terminal/close', p)); });
+ipcMain.handle('sacode:terminalPtyOutput', async (_e, a) => { const p = domainParams(a, { ...domainSid, cursor: domainInt(0) }); return withHost(() => bridge.request('terminal/output', p)); });
+ipcMain.handle('sacode:terminalKill', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('terminal/kill', p)); });
 ipcMain.handle('sacode:compactRun', async (_e, a) => { const p = domainParams(a, { ...domainSid, requestId: domainText(128) }); return withHost(() => bridge.request('compact/run', p)); });
 ipcMain.handle('sacode:compactDescribe', async (_e, a) => { const p = domainParams(a, domainSid); return withHost(() => bridge.request('compact/describe', p)); });
 ipcMain.handle('sacode:securityScan', async (_e, a) => { const p = domainParams(a, { ...domainSid, requestId: domainId, scope: domainArray(domainFile, 10000) }); return withHost(() => bridge.request('security/scan', p)); });
@@ -280,6 +312,39 @@ ipcMain.handle('sacode:automationDescribeExecution', async (_e, a) => { const p 
 ipcMain.handle('sacode:knowledgeIndexBuild', async (_e, a) => { const p = domainParams(a, { ...domainBinding, indexRevision: domainInt(0), files: domainArray(domainFile, 10000) }); return withHost(() => bridge.request('knowledge/index-build', p)); });
 ipcMain.handle('sacode:knowledgeSearch', async (_e, a) => { const p = domainParams(a, { ...domainBinding, indexRevision: domainInt(0), query: domainText(2048, 0) }, { limit: domainInt(1, 12) }); return withHost(() => bridge.request('knowledge/search', p)); });
 ipcMain.handle('sacode:knowledgeDescribeIndex', async (_e, a) => { const p = domainParams(a, domainBinding); return withHost(() => bridge.request('knowledge/describe-index', p)); });
+// 语音：录制（采集）在桌面渲染层完成，主进程只把校验过的 WAV 写进本会话隔离目录 voice/v1/，
+// 再由宿主 voice/record 按固定命名「导入登记」——渲染层给不出落盘路径、URL 或外部执行参数。
+// 转写走独立审批票（渲染层先经 approvalAsk 取票），与 Host voice_rpc.cj 的 consumeExactForCall 一致。
+const VOICE_DIR = join(SESSION_DIR, 'voice', 'v1');
+ipcMain.handle('sacode:voiceDescribe', async (_e, a) => {
+  const p = domainParams(a, domainSid, { operationId: domainId });
+  return withHost(() => bridge.request('voice/describe', p));
+});
+ipcMain.handle('sacode:voiceRecord', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, requestId: domainText(128), recordingId: domainVoiceId, wavBase64: domainAudioBase64 }, { durationMs: domainInt(0, 600000) });
+  let raw;
+  try { raw = Buffer.from(p.wavBase64, 'base64'); } catch { throw new Error('voice-bad-recording'); }
+  // 只接受 RIFF/WAVE 头与有界长度，避免把任意字节塞进会话目录。
+  const isWav = raw.length >= 44 && raw.length <= 26214400 && raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46 &&
+    raw[8] === 0x57 && raw[9] === 0x41 && raw[10] === 0x56 && raw[11] === 0x45;
+  if (!isWav) throw new Error('voice-bad-recording');
+  if (!existsSync(VOICE_DIR)) mkdirSync(VOICE_DIR, { recursive: true });
+  writeFileSync(join(VOICE_DIR, `${p.recordingId}.wav`), raw);
+  const params = { sessionId: p.sessionId, action: 'import', requestId: p.requestId, recordingId: p.recordingId, digest: createHash('sha256').update(raw).digest('hex'), bytes: raw.length };
+  if (p.durationMs !== undefined) params.durationMs = p.durationMs;
+  return withHost(() => bridge.request('voice/record', params));
+});
+ipcMain.handle('sacode:voiceTranscribe', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, requestId: domainText(128), recordingId: domainVoiceId, language: domainEnum('zh', 'auto') }, { approvalId: domainInt(1) });
+  // 不带 approvalId 时宿主按规范参数发号并返回 pending-approval；作答后带票重试。
+  const params = { sessionId: p.sessionId, action: 'start', requestId: p.requestId, recordingId: p.recordingId, language: p.language };
+  if (p.approvalId !== undefined) params.approvalId = p.approvalId;
+  return withHost(() => bridge.request('voice/transcribe', params));
+});
+ipcMain.handle('sacode:voiceTranscribeCancel', async (_e, a) => {
+  const p = domainParams(a, { ...domainSid, operationId: domainId });
+  return withHost(() => bridge.request('voice/transcribe', { sessionId: p.sessionId, action: 'cancel', operationId: p.operationId }));
+});
 
 require('./team-ipc.cjs').registerTeamIpc(ipcMain, (method, args) => withHost(() => bridge.request(method, args)));
 
@@ -475,6 +540,9 @@ ipcMain.handle("sacode:turnStart", async (_e, args) => {
   if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
     throw new Error("bad arguments");
   }
+  // 诊断起轮同样开新轮：上一次的游标不能带进新帧日志。
+  turnPollCursor = 0;
+  turnPollTurnId = null;
   return withHost(() => bridge.request("turn/start", { limit }));
 });
 
@@ -486,6 +554,9 @@ ipcMain.handle("sacode:taskStart", async (_e, args) => {
   return withHost(async () => {
     if (pageToolsWindow()) await pageToolBridge.attach(true);
     const turnRequestId = String(bridge.nextId);
+    // 新轮开始前清本地游标：即使起轮失败也不能拿上一轮的游标去读新日志。
+    turnPollCursor = 0;
+    turnPollTurnId = null;
     // HostBridge.request 已经封装 JSON-RPC params，不能在这里再嵌套一层 params。
     // 二次嵌套会让宿主忽略 customModelId，退回默认模型而不是执行页面选中的模型。
     const started = await bridge.request("task/start", customModelId ? { customModelId } : {});
@@ -533,7 +604,19 @@ ipcMain.handle("sacode:queueUpdate", async (_e, args) => {
 
 ipcMain.handle("sacode:turnPoll", async () => withHost(async () => {
   const turnRequestId = modelTurnRequestId;
-  const poll = await bridge.request("turn/poll");
+  // 主进程替渲染层持有游标：渲染层接口保持不变，多端同时读时不互相偷帧。
+  const params = { cursor: turnPollCursor };
+  if (turnPollTurnId !== null) params.turnId = turnPollTurnId;
+  const poll = await bridge.request("turn/poll", params);
+  if (poll.reset === true) {
+    // Host 已换轮：从新轮头读，旧 turnId 作废。若新轮尚未开始（turnId=0），
+    // 下一次 poll 不带 turnId，避免与「当前轮=0」误判为错配。
+    turnPollCursor = Number.isSafeInteger(poll.nextCursor) && poll.nextCursor >= 0 ? poll.nextCursor : 0;
+    turnPollTurnId = Number.isSafeInteger(poll.turnId) && poll.turnId > 0 ? poll.turnId : null;
+  } else {
+    if (Number.isSafeInteger(poll.nextCursor) && poll.nextCursor >= 0) turnPollCursor = poll.nextCursor;
+    if (Number.isSafeInteger(poll.turnId)) turnPollTurnId = poll.turnId > 0 ? poll.turnId : null;
+  }
   return { ...poll, turnRequestId, approvalRequests: modelApproval.takeRequests(bridge, turnRequestId) };
 }));
 
@@ -662,6 +745,9 @@ ipcMain.handle("sacode:sessionSelect", async (_e, args) => {
   if (!args || !isStr(args.sessionId) || !args.sessionId || args.sessionId.length>300) throw new Error("bad arguments");
   return withHost(async()=>{
     const selected = await bridge.request("session/select", {sessionId:args.sessionId});
+    // 切会话后 Host 重建帧日志：本地游标归零，下一次 poll 从新会话头读。
+    turnPollCursor = 0;
+    turnPollTurnId = null;
     return selected;
   });
 });

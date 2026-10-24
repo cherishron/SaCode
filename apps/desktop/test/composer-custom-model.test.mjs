@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import '../renderer/turn-poll-state.js';
 import '../renderer/send-queue-state.js';
 
 function fixture(taskStart) {

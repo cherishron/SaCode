@@ -1,7 +1,21 @@
 (function (root) {
   'use strict';
+  function createTurnState(turn) {
+    const reset = running => { turn.value = { running, settled:false, text:'', finishReason:'', cancelled:false, interrupted:false, delivered:0, used:null, budget:null, verdict:'', over:false, goalInFlight:false, pendingTurnCount:0 }; };
+    return {
+      reset: () => reset(false), start: () => reset(true),
+      appendText: text => { turn.value.text += text; },
+      appendToolDelta: body => { (turn.value.toolCallDeltas ||= []).push(body); },
+      question: id => { turn.value.questionId = id; },
+      running: value => { turn.value.running = value; },
+      started: (inFlight, count) => { Object.assign(turn.value,{goalInFlight:inFlight,pendingTurnCount:inFlight?count:0}); },
+      settle: receipt => { Object.assign(turn.value,{running:false,projectionPending:true,settled:true,finishReason:receipt.finishReason||'',cancelled:!!receipt.cancelled,interrupted:!!receipt.interrupted,delivered:receipt.delivered||0}); },
+      projectionReady: () => { turn.value.projectionPending = false; },
+    };
+  }
   function createTurnPoll({ poll, getGeneration, getEpoch, invalidate, getApprovalContext, selectProposal,
     turn, usage, approval, error, queueRows, refresh, refreshTools, refreshQueue, showContextTip, startTask }) {
+    const state = createTurnState(turn);
     let timer = null;
     function stop() {
       invalidate();
@@ -22,7 +36,7 @@
           if (p.questionId && p.questionId !== turn.value.questionId) {
             await refresh();
             if (!current()) return;
-            turn.value.questionId = p.questionId;
+            state.question(p.questionId);
           }
           const context = getApprovalContext();
           if (!context.suppressed) {
@@ -38,20 +52,15 @@
             else if (kind === 'projection' && body === 'questions') await refresh();
             else if (kind === 'projection' && body === 'plan') await refresh();
             else if (kind === 'projection' && body === 'queue') { await refresh(); await refreshQueue(); }
-            else if (kind === 'text') turn.value.text += body;
+            else if (kind === 'text') state.appendText(body);
             // 用量与工具参数属于独立事实，不拼进 Markdown 正文造成收束差异。
-            else if (kind === 'tool-call-delta') (turn.value.toolCallDeltas ||= []).push(body);
+            else if (kind === 'tool-call-delta') state.appendToolDelta(body);
           }
           if (!current()) return;
-          turn.value.running = p.running;
+          state.running(p.running);
           if (p.settled) {
-            turn.value.projectionPending = true;
+            state.settle(p);
             if (approval.value?.source === 'model') approval.value = null;
-            turn.value.settled = true;
-            turn.value.finishReason = p.finishReason || '';
-            turn.value.cancelled = !!p.cancelled;
-            turn.value.interrupted = !!p.interrupted;
-            turn.value.delivered = p.delivered || 0;
             usage.value = { used: p.used, budget: p.budget, over: !!p.over, verdict: p.usageVerdict || '' };
             // 轮次是在线路之后失败的，原因只落在 finishReason 里；界面原来只显示
             // 「已中断」三个字，用户既不知道发生了什么，也不知道该去看哪里。
@@ -112,5 +121,5 @@
     }
     return { start, stop };
   }
-  root.SaCodeTurnPoll = { createTurnPoll };
+  root.SaCodeTurnPoll = { createTurnPoll, createTurnState };
 })(globalThis);

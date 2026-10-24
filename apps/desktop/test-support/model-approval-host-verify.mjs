@@ -32,7 +32,7 @@ try{
  for(const decision of ['allowed-once','denied','cancelled']){
   const root=join(evidence,decision);mkdirSync(root);scenario={root,requests:[],rpc:[]};
   bridge=new HostBridge(exe,fixtureHostEnv(root,{PATH:join(process.env.SystemRoot,'System32'),TMP:root,TEMP:root,SACODE_PROVIDER_MODEL:'desktop-approval-protocol-fixture',SACODE_PROVIDER_BASE_URL:`http://127.0.0.1:${server.address().port}/v1/chat/completions`}));await bridge.start(root);
-  const ipcContext={ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},bridge,modelApproval,modelTurnRequestId:null,isStr:value=>typeof value==='string',withHost:work=>work()};
+  const ipcContext={ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},bridge,modelApproval,modelTurnRequestId:null,turnPollCursor:0,turnPollTurnId:null,isStr:value=>typeof value==='string',withHost:work=>work()};
   vm.runInNewContext(source.slice(begin,end),ipcContext);
   vm.runInNewContext(source.slice(startBegin,startEnd),ipcContext);
   await bridge.request('goal/create',{sessionId:'current',objective:'文件审批与目标完成'});

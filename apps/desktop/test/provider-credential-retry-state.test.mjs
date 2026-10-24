@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import {loadPageModule} from './support/load-page-module.mjs';
 function fixture(adapter) {
   const mounts = [];
+  // index.html 里 dialog.js 先于页面加载，弹窗以宿主全局出现；这里用同名标记的最小替身
+  // 承载插槽内容，让编辑表单里的按钮仍可从渲染树里取到。
+  const Dialog = {__saCodeDialog: true};
   const vue = { defineComponent: v => v, ref: value => ({value}), onMounted: fn => mounts.push(fn), onBeforeUnmount() {},
-    h: (tag, props, children) => ({tag, props: props || {}, children}) };
-  const page=loadPageModule(new URL('../renderer/pages/provider-settings.ts',import.meta.url),{vue});
+    h: (tag, props, children) => ({tag: tag === Dialog ? 'dialog' : tag, props: props || {}, children: typeof children === 'function' ? children() : children}) };
+  const page=loadPageModule(new URL('../renderer/pages/provider-settings.ts',import.meta.url),{vue,globals:{SaCodeDialog:Dialog}});
   const render = page.Page.setup({adapter});
   mounts.forEach(fn => fn());
   const nodes = () => { const all=[]; const visit=v=>{if(Array.isArray(v))v.forEach(visit);else if(v&&typeof v==='object'){all.push(v);visit(v.children);}};visit(render());return all;};

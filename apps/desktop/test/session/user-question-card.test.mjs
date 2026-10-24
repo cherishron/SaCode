@@ -6,12 +6,12 @@ import {fileURLToPath} from 'node:url';
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../../renderer/pages/user-question-card.ts',import.meta.url))],bundle:true,write:false,format:'cjs',external:['vue']});
 const flatten=node=>Array.isArray(node)?node.flatMap(flatten):node&&typeof node==='object'?[node,...flatten(node.children)]:[];
 const tick=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
-function fixture(answer=async()=>({accepted:true})){
+function fixture(answer=async()=>({accepted:true}),cardPatch={}){
   const unmounts=[],calls=[];
   const vue={defineComponent:x=>x,h:(type,props,children)=>({type,props,children}),ref:value=>({value}),onBeforeUnmount:fn=>unmounts.push(fn)};
   const ctx={module:{exports:{}},require:()=>vue};vm.runInNewContext(compiled.outputFiles[0].text,ctx);
   const options=[{id:'a',label:'甲'},{id:'b',label:'乙'}];
-  const props={sessionId:'s1',card:{id:'question-1',sessionId:'s1',status:'pending',questions:[{id:'single',question:'单选',type:'single',options,allowCustom:true},{id:'multi',question:'多选',type:'multi',options},{id:'confirm',question:'确认',type:'confirm'},{id:'text',question:'输入',type:'input'}]},answer:async(...args)=>{calls.push(args);return answer(...args);}};
+  const props={sessionId:'s1',card:{id:'question-1',sessionId:'s1',status:'pending',questions:[{id:'single',question:'单选',type:'single',options,allowCustom:true},{id:'multi',question:'多选',type:'multi',options},{id:'confirm',question:'确认',type:'confirm'},{id:'text',question:'输入',type:'input'}],...cardPatch},answer:async(...args)=>{calls.push(args);return answer(...args);}};
   const render=ctx.module.exports.UserQuestionCard.setup(props);
   const nodes=()=>flatten(render());
   return {props,render,nodes,calls,unmounts,submit:()=>nodes().find(n=>n.type==='form').props.onSubmit({preventDefault(){}})};
@@ -44,4 +44,26 @@ test('其他会话、历史终态及卸载后不提交，迟到应答不污染�
   let resolve;const pending=fixture(()=>new Promise(r=>resolve=r));fill(pending);pending.submit();pending.unmounts[0]();
   const fresh=fixture();resolve({accepted:true});await tick();assert.doesNotMatch(JSON.stringify(fresh.render()),/已提交/);
   pending.submit();assert.equal(pending.calls.length,1);
+});
+test('已答卡片默认自动收起为摘要，查看详情可只读展开再收起',()=>{
+  const f=fixture(async()=>({accepted:true}),{status:'answered',answers:[{id:'single',selectedIds:['a'],text:''},{id:'multi',selectedIds:['a','b'],text:''}]});
+  const formNode=()=>f.nodes().find(n=>n.type==='form');
+  assert.equal(formNode().props.hidden,true,'已答卡片的表单应默认收起');
+  const summary=f.nodes().find(n=>n.props?.class==='question-summary');
+  assert.ok(summary,'收起时应展示选择摘要');
+  assert.match(JSON.stringify(summary),/甲/);
+  assert.doesNotMatch(JSON.stringify(f.render()),/提交并继续任务/,'收起后不应再有提交按钮');
+  const reopen=f.nodes().find(n=>n.type==='button'&&n.children==='查看详情');
+  assert.ok(reopen,'应有「查看详情」按钮');
+  reopen.props.onClick();
+  assert.equal(f.nodes().find(n=>n.type==='form').props.hidden,false,'展开后表单可见');
+  assert.ok(f.nodes().find(n=>n.type==='button'&&n.children==='收起详情'),'展开态应有「收起详情」按钮');
+  f.nodes().find(n=>n.type==='button'&&n.children==='收起详情').props.onClick();
+  assert.equal(f.nodes().find(n=>n.type==='form').props.hidden,true,'可再次收起');
+});
+test('提交成功后卡片自动收起',async()=>{
+  const f=fixture();fill(f);assert.equal(f.nodes().find(n=>n.type==='form').props.hidden,false,'待答时表单展开');
+  f.submit();await tick();
+  assert.equal(f.nodes().find(n=>n.type==='form').props.hidden,true,'提交成功后应自动收起');
+  assert.match(JSON.stringify(f.render()),/已提交/);
 });

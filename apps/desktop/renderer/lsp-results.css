@@ -23,7 +23,7 @@
 }
 
 .lsp-verb-btn {
-  padding: 4px 10px;
+  padding: 4px var(--space-2);
   font-size: var(--fs-s);
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);
@@ -99,14 +99,15 @@
   margin: 0;
 }
 
+/* 错误/警告底色由 danger 令牌派生，深浅主题各自成立；正文用正文色，标题才用状态色。 */
 .lsp-error {
   flex-shrink: 0;
   padding: var(--space-2) var(--space-3);
-  background: #fef0f0;
-  border-bottom: 1px solid #f5c2c2;
-  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface-2));
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  color: var(--text);
 }
-.lsp-error strong { display: block; margin-bottom: 2px; }
+.lsp-error strong { display: block; margin-bottom: 2px; color: var(--danger); }
 .lsp-error p { margin: 0; font-size: var(--fs-s); }
 
 .lsp-result-area {
@@ -128,18 +129,18 @@
 }
 .lsp-result-label { font-weight: 600; font-size: var(--fs-m); }
 .lsp-badge-preview {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   background: var(--warn);
-  color: #fff;
+  color: var(--accent-text);
 }
 .lsp-badge-nonsem {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   padding: 1px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-s);
   background: var(--text-muted);
-  color: #fff;
+  color: var(--accent-text);
 }
 
 .lsp-result-body {
@@ -181,7 +182,7 @@
 .lsp-loc-range {
   font-size: var(--fs-s);
   color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-code);
   flex-shrink: 0;
 }
 
@@ -201,7 +202,7 @@
   background: var(--surface-3);
 }
 .lsp-ref-count {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -225,11 +226,11 @@
 }
 .lsp-call-toggle { width: 12px; flex-shrink: 0; }
 .lsp-call-kind {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   color: var(--text-muted);
   background: var(--surface-3);
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .lsp-call-name { color: var(--text); flex: 1; }
 .lsp-call-detail { padding-left: 20px; }
@@ -244,18 +245,18 @@
   border-bottom: 1px solid var(--border);
 }
 .lsp-diag-sev {
-  font-size: 10px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
 }
-.lsp-sev-error .lsp-diag-sev { background: var(--danger); color: #fff; }
-.lsp-sev-warn .lsp-diag-sev { background: var(--warn); color: #fff; }
-.lsp-sev-info .lsp-diag-sev { background: var(--accent); color: #fff; }
-.lsp-sev-hint .lsp-diag-sev { background: var(--text-muted); color: #fff; }
+.lsp-sev-error .lsp-diag-sev { background: var(--danger); color: var(--accent-text); }
+.lsp-sev-warn .lsp-diag-sev { background: var(--warn); color: var(--accent-text); }
+.lsp-sev-info .lsp-diag-sev { background: var(--accent); color: var(--accent-text); }
+.lsp-sev-hint .lsp-diag-sev { background: var(--text-muted); color: var(--accent-text); }
 .lsp-diag-range {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-code);
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -268,8 +269,8 @@
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: #fff8e1;
-  border: 1px solid #ffe082;
+  background: color-mix(in srgb, var(--warn) 12%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
   border-radius: var(--radius-xs);
 }
 .lsp-rename-stats { font-size: var(--fs-s); color: var(--text-muted); }
@@ -282,11 +283,11 @@
   border-bottom: 1px solid var(--border);
 }
 .lsp-rename-new {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-code);
   color: var(--ok);
-  background: #e8f5e9;
+  background: color-mix(in srgb, var(--ok) 14%, var(--surface-2));
   padding: 1px 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
 }
 .lsp-rename-note {
   font-size: var(--fs-s);

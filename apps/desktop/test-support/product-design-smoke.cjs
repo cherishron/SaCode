@@ -202,7 +202,7 @@ app.whenReady().then(async()=>{
   await js("document.querySelector('.settings-close').click()");
   await waitFor("!document.querySelector('dialog[open]')");
   check('输入区右侧按增强语音上下文发送排列',await js("(()=>{const children=[...document.querySelector('.composer-trailing').children];return children[0].id==='composer-enhance'&&children[1].classList.contains('composer-voice')&&children[2].classList.contains('context-meter-root')&&children[3].id==='send';})()"));
-  check('语音尚未接入时不会模拟录音',await js("document.querySelector('.composer-voice').disabled"));
+  check('语音按钮可点击且未点击时不模拟录音',await js("(()=>{const b=document.querySelector('.composer-voice');return !!b&&b.disabled===false&&b.getAttribute('data-state')==='idle'&&b.getAttribute('aria-label')==='开始语音输入';})()"));
   await js("document.querySelector('.permission-trigger').click()");
   await waitFor("!!document.querySelector('.permission-popover')");
   check('权限菜单保留四种模式且没有虚假生效',await js("(()=>{const pop=document.querySelector('.permission-popover');const buttons=[...pop.querySelectorAll('button')].filter(b=>b.querySelector('strong'));return buttons.length===4&&buttons.map(b=>b.querySelector('strong').textContent).sort().join('|')==='auto|build|plan|yolo'&&pop.textContent.includes('工具仍以核心实际审批为准');})()"));

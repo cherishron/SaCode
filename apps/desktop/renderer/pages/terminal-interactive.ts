@@ -52,6 +52,7 @@ export const TerminalInteractive = defineComponent({
     let fitAddon: { fit: () => void; dispose: () => void; } | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let resizeRaf = 0;
+    let pollTimer = 0;
 
     // 通道存根：未接通时用占位函数，让状态机不崩
     const stubChannels: TerminalChannels = {
@@ -130,12 +131,18 @@ export const TerminalInteractive = defineComponent({
           });
         });
         resizeObserver.observe(xtermContainer.value);
+        // 直播环轮询：与 turn/poll 同构，防 notify 丢帧；仅激活且 running 时拉取。
+        // 定时器只在挂载后存在，测试环境不触发 onMounted，故不会污染单测。
+        pollTimer = setInterval(() => {
+          if (props.active && view.state.phase === 'running') void view.pollOutput();
+        }, 150);
       } catch (e) {
         xtermError.value = String((e as Error).message || e);
       }
     });
 
     onBeforeUnmount(() => {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = 0; }
       if (resizeRaf) cancelAnimationFrame(resizeRaf);
       resizeObserver?.disconnect();
       resizeObserver = null;

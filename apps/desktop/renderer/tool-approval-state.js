@@ -55,6 +55,25 @@
         } catch (e) { if (current()) { outcomeKind.value = 'outcome outcome-denied'; outcome.value = '应答失败：' + cleanErr(e); } }
         return;
       }
+      // 语音转写工单：宿主按规范参数发号（客户端拿不到录音摘要与 ASR 二进制，无法自行固定票据），
+      // 这里只负责应答，再把票据交回语音装配继续转写；不伪造授权、不自动放行。
+      if (a.source === 'voice-transcribe') {
+        try {
+          const r = await api.approvalAnswer(a.approvalId, approvalAnswer);
+          if (generation !== getSessionGeneration()) return;
+          if (!r.accepted) {
+            outcomeKind.value = 'outcome outcome-denied';
+            outcome.value = '应答未被接受：工单状态 ' + r.state;
+            return;
+          }
+        } catch (e) {
+          if (generation === getSessionGeneration()) { outcomeKind.value = 'outcome outcome-denied'; outcome.value = '应答失败：' + cleanErr(e); }
+          return;
+        }
+        const voice = root.SaCodeVoiceCurrent;
+        if (voice && typeof voice.resume === 'function') await voice.resume(a.approvalId, approvalAnswer);
+        return;
+      }
       try {
         const r = await api.approvalAnswer(a.approvalId, approvalAnswer);
         if (generation !== getSessionGeneration()) return;

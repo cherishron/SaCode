@@ -28,6 +28,10 @@ const ipcId = ipcText();
 const ipcSid = { sessionId: ipcId };
 const ipcOwner = { ...ipcSid, projectId: ipcId, browserId: ipcId, tabId: ipcId };
 const ipcDigest = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
+// 语音：录音身份只接受安全字符集的不透明 id；WAV 以有界 base64 传输（≤8 MiB 解码）。
+const ipcVoiceId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+const ipcVoiceAudio = value => typeof value === 'string' && value.length <= 11800000 &&
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 const ipcFile = ipcObject({ path: value => ipcText(1024)(value) && !/[:\x00-\x1f\x7f]/.test(value) &&
   value.replace(/\\/g, '/').split('/').every(part => part && part !== '.' && part !== '..' && !/[. ]$/.test(part)), digest: ipcDigest });
 const ipcBinding = { ...ipcSid, workspace: ipcText(32768), workspaceRevision: ipcInt(0) };
@@ -63,6 +67,17 @@ const ipcSshArguments = value => {
 };
 // MCP 服务器名与工具名共用同一套安全字符集（与 Host mcp_rpc.cj 的字节白名单一致）。
 const ipcMcpName = value => typeof value === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(value);
+const ipcConnectionOwner = { ...ipcSid, scope: ipcEnum('user', 'project') };
+const ipcConnectionDefinition = value => {
+  const common = { id: v => typeof v === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(v), title: ipcText(600), enabled: v => typeof v === 'boolean' };
+  const target = { host: ipcText(253), port: ipcInt(1, 65535), user: ipcText(256), credentialRef: v => typeof v === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(v) };
+  const ssh = ipcObject({ ...common, kind: ipcEnum('ssh'), spec: ipcObject(target) });
+  const database = ipcObject({ ...common, kind: ipcEnum('database'), spec: ipcObject({ ...target, engine: ipcEnum('postgresql', 'mysql', 'dm'), database: ipcText(256), tlsMode: ipcEnum('verify-full') }) });
+  const envRef = ipcObject({ key: target.credentialRef, credentialRef: target.credentialRef });
+  const stdio = ipcObject({ ...common, kind: ipcEnum('mcp'), spec: ipcObject({ transport: ipcEnum('stdio'), command: ipcText(4096), args: ipcArray(ipcText(4096, 0), 100), envRefs: ipcArray(envRef, 128) }) });
+  const http = ipcObject({ ...common, kind: ipcEnum('mcp'), spec: ipcObject({ transport: ipcEnum('http'), endpoint: ipcText(4096), credentialRef: target.credentialRef }) });
+  return ssh(value) || database(value) || stdio(value) || http(value);
+};
 // 只把 Electron 的缺 handler 错误转成明确提示；真实拒绝/失败不吞掉、不重试。
 const ipcChecked = (channel, check, payload) => {
   if (!check(payload)) ipcBad();
@@ -74,6 +89,20 @@ const ipcChecked = (channel, check, payload) => {
   });
 };
 contextBridge.exposeInMainWorld("sacode", {
+  connectionList: request => ipcChecked('sacode:connectionList', ipcObject(ipcConnectionOwner), request),
+  connectionSave: request => ipcChecked('sacode:connectionSave', ipcObject({ ...ipcConnectionOwner, revision: ipcInt(0), definition: ipcConnectionDefinition }), request),
+  connectionControl: request => ipcChecked('sacode:connectionControl', ipcObject({ ...ipcConnectionOwner, revision: ipcInt(0), id: ipcText(80), action: ipcEnum('enable', 'disable', 'remove') }), request),
+  browserViewOpen: request => ipcChecked('sacode:browserViewOpen', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewDescribe: request => ipcChecked('sacode:browserViewDescribe', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewBack: request => ipcChecked('sacode:browserViewBack', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewForward: request => ipcChecked('sacode:browserViewForward', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewReload: request => ipcChecked('sacode:browserViewReload', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewClose: request => ipcChecked('sacode:browserViewClose', ipcObject({ ...ipcSid, projectId: ipcText(32768) }), request),
+  browserViewNavigate: request => ipcChecked('sacode:browserViewNavigate', ipcObject({ ...ipcSid, projectId: ipcText(32768), url: value => {
+    if (!ipcText(8192)(value) || /[\x00-\x20\x7f]/.test(value)) return false;
+    try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
+  } }), request),
+  browserViewLayout: request => ipcChecked('sacode:browserViewLayout', ipcObject({ ...ipcSid, projectId: ipcText(32768), visible: value => typeof value === 'boolean', bounds: ipcObject({ x: ipcInt(0,32768), y: ipcInt(0,32768), width: ipcInt(0,32768), height: ipcInt(0,32768) }) }), request),
   browserNavigate: request => ipcChecked('sacode:browserNavigate', ipcObject({ ...ipcOwner, url: value => {
     if (!ipcText(8192)(value)) return false;
     try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
@@ -110,6 +139,10 @@ contextBridge.exposeInMainWorld("sacode", {
   terminalInterrupt: sessionId => ipcChecked('sacode:terminalInterrupt', ipcObject(ipcSid), { sessionId }),
   terminalDescribe: (sessionId, limit) => ipcChecked('sacode:terminalDescribe', ipcObject(ipcSid, { limit: ipcInt(1, 262144) }), { sessionId, ...(limit === undefined ? {} : { limit }) }),
   terminalClose: sessionId => ipcChecked('sacode:terminalClose', ipcObject(ipcSid), { sessionId }),
+  // 交互终端直播：cursor 是 Host 侧环的单调块号；kill 停自有进程树，close 只拆视图。
+  // 与既有 terminalOutput（session/terminal-output 只读回放）不同名，避免两条车道混淆。
+  terminalPtyOutput: (sessionId, cursor) => ipcChecked('sacode:terminalPtyOutput', ipcObject({ ...ipcSid, cursor: ipcInt(0) }), { sessionId, cursor }),
+  terminalKill: sessionId => ipcChecked('sacode:terminalKill', ipcObject(ipcSid), { sessionId }),
   compactRun: (sessionId, requestId) => ipcChecked('sacode:compactRun', ipcObject({ ...ipcSid, requestId: ipcText(128) }), { sessionId, requestId }),
   compactDescribe: sessionId => ipcChecked('sacode:compactDescribe', ipcObject(ipcSid), { sessionId }),
   securityScan: request => ipcChecked('sacode:securityScan', ipcObject({ ...ipcSid, requestId: ipcId, scope: ipcArray(ipcFile, 10000) }), request),
@@ -131,6 +164,18 @@ contextBridge.exposeInMainWorld("sacode", {
     ...ipcSid, name: ipcMcpName, toolName: ipcMcpName, approvalId: ipcInt(1),
   }, { argumentsJson: ipcText(65536) }), request),
   mcpStatus: (sessionId, name) => ipcChecked('sacode:mcpStatus', ipcObject({ ...ipcSid, name: ipcMcpName }), { sessionId, name }),
+  // 语音：录制由桌面采集层完成（WAV），主进程写本会话隔离目录后再由宿主按固定命名导入登记；
+  // 转写走独立审批票（渲染层先经 approvalAsk 取票），与 Host voice_rpc.cj 一致。
+  // 渲染层给不出任意落盘路径、URL 或外部执行参数。
+  voiceDescribe: (sessionId, operationId) => ipcChecked('sacode:voiceDescribe', ipcObject(ipcSid, { operationId: ipcId }),
+    operationId === undefined ? { sessionId } : { sessionId, operationId }),
+  voiceRecord: (sessionId, requestId, recordingId, wavBase64, durationMs) => ipcChecked('sacode:voiceRecord',
+    ipcObject({ ...ipcSid, requestId: ipcText(128), recordingId: ipcVoiceId, wavBase64: ipcVoiceAudio }, { durationMs: ipcInt(0, 600000) }),
+    { sessionId, requestId, recordingId, wavBase64, ...(durationMs === undefined ? {} : { durationMs }) }),
+  voiceTranscribe: (sessionId, requestId, recordingId, language, approvalId) => ipcChecked('sacode:voiceTranscribe',
+    ipcObject({ ...ipcSid, requestId: ipcText(128), recordingId: ipcVoiceId, language: ipcEnum('zh', 'auto') }, { approvalId: ipcInt(1) }),
+    { sessionId, requestId, recordingId, language, ...(approvalId === undefined ? {} : { approvalId }) }),
+  voiceTranscribeCancel: (sessionId, operationId) => ipcChecked('sacode:voiceTranscribeCancel', ipcObject({ ...ipcSid, operationId: ipcId }), { sessionId, operationId }),
   automationTick: (sessionId, scopeId) => ipcChecked('sacode:automationTick', ipcObject({ ...ipcSid, scopeId: ipcId }), { sessionId, scopeId }),
   automationDescribeExecution: request => ipcChecked('sacode:automationDescribeExecution', ipcObject({ ...ipcSid, scopeId: ipcId, taskId: ipcText(80) }, { fireId: ipcId }), request),
   knowledgeIndexBuild: request => ipcChecked('sacode:knowledgeIndexBuild', ipcObject({ ...ipcBinding, indexRevision: ipcInt(0), files: ipcArray(ipcFile, 10000) }), request),

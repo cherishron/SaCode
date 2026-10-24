@@ -1,4 +1,4 @@
-// 冻结 DSH 639ed015 的语言映射与 CSS 变量主题；只在构建期折叠。
+// 冻结基线 639ed015 的语言映射与 CSS 变量主题；只在构建期折叠。
 // file:// 下不加载模块、不使用 WASM，不输出 HTML。MIT 见 assets/dsh-ui-LICENSE.txt。
 import { createHighlighterCoreSync, createCssVariablesTheme } from 'shiki/core';
 import { createJavaScriptRegexEngine, defaultJavaScriptRegexConstructor } from 'shiki/engine/javascript';
