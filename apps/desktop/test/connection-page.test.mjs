@@ -2,6 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {loadPageModule} from './support/load-page-module.mjs';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 
 const vue={defineComponent:x=>x,ref:v=>({value:v}),computed:spec=>({get value(){return typeof spec==='function'?spec():spec.get();},set value(v){spec.set(v);}}),watch:()=>{},onMounted:fn=>fn(),onBeforeUnmount:()=>{}};
 const module=loadPageModule(new URL('../renderer/pages/connection-page.ts',import.meta.url),{vue});
@@ -22,6 +24,30 @@ function setup(props={api:{connectionList:async() =>({revision:0,definitions:[],
   return {render,mounted,unmount};
 }
 const nodes=n=>Array.isArray(n)?n.flatMap(nodes):n&&typeof n==='object'?[n,...nodes(n.children)]:[];
+
+test('连接页面经真实 preload 对象契约加载、保存和启用',async()=>{
+  let api;const calls=[];let definitions=[],revision=0;
+  vm.runInNewContext(readFileSync(new URL('../preload.cjs',import.meta.url),'utf8'),{require:()=>({contextBridge:{exposeInMainWorld:(_name,value)=>{api=value;}},ipcRenderer:{invoke:async(channel,args)=>{
+    calls.push({channel,args:JSON.parse(JSON.stringify(args))});
+    if(channel==='sacode:connectionSave'){definitions=[args.definition];revision++;}
+    if(channel==='sacode:connectionControl'){definitions=definitions.map(d=>({...d,enabled:args.action==='enable'}));revision++;}
+    return {scope:args.scope,workspace:'',revision,definitions};
+  }}})});
+  const {render,mounted}=setup({api,sessionId:'s1'});
+  mounted[0]();await new Promise(r=>setImmediate(r));
+  assert.equal(calls.length,1,'页面必须能通过真实 preload 读取列表');
+  nodes(render()).find(n=>n.children==='添加连接').props.onClick();
+  for(const [label,value] of [['名称','测试库'],['连接地址','localhost'],['数据库','demo'],['用户名','tester'],['凭据引用','DB_TEST_PASSWORD']]){
+    nodes(render()).find(n=>n.props?.['aria-label']===label).props.onInput({target:{value}});
+  }
+  nodes(render()).find(n=>n.children==='保存').props.onClick();await new Promise(r=>setImmediate(r));
+  assert.equal(calls[1]?.channel,'sacode:connectionSave');
+  assert.equal(calls[1].args.definition.title,'测试库');
+  nodes(render()).find(n=>n.children==='启用').props.onClick();await new Promise(r=>setImmediate(r));
+  assert.equal(calls[2]?.channel,'sacode:connectionControl');
+  assert.equal(calls[2].args.action,'enable');
+  assert.ok(nodes(render()).some(n=>n.children==='已启用'));
+});
 
 test('ConnectionPage 加载连接列表并展示空态，不冒充已有连接',async()=>{
   const {render,mounted}=setup();mounted[0]();await new Promise(r=>setImmediate(r));
