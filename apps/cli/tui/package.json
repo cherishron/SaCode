@@ -1,0 +1,28 @@
+{
+  "name": "@stand-alone/sacode-tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SaCode 终端交互界面（Node/Ink），只做渲染与按键，业务仍走仓颉宿主",
+  "license": "MulanPSL-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "ink": "5.2.1",
+    "react": "18.3.1",
+    "string-width": "7.2.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.9",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-replace": "^6.0.3",
+    "ink-testing-library": "4.0.0",
+    "rollup": "^4.65.0"
+  }
+}

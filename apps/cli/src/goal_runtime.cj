@@ -386,8 +386,8 @@ func runGoalCommand(args: Array<String>): Int64 {
     }
     let lease = WriteLease("session.log")
     if (!lease.takeoverIfStale()) {
-        getStdErr().writeln("goal: already-owned");
-        return 5
+        getStdErr().writeln("goal: ${leaseFailureLabel(lease)}")
+        return leaseFailureExitCode(lease)
     }
     let log = SessionLog("session.log")
     var signalId: Int64 = -1

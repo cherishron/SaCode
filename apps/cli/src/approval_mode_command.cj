@@ -13,9 +13,13 @@ func runApprovalModeCommand(args: Array<String>): Int64 {
         getStdErr().writeln("mode: bad-approval-mode"); return 64
     }
     let lease = WriteLease("session.log")
+    // log 必须在 try 之外构造，finally 才能按 isDurableFrozen 决定是否归还租约。
+    let log = SessionLog("session.log")
     try {
-        if (write && !lease.takeoverIfStale()) { getStdErr().writeln("mode: already-owned"); return 5 }
-        let log = SessionLog("session.log")
+        if (write && !lease.takeoverIfStale()) {
+            getStdErr().writeln("mode: ${leaseFailureLabel(lease)}")
+            return leaseFailureExitCode(lease)
+        }
         if (!log.load()) { throw Exception("replay-rejected") }
         let mode = ModeController(log)
         if (read) { println("{\"ok\":true,\"mode\":\"${mode.current()}\"}") }
@@ -25,5 +29,7 @@ func runApprovalModeCommand(args: Array<String>): Int64 {
         }
         return 0
     } catch (_: Exception) { getStdErr().writeln("mode: persistence-or-replay-failed"); return 1 }
-    finally { if (write) { lease.release() } }
+    // 落盘未确认时保留租约（与 sacode call / worktree 同一口径），
+    // 不让下一个写者带着未结算的内存态进场。
+    finally { if (write && !log.isDurableFrozen()) { lease.release() } }
 }

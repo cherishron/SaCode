@@ -30,7 +30,10 @@ func builtinTools(): ToolRegistry {
     let reg = ToolRegistry()
     reg.register(ToolSpec("write", "写临时工作区文件", "path content", true))
     reg.register(ToolSpec("read", "读文件并记录版本标记，大文件可按行分页", "path offset limit", false))
-    reg.register(ToolSpec("edit", "编辑文件：用 new_string 替换 old_string", "path old_string new_string", true))
+    // edit 的实参是 JSON 对象，不是三个位置参数；跨进程的一次性 call 也没有内存观察表可借，
+    // 改既有文件必须先 read 让核心记下版本。展示面写清楚，免得调用方照着短参数串拼。
+    reg.register(ToolSpec("edit", "编辑文件（JSON 参数：path/old_string/new_string；改既有文件前须先 read）",
+        "{\"path\":..,\"old_string\":..,\"new_string\":..}", true))
     reg.register(ToolSpec("glob", "查找匹配模式的文件", "pattern", false))
     reg.register(ToolSpec("grep", "搜索文件内容", "pattern path", false))
     reg.register(ToolSpec("bash", "执行 shell 命令", "command", true))
@@ -52,11 +55,21 @@ func builtinTools(): ToolRegistry {
     return reg
 }
 
+// Windows PowerShell 5.1 往原生进程管道写字符串时会加 UTF-8 BOM（实测 `"y" |` 读到
+// EF BB BF 79），不剥就会把明确的一次放行判成乱码拒绝。只认开头这三字节，正文不动。
+func stripUtf8Bom(text: String): String {
+    let bytes = text.toArray()
+    if (bytes.size >= 3 && Int64(bytes[0]) == 239 && Int64(bytes[1]) == 187 && Int64(bytes[2]) == 191) {
+        return String.fromUtf8(bytes[3..])
+    }
+    return text
+}
+
 // 「读不到应答」和「答了不批」是两件事：前者返回空串（不作答，工单留在 pending），
 // 后者返回 denied。两者都必须让执行被拒，但只有后者会在日志里留下 decided。
 func decideAnswer(line: Option<String>): String {
     if (let Some(l) <- line) {
-        let t = l.trimAscii()
+        let t = stripUtf8Bom(l).trimAscii()
         if (t == "y" || t == "Y" || t == "yes" || t == "Yes" || t == "YES") {
             return "allowed-once"
         }
@@ -136,6 +149,22 @@ func callExitCode(allowed: Bool, stage: String): Int64 {
 // 还会在日志里留下一条指向不存在工具的 approval/asked。
 func needsTicket(reg: ToolRegistry, name: String): Bool {
     return reg.has(name) && reg.requiresApproval(name)
+}
+
+// 租约失败不能一律报 already-owned：core 已把原因分成 busy / owner-unknown / io-failed。
+// 前两类是「可能有人正持有」，io-failed 是当前环境写不了盘；脚本不该把环境失败当并发冲突重试。
+// 文案保留稳定前缀 lease-，退出码让 io-failed 落到执行期失败族（8）。
+func leaseFailureReason(lease: WriteLease): String {
+    let reason = lease.acquisitionFailure()
+    return if (reason.size == 0) { "unknown" } else { reason }
+}
+
+func leaseFailureLabel(lease: WriteLease): String {
+    return "lease-${leaseFailureReason(lease)}"
+}
+
+func leaseFailureExitCode(lease: WriteLease): Int64 {
+    return if (leaseFailureReason(lease) == "io-failed") { Int64(8) } else { Int64(5) }
 }
 
 func hasFlag(args: Array<String>, flag: String): Bool {
@@ -370,8 +399,8 @@ func runProjection(): Int64 {
 func runSeed(): Int64 {
     let lease = WriteLease("session.log")
     if (!lease.takeoverIfStale()) {
-        println("err	already-owned")
-        return 1
+        println("err\t${leaseFailureLabel(lease)}")
+        return leaseFailureExitCode(lease)
     }
     let sl = SessionLog("session.log")
     sl.append("turn/start", "t1")
@@ -578,7 +607,7 @@ func runPluginTests(): Unit {
 
 func runSignalTests(): Int64 {
     // Ctrl+C 的端到端取证：由外部驱动（PowerShell 的 GenerateConsoleCtrlEvent）向本进程
-    // 所在控制台发中断。这里验的是 DSH 那条不变量——中断不是就地终止进程，
+    // 所在控制台发中断。这里验的是参考基线那条不变量——中断不是就地终止进程，
     // 而是走与桌面 stop 同一条协作式取消：turn 在检查点收束、未落盘的写入结算、写租约归还。
     // 退出码约定 130（128+SIGINT）；内部断言有任何一条 FAIL 时退 1，避免「被杀也算过」。
     let p = "sig-session.log"
@@ -737,8 +766,8 @@ func runToolCall(args: Array<String>): Int64 {
     let asJson = hasFlag(args, "--json")
     let lease = WriteLease("session.log")
     if (!lease.takeoverIfStale()) {
-        getStdErr().writeln("err\talready-owned")
-        return 5
+        getStdErr().writeln("err\t${leaseFailureLabel(lease)}")
+        return leaseFailureExitCode(lease)
     }
     let log = SessionLog("session.log")
     if (!log.load()) {
@@ -790,7 +819,7 @@ func runExtjsTests(args: Array<String>): Unit {
     // 用法：sacode extjs [node 命令] [extjs 目录]
     let nodeCmd = if (args.size > 1) { args[1] } else { "node" }
     // 目录优先级：显式参数 > SACODE_EXTJS_DIR（npm 安装态由启动包装指到包内 extjs/）> 仓库相对 "extjs"。
-    // 从 npm 装出来的 dsh 没有仓库目录可退，缺这一档就会在 WorkingDirectory 上炸掉。
+    // 从 npm 装出来的 CLI 没有仓库目录可退，缺这一档就会在 WorkingDirectory 上炸掉。
     let hostDir = if (args.size > 2) {
         args[2]
     } else if (let Some(d) <- getVariable("SACODE_EXTJS_DIR")) {
@@ -1068,6 +1097,9 @@ func runHeadlessTests(): Unit {
     expect("EOF 读不到应答判为不作答", decideAnswer(None) == "")
     expect("y 判为一次放行", decideAnswer(Some("y")) == "allowed-once")
     expect("YES 带空白也判为放行", decideAnswer(Some(" YES ")) == "allowed-once")
+    // PowerShell 5.1 的管道应答带 UTF-8 BOM，不能把明确放行判成乱码拒绝。
+    expect("BOM 开头的 y 仍判为放行", decideAnswer(Some("\u{FEFF}y")) == "allowed-once")
+    expect("BOM 不改变拒绝判定", decideAnswer(Some("\u{FEFF}n")) == "denied")
     expect("n 判为拒绝", decideAnswer(Some("n")) == "denied")
     expect("乱码应答判为拒绝而不是放行", decideAnswer(Some("always")) == "denied")
     // 无应答者：不作答（不写 decided），工单停在 pending，执行必须被拒
@@ -1252,6 +1284,16 @@ func runGoalTests(): Unit {
     removeIfExists(plainPath, recursive: false)
 }
 
+// --help 与错误 usage 用同一份清单：两个面各写一半最容易漏掉新入口。
+func printCliUsage(toError: Bool): Unit {
+    let w = if (toError) { getStdErr() } else { getStdOut() }
+    w.writeln("usage: sacode <goal|team|job|mode|acp|worktree|batch|tips|knowledge|tools|call|--remote> [arguments]")
+    w.writeln("       sacode goal <run|describe>；任务、审批和取消由共享核心处理")
+    w.writeln("       sacode worktree <enter|describe|exit|agent-prepare|agent-finish|cleanup> [值] [--session <会话>]")
+    w.writeln("       sacode --worktree[=<名称>|#<PR编号>|<github pull URL>] [--resume <会话>] [--json] [\"提示词\"]")
+    w.writeln("       sacode <seed|projection|stream|tool|ext|cancel|extjs|sig|headless|realstream|att|plugin|all>（本机自测）")
+}
+
 func dispatchMode(mode: String, approvalMode: String, args: Array<String>): Int64 {
     if (mode == "tips") { return runTipsCommand(args) }
     if (mode == "projection") { return runProjection() }
@@ -1268,20 +1310,20 @@ func dispatchMode(mode: String, approvalMode: String, args: Array<String>): Int6
     if (mode == "tools") { return runToolsList(args) }
     if (mode == "call") { return runToolCall(args) }
     if (mode == "realstream") { runRealStreamTests() }
-    if (mode == "all" || mode == "goal") { runGoalTests() }
+    if (mode == "all") { runGoalTests() }
     return Int64(-1)
 }
 
 main(args: Array<String>) {
     if (args.size > 0 && args[0] == "knowledge") { return runKnowledgeCommand(args) }
     if (args.size > 0 && (args[0] == "--help" || args[0] == "-h")) {
-        println("usage: sacode <goal|team|job|mode|acp|worktree|tools|call> [arguments]")
-        println("       sacode acp list | acp describe <委派身份>（持久记录，只读）")
-        println("       sacode goal <run|describe>；任务、审批和取消由共享核心处理")
+        printCliUsage(false)
         return 0
     }
     if (args.size > 0 && args[0] == "team") { return runTeamCommand(args) }
-    if (args.size > 1 && args[0] == "goal") { return runGoalCommand(args) }
+    // 裸 goal 不能再落进自测：没有子命令时与其它入口一样给 usage（64），
+    // 否则用户看到一串 PASS，也分不清目标到底建没建。
+    if (args.size > 0 && args[0] == "goal") { return runGoalCommand(args) }
     if (args.size > 0 && args[0] == "batch") { return runBatch(args) }
     if (hasFlag(args, "--remote")) { return runRemote(args) }
     if (args.size > 0 && args[0] == "mode") { return runApprovalModeCommand(args) }
@@ -1298,10 +1340,8 @@ main(args: Array<String>) {
     let mode = if (args.size > 0) { args[0] } else { "all" }
     if (mode == "job") { return runJob(args) }
 
-    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "goal" && mode != "plugin" && mode != "tips") {
-        getStdErr().writeln("usage: sacode [seed|projection|all|stream|tool|ext|cancel|extjs|sig|headless|tools|call|realstream|att|goal|plugin|tips]")
-        getStdErr().writeln("       sacode worktree <enter|describe|exit|agent-prepare|agent-finish|cleanup> [值] [--session <会话>]")
-        getStdErr().writeln("       sacode --worktree[=<名称>|#<PR编号>|<github pull URL>] [--resume <会话>] [--json] [\"提示词\"]")
+    if (mode != "all" && mode != "stream" && mode != "tool" && mode != "ext" && mode != "cancel" && mode != "extjs" && mode != "projection" && mode != "seed" && mode != "sig" && mode != "headless" && mode != "tools" && mode != "call" && mode != "realstream" && mode != "att" && mode != "plugin" && mode != "tips") {
+        printCliUsage(true)
         return 64
     }
 

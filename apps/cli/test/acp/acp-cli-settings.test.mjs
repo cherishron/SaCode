@@ -26,7 +26,7 @@ test('无SDK的CLI与Host共享ACP配置、修订和写租约',{timeout:40000},a
   assert.deepEqual(await bridge.request('acp/settings/describe',{sessionId:'current'}),JSON.parse(enabled.stdout));
   const disabled=await bridge.request('acp/settings/set-enabled',{sessionId:'current',enabled:false,revision:1});
   const readonly=run(root,'settings');assert.equal(readonly.status,0,readonly.stderr);assert.deepEqual(JSON.parse(readonly.stdout),disabled);
-  const owned=run(root,'enable','2');assert.equal(owned.status,1);assert.match(owned.stderr,/already-owned/);
+  const owned=run(root,'enable','2');assert.equal(owned.status,1);assert.match(owned.stderr,/lease-busy/);
   await bridge.stop();const reopened=run(root,'enable','2');assert.equal(reopened.status,0,reopened.stderr);assert.equal(JSON.parse(reopened.stdout).revision,3);
   const log=readFileSync(join(root,'session.log'),'utf8');assert.equal(log.includes('acp/admission'),false);assert.equal(log.includes('acp/task/start'),false);
 });

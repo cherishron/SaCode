@@ -43,7 +43,7 @@ func runAcpProviderCommand(args: Array<String>, peerId: String): Int64 {
             let source = SessionLog("session.log")
             let lease = WriteLease("session.log")
             if (!lease.takeoverIfStale()) {
-                throw Exception("already-owned")
+                throw Exception(leaseFailureLabel(lease))
             }
             try {
                 if (!source.load()) {
@@ -86,7 +86,7 @@ func runAcpProviderCommand(args: Array<String>, peerId: String): Int64 {
             }
             let lease = WriteLease("session.log")
             if (!lease.takeoverIfStale()) {
-                throw Exception("already-owned")
+                throw Exception(leaseFailureLabel(lease))
             }
             try {
                 if (!log.load()) {

@@ -639,7 +639,9 @@ func runWorktreeCommand(args: Array<String>): Int64 {
         getStdOut().flush()
         return 0
     } catch (e: Exception) {
-        if (held) {
+        // flush-failed 表示内存态还没被确认为已提交；此时保留租约（与 sacode call 同一口径），
+        // 否则下一个写者会在未结算的日志上继续追加。
+        if (held && e.message != "flush-failed") {
             if (let Some(owned) <- lease) { owned.release() }
         }
         return reportWorktreeFailure(e)
@@ -771,7 +773,9 @@ func runCliSession(args: Array<String>): Int64 {
         }
         return 0
     } catch (e: Exception) {
-        if (held) {
+        // flush-failed 表示内存态还没被确认为已提交；此时保留租约（与 sacode call 同一口径），
+        // 否则下一个写者会在未结算的日志上继续追加。
+        if (held && e.message != "flush-failed") {
             if (let Some(owned) <- lease) { owned.release() }
         }
         return reportWorktreeFailure(e)

@@ -2,14 +2,16 @@ package cli
 
 import core.*
 import std.convert.*
+import std.env.getStdErr
 
 // 显式指定项目目录；用户知识不隐式混入项目查询。
 func runKnowledgeCommand(args: Array<String>): Int64 {
     try {
         if (args.size < 4) {
-            println(
+            // 用法是诊断面：与其它入口一样走 stderr + 64，stdout 只留查询/写入结果。
+            getStdErr().writeln(
                 "usage: sacode knowledge <list|save|remove|import|reference> <user|project> <workspace-or-empty> [query | id title content revision | id revision]");
-            return 2
+            return 64
         }
         let store = KnowledgeStore.forScope(args[2], args[3])
         if (args[1] == "list" && args.size <= 5) {
