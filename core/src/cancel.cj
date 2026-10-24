@@ -383,3 +383,211 @@ public class ThreadSafeDeliveryQueue <: FrameSink {
         return out
     }
 }
+
+// 单轮帧日志：同一 turn 的帧按单调序号追加，多个客户端各自按游标读取。
+//
+// 与 ThreadSafeDeliveryQueue 的差别是消费者语义：
+//   - ThreadSafeDeliveryQueue.take 是“取走”，一个消费者拿过之后别人就看不见；
+//   - TurnFrameJournal.page 是“按游标读”，读不改变日志，两个客户端从同一游标
+//     出发必然拿到同一组帧。
+// 兼容口径：take 仍保留“上一次取到哪”的旧语义，供未升级的桌面/移动/CLI 使用；
+// 显式传游标的客户端不受 take 影响。
+//
+// 容量与丢弃：帧只在当前轮内有意义，cap 满时淘汰最旧帧并如实计数（gap）。
+// 旧队列在满时 offer 返回 false，调用方实际会丢掉那一帧；这里改成保留最新 cap 帧，
+// 让慢消费者至少能拿到连续的尾部，并能通过 gap 知道自己漏了帧。
+public class TurnFramePage {
+    public let frames: ArrayList<String>
+    public let nextCursor: Int64
+    public let gap: Bool
+    public init(frames: ArrayList<String>, nextCursor: Int64, gap: Bool) {
+        this.frames = frames
+        this.nextCursor = nextCursor
+        this.gap = gap
+    }
+}
+
+public class TurnFrameJournal <: FrameSink {
+    let cap: Int64
+    let mtx = Mutex()
+    var turn: Int64 = 0
+    var frames = ArrayList<String>()
+    // frames[0] 的序号。序号从 1 开始，0 保留给“还没开始读”。
+    var base: Int64 = 1
+    // 旧 take 语义的读指针；page 不碰它。
+    var legacy: Int64 = 1
+    var settledFlag = false
+    var settlementText = ""
+    // 上一轮终态：自动续轮（goal drive）会立刻 beginTurn 下一轮，
+    // 正在收尾的客户端仍需要拿到上一轮的 settled，不能只看到“新轮开始”。
+    var previousTurn: Int64 = 0
+    var previousSettlementText = ""
+    var over: Int64 = 0
+    var lost: Int64 = 0
+
+    public init(cap: Int64) {
+        this.cap = cap
+    }
+
+    // 开新轮。若上一轮已结算，把终态留一代，供仍在轮询旧游标的客户端取用。
+    public func beginTurn(id: Int64): Unit {
+        mtx.lock()
+        if (settledFlag) {
+            previousTurn = turn
+            previousSettlementText = settlementText
+        } else {
+            previousTurn = 0
+            previousSettlementText = ""
+        }
+        turn = id
+        frames.clear()
+        base = 1
+        legacy = 1
+        settledFlag = false
+        settlementText = ""
+        over = 0
+        lost = 0
+        mtx.unlock()
+    }
+
+    // 切会话时清空：保留 turn=0，让带旧 turnId 的客户端走 reset 而不是误读新会话。
+    public func clear(): Unit {
+        mtx.lock()
+        turn = 0
+        frames.clear()
+        base = 1
+        legacy = 1
+        settledFlag = false
+        settlementText = ""
+        previousTurn = 0
+        previousSettlementText = ""
+        over = 0
+        lost = 0
+        mtx.unlock()
+    }
+
+    public func offer(frame: String): Bool {
+        mtx.lock()
+        var ok = true
+        if (frames.size >= cap) {
+            frames.remove(at: 0)
+            base += 1
+            over += 1
+            lost += 1
+            ok = false
+        }
+        frames.add(frame)
+        mtx.unlock()
+        return ok
+    }
+
+    // 旧消费语义：取走上一次 take 之后新增的帧，最多 max 条。
+    // 指针落后于已淘汰区间时直接对齐到 base：那些帧已经不可恢复，不能重复返回。
+    public func take(max: Int64): ArrayList<String> {
+        mtx.lock()
+        let end = base + Int64(frames.size)
+        if (legacy < base) { legacy = base }
+        let out = ArrayList<String>()
+        if (max > 0) {
+            while (legacy < end && out.size < max) {
+                out.add(frames[legacy - base])
+                legacy += 1
+            }
+        }
+        mtx.unlock()
+        return out
+    }
+
+    // 按游标读：不推进任何全局读指针，因此可被多个客户端重复调用。
+    // cursor < base 或 > end 都意味着客户端漏了帧或拿的是旧轮游标，gap=true。
+    public func page(cursor: Int64, max: Int64): TurnFramePage {
+        mtx.lock()
+        let end = base + Int64(frames.size)
+        var start = if (cursor < Int64(1)) { Int64(1) } else { cursor }
+        var gap = false
+        if (start > end) {
+            start = end
+            gap = true
+        }
+        if (start < base) {
+            start = base
+            gap = true
+        }
+        let out = ArrayList<String>()
+        var at = start
+        if (max > 0) {
+            while (at < end && out.size < max) {
+                out.add(frames[at - base])
+                at += 1
+            }
+        }
+        mtx.unlock()
+        return TurnFramePage(out, at, gap)
+    }
+
+    // 结算只认第一次：重复 poll 不得改写已交付的终态。
+    public func settle(tailJson: String): Unit {
+        mtx.lock()
+        if (!settledFlag) {
+            settledFlag = true
+            settlementText = tailJson
+        }
+        mtx.unlock()
+    }
+
+    public func turnId(): Int64 {
+        mtx.lock()
+        let v = turn
+        mtx.unlock()
+        return v
+    }
+
+    public func endCursor(): Int64 {
+        mtx.lock()
+        let v = base + Int64(frames.size)
+        mtx.unlock()
+        return v
+    }
+
+    public func settled(): Bool {
+        mtx.lock()
+        let v = settledFlag
+        mtx.unlock()
+        return v
+    }
+
+    public func settlement(): String {
+        mtx.lock()
+        let v = settlementText
+        mtx.unlock()
+        return v
+    }
+
+    public func previousTurnId(): Int64 {
+        mtx.lock()
+        let v = previousTurn
+        mtx.unlock()
+        return v
+    }
+
+    public func previousSettlement(): String {
+        mtx.lock()
+        let v = previousSettlementText
+        mtx.unlock()
+        return v
+    }
+
+    public func overflow(): Int64 {
+        mtx.lock()
+        let v = over
+        mtx.unlock()
+        return v
+    }
+
+    public func dropped(): Int64 {
+        mtx.lock()
+        let v = lost
+        mtx.unlock()
+        return v
+    }
+}

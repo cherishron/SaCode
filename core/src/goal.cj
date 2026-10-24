@@ -1,7 +1,7 @@
 package core
 import std.sync.*
 
-// Goal 快照切片：保留修订 CAS 与四态；尚未完整复刻上游 UUID、轮数上限及结构化原因。
+// Goal 快照切片：保留修订 CAS 与四态；尚未完整覆盖上游 UUID、轮数上限及结构化原因。
 // 本地 id 是 `goal-<n>`、
 // revision 是 CAS 值、phase 四态之一；本切片单 goal 场景 id 固定 `goal-1`，
 // revision 由「日志里已出现的 goal/change 条数」派生（不重复编码到事件数据里）。

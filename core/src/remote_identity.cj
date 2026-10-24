@@ -288,11 +288,15 @@ public class RemoteIdentityStore {
         return hit
     }
 
-    // 显式授予能力面（§4）。三条拒绝：设备不存在、设备已撤销、scope 名为空。
-    // 已撤销的设备不能被「顺手授权」复活；空 scope 名会留下一条永远匹配不上的记录，
-    // 让审计里看起来授过而实际谁都拿不到。
+    // 显式授予能力面（§4）。四类拒绝：设备不存在、设备已撤销、scope 名为空、
+    // scope 不在闭集内。已撤销的设备不能被「顺手授权」复活；空/未知 scope 名会留下
+    // 一条永远匹配不上的记录，让审计里看起来授过而实际谁都拿不到。
+    // read/write 不需要显式授予（RemoteAccessAuthorizer.scopeFor 对它们返回 None），
+    // 所以可授予的只有 execute/approval/management 三项。
     public func grantScope(deviceId!: String, scope!: String): Bool {
-        if (scope.size == 0) { return false }
+        if (scope != AUTHZ_SCOPE_EXECUTE && scope != AUTHZ_SCOPE_APPROVAL && scope != AUTHZ_SCOPE_MANAGEMENT) {
+            return false
+        }
         lock.lock()
         var ok = false
         if (let Some(d) <- devices.get(deviceId)) {

@@ -53,6 +53,23 @@ func catalogDedupesAndTrimsAndCapsSize() {
     @Expect(overflow, "bad-model-catalog")
 }
 
+@Test
+func catalogParsesCapacityFromDiscoveryMetadata() {
+    // 上游在列表里报的窗口是唯一可用的分母来源；没报就留空，不按模型名猜。
+    let models = ModelCatalog.parseModels(
+        "{\"data\":[{\"id\":\"a\",\"context_window\":1048576},{\"id\":\"b\",\"context_length\":\"128k\"}," +
+        "{\"id\":\"c\"},{\"id\":\"d\",\"context_window\":0},{\"id\":\"e\",\"context_window\":\"abc\"}," +
+        "{\"id\":\"f\",\"max_context_length\":\"1M\"}]}")
+    @Expect(models.size, Int64(6))
+    @Expect(models[0].id, "a")
+    @Expect(models[0].contextWindow, "1048576")
+    @Expect(models[1].contextWindow, "128000")
+    @Expect(models[2].contextWindow, "")
+    @Expect(models[3].contextWindow, "")
+    @Expect(models[4].contextWindow, "")
+    @Expect(models[5].contextWindow, "1000000")
+}
+
 // 连接摘要要给配置面用：只报通/不通、数量、首个 id 与耗时档，明文密钥不能出现在里面
 @Test
 func catalogSummaryCarriesNoCredentialMaterial() {

@@ -2,7 +2,6 @@
 #define SACODE_WINDOWS_PROCESS_BUILD
 #include "windows_process.h"
 #include <windows.h>
-#include <sddl.h>
 
 struct sacode_windows_process {
     HANDLE process, thread, job, stdout_read, stderr_read;
@@ -13,27 +12,6 @@ struct sacode_windows_process {
 static void close_handle(HANDLE *handle) {
     if (*handle && *handle != INVALID_HANDLE_VALUE) CloseHandle(*handle);
     *handle = NULL;
-}
-
-/* 只在已创建的令牌上查组成员：CheckTokenMembership 对主令牌返回 1309，
- * 这里直接枚举 TokenGroups 并 EqualSid 比对。返回 0/1；-1 表示查询失败。 */
-static int token_has_group(HANDLE token, PSID target) {
-    DWORD need = 0;
-    if (GetTokenInformation(token, TokenGroups, NULL, 0, &need) || GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-        return -1;
-    if (!need || need > 262144) return -1;
-    BYTE *buffer = (BYTE *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, need);
-    if (!buffer) return -1;
-    int found = -1;
-    if (GetTokenInformation(token, TokenGroups, buffer, need, &need)) {
-        TOKEN_GROUPS *groups = (TOKEN_GROUPS *)buffer;
-        found = 0;
-        for (DWORD i = 0; i < groups->GroupCount; ++i) {
-            if (EqualSid(groups->Groups[i].Sid, target)) { found = 1; break; }
-        }
-    }
-    HeapFree(GetProcessHeap(), 0, buffer);
-    return found;
 }
 
 static int absolute_windows_path(const wchar_t *path) {
@@ -133,6 +111,11 @@ uint32_t sacode_windows_process_create(const wchar_t *application, wchar_t *comm
     if (!OpenProcessToken(owned->process, TOKEN_QUERY, &token)) { error = GetLastError(); goto cleanup; }
     DWORD is_container = 0, returned = 0;
     union { ULONGLONG alignment; BYTE bytes[1024]; } info;
+    /* 身份只以 TokenIsAppContainer + 目标包 SID 判定。CreateAppContainerProfile 产出的
+     * profile 本就没有包身份，TokenGroups 不含 S-1-15-2-1（ALL APPLICATION PACKAGES）；
+     * 2026-10-22 探针证明该形态可正常加载并执行（系统 AppContainer 进程同样不含该组）。
+     * 曾以"缺该组即拒绝"作为 26H2 失败判据，实测是误拒，已移除；loader 阶段失败会以
+     * 真实退出码与输出呈现，由上层按普通执行结果结算。 */
     if (!GetTokenInformation(token, TokenIsAppContainer, &is_container, sizeof is_container, &returned))
         error = GetLastError();
     else if (!is_container) error = ERROR_ACCESS_DENIED;
@@ -140,21 +123,6 @@ uint32_t sacode_windows_process_create(const wchar_t *application, wchar_t *comm
         error = GetLastError();
     else if (!EqualSid(((TOKEN_APPCONTAINER_INFORMATION *)info.bytes)->TokenAppContainer, sid))
         error = ERROR_ACCESS_DENIED;
-    else {
-        /* 26H2 下 SECURITY_CAPABILITIES 可能产出 LPAC 形态（无 S-1-15-2-1 包权威组），
-         * 子进程在加载器初始化阶段即退出，宿主只能看到 exit 1。这里显式识别该形态并
-         * 以 ERROR_NOT_SUPPORTED 交回：上层据此报 SANDBOX_INIT_FAILED，而不是把
-         * 环境级故障伪装成命令失败。只检测，不修改组、不降级。 */
-        PSID all_app_packages = NULL;
-        if (!ConvertStringSidToSidW(L"S-1-15-2-1", &all_app_packages)) {
-            error = GetLastError();
-        } else {
-            int found = token_has_group(token, all_app_packages);
-            if (found < 0) error = GetLastError();
-            else if (!found) error = ERROR_NOT_SUPPORTED;
-        }
-        if (all_app_packages) LocalFree(all_app_packages);
-    }
     CloseHandle(token);
     if (!error) { owned->ready = 1; *result = owned; *pid = child.dwProcessId; }
 cleanup:

@@ -130,7 +130,7 @@ public class GoalRunner {
 let GOAL_ROUND_PROMPT_EVENT = "goal/round-prompt"
 
 // 上游的保留续跑提示：命名目标、轮次与上限，并要求以工作区与工具结果为准。
-// 形状是自有文案（不逐字复刻上游 prompt.ts），但三条职责一致——说清追求什么、
+// 形状是自有文案（不逐字照搬上游 prompt.ts），但三条职责一致——说清追求什么、
 // 说到第几轮、说清上限在哪。
 func goalRoundText(objective: String, round: Int64, cap: Int64): String {
     var text = "<goal_round>\n目标：${objective}\n轮次：${round}"

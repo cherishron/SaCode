@@ -234,9 +234,9 @@ func appContainerFailureCategorizesStages() {
         "appcontainer-init-failed:environment:environment-localappdata")
     @Expect(appContainerFailureCategory("create", "windows-process-bad-args"),
         "appcontainer-init-failed:create:unknown")
-    // LPAC 形态（缺 ALL APPLICATION PACKAGES）必须与命令退出码分开报。
+    // 缺 AAP 组不是失败判据（2026-10-22 探针）；create:50 按普通 Win32 创建失败归类，仍与退出码分开。
     @Expect(appContainerFailureCategory("create", "windows-process-create:50"),
-        "SANDBOX_INIT_FAILED:token-missing-all-application-packages")
+        "appcontainer-create-failed:50")
 }
 
 @Test

@@ -851,7 +851,9 @@ func resolveWindowsExecutable(command: String, systemRoot: String): String {
                 continue
             }
             let candidate = trimmed + "\\" + command + (if (lower.endsWith(".exe")) { "" } else { ".exe" })
-            if (FileInfo(candidate).isRegular()) {
+            // FileInfo(path) 在路径不存在时抛 FException，必须先 exists 再探测，
+            // 否则 PATH 首个不含该命令的目录就会中断整轮解析。
+            if (exists(candidate) && FileInfo(candidate).isRegular()) {
                 return candidate
             }
         }
@@ -1021,11 +1023,9 @@ func appContainerLibraryCloseReason(message: String): String {
 
 // 阶段分类：命令解析/参数、进程创建、初始化三类互斥，不能统一报成"环境不支持沙箱"。
 func appContainerFailureCategory(stage: String, message: String): String {
-    // 原生层识别出 LPAC 形态（缺 ALL APPLICATION PACKAGES）时返回 ERROR_NOT_SUPPORTED。
-    // 这是沙箱初始化失败，不是命令退出码；必须与 shell-exit-code 分开报。
-    if (message == "windows-process-create:50") {
-        return "SANDBOX_INIT_FAILED:token-missing-all-application-packages"
-    }
+    // 不再把 create:50 单独解释为"token 缺 ALL APPLICATION PACKAGES"：2026-10-22 探针证明
+    // 该组在可正常执行的 AppContainer token 上同样缺失，原生层已移除该误拒。create:50
+    // 与其他 create 失败一样按 Win32 码归入 appcontainer-create-failed。
     if (message == "windows-process-invalid-argument" || message == "windows-process-unsupported-shell-arguments") {
         return "appcontainer-command-invalid:arguments"
     }

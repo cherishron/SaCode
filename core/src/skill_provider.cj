@@ -3,7 +3,7 @@ package core
 import std.collection.ArrayList
 
 // 技能 provider 接口（第 2 段）。
-// 对齐 DSH RUNTIME_SKILL_PROVIDER：{ name, list, get }。
+// 对齐基线 RUNTIME_SKILL_PROVIDER：{ name, list, get }。
 // list() 返回摘要列表（不含 content）；get(name) 返回完整定义（含 content）。
 // 两者 fail-soft：缺失/坏文件返回空列表 / None，不抛（一个坏技能不让整个注册表崩，§3.2）。
 public interface SkillProvider {

@@ -268,6 +268,12 @@ public class ModelSpec {
         }
         return false
     }
+    // 发现接口报出的窗口只替换这一个字段，其余人工确认过的字段原样保留。
+    public func withContextWindow(value: String): ModelSpec {
+        return ModelSpec(id, name, value, maxTokens, image,
+            inputModalities: inputModalities, outputModalities: outputModalities, supports: supports,
+            meterUnit: meterUnit, provenance: provenance, availability: availability)
+    }
 }
 
 public class ProviderRecord {
@@ -627,6 +633,16 @@ public class ProviderRegistry {
     // 是两件事，后者必须在到达这里之前就抛掉。合并结果与原状相同 = 没发生，
     // 不落事件：否则用户每拉一次就白涨一次 revision，还撞一次别人的冲突提示。
     public func applyPulledModels(providerId: String, ids: Array<String>, expectedRevision: Int64): Unit {
+        var models = ArrayList<CatalogModel>()
+        for (id in ids) {
+            models.add(CatalogModel(id, ""))
+        }
+        applyPulledModelEntries(providerId, models.toArray(), expectedRevision)
+    }
+
+    // 带容量的拉取落盘。账本只认「模型 id + 窗口」这一层：容量补齐算一次变更，
+    // 重复拉同一份清单不再涨 revision，否则用户每拉一次就撞一次冲突提示。
+    public func applyPulledModelEntries(providerId: String, models: Array<CatalogModel>, expectedRevision: Int64): Unit {
         let lease = WriteLease(file)
         if (!lease.acquire()) {
             throw Exception("provider-settings-busy")
@@ -638,17 +654,29 @@ public class ProviderRegistry {
             if (rec.id.size == 0) {
                 throw Exception("settings-rejected")
             }
-            let merged = mergePulledIds(rec.models, ids)
+            let merged = mergePulledModels(rec.models, models)
             if (Int64(merged.size) > 128) {
                 throw Exception("settings-rejected")
             }
-            if (Int64(merged.size) == Int64(rec.models.size)) {
+            if (sameModelCapacity(rec.models, merged)) {
                 return
             }
             commit("provider/upsert", rec.withModels(merged).toJson())
         } finally {
             lease.release()
         }
+    }
+
+    private func sameModelCapacity(before: Array<ModelSpec>, after: Array<ModelSpec>): Bool {
+        if (before.size != after.size) { return false }
+        var i: Int64 = 0
+        while (i < Int64(before.size)) {
+            if (before[i].id != after[i].id || before[i].contextWindow != after[i].contextWindow) {
+                return false
+            }
+            i += 1
+        }
+        return true
     }
 
     // 手动添加上游模型：有些供应商没有列表接口或返回不全，拉取通道替代不了它。

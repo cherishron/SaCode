@@ -339,3 +339,63 @@ func cleanCancel(tag: String) {
     removeIfExists("core-test-cancel-${tag}.log", recursive: false)
     removeIfExists("core-test-cancel-${tag}.log.lease", recursive: false)
 }
+
+// 帧日志的核心契约：多个游标读同一轮看到同一组帧；读不消费；
+// 旧 take 指针与游标互不影响；容量淘汰时如实报 gap。
+@Test
+func turnFrameJournalKeepsFramesForMultipleCursors() {
+    let j = TurnFrameJournal(8)
+    j.beginTurn(7)
+    @Expect(j.offer("text:a"), true)
+    @Expect(j.offer("text:b"), true)
+    @Expect(j.offer("text:c"), true)
+    @Expect(j.endCursor(), Int64(4))
+    let first = j.page(1, 2)
+    @Expect(first.gap, false)
+    @Expect(Int64(first.frames.size), Int64(2))
+    @Expect(first.frames[0], "text:a")
+    @Expect(first.frames[1], "text:b")
+    @Expect(first.nextCursor, Int64(3))
+    // 第二个客户端从同一游标出发，必须拿到同一组帧——page 不消费。
+    let again = j.page(1, 2)
+    @Expect(Int64(again.frames.size), Int64(2))
+    @Expect(again.frames[0], "text:a")
+    @Expect(again.frames[1], "text:b")
+    let rest = j.page(3, 8)
+    @Expect(Int64(rest.frames.size), Int64(1))
+    @Expect(rest.frames[0], "text:c")
+    @Expect(rest.nextCursor, Int64(4))
+    // 旧 take 语义独立推进，不影响游标读。
+    let legacy = j.take(8)
+    @Expect(Int64(legacy.size), Int64(3))
+    @Expect(Int64(j.take(8).size), Int64(0))
+    let replay = j.page(1, 8)
+    @Expect(Int64(replay.frames.size), Int64(3))
+}
+
+@Test
+func turnFrameJournalReportsGapAndKeepsPreviousSettlement() {
+    let j = TurnFrameJournal(2)
+    j.beginTurn(1)
+    j.offer("1")
+    j.offer("2")
+    // 第三帧挤掉最旧的 "1"：从 1 开始读必须报 gap，并从仍有数据的 2 开始。
+    @Expect(j.offer("3"), false)
+    let paged = j.page(1, 8)
+    @Expect(paged.gap, true)
+    @Expect(Int64(paged.frames.size), Int64(2))
+    @Expect(paged.frames[0], "2")
+    @Expect(paged.frames[1], "3")
+    @Expect(j.dropped(), Int64(1))
+    // 结算只认第一次：重复 settle 不得改写终态。
+    j.settle(",\"cancelled\":true")
+    j.settle(",\"cancelled\":false")
+    @Expect(j.settled(), true)
+    @Expect(j.settlement(), ",\"cancelled\":true")
+    // 自动续轮后，上一轮终态仍可被旧游标客户端取到一代。
+    j.beginTurn(2)
+    @Expect(j.turnId(), Int64(2))
+    @Expect(j.previousTurnId(), Int64(1))
+    @Expect(j.previousSettlement(), ",\"cancelled\":true")
+    @Expect(j.settled(), false)
+}

@@ -38,6 +38,30 @@ public func mergePulledIds(existing: Array<ModelSpec>, ids: Array<String>): Arra
     return list.toArray()
 }
 
+// 带容量的拉取：id 规则与 mergePulledIds 一致，另外只把上游明确报出的窗口
+// 补到空位上。人工填过或人工确认过的窗口不被一次拉取冲掉。
+public func mergePulledModels(existing: Array<ModelSpec>, models: Array<CatalogModel>): Array<ModelSpec> {
+    let list = specsOf(existing)
+    for (raw in models) {
+        let id = raw.id.trimAscii()
+        if (id.size == 0 || id.size > 200) { continue }
+        var slot = Int64(-1)
+        var i = Int64(0)
+        while (i < Int64(list.size)) {
+            if (list[i].id == id) { slot = i }
+            i += 1
+        }
+        if (slot >= 0) {
+            if (list[slot].contextWindow.size == 0 && raw.contextWindow.size > 0) {
+                list[slot] = list[slot].withContextWindow(raw.contextWindow)
+            }
+            continue
+        }
+        list.add(ModelSpec(id, id, raw.contextWindow, "", false, provenance: "provider-listed"))
+    }
+    return list.toArray()
+}
+
 public func mergeManualIds(existing: Array<ModelSpec>, ids: Array<String>): Array<ModelSpec> {
     let list = specsOf(existing)
     appendIds(list, ids, "user-entered")

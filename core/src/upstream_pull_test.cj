@@ -49,6 +49,41 @@ func mergePulledIgnoresBlankAndDuplicateEntriesInOneResponse() {
     @Expect(out.size, Int64(1))
 }
 
+// 上游报的窗口只补空位：人工填过/人工确认过的值不会被一次拉取冲掉。
+@Test
+func mergePulledModelsFillsOnlyMissingCapacity() {
+    let existing: Array<ModelSpec> = [
+        ModelSpec("m-a", "已改名", "", "4k", false, provenance: "human-confirmed"),
+        ModelSpec("m-b", "人工填过", "64k", "4k", false),
+    ]
+    let entries: Array<CatalogModel> = [
+        CatalogModel("m-a", "1048576"), CatalogModel("m-b", "200k"), CatalogModel("m-c", "128k"),
+    ]
+    let out = mergePulledModels(existing, entries)
+    @Expect(out.size, Int64(3))
+    @Expect(out[0].contextWindow, "1048576")
+    @Expect(out[0].name, "已改名")
+    @Expect(out[1].contextWindow, "64k")
+    @Expect(out[2].contextWindow, "128k")
+    @Expect(out[2].provenance, "provider-listed")
+}
+
+// 容量补齐也要守幂等：重复拉取同一份清单不再涨 revision。
+@Test
+func applyPulledCapacityIsIdempotentOnDocument() {
+    upCleanup()
+    let r = ProviderRegistry(upFile)
+    r.update(upDraft("m-a"), -1)
+    let entries: Array<CatalogModel> = [CatalogModel("m-a", "128k"), CatalogModel("m-b", "1048576")]
+    r.applyPulledModelEntries("step", entries, r.describe().revision)
+    let after = ProviderRegistry(upFile).describe()
+    @Expect(after.providers[0].models.size, Int64(2))
+    @Expect(after.providers[0].models[1].contextWindow, "1048576")
+    r.applyPulledModelEntries("step", entries, after.revision)
+    @Expect(ProviderRegistry(upFile).describe().revision, after.revision)
+    upCleanup()
+}
+
 @Test
 func manualAddUsesUserEnteredProvenanceAndSameDedupe() {
     let none: Array<ModelSpec> = []

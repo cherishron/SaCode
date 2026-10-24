@@ -2,7 +2,7 @@ package core
 import std.fs.*
 import std.unittest.*
 
-// 冻结 DSH 的输入校验和合法迁移；拒绝时不能追加事件。
+// 冻结基线的输入校验和合法迁移；拒绝时不能追加事件。
 @Test
 func goalContractRejectsBlankObjectiveWithoutMutation() {
     let root = "core-goal-contract-blank"

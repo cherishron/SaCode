@@ -1,6 +1,7 @@
 package core
 
 import std.unittest.*
+import std.env.*
 
 @When[os == "Windows"]
 @Test
@@ -41,6 +42,35 @@ func appContainerWindowsX64AbiMatchesDocumentedStructures() {
     @Expect(sizeOf<AcStartupInfoEx>(), UIntNative(112))
     @Expect(sizeOf<AcSecurityCapabilities>(), UIntNative(24))
     @Expect(sizeOf<AcProcessInformation>(), UIntNative(24))
+}
+
+@When[os == "Windows"]
+@Test
+func resolveWindowsExecutableSkipsMissingEntriesAndFailsClassified() {
+    // 2026-10-22：FileInfo(p).isRegular() 在路径不存在时抛异常，PATH 解析会在第一个
+    // 没有该 exe 的目录处中断，run_code 的 node 解析因此塌成 init-failed:resolve:unknown。
+    let saved = getVariable("PATH")
+    var root = "C:\\Windows"
+    if (let Some(value) <- getVariable("SystemRoot")) {
+        root = value
+    }
+    try {
+        // 首项不存在：必须继续向后找到真实存在的 hostname.exe。
+        setVariable("PATH", "C:\\__sacode_resolve_missing_dir__;${root}\\System32")
+        @Expect(resolveWindowsExecutable("hostname", root), root + "\\System32\\hostname.exe")
+        // 全都不存在时仍给出可归因的固定分类，而不是 FileInfo 的原始异常文本。
+        var message = ""
+        try {
+            resolveWindowsExecutable("sacode-missing-tool", root)
+        } catch (e: Exception) {
+            message = e.message
+        }
+        @Expect(message, "windows-enforcing-resolve-not-found")
+    } finally {
+        if (let Some(value) <- saved) {
+            setVariable("PATH", value)
+        }
+    }
 }
 
 @When[os == "Windows"]

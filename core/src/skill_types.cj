@@ -3,7 +3,7 @@ package core
 // 技能类型定义（第 2 段：独立核心发现与解析模块）。
 // 对齐 docs/plans/skill-integration-design-2026-10-20.md §3.1。
 // SkillSummary = 目录项（list 返回，不含 content）；SkillDefinition = 完整定义（get 返回，含 content）。
-// 不用 DSH 的 invocation/rank 数值字段：调用策略用 modelInvocable/userInvocable 两布尔位，
+// 不用基线的 invocation/rank 数值字段：调用策略用 modelInvocable/userInvocable 两布尔位，
 // 跨层同名覆盖按 §3.2 优先级表（provider 注册顺序），不靠 rank。
 
 // 技能资源指引：只给 directory/url/opaque hint，不枚举不抓取。
