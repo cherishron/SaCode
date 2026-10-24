@@ -115,6 +115,8 @@ apps/cli/out/
 npm/sacode-cli-*/bin/
 npm/sacode-cli-*/extjs/
 npm/sacode-cli-*/build-manifest.json
+# TUI 单文件产物（scripts/pack-tui.mjs 生成，随 npm pack 进主包）
+npm/sacode-cli/tui/
 protocol-bridge-dbg/
 apps/desktop/dist/
 .superpowers/
@@ -126,3 +128,12 @@ apps/desktop/.tinyrobot-*/
 
 # 桌面运行数据含用户会话和凭据，不入库。
 apps/desktop/data/
+
+# Web 工作台（apps/web）一次性产物
+# screenshots/ 是视觉验证截图，属一次性证据；长期证据保留文字记录在 docs/evidence/
+apps/web/screenshots/
+# Playwright 运行产物（截图 diff、trace、报告）
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+apps/web/.playwright/
