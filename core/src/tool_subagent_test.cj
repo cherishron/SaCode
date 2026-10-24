@@ -16,7 +16,7 @@ class DelegateProbeProvider <: Provider {
 }
 
 @Test
-func delegateToolRegistrationApprovalResultAndCancellation() {
+func delegateToolRegistrationAndApprovalGate() {
     Directory.create("../target/tmp", recursive: true)
     let root = canonicalize(Directory.createTemp("../target/tmp")).toString()
     try {
