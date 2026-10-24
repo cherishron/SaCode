@@ -20,6 +20,6 @@
 ## 备注
 
 - 本文件只由 codearts 维护。
-- 2026-10-24 提交批次（本会话 6 笔，本地领先 `origin/dev` **10**、**未推送**）：`9dfb2ca` 错题本 / `be50cb5` 体检证据+CHANGELOG / `559024f` repo-conventions 1.1.0 / `64e12fd` ui-design 1.0.0 / `2777275` D27 去重 / `e5d25bc` 台账。
+- 2026-10-24 提交批次（本会话 **8 笔**，已 `push` 到 `origin/dev`：`a0b16c3..9fbc87e`）：`9dfb2ca` 错题本 / `be50cb5` 体检证据+CHANGELOG / `559024f` repo-conventions 1.1.0 / `64e12fd` ui-design 1.0.0 / `2777275` D27 去重 / `e5d25bc` 台账 / `a63a8c0` 台账状态更新 / `9fbc87e` 台账基线更新+活文档去缩写。
 - **纠错记录**：首次提交误把他人**已暂存**的一批 `docs/evidence|plans|product|superpowers` 迁移删除（59 文件）连带提交，已 `git reset --mixed HEAD~6` 撤销并逐笔重做。他人这 59 项迁移删除现回到**未暂存**状态，**需相关会话重新 `git add` 提交**（工作区内容未受影响）。
-- **未提交（文件夹带他会话改动、无法干净拆分）**：`docs/product/PRD.md`、`docs/product/PRD-tracking.md`、`docs/evidence/README.md`。
+- **混合文件（夹带他会话改动）处理**：`docs/product/PRD.md`、`docs/product/PRD-tracking.md` 已用「还原 HEAD → 重放我的编辑 → 提交 → 还原工作区」**只入库我的改动**；`docs/evidence/README.md` 我的新增夹在他会话未提交条目之间、无法与 HEAD 分离，故**保留在工作区**随其台账一并提交。
