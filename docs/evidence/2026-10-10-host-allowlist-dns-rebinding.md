@@ -3,7 +3,7 @@
 对象：`apps/daemon/src/remote_schema.cj`、`apps/daemon/src/daemon.cj`、`apps/daemon/src/remote_schema_test.cj`、`apps/daemon/test/remote-host-guard.test.mjs`。
 取证态：**工作区态**（HEAD = `e92c72e`；本批文件在改动前都是提交态干净文件，`git status` 当场核过）。
 
-规格依据（`docs/superpowers/specs/2026-10-10-unified-remote-mobile-design.md` §7 第 124 行，逐字）：
+规格依据（`docs/clients/mobile/2026-10-10-unified-remote-mobile-design.md` §7 第 124 行，逐字）：
 > 外部 CORS 默认不开放；Host/Origin 检查、HTTPS 与凭据校验防止浏览器跨站及 DNS rebinding；非浏览器客户端没有 Origin 不能作为放行理由。
 
 批次 G 落了 Origin 那一半，Host 那一半一直在「在飞未完成」表里（当时写的理由是「缺一个本实例允许被哪些主机名访问的配置面」）。本批把这两半一起补齐。

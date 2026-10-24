@@ -1,6 +1,6 @@
 # W10 持久化屏障与恢复契约（设计稿，待用户评审后再实施）
 
-> **进度对账（2026-10-09 整理）**：本文档为历史设计稿/契约，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为历史设计稿/契约，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
 主责：A（起草与接口收口）｜实施：B（W10）｜复核：I（W80）｜上游出处：冻结 `639ed015397290b3745d163aafe02ffee4aa3f84` 的 `docs/subsystems/persistence`
 
@@ -17,12 +17,12 @@
 | 尾帧（半行 / 最后一帧 seq 不等于下标）→ 截断保留前缀并置 `truncatedTail`；**中段**缺帧 → 整份拒绝 `return false` | `core/src/session.cj:loadLocked` | 读源码 |
 | 未知事件类型既不拒也不标：回放原样保留，投影按 `isSurfaceEvent` 过滤 | `core/src/session.cj:isSurfaceEvent`、`loadLocked` | 读源码 |
 | 独占写靠租约文件 `rename(overwrite:false)` 原子抢；`-32001 already-owned`、`-32002 replay-rejected`、`-32003 flush-failed`（失败保留租约与内存态供重试） | `core/src/lease.cj:WriteLease`、`apps/host/src/main.cj:leaseHeld` | `grep -n "32001\|32002\|32003" apps/host/src/main.cj` |
-| 崩溃恢复**合成 closers 完全不存在** | 全仓 `grep -rn "interruptedTurnClosers" --include=*.cj` ⇒ **0 命中**（只出现在 `docs/plans/plan-deepseek-harness-replication.md` 与本机上游副本里） | 该命令 |
+| 崩溃恢复**合成 closers 完全不存在** | 全仓 `grep -rn "interruptedTurnClosers" --include=*.cj` ⇒ **0 命中**（只出现在 `docs/plans/plan-architecture-overview.md` 与本机上游副本里） | 该命令 |
 | 上游三类 closer 里连 `step/end` 这个事件类型都不存在 | `grep -rn '"step/end"' --include=*.cj .` ⇒ **0 命中**（只有 `step/start`） | 该命令 |
 | 无会话元数据头（格式版本、cwd、fork 血统、delegation 深度都不落盘） | `grep -rn "SessionHeader\|isSeeded\|formatVersion" core/src` ⇒ **0 命中** | 该命令 |
 | 迁移只有差异计算，无落盘服务 | `core/src/migration_pack.cj:computeMigrationPlan`；`MigrationApplyResult` 仅在 `migration_pack_test.cj` 里手工构造 | 读源码 |
 
-**矩阵落差（要先纠再写）**：`docs/plans/dsh-capability-matrix.md` 的 `persistence` 行现在记 **✔**，备注把「崩溃恢复合成」算作已复刻——上表两条 grep 证明实现侧一个 closer 都没有合成。按「标记/模拟/未接均不得判完成」，该行应为 ◐。该文件此刻有别的会话未落库改动，**本批不动它**，把纠偏记进 §6 归属。
+**矩阵落差（要先纠再写）**：`docs/plans/capability-matrix.md` 的 `persistence` 行现在记 **✔**，备注把「崩溃恢复合成」算作已实现——上表两条 grep 证明实现侧一个 closer 都没有合成。按「标记/模拟/未接均不得判完成」，该行应为 ◐。该文件此刻有别的会话未落库改动，**本批不动它**，把纠偏记进 §6 归属。
 
 ## 2. 上游口径（要点，不是转抄）
 

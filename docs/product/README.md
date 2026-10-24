@@ -10,7 +10,7 @@
 | [`PRD.md`](PRD.md) | 现行产品需求：F01–F21 能力域、授权与真实任务验收要求 | 活跃。含 2026-10-09 进度对账节（三档口径：已实现/真实入口已接通/仍未验证或缺失）；带日期的进度表是历史快照，不是实时真源 |
 | [`PRD-tracking.md`](PRD-tracking.md) | F01–F21 **全程跟进台账**：逐域完成/未完成、缺陷登记（P1/P2/已闭合）、平台快照与关键分母读数 | 2026-10-16 建立；同日刷新：D10 根因已定位（Low 标签继承链）、新增 D18（NSIS）/D19（旧 DLL 载荷）。只登记现状与证据，不改需求、不计算完成率；**完成功能或闭合缺陷必须同批更新**（AGENTS.md「文档同步规则」） |
 | [`platform-and-distribution.md`](platform-and-distribution.md) | 平台支持矩阵、npm/GitHub 分发、安装渠道与证据边界 | 2026-10-13 用户决策；**支持目标与已验证状态分开登记**；不等于全平台已发布 |
-| [`desktop-design-standard.md`](desktop-design-standard.md) | 桌面布局与品牌规范（兼②设计文档） | 2026-10-03 起草，引用旧基线；使用时结合 PRD 复核，进度以 PRD 为准 |
+| [`desktop-design-standard.md`](../clients/desktop/desktop-design-standard.md) | 桌面布局与品牌规范（兼②设计文档） | 2026-10-03 起草，引用旧基线；使用时结合 PRD 复核，进度以 PRD 为准 |
 
 ## 使用规则
 

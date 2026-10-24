@@ -103,7 +103,7 @@
 | `docs/product/PRD.md` | `:205`、`:463`、`:508` | F19 要求来源选择、预览、字段映射、去重、报告、取消、重启恢复；单向追加；损坏条目单独报告；不读密钥/不执行脚本 | 作为功能与验收需求 |
 | `docs/product/PRD.md` | `:817` | 现状表把“模型配置导入”标为“完整”，同时承认“跨产品通用数据导入/显式字段映射不存在” | “完整”只描述模型绑定导入，不是 F19 完成 |
 | `docs/product/PRD-tracking.md` | `:148` | F19 状态“待核”，已完成“无”，剩余“导入实现与验收证据未见；字段映射/去重/报告未落地” | 以台账为准：F19 未完成 |
-| `docs/evidence/model-center-b5-migration-2026-10-05.md` | — | 声称 `computeMigrationPlan() → 差异预览 → MigrationApplyResult` 流程 | 与源码不符：源码无 apply；该证据只能证明校验/预览，不能证明应用落库 |
+| `docs/clients/desktop/model-center-b5-migration-2026-10-05.md` | — | 声称 `computeMigrationPlan() → 差异预览 → MigrationApplyResult` 流程 | 与源码不符：源码无 apply；该证据只能证明校验/预览，不能证明应用落库 |
 
 本设计在实现阶段应同步更新台账与证据口径，不得沿用“完整”概括 F19。
 
@@ -1373,7 +1373,7 @@ idle
 - 知识快照是单文件全量替换；大批量导入会带来一次较大的写放大，容量上限必须先预检。
 - 去重索引是新增的派生存储；如果实现不当会成为第二真源。必须坚持“目标 provenance 为准、索引可重建”。
 - 新增 IPC 通道会改变公共面计数；未同步 preload/main/bridge 测试前，不得在 UI 宣称可用。
-- 现有 `docs/evidence/model-center-b5-migration-2026-10-05.md` 的 apply 表述与源码不符；实现阶段应登记更正，不能沿用旧结论。
+- 现有 `docs/clients/desktop/model-center-b5-migration-2026-10-05.md` 的 apply 表述与源码不符；实现阶段应登记更正，不能沿用旧结论。
 
 ---
 

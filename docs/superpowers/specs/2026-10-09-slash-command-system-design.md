@@ -67,7 +67,7 @@ SaCode 当前有 `+` 菜单（附件/文件/技能/MCP/目标）和 `@` 文件�
 - 可选 PR 评论、auto-fix、resume
 
 **实现方式**（SaCode 自有）：
-- 不复刻 Qwen Code 的 worktree 隔离、16 agents 并行架构
+- 不实现 Qwen Code 的 worktree 隔离、16 agents 并行架构
 - 用 SaCode 自己的 Agent 团队 + goal 机制 + 审批工单实现
 - 参考 `docs/evidence/qwen-code-review-gap-2026-10-09.md` 的 17 项差距清单
 

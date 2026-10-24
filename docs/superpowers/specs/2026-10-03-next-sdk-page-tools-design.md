@@ -1,16 +1,16 @@
-# DSH 桌面入口 Next SDK 页面工具接入设计
+# 基线 桌面入口 Next SDK 页面工具接入设计
 
 > **状态（2026-10-09 整理）**：本文为设计规格（未实现），与 `plans/2026-10-03-next-sdk-page-tools.md` 配套。产品真实进度以 [`docs/product/PRD.md`](../../product/PRD.md) 进度对账为准；勿将其误读为已交付。
 
 ## 目标
 
-在 DSH Electron 桌面渲染层接入 `@opentiny/next-sdk`，让页面级工具（读 DOM、点击、输入、滚动）通过 `document.modelContext` 注册，经 IPC 暴露给宿主，使模型能像调用 `write`/`read` 一样调用页面工具。
+在 基线 Electron 桌面渲染层接入 `@opentiny/next-sdk`，让页面级工具（读 DOM、点击、输入、滚动）通过 `document.modelContext` 注册，经 IPC 暴露给宿主，使模型能像调用 `write`/`read` 一样调用页面工具。
 
 ## 范围与排除
 
 **含**：构建期折叠 `@opentiny/next-sdk` 为经典脚本；渲染层初始化 `document.modelContext`；注册固定页面工具集；新增 IPC 通道让宿主列出并调用页面工具；bridge 测试与 `--ui-smoke` 断言。
 
-**不含**：`@opentiny/next-remoter`（Vue 聊天组件——DSH 已有 TinyRobot 消息面，不装第二套）；Web Agent 服务（远程遥控模式——本批只做纯前端模式，不跑 Node.js 代理）；外部 MCP 客户端接入（VS Code/CodeX 等——属远程模式，本批不做）；模型真凭证（仍 BLOCKED）。
+**不含**：`@opentiny/next-remoter`（Vue 聊天组件——基线 已有 TinyRobot 消息面，不装第二套）；Web Agent 服务（远程遥控模式——本批只做纯前端模式，不跑 Node.js 代理）；外部 MCP 客户端接入（VS Code/CodeX 等——属远程模式，本批不做）；模型真凭证（仍 BLOCKED）。
 
 ## 架构
 
@@ -33,7 +33,7 @@
 - `@opentiny/next-sdk` 0.4.11：`"type": "module"`（纯 ESM，无 UMD/IIFE）
 - esbuild 折叠（仅引入 `initializeBuiltinWebMCP` + `WebMcpClient`）：1.8 MB IIFE，0 个动态 `import(`、0 个 `new Function`、0 个裸 `"vue"` 引用
 - 1 个 `eval(` 存在：`PageController.executeJavascript(script, signal)` —页面代理功能的方法，不在 `initializeBuiltinWebMCP` 或 `WebMcpClient` 的调用链上；CSP `script-src 'self'` 只在调用时拦截 `eval`，不在解析时拦截
-- DSH CSP：`default-src 'self'; style-src 'self'; script-src 'self'`（`renderer/index.html:5`）
+- 基线 CSP：`default-src 'self'; style-src 'self'; script-src 'self'`（`renderer/index.html:5`）
 
 ## 组件
 
@@ -85,7 +85,7 @@
 
 新增：
 - `document.modelContext` 存在
-- `page.readState` 返回的 `title` 是 `DSH Harness`
+- `page.readState` 返回的 `title` 是 `基线 Harness`
 - `page.clickElement` 对越界索引返回 `{ success: false }`
 
 ## 验收标准

@@ -46,6 +46,6 @@ HEAD `7a249a1c2ca03f5d4ad7a7c5e82eb81d60a00238` 加未提交工作区实现；�
 - `node --test test/knowledge-electron.test.mjs`：Electron→实际 preload→IPC→本轮 Host 1/1 通过，验证保存、搜索、引用、用户/项目隔离、项目文件导入；亮暗与窄窗截图，`overflow=false`。仍使用隔离夹具的 `--no-sandbox --disable-gpu`，不代表产品默认安全启动或安装态通过。
 - 看图发现页面仍写“不自动发送给模型”，与自动检索实际行为矛盾。现改为“相关片段会随任务请求发送给当前模型”，增加实际 Electron 可见文案检查；`node scripts/pack-pages.mjs` 及页面复验通过。没有修改自动发送/检索权限或更换模型。
 
-日志均在 `target/tmp/product-host-current-20261017-f31c/`：`build.log`、`chain-tests.log`、`knowledge-auto-host.log`、`pages-build.log`、`knowledge-electron-v2.log` 及已记录的退出码文件。最终页面证据为 `target/tmp/knowledge-ui/run-AmTkLo/result.json` 和 `knowledge-{light,dark,narrow}.png`；已检查亮色与窄窗截图。CLI 自动检索和核心 5/5 的当前证据见 [CLI 专项 §11](2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md)。完整桌面装配、默认安全启动、安装态及代码理解效果仍待验。
+日志均在 `target/tmp/product-host-current-20261017-f31c/`：`build.log`、`chain-tests.log`、`knowledge-auto-host.log`、`pages-build.log`、`knowledge-electron-v2.log` 及已记录的退出码文件。最终页面证据为 `target/tmp/knowledge-ui/run-AmTkLo/result.json` 和 `knowledge-{light,dark,narrow}.png`；已检查亮色与窄窗截图。CLI 自动检索和核心 5/5 的当前证据见 [CLI 专项 §11](../clients/cli/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md)。完整桌面装配、默认安全启动、安装态及代码理解效果仍待验。
 
 跑后产物守卫 `GATE: FAIL (13 checks, fail=4)`，原始输出为同目录 `artifact-gate.log`：先前误生成的 `core/core/` 仍在，另有 `apps/daemon/target/`、`apps/host/target/`、`apps/desktop/target/`，后三项归属未核，未触碰。当前全部新运行输出位于根 `target/tmp`；未把专项通过扩大为全门禁通过。

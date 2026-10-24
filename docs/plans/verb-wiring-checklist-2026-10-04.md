@@ -1,10 +1,10 @@
 # 51 行 ◐ 的 verb 接入清单（供并发线落库后直接执行）
 
-> **进度对账（2026-10-09 整理）**：本文档为历史接入清单/计划，所列 ◐→✔ 状态以当时口径为准，不随后续改动自动更新。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为历史接入清单/计划，所列 ◐→✔ 状态以当时口径为准，不随后续改动自动更新。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
-**目的**：把能力矩阵里 **51 行 ◐**（按表头名「已复刻」列机械复算）升到 ✔ 所需的**入口侧接入工作**列成清单。每条给出：目标宿主 verb / 目标 CLI 子命令 / 断言集最小形态 / 会话日志事件 / 上游契约出处。并发线把 `apps/host/src/main.cj` 与 `apps/cli/src/main.cj` 的在飞改动落库后，按本表逐条推。
+**目的**：把能力矩阵里 **51 行 ◐**（按表头名「已实现」列机械复算）升到 ✔ 所需的**入口侧接入工作**列成清单。每条给出：目标宿主 verb / 目标 CLI 子命令 / 断言集最小形态 / 会话日志事件 / 上游契约出处。并发线把 `apps/host/src/main.cj` 与 `apps/cli/src/main.cj` 的在飞改动落库后，按本表逐条推。
 
-> **本文首版有两处凭记忆写错**：把 `session-title` / `todo` / `plan` / `goal` / `permission-presets` / `jobs` / `webhook` 当已 ✔、把不在表里的 `gateway` 当一行，漏了 `llm-streaming` / `session-query`，且把 `agent-team` / `user-questions` / `web-server` / `product-telemetry` 放错阶段。现全部按矩阵「阶段」+「已复刻」两列机械重生成。教训同用户记忆「markdown 表格读写陷阱：读表必须按表头名取列」——**凡报数与分组一律取列，不照叙述累加**。
+> **本文首版有两处凭记忆写错**：把 `session-title` / `todo` / `plan` / `goal` / `permission-presets` / `jobs` / `webhook` 当已 ✔、把不在表里的 `gateway` 当一行，漏了 `llm-streaming` / `session-query`，且把 `agent-team` / `user-questions` / `web-server` / `product-telemetry` 放错阶段。现全部按矩阵「阶段」+「已实现」两列机械重生成。教训同用户记忆「markdown 表格读写陷阱：读表必须按表头名取列」——**凡报数与分组一律取列，不照叙述累加**。
 
 **为什么现在不做**：并发线两份 `main.cj` 分别有 41 / 46 行未落库改动；共享 worktree 纪律不吞并不 revert，只能等其落库。核心 `.cj` 文件由本会话独占，已全量提交。
 
@@ -14,7 +14,7 @@
 - **CLI 子命令**：`main.cj` 加 `if (mode == "<名>")` 分派；断言式 `expect(名字, 条件)` 打印 `PASS` / `FAIL` 前缀；剥 SDK PATH 后能独立跑；返回码 = `FAIL` 计数。
 - **桌面 IPC 通道**：`preload.cjs` 与 `test/bridge.test.mjs` 同步增删（AGENTS.md）；按动作命名、逐字段校验，不给「发任意方法」通道。
 - **会话日志不变量**：所有 log-only 事件不进 `isSurfaceEvent` 白名单（system/developer/user/assistant/tool-result 才是）；`<verb>::<字段>::<字段>` 管道编码；未来放开需换长度前缀。
-- **升 ✔ 判据**（沿用 `plan-deepseek-harness-replication.md` §6.1.2 A 档）：至少一条子系统级断言、上游校正段有出处、双入口各跑一次、变异反证不假绿。
+- **升 ✔ 判据**（沿用 `plan-architecture-overview.md` §6.1.2 A 档）：至少一条子系统级断言、上游校正段有出处、双入口各跑一次、变异反证不假绿。
 
 ## 逐模块清单（51 行，按矩阵「阶段」列分组）
 
@@ -113,7 +113,7 @@
 
 - **本清单覆盖**：**51 行 ◐**（M0 4 + M1 7 + M2 2 + M3 3 + M4 11 + M5/M6 11 + M7 6 + M8 7 = 51）。
 - **不含已 ✔ 的 12 行**：`approval` / `conversation` / `core` / `extensions` / `persistence` / `session` / `session-projection` / `subprocess` / `system-prompt` / `token-meter` / `tools` / `web-client`。
-- **README 行**：不在 63 模块分母内，`已复刻` 列的 ☐ 不计数。
+- **README 行**：不在 63 模块分母内，`已实现` 列的 ☐ 不计数。
 - `cordis` / `gateway` **不在 subsystems 表里**（框架层/交付层裁决，见矩阵「M0 基座的裁决」），本清单不单列。
 
 ## 提交顺序建议

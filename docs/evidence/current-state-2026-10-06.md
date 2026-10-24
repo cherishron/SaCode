@@ -14,7 +14,7 @@
 
 - 核心测试：`702 / 693 通过 / 2 跳过 / ERROR 5 / FAILED 2`（`v11` 结果：`pluginStoreInstallsAndReplaysFromColdProcess`、`pluginStoreReportsOrphanDirectoryWithoutDeletingIt` 仍 ERROR/FAILED，其余 693 全绿）。`plugin_store` 测试的 7 条失败全部为 `Directory.create` 在已存在目录时抛错；修复已提交（构建通过，`plugin_store.cj` 编译无错误）。
 - 桌面测试：`test/temp-test.ts` 已删除（遗留文件）；`model-pages-render`、`plugin-inventory-lifecycle` 的 `TypeError: whenReady` 为预存在测试基础设施问题（与模型中心接线无关）。
-- Electron 安装包：构建已出 `SaCode Setup 0.1.0.exe`（81.3MB），`docs/evidence/model-center-replacement-2026-10-06.md:34-41` 记录构建 SHA256 一致性；已安装版本启动报 `customs-guard.cjs` 缺失（`preload.cjs` 通道已加，源码存在 `customs-guard.cjs`；构建脚本未将其打包入安装包——构建脚本问题）。
+- Electron 安装包：构建已出 `SaCode Setup 0.1.0.exe`（81.3MB），`docs/clients/desktop/model-center-replacement-2026-10-06.md:34-41` 记录构建 SHA256 一致性；已安装版本启动报 `customs-guard.cjs` 缺失（`preload.cjs` 通道已加，源码存在 `customs-guard.cjs`；构建脚本未将其打包入安装包——构建脚本问题）。
 - 真实模型：StepFun `step-5-preview` 测试全部通过（4/4）。
 
 ## 8 项缺陷当前闭合状态

@@ -1,6 +1,6 @@
 # SaCode 侧边会话历史记录 开发简报（交 codex 执行）
 
-> **进度对账（2026-10-09 整理）**：本文档为历史开发简报/设计登记，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为历史开发简报/设计登记，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
 基线：2026-10-08 工作区态，分支 `refactor/dsh-learning`，HEAD `35a69ca`。工作区存在**并发会话的未提交改动**（`git status` 有 30+ 条），逐文件精确暂存，不要 `git add -A`，不要 revert 他人改动。
 
@@ -138,7 +138,7 @@
 
 这条不只是我们的保守选择 —— 官方 `dsh-client-ui-workspace/README.zh.md` 原文写明「**没有 Session 删除**：会话可以归档但绝不会被删除」，连工作区删除也只「从工作区列表中移除，文件夹与会话记录会保留」。接口规格 F01 行选的 `session/archive` 与上游一致；旧草稿里的 `session/delete` 应当作废。
 
-current 会话不许归档：先打开别的会话。返回 `busy`（或 `not-authorized`）配中文提示「请先打开其他会话再归档当前」。官方另有一条要一并复刻的不变量：**Host 规定置顶与归档互斥**（§8），取消归档前不能同时是 pinned。
+current 会话不许归档：先打开别的会话。返回 `busy`（或 `not-authorized`）配中文提示「请先打开其他会话再归档当前」。官方另有一条要一并实现的不变量：**Host 规定置顶与归档互斥**（§8），取消归档前不能同时是 pinned。
 
 ## 4. 新增 Host verb 契约
 
@@ -220,13 +220,13 @@ UI 面：新增断言进 `test-support/ui-smoke.cjs`（现有 `note(cond, '中�
 - 不提交产物：`target/`、`apps/desktop/dist/`、`npm/dsh-cli-*/bin/`、`*.log`。
 - 开发态绿了要在打包态复验；`dist/host` 可能是上一轮旧产物，核 exe 的 mtime/体积再下结论。
 
-## 8. 官方 DSH 侧边栏基准（从安装态 asar 原文读取）
+## 8. 官方 基线 侧边栏基准（从安装态 asar 原文读取）
 
 **取法补正**：`A.listPackage(P)` 返回的是 win32 原生反斜杠串，且**首字符是前导分隔符**（一个反斜杠）；原串直接交给 `extractFile` 会报 `was not found`，必须 `.slice(1)` 去掉它（`searchNodeFromDirectory` 会把空首段当目录名查）。不要 `extractAll`。
 
 **组件归属（重要，别找错包）**：`@deepseek-ai/dsh-client-ui-sidebar` 只是**外壳**（slot 与 dict：`sidebar.brand.mark/name`、`sidebar.workspaces`、`sidebar.panellist`、`sidebar.settings`、`sidebar.toggle.badge`，动作 `session.new`、`toggle.open/collapse`）。**会话列表全部在 `dsh-client-ui-workspace`**，它把自己注册进 `sidebar.workspaces` 席位。找侧栏行为要去 ui-workspace，不是 ui-sidebar。
 
-**证据分档**：来源是安装包内 `README.zh.md` 原文 + `lib/*.js` 打包代码，版本 `@deepseek-ai/dsh-desktop` **0.2.0-rc.2、channel=nightly**（Electron 44.0.0）。这**不等于**能力矩阵冻结的 `639ed01`，存在版本漂移；且本次**没有运行官方桌面**做运行态对照。下面每条是「文档+代码原文确证」，不是「官方实际行为确证」。据此写方案时按上游契约复刻，但不要在验收里声称官方实测通过。
+**证据分档**：来源是安装包内 `README.zh.md` 原文 + `lib/*.js` 打包代码，版本 `@deepseek-ai/dsh-desktop` **0.2.0-rc.2、channel=nightly**（Electron 44.0.0）。这**不等于**能力矩阵冻结的 `639ed01`，存在版本漂移；且本次**没有运行官方桌面**做运行态对照。下面每条是「文档+代码原文确证」，不是「官方实际行为确证」。据此写方案时按上游契约实现，但不要在验收里声称官方实测通过。
 
 **独立复核（本轮第二次直读，非转述）**：另跑了一次只读探针，逐条取原文行核对以下六项，全部确证 ——
 `ui-workspace/lib/client.js`（198642 字节）中 `session_delete/deleteSession/removeSession/session_remove` **0 命中**、`onContextMenu/contextMenu` **0 命中**、`preview` **0 命中**；`ui-sidebar/lib/client.js`（32107 字节）中 `SessionNodeItem/session_list` **0 命中**（证实外壳不渲染列表）；`ui-sidebar/README.zh.md` 原文「侧边栏是导航外壳……**ui-workspace 填充 `sidebar.workspaces`**」；`ui-primitives/lib/index.js` 原文 `const MIN = 6e4; const HOUR = 36e5; const DAY = 864e5;`。
@@ -241,7 +241,7 @@ UI 面：新增断言进 `test-support/ui-smoke.cjs`（现有 `note(cond, '中�
 
 **另记一条口径修正（影响 §5 C1）**：简报初稿设想的「委派中徽章 + 可切到委派会话」与上游不同 —— 上游把 subagent 来源会话**从列表隐藏**，只在状态优先级里保留 `runningSubagentCount`。C1 因此要先重定口径（隐藏 / 折叠到来源 / 加徽章是三选一），见 §5 C1。
 
-| 官方能力 | 原文契约（可复刻的最小事实） |
+| 官方能力 | 原文契约（可实现的最小事实） |
 | --- | --- |
 | 搜索 | **本地 + 后端混合**，不是纯前端：`deriveSearchResults` 先做不区分大小写的「标题与 Workspace 子串匹配」，再并上 Host 内容匹配。`SEARCH_DEBOUNCE_MS = 250`、查询上限 `SEARCH_QUERY_MAX_CODE_UNITS = 500`、每次新查询 `controller.abort()` 中止前一个、结果上限 `SESSION_SEARCH_RESULT_LIMIT = 20`、摘要 `SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS = 240`。后端是**字面 token/短语匹配，无模糊搜索** |
 | 重命名 | wire `session_rename`，入参 `{sessionId, title}`，出参 **`{title, seq}`**。调用走 `sessions.using(sessionId, {source:"workspaceOperation"}, ref => ref.binding.session.rename(title))`。入口两个：行 `...` 菜单 order 200 + **标题双击**；对话框注册在 `shell.overlay`。快捷键 `Mod+Alt+G`。**官方无 CAS**，靠返回的 `seq` 回执 |
@@ -258,7 +258,7 @@ UI 面：新增断言进 `test-support/ui-smoke.cjs`（现有 `note(cond, '中�
 | 其他确证存在 | 未读 `completionUnread`（**浏览器本地 `new Set()`，官方注释称「完成时间>上次查看时间这一事实永远不会到达宿主」**）、活动定时任务时钟标记（`sidebar.session.row.leading` 席位，仅 idle 行渲染、非 Tab stop）、HTML5 拖拽排序、标题省略裁切 + 悬停 marquee、悬停卡 `openDelayMs: 800` 与复制标题、`AnimatedRows`（`ROW_FADE_MS=100`）、`Mod+K` 搜索、收起轨道 56px + `sidebar.toggle.badge`、埋点 `branch_session_click` |
 | 确证**不存在** | 会话删除、右键菜单、消息摘要预览、收藏/星标/tag（`favorite`/`收藏`/`label:"star"` 均 0 命中，`star` 命中全是 start/restart 词干）、**虚拟滚动与分页/加载更多**（`loadMore`/`pagination`/`virtual`/`Virtuoso`/`overscan`/`IntersectionObserver` 全部 0 命中） |
 
-**据此得到的三条复刻裁决**（按本仓「先判上游有没有这能力」的既定纪律）：
+**据此得到的三条实现裁决**（按本仓「先判上游有没有这能力」的既定纪律）：
 
 1. **archive 不是我们的发明，是上游契约**；`delete` 上游明确不做。§3-C 的结论与官方一致，可以照 §4 落地。
 2. **消息摘要、右键菜单、批量操作是自有增量**，上游没有 → 不占 63 行上游能力分母，也不该写成「对齐官方」。默认撤出本批范围（§5 B2 相应改口径）。
@@ -280,7 +280,7 @@ UI 面：新增断言进 `test-support/ui-smoke.cjs`（现有 `note(cond, '中�
 
 已按此实现并验证的增量（记为 **N1**，与 A 系列表面互不替代）：
 
-- **上游有没有**：无。官方 DSH 的会话面在 `ui-workspace` 的会话列表，既没有对话内导航也没有消息摘要（见 `reference-dsh-official-desktop-ui-baseline` 与本文 §8）→ **自有增量，不占 63 行上游能力分母**。
+- **上游有没有**：无。官方 基线 的会话面在 `ui-workspace` 的会话列表，既没有对话内导航也没有消息摘要（见 `reference-dsh-official-desktop-ui-baseline` 与本文 §8）→ **自有增量，不占 63 行上游能力分母**。
 - **条目粒度=轮次**：每条 `user/` 投影行一条，标题取提问首行（60 字符截断），内容取该轮全文（120 字符截断），回复计数与该轮首条回复摘要进悬浮卡。纯派生落点 `renderer/msgfold.js` 的 `turnOutline(lines, rows)`，锚点 id 与 `toBubbleMessages` 同一取法——侧栏不许造界面上跳不到的锚点；第一条提问之前的 system/developer 行不建条目。
 - **定位仍然只有一个所有者**：`renderer/conversation-scroll.js` 加 `jumpTo(node, id)` 与 `onAnchor` 播报；渲染层只交锚点，绝不自取 `scrollTop`。跳到未知 id 如实返回 false 且不动位置、不解除跟随；在尾部时宿主交还 `null` 锚点，高亮回落到最后一轮。
 - **呈现**：`nav.turn-nav` 覆盖在对话区右缘，**不改 `.conversation` 的盒子**（`layout-smoke.cjs` 拿的是 `.conversation.right === .conversation-center.right` 这条判据）；对话列宽 `<760px` 让位不压正文，不足两轮不出现。悬浮卡用 CSS `:hover`/`:focus-visible` 出，键盘可达，条目带中文 `aria-label` 与 `aria-current`。

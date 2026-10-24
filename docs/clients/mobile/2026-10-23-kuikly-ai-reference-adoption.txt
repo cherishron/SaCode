@@ -1,0 +1,79 @@
+Kuikly AI 参考资料采纳记录（移动端）
+=====================================
+日期：2026-10-23
+取证态：未提交工作区，Windows x64
+参考来源：https://kuikly.tds.qq.com/AI/chat-markdown.html（Kuikly AIChat 套件；
+          «三、生产级项目实战 DeepSeek Harness Mobile» 一节）
+性质：第三方组件真实接入 + 真机前构建读数。不含真机运行、不含远程 daemon 实连。
+
+一、参考了什么
+--------------
+1. KuiklyMarkdown（流式 Markdown 渲染）：增量 AST、GFM 表格/列表/任务清单、19 语言代码高亮。
+2. KuiklyChatUI（会话 UI 组件库）：思考折叠、代码块、工具调用卡（Tool Call）、表格。
+3. DeepSeek Harness Mobile（架构参考）：Kuikly 宿主 + 电脑端 Host；
+   Relay 加密隧道 / SSH 端口转发 两种连接；按连接来源（relay:<hostId>、ssh:default）隔离会话缓存。
+
+二、本次实际落地（只做第 1 项）
+-------------------------------
+改动文件（3 个，均在本仓 apps/mobile）：
+- gradle/libs.versions.toml：新增 kuiklymarkdown = "1.0.6-2.0.21" 与 kuikly-markdown 依赖别名。
+- shared/build.gradle.kts：commonMain 增加 implementation(libs.kuikly.markdown)。
+- shared/src/commonMain/kotlin/com/sa/demo/saui/chat/SaMarkdown.kt（新增）：唯一接入点，
+  `fun ViewContainer<*, *>.SaMarkdown(content: String) { KuiklyMarkdown(content) }`。
+- shared/src/commonMain/kotlin/com/sa/demo/saui/chat/ChatMessageBubble.kt：AI 消息改走 SaMarkdown，
+  用户消息仍走原极简渲染（用户输入不需要 Markdown 语义）。
+
+三、版本与仓库核实（踩坑记录）
+------------------------------
+- 官方文档给的是 `KuiklyMarkdown:1.0.6-2.1.21`，后缀 2.1.21 指 Kotlin 2.1.21；
+  本工程 kotlin = 2.0.21、kuikly = 2.6.0-2.0.21（libs.versions.toml），KMP metadata 不兼容。
+- 在 maven-tencent 元数据中确认存在 **1.0.6-2.0.21**（另有 1.0.6-2.0.21-ohos），据此选用；
+  鸿蒙构建须切 -ohos 变体（本次未做）。
+- 文档给的 `https://mirrors.tencent.com/repository/maven/kuikly` 在本机实测 404
+  （Nexus 返回 Repository not found）；构件实际在工程**已配置**的
+  `https://mirrors.tencent.com/nexus/repository/maven-tencent/` 下，无需新增仓库。
+- KuiklyChatUI 五个模块（kuiklychat-compose/compat/agui/agentcard/ai）在该仓库元数据中
+  未找到（探测无版本），故本轮不接；留作后续按需核实其他仓库或内网源。
+
+四、API 实测（不照文档猜）
+--------------------------
+文档示例是 Compose 写法（`MarkdownView { attr { content(...) } }`），与本构件不符。
+解包 KuiklyMarkdown-release.aar 后以 javap 读取真实签名：
+- `com.tencent.kuiklybase.KuiklyMarkdownKt.KuiklyMarkdown(ViewContainer, String, MarkdownConfig,
+   MarkdownComponents, MarkdownFlavourDescriptor, boolean)`
+- `KuiklyStreamingMarkdownKt.KuiklyStreamingMarkdown(ViewContainer, MarkdownStreamingState,
+   MarkdownBlock, MarkdownConfig, MarkdownComponents)`
+- `MarkdownStreamingState.update(text, isEnd)` 返回块列表，可用于流式增量。
+结论：它是 Kuikly DSL 的 `ViewContainer` 扩展，不是 Compose 组件；本轮取非流式入口
+（`KuiklyMarkdown(content)`），流式入口留待气泡接入增量状态后启用。
+
+五、构建读数（真实执行，联网解析依赖）
+--------------------------------------
+工具链：JDK 17.0.2、Gradle Wrapper 8.9、Android SDK D:/Android/Sdk、未改系统 PATH。
+1) :shared:compileDebugKotlinAndroid（引入依赖后首轮）
+   → BUILD SUCCESSFUL in 2m 37s（7 actionable tasks: 7 executed，非缓存命中）
+2) :shared:compileDebugKotlinAndroid（接入 SaMarkdown 后）
+   → BUILD SUCCESSFUL in 53s
+3) :androidApp:assembleDebug
+   → BUILD SUCCESSFUL in 2m 37s，checkDebugDuplicateClasses 通过（无重复类冲突）
+   产物 androidApp/build/outputs/apk/debug/androidApp-debug.apk
+        9,182,509 字节（接入前 8,822,998，增量 +359,511 字节）
+        SHA256 511031f74863be15a0fe8ad1b2d806bd6b7b23c03793ed7ba64f21a6e2d57cd2
+体积增量与官方「Android aar AOT 增量约 300KB」量级一致，可作旁证但不是同一口径的测量。
+
+六、未验证项
+------------
+- 未安装到真机/模拟器，未观察 Markdown 实际渲染效果（表格、代码高亮、深浅色）；
+- 未接流式入口（KuiklyStreamingMarkdown / MarkdownStreamingState），打字机逐字更新尚未启用；
+- 未接 KuiklyChatUI（思考折叠/工具调用卡/表格卡片）；
+- 未做鸿蒙 -ohos 变体与 ohos 构建；
+- 未改深色主题配色（MarkdownConfig 颜色仍用默认，需按 SaUIColors 对齐后再验）；
+- 未提交、未推送、未打包候选。
+
+七、下一步建议（按价值排序）
+----------------------------
+1. 真机看渲染效果并校正 MarkdownConfig（颜色/字号/间距对齐 SaUI 令牌）；
+2. 接 KuiklyStreamingMarkdown，替换现在逐帧全量重排的正文渲染；
+3. 参考 DeepSeek Harness Mobile 的 Relay/SSH 双通道与「按连接来源隔离缓存」，
+   对齐现有 RemoteDaemonClient（当前只有直连 daemon）；
+4. KuiklyChatUI 若能取得，再评估思考折叠/工具卡的复用，不整体替换 SaUI。

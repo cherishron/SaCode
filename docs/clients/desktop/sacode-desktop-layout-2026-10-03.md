@@ -1,0 +1,282 @@
+# SaCode 桌面布局验收（2026-10-03）
+
+## 范围与版本
+
+本批沿用 Electron、Vue runtime、TinyVue、TinyRobot，统一已实现的会话、工具审批、用量预算及输入区。规范见 [桌面设计规范](desktop-design-standard.md)。源代码提交为 `d8761ef`（布局、中文及品牌）与 `87cc47d`（深色滚动条与过渡等待）。
+
+不将导航锚点计为独立页面。设置、自动化、工作区/会话管理、文档预览、可拆分窗格尚未完成，全部桌面 UI 对齐目标仍未完成。未取得 DSH 一手视觉基线，不能声称像素级复刻。
+
+## 实测
+
+| 对象 | 结果 | 证据边界 |
+| --- | --- | --- |
+| 当前工作区桌面单测 | 70/70 | 包含其他任务未提交的桥接测试，不等同于提交快照 |
+| 干净 `d8761ef` 桌面单测 | 65/65 | 从 git archive 导出源码；共享本机已安装依赖缓存 |
+| `87cc47d` 打包态 UI 冒烟 | `UI_SMOKE PASS`，退出码 0 | 包内 SaCode.exe；消息、审批、取消、落盘、预算检查 |
+| `87cc47d` 打包态布局 | 六组全部通过，退出码 0 | 亮暗 × 880×640、1100×720、1440×900；每组 13 项 |
+| 本批最小窗口补验 | 八组全部通过，退出码 0 | 开发态；新增 860×600 及消息非空断言，每组 14 项；新增检查未进入上述包 |
+| 可执行文件品牌 | ProductName、FileDescription 均为 SaCode | 提取实际 SaCode.exe 的关联图标，人工确认白色 SA 标志 |
+
+已打开打包态亮色 880×640 与开发态深色 860×600 截图，检查控件、消息标签、输入底边和侧栏。最小窗口侧栏可独立滚动，底部预算说明需滚动查看；会话和输入区保留在中央，不产生整页横向溢出。
+
+本机取证目录（不入库）：`dualtest/ui-87cc47d/packaged-layout/`（截图与 JSON）、`dualtest/ui-87cc47d/packaged-ui.log`、`dualtest/sacode-ui-minimum/`（八组补验）。图片像素受系统 150% DPI 缩放影响；验收尺寸使用 CSS 逻辑像素。
+
+## 构建产物
+
+干净 `d8761ef` 构建 Host 并打包，携带 89 个宿主文件，产出未签名安装包和便携包。后续 `87cc47d` 的 unpacked 构建复用该 Host（两提交间核心与 Host 源码无差异），重新生成 vendor 并打包前端。该构建未包含另一个任务正在修改的 OpenSSL 打包脚本。
+
+| 产物（`dualtest/ui-d8761ef/source/apps/desktop/dist/electron/`） | 字节 | SHA256 |
+| --- | ---: | --- |
+| SaCode Setup 0.1.0.exe | 80544514 | 551B81206E5B143CE46D95C88A7D02561C665E115B63745DFCB10B1255ADF7AE |
+| sacode-portable.exe | 80392503 | 76448083BBC70DA9F8175E25457064B2DAAFC7985091554841962DCC98CB1266 |
+
+安装包对应 `d8761ef`，不包含 `87cc47d` 的深色滚动条修复；最新版前端已通过 unpacked 打包态检查。没有执行实际安装/卸载，不能将构建成功等同于安装验收通过，也不能将本批 UI 冒烟等同于真实模型验收。
+
+## 工具详情与共享弹窗补验
+
+新增 `renderer/dialog.js` 共享原生模态组件与工具详情入口。详情名称、描述、授权要求来自当前 `extension/list` 工具清单；只保存被选中的标识，清单移除工具后详情随之关闭，不持有过期业务副本。协议标识保留原文，界面标签与说明使用中文。不将该详情计为完整插件管理（仍无插件 manifest、激活/卸载与设置面）。
+
+开发态 `--ui-smoke` 新增七条断言：打开、真实工具字段、初始焦点、Tab 模态范围、Escape 关闭、焦点归还、会话事件不变，全通过，退出码 0。原有断言保留，总计 79 条 `UI OK`。该断言覆盖当前单弹窗场景，多弹窗嵌套与全局快捷键冲突仍待验。
+
+`--layout-smoke` 输出工作台八组（每组 14 项）及工具详情八组（每组 7 项），共 168 项全部通过；已打开亮色 860×600 弹窗截图确认字段栅格和标题/关闭按钮对齐。取证目录 `dualtest/sacode-dialog-layout/` 与 `dualtest/dialog-ui.log`。本补验尚未重新生成安装包，前一节产物哈希不代表新增弹窗版本。
+
+## 右侧标签页与中文指南补验
+
+工具/预算与指南成为独立右侧标签页，共用标签高度、内容边界与滚动容器。方向键/Home/End 切换标签，左侧导航自动恢复所需页面并聚焦分区。页面切换只改变视图状态，工具、用量、审批仍来自现有核心通道。指南使用静态中文说明，明确当前轮次为示例输出，不能将其计为真实模型能力。
+
+新增七条 UI 断言，总计 86 条通过：指南显示、当前限制、方向键焦点、跨页预算导航、会话不变、待审批提醒、原工单保留。新增指南八组、每组六项几何检查，工作台/工具详情/指南合计 216 项通过；取证目录 `dualtest/sacode-guide-layout/`、`dualtest/guide-ui.log`。已人工查看深色最小窗口截图并修复审批标签换行。边界检测保留 1 CSS 像素容差；曾出现约 0.000004 像素的浮点差值，非实际溢出。
+
+本批完成 Rightbar 的标签页与指南切片；文档预览、浮动/拆分窗格、设置与自动化页面仍未完成。上述新增功能尚未进入前述安装包。
+
+## 文本快照预览补验
+
+新增文档预览标签页，纯派生函数从 `session/projection.messages` 最新一条成功的 `tool/result: ok-read:<路径>:<字节数>` 恢复正文、路径与字节数；不另存文件内容真源、不直接从渲染层读文件。失败读取不冒充成功，此前成功记录仍作为读取时快照显示。重放同一投影可重建预览。当前覆盖文本读取快照，不代表完整文件浏览器、Markdown/PDF/图片预览。
+
+正文作为 Vue 文本节点呈现，保留换行、折行长文本；空文件有效，没有成功读取时显示空状态。新增三条纯解析测试覆盖 Windows 盘符/路径冒号、原始多行正文、损坏头部、非工具记录与空文件。桌面单测 73/73；UI 冒烟新增四项，总计 90 项通过，包含成功读取后路径 `dsh-tool.txt`、19 字节与正文 `hello-from-renderer` 的真实往返。
+
+工作台、工具详情、指南及预览分别覆盖亮暗主题四种尺寸，总计 256 项布局检查通过。布局取证先通过真实工具写入并读取，再生成待审批工单，未伪造文件或投影。截图与日志位于 `dualtest/sacode-preview-layout/`、`dualtest/preview-ui.log`、`dualtest/preview-node.log`，已查看亮色 860×600 预览截图。标签布局采用两列加一行指南，三标签高度统一，内容区独立滚动。
+
+预览属于 Rightbar 的已实现切片；浮动/拆分、完整文档格式支持、设置及自动化仍待实现。此前安装包没有本批代码。
+
+## 右侧拆分窗格补验
+
+新增拆分/合并按钮、上下独立滚动窗格与可调分隔条。副窗格与主窗格预览都从同一 `readPreview` 计算值渲染，仅布局比例和标签选择属于视图状态；副窗格使用独立 DOM 标识，避免重复 ID。比例限制 25%–75%，支持上下方向键、Home/End、鼠标拖动及双击复位。
+
+新增五项 UI 断言，总计 95 项通过，覆盖共享读取快照、键盘比例、真实鼠标拖动至 70%、松开后不再改变比例、合并且会话事件不变。首次鼠标检查发现指针越过分隔条后未更新，已改为窗口级移动监听并用 AbortController 在结束/取消/卸载时清理；复跑通过。桌面单测仍为 73/73。
+
+拆分状态亮暗主题四种尺寸，每组七项检查通过；连同现有四类界面共 312 项布局检查通过。验证列边界、分隔条顺序、默认等分、独立滚动、同源快照及无整页溢出。证据位于 `dualtest/sacode-split-layout/`、`dualtest/split-ui.log`、`dualtest/split-node.log`；已打开深色 860×600 拆分截图检查布局。当前固定上下拆分，浮动窗格、多窗格编排与设置/自动化仍待实现；本批未重打安装包。
+
+## 浮动文本预览补验
+
+预览可从主/副窗格打开应用内非模态浮层，复用同一读取投影和共享 dialog 组件。工具详情继续采用原生模态模式；非模态预览不阻断会话输入，关闭后归还触发焦点。当前浮层位置固定，不支持拖动移动、缩放或独立 Electron 窗口，不将其计为全部上游浮动窗格能力。
+
+新增五项 UI 检查，总计 100 项通过：同源快照、会话仍可聚焦、工具模态叠放、Escape 只关闭上层、浮动预览关闭及焦点归还。桌面单测 73/73。浮动预览八组、每组六项布局检查通过，全部界面合计 360 项。日志与截图位于 `dualtest/float-ui.log`、`dualtest/float-node.log`、`dualtest/sacode-float-layout/`，已查看深色最小窗口截图确认中文层级与窗口内边界。
+
+设置、自动化、工作区/会话管理、完整文档格式和多窗格编排仍未完成。浮动预览未进入此前安装包，全桌面 UI 对齐目标保持未完成。
+
+## 浮层移动、缩放与窗口约束补验
+
+共享 dialog 组件新增可调整模式，仅文档浮层启用。标题栏移动、右下角缩放支持真实鼠标和方向键；框体尺寸与位置只属于当前视图状态，不新增业务持久化。四边保留 16px，最小尺寸 320×160px，窗口变化时重新限制尺寸与位置。正文独立滚动，关闭、取消拖动或卸载时清理监听。工具详情仍使用固定模态布局。
+
+新增五条 UI 实测，总计 105 条通过：键盘移动、键盘缩放、真实鼠标移动、真实鼠标缩放、主窗口收缩后保留可见边距。73 条桌面单测与原有 360 项布局检查通过，旧弹层关闭、上层 Escape 仲裁和焦点归还回归保持通过。证据在 `dualtest/adjust-ui.log`、`dualtest/adjust-node.log`、`dualtest/sacode-adjust-layout/`。这批仅补齐应用内浮层调整，不宣称独立系统窗口或全部多窗格编排完成，尚未重打安装包。
+
+## 最新干净快照打包态复验
+
+`7c2e936` 经 git archive 导出、重建 vendor 与 unpacked Electron 包，68 条已提交测试通过（工作区 73 条含其他任务尚未提交的桥接测试）。包内布局检查全部通过；UI 首次并行复跑在固定等待 100ms 的窗口缩小检查失败，独立复跑同一包通过。`a7b7875` 将检查改为等待真实 860×600 尺寸与浮层边界条件，不降低几何标准；重新导出并重建该提交，68 条测试、105 项包内 UI 检查及 360 项包内布局检查全部通过，两个包内检查并行执行亦通过。
+
+构建复用 `d8761ef` 干净来源的 89 文件 Host 包：`git diff d8761ef a7b7875 -- core apps/host` 无差异，未声称重新编译核心；前端/vendor/asar 已重新生成。未纳入其他任务未提交的真实 SSE 与 OpenSSL 打包修改。依赖缓存来自当前本机 node_modules 与官方 Electron dist，源码来自提交快照。
+
+最新取证目录 `dualtest/ui-a7b7875/`：`node-tests.log`、`packaged-ui.log`、`packaged-layout.log`、`packaged-layout/layout-report.json`；报告含六类界面各八组，失败条目为 0。完整安装包/便携包构建已启动，暂不记录其成功或哈希，完成后补证。仍未做实际安装/卸载，不将 unpacked 冒烟等同于安装验收。
+
+将子进程 PATH 限定为 `C:\Windows\System32;C:\Windows` 后，包内 UI 冒烟再次通过，退出码 0（`clean-path-ui.log`）。这证明本批会话、工具与预览切片不依赖 PATH 中的仓颉 SDK/Node；没有覆盖尚未接入的真实 TLS 或扩展宿主能力。
+
+## 最新安装包构建完成与长错误补验
+
+`a7b7875` 完整 electron-builder 构建退出码 0，安装包与便携包均产出，未签名。产物在 `dualtest/ui-a7b7875/source/apps/desktop/dist/electron/`，包含标签页、文本预览、拆分、浮层移动缩放；未包含随后本批的错误区样式修复。
+
+| 产物 | 字节 | SHA256 |
+| --- | ---: | --- |
+| SaCode Setup 0.1.0.exe | 80551596 | 60E9B5540ABAE6833772DE8F5526D020BDA664863BBB844B4E370F81F3E1BE57 |
+| sacode-portable.exe | 80399585 | B751D2DFC034B737AD07FD4D56AE5448AB6EBD15CD3E0D7B27652CDDF77BD155 |
+
+发现并修复长错误区无高度上限、紧凑窗口边距与正文不一致的问题：错误区限高独立滚动，运行栏禁止压缩，正文/错误/输入区共用水平边距。新增八组、每组五项视觉压力检查，全部布局共 400 项通过；105 项 UI 行为回归通过。此压力场景是临时 DOM fixture，仅验证共享样式，没有伪造核心错误、协议应答或持久记录。证据位于 `dualtest/sacode-error-layout/`、`dualtest/error-layout.log`、`dualtest/error-ui.log`，已打开深色最小窗口截图确认运行栏和输入区可见。
+
+## 设置窗口与真实预算操作补验
+
+新增中文 SaCode 设置入口，复用共享模态组件、标签键盘语义与设计令牌。通用页提供当前会话预算读写；预算区采用同一渲染函数、不同 DOM 标识，避免重复 ID，读数和变更均走现有核心 `usage/status` / `usage/setBudget`，与右侧同步。工具与扩展页逐项展示 `extension/list` 工具名称、说明与审批要求。模型页明确配置未开放，没有虚构 provider 卡片或凭证操作。
+
+新增八条 UI 断言，总计 113 项通过，包括设置打开、同源读数、未开放说明、分类键盘切换、逐项核对核心清单、Escape/焦点归还、真实收紧预算到 90 与侧栏同步。桌面单测 73/73；三个设置分类各八组、每组五项布局检查通过，全部界面合计 520 项通过。证据位于 `dualtest/settings-ui.log`、`dualtest/settings-node.log`、`dualtest/sacode-settings-layout/`，已查看深色 860×600 通用设置截图。
+
+设置仅部分完成：真实模型地址/模型/凭证持久配置、全局配置域、扩展安装/启用/卸载尚未接入；不能将未开放说明页视为配置能力通过。自动化及工作区/会话管理也仍未完成。此次设置与错误区修复尚未进入 `a7b7875` 安装包，完整 UI 目标保持未完成。
+
+## 全局快捷键与模态优先补验
+
+沿用 Vue runtime，在组件挂载时登记键盘监听、卸载时清理并停止轮询。Ctrl+, 打开设置、Ctrl+L 聚焦输入、Ctrl+Shift+P 打开预览、输入区 Ctrl+Enter 调用既有 `userSend`。组合输入、重复按键和额外 Alt 修饰不触发操作；全局导航/发送先检查原生模态层，不能绕过模态焦点约束。指南新增中文快捷键说明，设置入口与输入区提供 aria-keyshortcuts。
+
+新增六项真实键盘 UI 检查，总计 119 项通过：设置开启、模态优先、原焦点恢复、预览导航、输入聚焦、Ctrl+Enter 由核心只记录一条消息。原有按钮发送检查保留。含新增指南卡片的 520 项布局检查回归通过。证据位于 `dualtest/keys-ui.log`、`dualtest/keys-layout.log`、`dualtest/sacode-keys-layout/`。本轮未验 macOS 的 Meta 快捷键，不宣称新增平台支持。
+
+当前 Host 仍没有设置/模型配置、工作区/会话目录管理、自动化的真实数据通道（仅会话预算通道可供设置页使用）。这些完整页面及数据接口继续列为未完成，不以静态列表替代；此前 `a7b7875` 产物不包含本轮快捷键。
+
+## 预算表单处理中一致性补验
+
+预算侧栏与设置表单共用 `budgetBusy`，前一次提交尚未结算时拒绝重复进入；两处输入与应用按钮同步禁用、保持原尺寸和文案，区域标记 aria-busy，现有 aria-live 提示正在提交。核心继续校验预算，不将界面禁用视为授权或业务闸门。finally 在成功或异常结束后释放忙碌状态。
+
+新增三条 UI 检查，总计 122 条通过：两处同步锁定、同一帧多次点击只产生一个真实预算请求、回执后恢复。验收在主进程临时包装真实 bridge.request，仅对 `usage/set-budget` 延迟 150ms 并计数，响应仍由原核心返回，结束后恢复原方法；没有伪造预算结果。此前设置补验段中的 `usage/setBudget` 为协议名笔误，实际宿主协议为 `usage/set-budget`，preload 方法为 `usageSetBudget`。
+
+520 项正常状态布局检查回归通过，取证目录 `dualtest/sacode-budget-busy-layout/`、`dualtest/budget-busy-ui.log`、`dualtest/budget-busy-layout.log`。本轮没有做异常注入，不能将成功回执检查推断为全部故障场景通过。改动尚未进入既有安装包。
+
+## 通用设置的外观配置基础
+
+新增仓颉 `SessionAppearance`，将当前会话主题作为 `appearance/theme` 日志事实；仅允许 `system`、`light`、`dark`，读数从日志事件派生，不新增前端/Electron 独立配置文件。重复值及非法值不新增事件。该事件不进入模型消息投影。当前选择明确属于会话范围，不能将其称为全局配置域。
+
+四条新增核心测试验证默认值不写盘、flush/load 后恢复主题、消息投影不混入外观事件、非法/重复值拒绝、无效历史不覆盖有效值。以干净 HEAD 源码加本批两个新文件导出隔离工程，`cjpm test` 124/124，退出码 0，日志 `dualtest/appearance-domain/core-tests.log`。未纳入并行任务未提交的 SSE、审批及依赖清单修改。
+
+此模块是通用设置的真实数据基础，尚未连接 Host、preload 或主题选择界面。调用方仍须取得会话租约并完成 flush 才能报告保存成功。现有桌面继续跟随系统主题；新模块通过不代表主题选择 UI 已完成，下一步接入有限读写通道并验收保存、重启和两端投影一致性。
+
+## 外观配置 Host 与设置界面接入
+
+新增 Host `appearance/get`、`appearance/set-theme` 及对应两个有限 preload 动作，握手能力列表同步登记。非法值在主进程和核心均拒绝；写入须取得会话租约、加载并恢复计量，flush 成功后才释放租约并返回 saved。失败路径保留写入责任。读取在无租约时重新加载日志，运行中仅放行读取，主题变更返回在途拒绝。
+
+设置通用页接入三种中文主题选择，使用共享按钮尺寸与语义令牌。启动读取已保存主题，Electron nativeTheme 只跟随核心成功响应；提交过程中锁定选择器，保存后刷新会话计数。未保存的本地选择不覆盖已存主题，不另建 Electron/localStorage 配置真源。
+
+从干净 HEAD 加本批文件生成隔离工程并重新编译 Host，使用原已验 DLL 清单与新编译 exe 组成宿主包。70 条已提交桌面测试通过（含新增两条 Host 集成场景）；128 项 UI 冒烟与 520 项布局检查通过，已查看深色最小窗口截图。覆盖三主题真实保存、回执后日志已落盘、渲染层重载恢复；Host 集成覆盖进程重启、非法值拒绝、重复值不追加、模型消息不混入外观、另一写者持有租约时拒绝变更。日志与产物位于 `dualtest/appearance-host/`（`build.log`、`node.log`、`ui.log`、`layout.log`、`layout/`）。
+
+本批验证的是当前会话外观，不是全局配置、真实模型配置或完整设置域；未故障注入 flush 失败，也未在安装包中复验。工作区/会话目录、自动化等完整页面继续列为未完成。旧宿主不含此接口，运行本批界面须重新构建匹配 Host，不回退到前端自存主题。
+
+## 共享弹窗长内容滚动修复
+
+原共享弹窗使用整窗 `overflow:auto`，长说明会带走标题和关闭按钮，与正文独立滚动规范不一致。新增真实 Electron 几何压力样本，在亮暗主题、四种窗口尺寸共八组中先复现 `bodyScrolls` 与 `dialogDoesNotScroll` 失败，退出码 1。样本仅注入长文字验证布局，不登记为新增配置或工具能力。
+
+共享弹窗改为纵向 flex：标题栏不收缩，正文 `min-height:0` 并独立滚动；正文滚动条沿用共享色令牌及稳定占位。仅对 `[open]` 设置 flex，不改变原生 dialog 的隐藏和模态语义。工具详情、设置与浮动预览继续复用同一布局规则。
+
+修复后隔离目录 `dualtest/appearance-host/source` 使用已编译匹配 Host，覆盖本轮 CSS 与布局验收源码：88 组报告合计 **552 项几何检查全部通过**，开发态 **128 项 UI OK、UI_SMOKE PASS**，两次最终进程均退出码 0。日志为 `dualtest/appearance-host/dialog-red.log`、`dialog-green.log`、`dialog-ui.log`；截图与报告为隔离目录 `apps/desktop/dist/layout/`。已打开最小窗口深色长设置截图，确认滚动至末尾后标题与关闭入口仍可见，正文折行且不横向溢出。本轮未重打安装包，不将开发态检查扩称安装包验收完成。
+
+## 核心目录投影与中文会话列表
+
+新增 `core/src/catalog.cj` 的 `SessionCatalog`：默认 `session.log` 与 `sessions/<目录>/session.log` 从真实文件系统发现，标题取首条非空用户消息，事件数经 `SessionLog` 回放得到；不建立第二份持久索引。扫描不递归，规范化路径检查阻止目录外链接；中段损坏显示 `replay-rejected`，截断尾部保留有效前缀并标 `truncated-tail`，只读操作不修复、不写租约、不 flush。
+
+Host 新增固定只读 `session/catalog`，登记初始化能力并允许运行中的回合读取；Electron/preload 仅新增固定 `sessionCatalog()`，没有接收任意根目录或通用方法的 IPC。会话列表复用 SaCode 图标导航、中文共享弹窗、36px 刷新控件和卡片栅格，显示当前会话、目录、已保存事件数与失败状态；处理中禁用刷新并通过 live 状态说明结果。界面明确保留新建、切换与工作区选择的未完成状态。
+
+隔离验证基线为 `2b9e5fb` 加本批文件，排除其他会话的在飞 SSE/审批修改，目录 `dualtest/catalog/source`。核心 **128/128**（含新增目录用例四项），新构建 Host 成功，桌面 **72/72**（新增 Host 集成两项），UI **135 项 OK / UI_SMOKE PASS**，布局 **96 组报告 / 600 项检查 / 零失败**。Host 集成含中文空格目录、引号/换行标题、目录外 junction、损坏日志、非递归发现、未 flush 不计入及 flush 后更新、空目录不创建日志。日志为 `dualtest/catalog/core.log`、`host-build.log`、`catalog-node.log`、`ui.log`、`layout.log`；最终核心复验为 `dualtest/core-final.log`。截图位于隔离目录 `apps/desktop/dist/layout/`，已查看最小窗口深色会话列表，卡片与状态同行对齐且无横向溢出。
+
+本批仅提供真实只读会话清单，不等于工作区/会话管理全流程完成；未重打安装包。目录 API 参考仓颉官方 [Directory 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_classes.html) 与 [FileInfo/Path 文档](https://docs.cangjie-lang.cn/docs/1.1.0/libs/std/fs/fs_package_api/fs_package_structs.html)，以本机 SDK 1.1.3 编译及动态用例为落地依据。
+
+## 会话新建、切换与恢复
+
+`SessionCatalog` 新增命名会话创建、清单 ID 路径解析及所选 ID 回放；名称记录为 `session/title`，不伪装为用户消息。所选会话记录在根默认日志的 `workspace/session-selected`，不新增本地缓存或第二份索引文件。新建目录采用独占目录创建屏障，解决 SDK 临时文件名可复用造成的名称冲突；标题显式按 Unicode 空白修剪，并拒绝空白、控制字符和超长输入。
+
+Host 新增固定 `session/create`、`session/select`。切换前先结算旧会话写入，拒绝待决定或已允许但未消费的工单、在途回合、扩展宿主及调用；选择完成落盘后才重新绑定日志、租约、工具运行态、审批、预算和投递队列。重启读取所选 ID；若所选目录丢失，则拒绝静默回退和写入，允许用户通过清单明确选择可用会话恢复。选择保存失败保留根租约，并拒绝后续写入直到重启；flush 错误改走 stderr，stdout 保持 NDJSON 协议帧。
+
+桌面通过固定 IPC 新建并打开会话，切换后重新读取消息、预算与主题，主标题随当前核心标题变化。名称输入、新建与打开按钮共享高度；目录信息与打开按钮同行；长标题省略并保留完整提示。待处理任务/审批或配置保存期间禁用切换并显示中文原因。窗口内草稿按会话保留；临时流式、工具结果、详情、浮动预览与预算输入在切换时清理。响应以会话代次校验，旧会话迟到的投影、工具清单、预算、主题及轮询不得覆盖新界面。
+
+隔离目录 `dualtest/session-management/source` 从 `015ec23` 导出，并纳入后续已提交的审批号与系统提示核心文件，加本批源码；不包含主工作区在飞 SSE、agent 与打包修改。核心 **135/135**，Host 编译成功，桌面 **77/77**（新管理集成五项），UI **147 项 OK / UI_SMOKE PASS**，布局 **96 组 / 624 项 / 零失败**。日志为 `dualtest/session-management-core.log`、`dualtest/session-management/{host-build.log,node.log,ui.log,layout.log}`。包含真实只读文件故障注入：选择保存失败不报告成功、原选择保持不变、后续写入被拒、stdout 每行可解析为 JSON。取消后切换、旧写入 flush、消息/预算/主题隔离、重启恢复、无效 ID、缺失目录显式恢复均有 Host 往返覆盖。
+
+迟到投影反证仅修改隔离渲染文件，移除会话代次保护后，`epoch-red.log` 两项指定 UI 检查失败、进程退出码 1；恢复后完整 UI 套件通过。布局通过真实核心创建多个会话，覆盖长中文标题、多个卡片和表单同行；已查看最小窗口深色截图，表单、标题/状态及目录/打开按钮对齐，正文滚动而关闭入口固定。
+
+另外以绝对路径启动 Node，将 PATH 缩至 Windows/System32 与 Windows，会话管理五项 Host 集成仍全通过，日志 `dualtest/session-management/clean-path-management.log`。新使用的 `libcangjie-std-unicode.dll` 已在宿主同目录，运行不依赖 SDK PATH；该结论只覆盖本批会话管理，不外推 TLS、扩展或安装流程。
+
+本批不等于工作区全流程完成：项目目录选择、工作区元数据、CLI 对应交互、标题生成/重命名仍待补齐；也未重打安装包。核心目录存储不被命名为项目工作区。完整桌面 UI 目标保持未完成。
+
+## 会话项目目录与工作区窗口增量（2026-10-03）
+
+本批源码以 `5f63384` 所在工作区实现，隔离验收导出基线为 `6a3333c`，仅加入本批工作区源码；不混入在飞 SSE、Next SDK、依赖清单或打包脚本修改。会话项目目录经核心 `SessionWorkspace` 写入 `workspace/directory`，不进入模型消息；Host 提供固定 `workspace/get`、`workspace/set-directory`，Electron 仅暴露读取和系统目录选择动作。前端不保存第二份目录事实。
+
+中文工作区弹窗复用共享标题、36px 控件、卡片边界和间距。目录状态、路径与说明共用左基线；长路径折行；执行/审批时禁用目录变更。系统选择器取消不追加事件，核心 flush 成功后才显示已保存。会话切换恢复项目目录，新会话不继承旧目录。相对文件读写实际使用所选中文带空格目录，绝对路径保留原语义；该目录是文件路径基准，不是权限沙箱。变更目录后重建工具运行时，旧目录观察记录不用于新目录写入。
+
+隔离核心 **138/138**、Host 构建成功、桌面 **80/80**；补充握手能力断言定向 **1/1**。真实 Electron UI **157 项 OK / UI_SMOKE PASS**，布局 **104 组 / 664 项 / 零失败**，覆盖亮暗主题和四种尺寸。日志：`dualtest/workspace-core.log`、`dualtest/workspace/{host-build.log,node.log,ui.log,layout.log}`；截图及结构报告：`dualtest/workspace/source/apps/desktop/dist/layout/`。已打开最小窗口的亮暗工作区截图复查。发现截图可能停留在上一个会话弹窗的绘制帧，脚本补充双帧绘制等待后完整重跑，截图确认显示实际工作区。
+
+Host 动态测试覆盖跨进程重启恢复、会话隔离、无效目录不写日志、待审批/写租约冲突、只读日志保存失败。失败时保留写入责任，界面不报告成功；读取返回磁盘旧目录，后续工具变更被拒绝，要求重启恢复。权限恢复后的退出 flush 仍可能提交待保存事件，不能理解为失败变更永远被丢弃。
+
+UI 自动验收替换系统选择器返回值，使用真实目录和核心完成后续流程；尚未手工操作原生系统选择窗口，不将其列为手工验收通过。完整工作区分组/元数据、CLI 对应操作以及全部设置/自动化仍未完成；本批未重新构建安装包，不沿用旧安装包证明新功能通过，也不宣称 DSH 像素级一致。
+
+## 长中文项目路径与目录丢失恢复提示（2026-10-03）
+
+工作区目录不存在或不可访问时，原正文仍显示正常路径说明，缺少恢复方式。本批改为明确提示恢复原目录或重新选择，并说明相对文件操作不会自动改用默认目录；保留核心返回的原路径、错误状态和重新选择入口。
+
+真实 Electron UI 测试移动一次性项目目录后重新打开窗口，检查恢复提示、原路径与错误状态、重新选择按钮可用，并在 finally 恢复目录；**160 项 UI OK / UI_SMOKE PASS**，日志 `dualtest/workspace/ui-recovery.log`。不模拟目录可用性返回值。
+
+布局入口先通过核心保存真实长中文带空格项目目录，再执行文件读写和全部窗口检查。新增目录必须折行、标题和选择按钮垂直居中断言。首轮出现八条预览 actualRead 红灯：断言仍写死相对文件名；更新为精确核对本次项目目录内的完整文件路径，不放宽为后缀匹配。最终 **104 组 / 680 项 / 零失败**，退出码 0，日志 `dualtest/workspace/layout-long-final.log`；截图和报告为 `dualtest/workspace/source/apps/desktop/dist/layout/`。已打开最小亮色窗口截图，长路径保持卡片内折行且共用左基线。JS 三个改动文件语法检查通过。本批在前述隔离源码上验证，不包含并发 SSE 或依赖修改；未重打安装包，完整 UI 目标继续保持未完成。
+
+## 最新提交发布态重建与截图目录修复（2026-10-03）
+
+从 `a6e42f2` 用 git archive 导出干净源码到 `dualtest/ui-a6e42f2/source`，重新构建 Host 成功；DLL 复用前述隔离运行库集合，Host exe 替换为本次新构建。重新生成 vendor、桌面 **80/80**，使用本机官方 Electron dist 完成 electron-builder（rc=0），没有混入主工作区的 SSE、Next SDK、依赖或打包脚本增量。
+
+产物位于 `dualtest/ui-a6e42f2/source/apps/desktop/dist/electron/`：`SaCode Setup 0.1.0.exe` 80583356 字节，SHA256 `FC55FA4D6AFBB6DCB3DDE2E47F62A922FF23171505CC66504259FDC4B9ABBF35`；`sacode-portable.exe` 80431343 字节，SHA256 `B02DE2CA7D56411323221F08B5A70BBA448062ED2A894F376011DE9C8A2551AB`。两者未签名；实际安装、卸载与便携启动未在本轮验证。
+
+包内 `win-unpacked/SaCode.exe --ui-smoke` 通过 **160 项**。默认 `--layout-smoke` 首轮报 `ENOTDIR`：截图默认写到 asar 内。修复发布态默认目录为本次临时会话的 layout 子目录；开发态目录和显式 `--capture-dir` 保持原语义。仅含该源码修复的隔离目录重新打包到 `dist/verify/win-unpacked`，构建 rc=0；包内再次通过 **160 项 UI、104 组 / 680 项布局 / 零失败**，全部退出码 0。日志：`dualtest/ui-a6e42f2/{host-build.log,vendor.log,node.log,builder.log,ui.log,verify-build-final.log,ui-final.log,layout-final.log}`。实际默认截图报告：`C:/Users/jingg/AppData/Local/Temp/dsh-smoke-520-1791034244635/layout/layout-report.json`。
+
+前述安装包对应 `a6e42f2`，不包含随后发现的默认截图目录修复；`dist/verify` 才包含修复。不得把两者混称为同一版本或声称新安装包已验证安装卸载。下一批仍需重打含修复的交付包，并完成安装卸载及全部功能验收。
+
+## 冻结上游圆角与控件状态几何对齐（2026-10-03）
+
+本批读取 S0 快照的 ui-theme `base.css`、`corner-shape.css`，与圆角规范相互核对，来源与映射见 `dsh-ui-style-audit-2026-10-03.md`。SaCode 共享圆角改为 4/8/12/16/20/28px，并按用途分别应用标准按钮/输入/导航、紧凑按钮、工具与审批分组、预览、独立卡片/气泡以及输入主容器/弹窗。保留原 SaCode 图标、中文文案、Vue runtime 与 OpenTiny 组件；不切换框架。
+
+引擎支持时已映射表面采用平滑曲线，状态点保留圆弧；本机 Electron 不支持 corner-shape，本次实际验证普通圆弧回退，不能宣称平滑曲线渲染已经通过。补充共享按钮焦点描边，使原生和 TinyVue 控件及恢复焦点可辨识。
+
+在前述隔离 `a6e42f2` 源码和发布态截图路径修复上加入本批 CSS、布局脚本，未混入 SSE/依赖修改。最终开发态 **160 项 UI OK / UI_SMOKE PASS**，**104 组 / 752 项布局 / 零失败**，退出码均 0。日志 `dualtest/ui-a6e42f2/{radius-ui-final.log,radius-verified.log}`；结构报告和截图 `dualtest/ui-a6e42f2/source/apps/desktop/dist/layout/`。最小亮色主窗口和暗色工作区截图已打开检查：文字和长路径未因圆角裁剪，卡片和控件仍保持原栅格与高度。
+
+状态检查使用真实 mouseMove 与 Tab，核对悬停、焦点、描边和不变尺寸；标准控件断言同时包含实际禁用的停止按钮。后台窗口最初出现焦点外圈缺失，增加控件共享 focus 规则后仍有同样现象，诊断确认 WebContents 未获焦点；激活 WebContents 后仅一组事件尚未完成。最终增加 document.hasFocus 和事件完成等待，不删除或放宽断言，全量通过。报告保留 before/after、hover、focus、outline 字段，便于复核。此前失败日志保持可追溯。
+
+本批只关闭已实现表面的圆角映射差距；完整主题材质和页面模块仍未完成，未重打含本批 CSS 的安装包，不以旧产物证明新样式通过。
+
+## 弹窗/输入框投影与中性发丝线对齐（2026-10-03）
+
+继续核对 S0 的 `gradient-shadow-text.css`、`design-platform.css`、`elevation-styles.client.spec.ts`。共享投影采用继承的描边色和逐元素派生参数，输入框使用 soft、浮动预览使用 panel、模态弹窗使用 prominent；这些表面的实体 border 为 0。中性按钮、卡片和分隔线使用 0.5px，审批/警告/错误仍保留 1px 状态边框。界面语义与现有技术栈保持原设计。
+
+本批参数适配沿用上游，完整 MIT 文件置于 `apps/desktop/renderer/assets/dsh-ui-LICENSE.txt`，归属说明写在样式源码中。本轮通过 asar API 用本机 path.join 路径提取包内文件，与源文件逐字节比对成功，并核验共享投影规则存在；首次使用斜杠字符串提取失败，改用平台路径后通过，未据提取失败认定授权文件缺失。
+
+隔离源码在前述 a6e42f2 导出及后续已提交的截图路径/圆角改动上加入本批样式和布局脚本，不包含主工作区的 SSE、Next SDK 或依赖修改。开发态 **160 项 UI OK / UI_SMOKE PASS**，**104 组 / 784 项布局 / 零失败**。首轮 warningBorder 红灯来自 150% DPR 的边框设备像素量化；改为按实际 DPR 核验，源码继续保持 1px 实体警告边框。新增动态重绑输入描边色检查，证明派生投影响应表面状态且恢复原值。
+
+重新运行 electron-builder --dir 输出 `dualtest/ui-a6e42f2/source/apps/desktop/dist/elevation-verify/win-unpacked`，rc=0。该包内 SaCode.exe 顺序复跑 UI 与布局，**160 项 UI、104 组 / 784 项布局均通过**，退出码均 0。日志 `dualtest/ui-a6e42f2/{elevation-layout-final.log,elevation-ui.log,elevation-package.log,elevation-package-ui.log,elevation-package-layout.log}`；包内运行生成的报告/截图 `dualtest/ui-a6e42f2/elevation-layout-packaged/`。最小亮色工作区与暗色浮动预览截图已打开复查，投影、焦点描边、正文和长路径可见，窗口边界及原有栅格检查保持通过。
+
+本轮构建的是 unpacked 发布态目录，未重新生成含本批样式的 NSIS/便携包，未验证实际安装卸载。菜单材质、完整色板和未实现页面仍待核验；不声明完整 DSH UI 已完成。
+
+## 上游输入卡片结构与正文轴对齐（2026-10-03）
+
+本批基于冻结上游 InputBar、MessageItem、ChatView 及主题正文规则，调整输入区为同一卡片内的正文和底部发送操作，间隔 12px、按钮靠右；输入焦点描边由外卡片承担。以前本仓的“文本域与发送按钮底边相同”是自定布局，现替换为上游纵向结构验收，保留发送和快捷键的实际业务链路。
+
+输入、助手消息和流式正文统一 14px/24px，用户正文为 14px/22px，用户气泡使用 10px 竖向内边距及消息列 70.2% 宽度上限、右对齐。用户气泡增加集中主题表面令牌，亮暗主题均与背景区分；不在组件内分散硬编码色值。角色分组、折叠阈值、会话日志和核心真源不变。
+
+隔离源码由干净 `7b12caf` 导出至 `dualtest/composer/source`，加入本批四个桌面源码改动；复用此前匹配 Host/DLL，未混入并发 SSE、Next SDK 或依赖修改。vendor 重新生成成功，JS 三个改动文件语法检查通过。最终 **161 项 UI OK / UI_SMOKE PASS**，增加流式回显字号/行高断言；**112 组 / 856 项布局 / 零失败**，退出码均 0。日志 `dualtest/composer/{vendor.log,ui-final-verified.log,layout-final.log}`；报告及截图 `dualtest/composer/source/apps/desktop/dist/layout/`。
+
+布局用界面发送真实长中文消息，经核心投影再展开，覆盖正文完整性、右边对齐、70.2% 宽度上限、折行无横溢出、用户底色可见和紧凑折叠按钮圆角。输入卡片测量结构、焦点环以及正文与控件层级；最小亮色主窗口/长用户消息和暗色主窗口截图已打开复查。原有审批、预算、会话恢复、预览和快捷键 UI 检查全部保留通过。
+
+完整 composer 的模型/预设/附件选择、自动增长、共享宽度轴和完整 Markdown 仍未实现；本批未重打发布产物，不引用前批包内通过证明本批改动已经进入安装包。完整桌面目标保持未完成。
+
+## 草稿自动增长、紧凑停靠与会话恢复（2026-10-03）
+
+进一步核对冻结 InputBar 的 .grow/.scroll/.input，确认停靠编辑区最小 36px。原 80px 自定最小值和手动 resize 改为单行起步、正文派生高度、14 行上限；小窗口进一步按可用高度收紧，保持至少 80px 对话滚动区的验收条件。正文内边距对应 4px 顶部、8px 底部，默认 14 行加内边距上限 348px；不是把所有窗口强制缩为同一小高度。
+
+Vue runtime 指令只在正文或宽度变化时测量，ResizeObserver 捕获窗口变窄后的折行；保留内部滚动位置，卸载时撤销观察和待执行动画帧。草稿高度仅是视图派生，不写日志、不改变发送/快捷键/会话真源。
+
+沿用 `dualtest/composer/source` 的隔离源码（干净 7b12caf 导出，已加入 170a2f5 对应桌面源码），纳入本批改动；不包含并发 SSE、Next SDK 或依赖修改。最终 **168 项 UI OK / UI_SMOKE PASS**，**120 组 / 904 项布局 / 零失败**，退出码均 0。日志 `dualtest/composer/{autosize-compact-ui.log,autosize-compact-layout.log}`；截图和结构报告 `dualtest/composer/source/apps/desktop/dist/layout/`。三个改动 JS 文件语法检查通过。
+
+UI 验证增长、到顶滚动、删除后回到 36px、窄窗口重新折行、只调整草稿不写事件、切换到新会话后收缩、恢复原会话长草稿后重新适配。布局在四种尺寸、亮暗主题中设置真实 30 行中文草稿，精确核验达到对应高度上限、内部滚动、对话可见空间、发送控件仍在卡片内、页面无溢出及事件计数不变。最小窗口长草稿截图已打开复查。
+
+本批未重打安装包；完整模型/预设/附件选择、引用编辑器和共享宽度轴继续未完成。自动增长补齐不代表完整 composer 或完整桌面验收通过。
+
+## 助手 Markdown 排版增量（2026-10-04）
+
+助手展开正文接入基础 Markdown，保持现有中文、SaCode 品牌、Vue runtime、TinyVue 和 TinyRobot。token 转 Vue 节点而非 HTML 注入；用户消息、工具结果和折叠摘要保持原文。HTML/代码文本、危险链接及图片不加载的三项针对性单测全部通过。
+
+沿用上述隔离源码和宿主，纳入本批 renderer、layout-smoke 与 pack-tinyrobot 修改，重新生成 vendor。最终 **168 项 UI OK / UI_SMOKE PASS**、**128 组 / 952 项布局 / 零失败**，两个 Electron 进程退出码均 0；日志 `dualtest/composer/markdown-final-{layout-smoke,ui-smoke}.log`。UI stderr 的 `approval-not-granted:denied` 来自原有拒绝审批测试，预期拒绝及记账断言通过。JS 语法与差异空白检查通过。
+
+新增八组正文排版夹具覆盖亮暗主题及四种窗口：语义块存在、16px 块间距、统一左基线、长代码内部滚动、嵌套列表缩进与页面无横向溢出。夹具使用真实 Markdown 渲染器挂载临时视图，不写入会话或伪造模型结果；最小亮色截图 `sacode-markdown-light-860x600.png` 已打开复查。报告位于 `dualtest/composer/source/apps/desktop/dist/layout/layout-report.json`。
+
+未重打安装包，也未验证并发 SSE/Next SDK 改动。完整 Markdown（高亮、图片/附件、流式正文、宽表格与上下文节点）、模型设置、自动化和全页面基线仍未完成；完整桌面目标保持进行中。
+
+## 流式与投影正文统一增量（2026-10-04）
+
+流式与投影助手消息共享 `SaCodeMarkdown.Body`，流式组件仅解释已有瞬时文本；正常收束撤回显、取消保留未落盘正文的生命周期保持不变。移除会使文字轴偏移的流式框边线，内边距与消息盒一致；正文占 `.msg-node` 整行，折叠按钮仍独立换行。
+
+新增任意逐字符截断与未闭合代码围栏测试，Markdown 单测 **4/4**。隔离源码及原宿主继续不含并发 SSE/Next SDK 改动。Electron **170 项 UI OK / UI_SMOKE PASS**，布局最终 **136 组 / 1016 项 / 零失败**，退出码均 0。日志 `dualtest/composer/streaming-markdown-ui-smoke.log` 与 `streaming-markdown-layout-final.log`；语法与差异空白检查通过。
+
+新增八组流式布局验收挂载实际 `Stream` 与 TinyRobot `BubbleProvider/BubbleList`、本仓 `TextBubble`，按三段 Markdown 更新后检查：正文相同、左右轴一致、块高度一致、标题/列表/代码语义存在、两处长代码各自滚动、无页面横向溢出、事件计数未变。临时视图不伪造核心事件或真实模型结果。初次截图取得滚动前画面，补上正文标题可见条件与双帧等待后全量复跑，已打开最小窗口 `sacode-streaming-markdown-light-860x600.png` 复查。
+
+真实取消流程补验共享 Markdown 组件及停止后状态提示撤去；正常收束仍验证只有投影正文。仅证明当前样例流式与组件排版，不宣称真实模型、全 Markdown 功能或整包通过。本批未重打安装包；完整页面、模型配置、自动化、代码高亮、附件及上下文节点继续待补齐。
+
+## 当前实现进入发布包（2026-10-04）
+
+后续已从 `bc71f97` 干净导出源码重新生成 NSIS 与 portable，当前圆角、投影、输入区自动增长、基础 Markdown 和流式统一均进入产物。win-unpacked 与真实 portable 启动器分别通过 **170 项 UI、136 组/1016 项布局**；便携入口不转发控制台输出，故新增落盘 UI 断言报告后重新构建，并依据真实报告确认通过。109 个 asar/Host/DLL 文件与源码及构建输入逐字节一致，原 SA 可执行图标已提取复查。
+
+构建路径、哈希、报告和剩余限制见 [桌面本地验收构建](sacode-desktop-release-2026-10-04.md)。实际安装卸载与公司元数据仍待补齐；完整页面及完整 DSH 验收继续进行中。

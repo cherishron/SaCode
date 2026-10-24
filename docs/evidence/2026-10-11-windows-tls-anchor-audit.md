@@ -1105,7 +1105,7 @@ A1 原文要求「CFFI 绑 crypt32 导出系统信任根 → 注入 `CustomCA`�
 ## 41. 批次 F 的定级在本文档与 batchF 专档之间不一致，按一条判据统一（`remote source` 不是「模拟成功」）（2026-10-11 11:31 复核）
 
 **冲突**：本文 §33/§34 那行把 `remote source` 记成「**模拟成功**（动词在能力清单里、返回是空壳）＋远程取源后端未实现」，
-而 `docs/evidence/2026-10-11-plugin-gap-disposition-batchF.md` 的「结论一句话」写的是
+而 `docs/clients/desktop/2026-10-11-plugin-gap-disposition-batchF.md` 的「结论一句话」写的是
 「四项里有三项在 HEAD 上是**如实拒绝或空集**，一项是**模拟成功**（`install cancel`）」，其汇总表第 65 行把 remote source 记为
 「后端未实现，保持空清单」。**同一个缺口两种定级，会直接改变它下次被排到哪一档**（模拟成功是要立刻纠的假象，未实现是功能缺口），
 所以必须定一个说法。

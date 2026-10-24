@@ -1,22 +1,22 @@
 # SaCode MCP 接入方案设计（2026-10-20）
 
-> 纯调研 + 设计。DSH 源码只读（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）。本文件不改产品代码、不碰在途文件、不构成实施授权。
+> 纯调研 + 设计。基线 源码只读（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）。本文件不改产品代码、不碰在途文件、不构成实施授权。
 
 ## 0. 背景与目标
 
-调研 DSH（DeepSeek Harness）的 MCP 客户端实现，给出 SaCode 的 MCP 接入路径：哪些复用 DSH 设计、哪些按 SaCode 既有架构（仓颉 core 共享业务 + Host/CLI/桌面三入口）改写、哪些 RPC 与前端组件要新增。
+调研 基线（参考基线）的 MCP 客户端实现，给出 SaCode 的 MCP 接入路径：哪些复用 基线 设计、哪些按 SaCode 既有架构（仓颉 core 共享业务 + Host/CLI/桌面三入口）改写、哪些 RPC 与前端组件要新增。
 
-DSH 是 Node + React + cordis 插件体系；SaCode 是仓颉静态库共享核心 + Electron（Vue runtime，无模块加载器）+ NDJSON/JSON-RPC Host。两边语言与运行时不同，**不能直接移植包**，但 MCP 协议层（stdio + JSON-RPC）与命名/状态语义可对齐。
+基线 是 Node + React + cordis 插件体系；SaCode 是仓颉静态库共享核心 + Electron（Vue runtime，无模块加载器）+ NDJSON/JSON-RPC Host。两边语言与运行时不同，**不能直接移植包**，但 MCP 协议层（stdio + JSON-RPC）与命名/状态语义可对齐。
 
 ---
 
-## 1. DSH 实现摘要（逐条回答 6 个调研问题）
+## 1. 基线 实现摘要（逐条回答 6 个调研问题）
 
 证据来自 `@deepseek-ai/dsh-mcp-client`（`lib/index.js` bundled）、`dsh-acp`、`dsh-client-ui-plugin-manager`、`dsh-client-ui-settings-plugin-inventory`、`dsh-plugin-manager`、`dsh-host-plugin-inventory`、`dsh-package-manifest`、`dsh-user-approval`。行号均指各包 `lib/index.js`（或 `lib/client.js`/`lib/types/index.js`）。
 
 ### 1.1 服务发现：静态配置，不做注册表/动态扫描
 
-DSH 有**两条 MCP 声明路径**，都是静态配置：
+基线 有**两条 MCP 声明路径**，都是静态配置：
 
 - **profile 级（cordis 插件配置）**：`dsh-mcp-client` 作为 cordis 插件，每台 MCP 服务器是 `Config` 一条实例。schema 是 `z.union` 按 `transport` 判别（`dsh-mcp-client/lib/index.js:780-800`）：
   - stdio：`{transport:"stdio", serverName, command, args[], env{}, cwd, toolCallTimeoutMs(默认60000), failOnStartupError, maxInstructionBytes, reconnect}`
@@ -72,7 +72,7 @@ DSH 有**两条 MCP 声明路径**，都是静态配置：
 
 ### 1.7 UI / 清单 / typert 协议（插件管理面，与 MCP 解耦）
 
-- **插件清单**：DSH 无"一份 manifest 文件"概念。`dsh-package-manifest/lib/index.js` 是 `export {};`（纯 `package.json.dsh` 字段类型声明，类型在未发布的 `src/types.ts`）。profile 装哪些插件由 profile 目录 `package.json` 的 `dsh.profile.bundles`（有序列表）+ `cordis.patch.yml`（YAML 序列，条目 `{id, name?, insert?, disabled?}`）决定。启停写 `cordis.patch.yml` 的 `disabled` 字段（`dsh-plugin-manager/lib/types/patch.js:13-49`）；bundle 选择写 `package.json.dsh.profile.bundles`（`lib/types/index.js:755-780`）。
+- **插件清单**：基线 无"一份 manifest 文件"概念。`dsh-package-manifest/lib/index.js` 是 `export {};`（纯 `package.json.dsh` 字段类型声明，类型在未发布的 `src/types.ts`）。profile 装哪些插件由 profile 目录 `package.json` 的 `dsh.profile.bundles`（有序列表）+ `cordis.patch.yml`（YAML 序列，条目 `{id, name?, insert?, disabled?}`）决定。启停写 `cordis.patch.yml` 的 `disabled` 字段（`dsh-plugin-manager/lib/types/patch.js:13-49`）；bundle 选择写 `package.json.dsh.profile.bundles`（`lib/types/index.js:755-780`）。
 - **侧栏 Plugins 面板**（`dsh-client-ui-plugin-manager/lib/client.js`，React）：`PluginManagerPage` + `PackageCard`/`ItemCard`/`PackageDetail`/`RowsSection`/`InstallDialog`。卡片字段：包名/标题/描述/图标/版本 Tag/实验性 Tag/问题 Tag/启用开关。列表分"官方"（`optional && !installed`）与"已安装"两组，按短名排序，启停不挪动卡片。
 - **设置页清单**（`dsh-client-ui-settings-plugin-inventory`）：**纯只读**，注册 `settings.plugins.tab`（id="all"），懒调 `ctx.remote.pluginInventory.list()` 取快照，不订阅变更、不调任何写入方法。与侧栏的区别：侧栏**写**（启停/安装/卸载/配置），设置页**读**（看所有 Loader 行状态/失败/出处 + agent preset 组合）。
 - **typert 协议**：`typert.host.js`/`typert.remote-client.js` 是 `dsh-typert-generator` 从 FaceModel 生成的协议元数据（service/namespace/method/参数 zod/结果 zod），不是可调用对象。Host 用 `@Remote` 装饰器标注方法，Client 用 `ctx.remote.<namespace>.<method>` 调用。`dsh-plugin-manager` 暴露 `pluginManager/{listPlugins,listBundles,registries,inspect,setPluginEnabled,setBundleEnabled,installBundle,waitForInstall,cancelInstall,removeBundle,listVersionExemptions,setVersionExemption}`；`dsh-host-plugin-inventory` 暴露 `pluginInventory/list`；`dsh-client-ui-plugin-manager` 暴露 `pluginRegistryProbe/fastest`。重试不是独立 RPC，是前端再发 `installBundle`。
@@ -81,7 +81,7 @@ DSH 有**两条 MCP 声明路径**，都是静态配置：
 
 ## 2. SaCode 现状对照
 
-| 维度 | DSH | SaCode 现状 | 差距 |
+| 维度 | 基线 | SaCode 现状 | 差距 |
 |---|---|---|---|
 | MCP 客户端（执行面） | `dsh-mcp-client`（Node，复用官方 SDK） | `core/src/mcp_client.cj`（仓颉，**自写** stdio + NDJSON JSON-RPC：`connect`/`listTools`/`callTool`/`close`，TurnToken 取消、单调钟 deadline 超时、fail-closed `McpOpResult`） | SaCode 已有等价执行面，**不依赖官方 SDK**（仓颉无 npm）；stdio only，无 streamable-http |
 | 注册表（权限面） | cordis 插件 fiber + `activeServerNames` | `core/src/mcp.cj` `McpRegistry`（`register`/`deregister`/`list`/`isRegistered`，log-only `mcp/server` 事件） | 已有；但 register 只记名+transport，未持配置（command/args/env） |
@@ -104,42 +104,42 @@ SaCode 已有的可复用资产：`McpClient`（执行面）、`McpRegistry`（�
 
 ### 3.1 配置加载（core + CLI/Host）
 
-- 在 core 新增 `McpServerConfig`（对齐 DSH `Config`）：`{serverName, transport:"stdio"|"streamable-http", command, args[], env{}, cwd, toolCallTimeoutMs(默认60000), reconnect:{enabled,initialDelayMs:500,maxDelayMs:30000,maxAttempts:10}, failOnStartupError}`。`serverName` 正则 `^[A-Za-z0-9_-]{1,32}$`，重名拒绝。
-- core 新增 `McpConfigLoader.parse(jsonText)`：解析 `mcpServers[]`（采用 DSH ACP 的会话级数组形态，最贴近实际用法），返回 `ArrayList<McpServerConfig>`。schema 校验失败 fail-closed，不静默丢条目。
+- 在 core 新增 `McpServerConfig`（对齐 基线 `Config`）：`{serverName, transport:"stdio"|"streamable-http", command, args[], env{}, cwd, toolCallTimeoutMs(默认60000), reconnect:{enabled,initialDelayMs:500,maxDelayMs:30000,maxAttempts:10}, failOnStartupError}`。`serverName` 正则 `^[A-Za-z0-9_-]{1,32}$`，重名拒绝。
+- core 新增 `McpConfigLoader.parse(jsonText)`：解析 `mcpServers[]`（采用 基线 ACP 的会话级数组形态，最贴近实际用法），返回 `ArrayList<McpServerConfig>`。schema 校验失败 fail-closed，不静默丢条目。
 - CLI `--mcp-config <path>` 接 `McpConfigLoader`：读取文件→解析→随会话注入 core `McpRegistry`。当前 `worktree_command.cj` 的 BLOCKED（退 69）改为真实消费；路径已在 chdir 前转绝对（既有逻辑保留）。
-- Host `initialize` 时按会话注入 `mcpServers`（对应 DSH ACP `params.mcpServers`），会话级隔离。
+- Host `initialize` 时按会话注入 `mcpServers`（对应 基线 ACP `params.mcpServers`），会话级隔离。
 
 ### 3.2 Host RPC 面（新增 `mcp/*` 命名空间）
 
 参照现有 `approval/*`/`extension/*` 命名约定，新增（写入 `docs/plans/host-capabilities.json` 与 `apps/host/src/main.cj` 分派）：
 
-| RPC | 作用 | 对应 DSH |
+| RPC | 作用 | 对应 基线 |
 |---|---|---|
 | `mcp/list` | 列已注册 MCP 服务器及连接状态（serverName/transport/status/toolsCount/lastError） | `pluginInventory/list`（只读投影） |
 | `mcp/connect` | 按配置 connect 一台服务器（spawn+握手+listTools） | `McpClient.apply` |
 | `mcp/disconnect` | 关闭一台服务器（dispose 子进程，不留孤儿） | `connection.dispose` |
 | `mcp/tools` | 拉取某服务器的工具清单（强制 refresh） | `client.listTools({cacheMode:"refresh"})` |
 | `mcp/call` | 调用某工具（serverName+rawName+argumentsJson） | `client.callTool` |
-| `mcp/status` | 查单台连接状态（connected/reconnecting/failed/lastAttempt） | supervisor 变量结构化暴露（DSH 没有，SaCode 需补） |
+| `mcp/status` | 查单台连接状态（connected/reconnecting/failed/lastAttempt） | supervisor 变量结构化暴露（基线 没有，SaCode 需补） |
 
 约束：`mcp/call` 只收 `approvalId`（与 `toolCall`/`extension/call` 一致），渲染层传自报审批字符串没有通路——审批走工单。`mcp/call` 的取消复用现有 `turn/cancel`/`TurnToken`；超时用 `toolCallTimeoutMs`。
 
 ### 3.3 工具桥（MCP 工具进模型工具表 + 审批）
 
-- core 新增 `McpToolBridge`：`McpClient.listTools` 返回的 `McpToolInfo[]` 经 `mcpPublicToolName` 命名后，注册进模型 ToolRuntime 的工具表（`mcp__<server>__<rawName>`）。**原子世代交换**：先整批构建下一代 → dispose 上一代 → 注册新一代；fetch 失败保留旧工具；重名回滚整批（对齐 DSH `syncTools`）。
+- core 新增 `McpToolBridge`：`McpClient.listTools` 返回的 `McpToolInfo[]` 经 `mcpPublicToolName` 命名后，注册进模型 ToolRuntime 的工具表（`mcp__<server>__<rawName>`）。**原子世代交换**：先整批构建下一代 → dispose 上一代 → 注册新一代；fetch 失败保留旧工具；重名回滚整批（对齐 基线 `syncTools`）。
 - 模型 `tool_call` 命中 `mcp__*` 前缀时，`McpToolBridge` 路由到 `McpClient.callTool(rawName, args)`；`isError===true` 抛错不伪装成功（core 已有该语义）。
-- **审批**：MCP 工具调用走现有 `approval/ask` 工单（与内置 write/edit 一致），按工具名粒度（`mcp__<server>__<rawName>`）发审批；`plan` 模式禁所有 `mcp__*`，`build` 模式按工单，`auto`/`yolo` 按档位。**不另建 allowlist/blocklist**（DSH 也没有；SaCode 现有 `approval/set-mode` 已足够）。命名稳定即可跨重启复用审批状态（对齐 DSH 锚点思路）。
+- **审批**：MCP 工具调用走现有 `approval/ask` 工单（与内置 write/edit 一致），按工具名粒度（`mcp__<server>__<rawName>`）发审批；`plan` 模式禁所有 `mcp__*`，`build` 模式按工单，`auto`/`yolo` 按档位。**不另建 allowlist/blocklist**（基线 也没有；SaCode 现有 `approval/set-mode` 已足够）。命名稳定即可跨重启复用审批状态（对齐 基线 锚点思路）。
 - MCP 工具的 `toolCallTimeoutMs` 默认 60000，可被配置覆盖；取消信号经 `TurnToken` 传到 `McpClient`（core 已实现）。
 
 ### 3.4 重连 supervisor（core）
 
-- core 新增 `McpConnectionSupervisor`：包住 `McpClient`，按 `McpReconnectPolicy.delayForAttempt` 调度重连（已有算法）；连续失败 `maxAttempts` 次后**注销该服务器的所有工具**（对齐 DSH `:195-197`）；连接持续超过 `maxDelayMs` 重置计数。
-- 状态结构化暴露（DSH 未做、SaCode 需补）：`{status:"connected"|"reconnecting"|"failed"|"disconnected", failedAttempts, lastError, connectedAt}`，供 `mcp/status` 与 UI 读。这是相对 DSH 的改进点（DSH 只进日志）。
+- core 新增 `McpConnectionSupervisor`：包住 `McpClient`，按 `McpReconnectPolicy.delayForAttempt` 调度重连（已有算法）；连续失败 `maxAttempts` 次后**注销该服务器的所有工具**（对齐 基线 `:195-197`）；连接持续超过 `maxDelayMs` 重置计数。
+- 状态结构化暴露（基线 未做、SaCode 需补）：`{status:"connected"|"reconnecting"|"failed"|"disconnected", failedAttempts, lastError, connectedAt}`，供 `mcp/status` 与 UI 读。这是相对 基线 的改进点（基线 只进日志）。
 - 重连只针对 stdio（子进程崩溃）；streamable-http 的传输恢复归 SDK/传输层（首版可只支持 stdio）。
 
 ### 3.5 子进程环境净化（core）
 
-- core spawn MCP 子进程前 `scrubParentEnv`：剔除名匹配 `KEY|PASSWORD|SECRET|TOKEN`（不区分大小写）与 `SA_CODE_*`/`SACODE_*` 敏感前缀的变量，再叠加配置 `env`。对齐 DSH `:26-31`，避免把宿主凭据泄给 MCP 子进程。
+- core spawn MCP 子进程前 `scrubParentEnv`：剔除名匹配 `KEY|PASSWORD|SECRET|TOKEN`（不区分大小写）与 `SA_CODE_*`/`SACODE_*` 敏感前缀的变量，再叠加配置 `env`。对齐 基线 `:26-31`，避免把宿主凭据泄给 MCP 子进程。
 
 ### 3.6 前端组件（桌面渲染层，Vue runtime）
 
@@ -148,7 +148,7 @@ SaCode 已有的可复用资产：`McpClient`（执行面）、`McpRegistry`（�
 - **MCP 服务列表页**（`renderer/pages/mcp-servers.ts`）：卡片列表，每台展示 `serverName`/transport/状态点（`connected`绿/`reconnecting`琥珀/`failed`红/`disconnected`灰）/工具数/`lastError`/启用开关。状态从 Host `mcp/list` 投影读（订阅 `mcp/changed` 事件）。启停调 `mcp/connect`/`mcp/disconnect`。
 - **连接状态点**：复用现有权限菜单的配色语言（plan 蓝/build 绿/auto 琥珀/yolo 红）做状态点，不引入新设计系统。
 - **工具调用展示**：MCP 工具结果走现有消息渲染器的 `role==="tool"` 分支（已有 ToolRole），审批工单走现有 `approval/ask` UI。
-- **设置页 MCP 标签**（只读清单，可选二期）：对齐 DSH `ui-settings-plugin-inventory` 的只读姿态，调 `mcp/list` 取快照，不订阅、不写。
+- **设置页 MCP 标签**（只读清单，可选二期）：对齐 基线 `ui-settings-plugin-inventory` 的只读姿态，调 `mcp/list` 取快照，不订阅、不写。
 
 ### 3.7 IPC 面（桌面 preload）
 
@@ -158,29 +158,29 @@ SaCode 已有的可复用资产：`McpClient`（执行面）、`McpRegistry`（�
 
 ## 4. 风险与边界
 
-- **stdio 优先，streamable-http 二期**：DSH 的 streamable-http 重连归属 README 标"未决定"（开源设计问题）；SaCode 首版只做 stdio，HTTP 传输恢复留待二期，避免引入未决设计。
-- **不引官方 MCP SDK**：仓颉 core 无 npm，`McpClient` 已自写 stdio+JSON-RPC；继续自维护，不偏离。代价：协议版本协商需手动跟 MCP 规范演进（DSH 靠 SDK `versionNegotiation:"auto"`，SaCode 需自己实现回退）。
-- **审批一致性**：MCP 工具走 `approval/ask` 工单，与内置工具同档位同语义；**不**给 MCP 工具开后门（`auto`/`yolo` 仍按档位放行，`plan` 全禁）。DSH 不接审批是 DSH 的选择，SaCode 这里**比 DSH 更严**（SaCode 全程审批是核心卖点）。
-- **工具世代交换并发**：`listChanged` 通知 + 重连可能并发触发 syncTools；core 须串行化（DSH 用 `enqueueSync` 队列），SaCode 用现有 turn/lease 机制串行，不并发注册。
+- **stdio 优先，streamable-http 二期**：基线 的 streamable-http 重连归属 README 标"未决定"（开源设计问题）；SaCode 首版只做 stdio，HTTP 传输恢复留待二期，避免引入未决设计。
+- **不引官方 MCP SDK**：仓颉 core 无 npm，`McpClient` 已自写 stdio+JSON-RPC；继续自维护，不偏离。代价：协议版本协商需手动跟 MCP 规范演进（基线 靠 SDK `versionNegotiation:"auto"`，SaCode 需自己实现回退）。
+- **审批一致性**：MCP 工具走 `approval/ask` 工单，与内置工具同档位同语义；**不**给 MCP 工具开后门（`auto`/`yolo` 仍按档位放行，`plan` 全禁）。基线 不接审批是 基线 的选择，SaCode 这里**比 基线 更严**（SaCode 全程审批是核心卖点）。
+- **工具世代交换并发**：`listChanged` 通知 + 重连可能并发触发 syncTools；core 须串行化（基线 用 `enqueueSync` 队列），SaCode 用现有 turn/lease 机制串行，不并发注册。
 - **子进程孤儿**：`McpClient.close()` 已强杀子进程（core 注释"断开时强杀，不留孤儿"）；重连失败路径要保证旧子进程 dispose，再启新世代。
 - **环境净化不能误删 MCP 自身所需变量**：`scrubParentEnv` 黑名单只剔敏感命名，保留 `PATH`/`SystemRoot`/`TEMP` 等；MCP 配置 `env` 覆盖最后生效。
 - **`--mcp-config` 与会话级 `mcpServers` 两入口**：CLI 文件配置用于长期；Host 会话级 `mcpServers` 用于按任务注入。两路径都经 `McpConfigLoader` + `McpRegistry`，不各写一套。
-- **UI 不是 cordis fiber**：DSH 的 fiber 状态机不适用 SaCode；SaCode 用 `mcp/list` 投影 + supervisor 结构化 status 字段，前端按 4 色点渲染。这是架构差异，不是缺陷。
-- **命名冲突**：`mcp__<server>__<rawName>` 超长时 SaCode `mcpPublicToolName` 已有 hash 兜底（与 DSH 同款）；重名整体回滚。
-- **未验证项（DSH 源码未答）**：MCP 工具在 DSH 是否实际触发审批（由 `dsh-tools`/ToolRuntime 决定，不在 mcp-client 包内）；DSH 连接状态机是否对外暴露结构化字段（supervisor 只返回 `{ready,instructions,resources,dispose}`，无 status）；stdio "临时探测进程"细节在 SDK 内。SaCode 设计上对这两项**主动补齐**（审批走工单、status 结构化）。
+- **UI 不是 cordis fiber**：基线 的 fiber 状态机不适用 SaCode；SaCode 用 `mcp/list` 投影 + supervisor 结构化 status 字段，前端按 4 色点渲染。这是架构差异，不是缺陷。
+- **命名冲突**：`mcp__<server>__<rawName>` 超长时 SaCode `mcpPublicToolName` 已有 hash 兜底（与 基线 同款）；重名整体回滚。
+- **未验证项（基线 源码未答）**：MCP 工具在 基线 是否实际触发审批（由 `dsh-tools`/ToolRuntime 决定，不在 mcp-client 包内）；基线 连接状态机是否对外暴露结构化字段（supervisor 只返回 `{ready,instructions,resources,dispose}`，无 status）；stdio "临时探测进程"细节在 SDK 内。SaCode 设计上对这两项**主动补齐**（审批走工单、status 结构化）。
 
 ## 5. 不在范围
 
 - 不实施、不写产品代码、不改 core/Host/CLI/桌面源码。
 - 不碰其他方在途文件（`renderer/pages/permission-menu.ts`、`product-design.css` 等）。
 - 不提交、不推送。
-- MCP resources/prompts（DSH README 标"不受支持"）首版不做。
+- MCP resources/prompts（基线 README 标"不受支持"）首版不做。
 - streamable-http 传输、MCP OAuth 元数据发现首版不做。
 - 插件市场（`docs/interfaces/README.md:21` 的"Skill/MCP 宿主分派缺口"）是更大范围，本方案只覆盖 MCP 客户端接入，不覆盖市场分发。
 
 ## 6. 取证索引
 
-DSH（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）：
+基线（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）：
 - `dsh-mcp-client/lib/index.js`：Config schema `:780-800`、`createTransport` `:38-48`、Client/connect `:595-644`、`syncTools` `:127-161`、`publicToolName` `:96-101`、call 回调 `:140-148`、`createExecutor` `:226-254`、`RECONNECT_DEFAULTS` `:433-439`、`scheduleReconnect` `:557-584`。
 - `dsh-acp/lib/index.js`：`mountAcpMcpServers` `:216-257`、`mcpServers` 参数 `:702,721,1177,1223`。
 - `dsh-host-plugin-inventory/lib/types/index.js:46-62,92-118`：fiber 状态映射 + `pluginInventory.list`。

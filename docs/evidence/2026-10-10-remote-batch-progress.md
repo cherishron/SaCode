@@ -1,6 +1,6 @@
 # 2026-10-10 远程接入批次进度
 
-对齐 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md`。逐提交列出取证计数、rc 与阻塞项，
+对齐 `docs/clients/mobile/2026-10-10-unified-remote-mobile.md`。逐提交列出取证计数、rc 与阻塞项，
 不合并跨批次证据，不用「文件存在」代替测试通过。
 
 ## 已交付提交
@@ -807,7 +807,7 @@ if (decision.allowed
 
 ## 批次 Z：契约方法表 119 条锚点的真实落地审计（plan 第 72 行）
 
-**目标**：把 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` §1 第 4 条「审查方法表真实引用，记录能力缺实现时需补哪个核心/Host模块；未完成项不得进 capabilities」按源码事实逐条机械核对。纯取证任务，无源码改动、无测试改动、无构建。
+**目标**：把 `docs/clients/mobile/2026-10-10-unified-remote-mobile.md` §1 第 4 条「审查方法表真实引用，记录能力缺实现时需补哪个核心/Host模块；未完成项不得进 capabilities」按源码事实逐条机械核对。纯取证任务，无源码改动、无测试改动、无构建。
 
 **探针**：`apps/desktop/.tmp-test/audit-anchors-v2.cjs`（未入库），按文件读代码并分类五档：`implemented-locally` / `forwarded-only` / `capabilities-only` / `proposed` / `anchor-broken`。原始 TALLY `{"implemented-locally":91,"forwarded-only":6,"anchor-broken":20,"proposed":2}`——把 20 条 anchor-broken 与 2 条 proposed 逐条人工复核后确认，**没有一条是「完全没实现」**，都是契约表的元数据过期（锚点写错文件或行号，或谓词后缀指错定义所在文件）。
 
@@ -873,7 +873,7 @@ if (decision.allowed
 
 ## 批次 AA：计划未勾项的推进性审计（承接前 32 批的散点讨论）
 
-**目标**：把 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` 的 **70 项未勾**（`grep -c '^- \[ \]'`）按四档归位——独立可推进 / 等并发会话 / 环境阻塞 / 用户授权——替代前几轮散在各处批次的零散「未做」讨论。
+**目标**：把 `docs/clients/mobile/2026-10-10-unified-remote-mobile.md` 的 **70 项未勾**（`grep -c '^- \[ \]'`）按四档归位——独立可推进 / 等并发会话 / 环境阻塞 / 用户授权——替代前几轮散在各处批次的零散「未做」讨论。
 
 **产出**：新增 `docs/evidence/2026-10-10-remaining-plan-audit.md`，含四档判据、A/B/C/D 分类、每个可推进项的具体改法与风险、按解锁顺序排好的推进表。
 

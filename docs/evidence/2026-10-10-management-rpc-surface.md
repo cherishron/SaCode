@@ -1,6 +1,6 @@
 # 批次 O：认证 RPC 管理面（auth/devices / auth/revoke）——建了处理器，故意没建 scope 的来源
 
-规格出处：`docs/superpowers/specs/2026-10-10-unified-remote-mobile-design.md` §5
+规格出处：`docs/clients/mobile/2026-10-10-unified-remote-mobile-design.md` §5
 
 > 网络最小身份引导端点限定为 POST /auth/enroll 与 POST /auth/token；…设备列表、确认、撤销只能通过本机受保护管理入口**或具有显式管理权限的认证 RPC**。
 

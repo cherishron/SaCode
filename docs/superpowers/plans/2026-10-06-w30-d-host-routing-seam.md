@@ -6,7 +6,7 @@
 日期：2026-10-06
 状态：**待 A 接单**（D 本批 core 侧已完成，等 A 接 host 侧线）
 
-判据（`docs/superpowers/specs/2026-10-05-model-center-design.md`）：断言 34、49、69、79、80、81、82。
+判据（`docs/clients/desktop/2026-10-05-model-center-design.md`）：断言 34、49、69、79、80、81、82。
 
 ---
 

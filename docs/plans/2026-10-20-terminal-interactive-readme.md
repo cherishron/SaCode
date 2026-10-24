@@ -4,7 +4,7 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| [DESIGN.md](./DESIGN.md) | 现状盘点、三车道分离、Host 分派、PTY/FFI、安全边界、与 execution 复用、待确认项 |
+| [设计正文](2026-10-20-terminal-interactive-design.md) | 现状盘点、三车道分离、Host 分派、PTY/FFI、安全边界、与 execution 复用、待确认项 |
 
 **一句话现状：** 工作台「终端」标签已开放，但只回放已落盘 `terminal/chunk`；没有 spawn、stdin、resize、中断。`execution/*` 是一次性 pipe 任务（stdin 丢弃），不能冒充交互 PTY。
 

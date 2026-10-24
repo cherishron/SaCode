@@ -113,7 +113,7 @@ argv」。那是 `sandbox-exec` / `bwrap` 的形态；**AppContainer 在进程�
 | 桌面 / CLI / Host / daemon 回归 | **未跑** | 本轮只动 `core/` |
 
 上一份可对比的基线是 2026-10-11 的 `TOTAL 1249 / PASSED 1203 / FAILED 9 / ERROR 35 /
-SKIPPED 2`（`docs/evidence/2026-10-11-takeover-regression-and-plugin-delivery.md`），
+SKIPPED 2`（`docs/clients/desktop/2026-10-11-takeover-regression-and-plugin-delivery.md`），
 本身即为红。注意两批用例总数不同（1249 → 1263），**不可直接相减**。
 
 ## 五、行为变更（不是纯 bugfix，需产品确认）

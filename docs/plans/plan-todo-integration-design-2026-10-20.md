@@ -1,33 +1,33 @@
-# SaCode「创建计划」接入方案：DSH Plan / Todo 调研与对照
+# SaCode「创建计划」接入方案：基线 Plan / Todo 调研与对照
 
 > 编号：DRAFT-PLAN-001
 > 日期：2026-10-20
 > 性质：**纯调研 / 设计**（未写产品代码、未提交、未推送）
-> 范围：只读 DSH 解包源码 + 只读 SaCode 源码（`apps/host/src/main.cj` execution 相关 RPC、`core/src/plan.cj`、`core/src/todo*.cj`、`core/src/goal_*.cj`、桌面 composer / permission 组件），产出本方案
+> 范围：只读 基线 解包源码 + 只读 SaCode 源码（`apps/host/src/main.cj` execution 相关 RPC、`core/src/plan.cj`、`core/src/todo*.cj`、`core/src/goal_*.cj`、桌面 composer / permission 组件），产出本方案
 > 关联需求：F02（AI 执行与工具）、F04（目标）、F02/F04 计划与待办支撑切片
 > 基线：本次为工作区只读态，不含任何源码改动；SaCode 侧符号以当前 `core/src`、`apps/host/src`、`apps/desktop/renderer` 为准
-> DSH 源码根：`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`
+> 基线 源码根：`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`
 
 ---
 
 ## 0. 结论摘要（先读）
 
-1. **DSH 的「Plan」不是 `dsh-tool-workflow`。** 任务书里点名的 `dsh-tool-workflow` 实际是**多 agent 编排工具**（模型写一段 JS 脚本把工作扇出给多个 subagent 并返回 JSON），与"计划"无关。DSH 真正的 Plan 是 **plan mode**：`dsh-plan-mode`（宿主）+ `dsh-client-ui-plan`（Web UI）。
+1. **基线 的「Plan」不是 `dsh-tool-workflow`。** 任务书里点名的 `dsh-tool-workflow` 实际是**多 agent 编排工具**（模型写一段 JS 脚本把工作扇出给多个 subagent 并返回 JSON），与"计划"无关。基线 真正的 Plan 是 **plan mode**：`dsh-plan-mode`（宿主）+ `dsh-client-ui-plan`（Web UI）。
 2. **Plan 与 Todo 是两个正交概念，天然不耦合**：
    - **Plan（计划模式）** = 逐 agent 的**协作状态（collaboration state）**：进入后 agent 先探索/设计，再把完整 markdown 计划用 `exit_plan_mode` 工具**呈交用户审阅**；用户 Approve 才退出计划模式并"从下一步开始执行"。它是**软引导（prompt 段落）而非沙箱**，不限制工具。
    - **Todo** = agent 在工作时维护的**细粒度任务清单**（`todo_write` 工具，全量替换、单所有者、`{content, status}` 三态），是"执行阶段的步骤清单"，**不是 Plan 的子任务树**，两者在代码层面没有引用关系。
 3. **Plan 审批 ≠ 工具审批**：工具审批走 `dsh-user-approval`（一次性 `approval/ask → approval/decided` 工单）；**计划审阅走 `dsh-user-questions` 通道**（`interaction.ask`，携带 `intent.kind = "plan-review"` 与发起 `callId`）。二者是**两条独立通道**，只是共用 UI 的"审阅操作插槽"。
-4. **Goal**（`dsh-goal`）是**跨轮次/跨会话的长期目标**：拥有 `objective`、`phase`、`roundsStarted`、`maxGoalRounds`，变更用 `{id, revision}` 的 compare-and-set；`dsh-goal-round-driver` 在 agent 空闲且目标 active 且未超轮次预算时，用 `agent.followup()` 驱动**下一轮**。Goal 与 Plan 在 DSH 代码里**无显式引用**，属概念分工：**Goal 驱动轮次，Plan 把关设计，Todo 承载步骤**。
+4. **Goal**（`dsh-goal`）是**跨轮次/跨会话的长期目标**：拥有 `objective`、`phase`、`roundsStarted`、`maxGoalRounds`，变更用 `{id, revision}` 的 compare-and-set；`dsh-goal-round-driver` 在 agent 空闲且目标 active 且未超轮次预算时，用 `agent.followup()` 驱动**下一轮**。Goal 与 Plan 在 基线 代码里**无显式引用**，属概念分工：**Goal 驱动轮次，Plan 把关设计，Todo 承载步骤**。
 5. **SaCode 现状**：**Todo 已完整落地**（`core/src/todo.cj` `TodoStore` + `todo_tool.cj` `todo_write` + host `session/projection` 的 `todos` + 桌面 `todo-panel.ts`）；**Goal 已完整落地**（`core/src/goal*.cj` 全套 + `goal/*` RPC + 桌面目标编辑）。**唯独"计划"缺产品闭环**——`core/src/plan.cj:PlanModeController` 仅是一个 log-only 的 `plan/mode` 开关，且已被 2026-10-09 审批模式设计**标记废弃并合入 `ModeController`**；没有计划的生成/呈交/审阅/批准链路，桌面 `composer-menu.ts` 的"创建计划"按钮因此禁用、文案"后端未接入"。**PRD 已如实登记该缺口**（`docs/product/PRD.md` 第 804 行"计划审阅批准流程（区别于工具权限审批）的产品闭环待核查"）。
-6. **`execution/*` RPC 与 DSH Plan 不是同一层**：`execution/propose|authorize|start|stop|describe|output` 是**真实进程的提案→授权→启动→监督链**（对应 DSH 的 `dsh-tool-bash`/`dsh-pwsh` + `sandbox` + `dsh-user-approval` + `dsh-jobs`），`execution/review-*` 是**变更审查并写回**（diff 级）。**批准计划 ≠ 授权写入/运行命令**；计划批准后的执行动作仍必须走原有审批/执行链。
+6. **`execution/*` RPC 与 基线 Plan 不是同一层**：`execution/propose|authorize|start|stop|describe|output` 是**真实进程的提案→授权→启动→监督链**（对应 基线 的 `dsh-tool-bash`/`dsh-pwsh` + `sandbox` + `dsh-user-approval` + `dsh-jobs`），`execution/review-*` 是**变更审查并写回**（diff 级）。**批准计划 ≠ 授权写入/运行命令**；计划批准后的执行动作仍必须走原有审批/执行链。
 
-> **一句话接入判断**：Todo 与 Goal **直接复用**；Plan 需**新增**一条"计划模式 + 计划审阅"链路（大部分机制可从 DSH `dsh-plan-mode` 平移，并复用 SaCode 已有的会话日志/投影/审批工单/模式控制器），前端改三个点（composer 按钮、审阅面板、回合末计划卡片）。
+> **一句话接入判断**：Todo 与 Goal **直接复用**；Plan 需**新增**一条"计划模式 + 计划审阅"链路（大部分机制可从 基线 `dsh-plan-mode` 平移，并复用 SaCode 已有的会话日志/投影/审批工单/模式控制器），前端改三个点（composer 按钮、审阅面板、回合末计划卡片）。
 
 ---
 
 ## 1. 调研问题逐条回答
 
-### Q1. Plan vs Todo：DSH 怎么区分？Plan 是人写的还是 AI 生成的？Todo 是 Plan 的子任务吗？
+### Q1. Plan vs Todo：基线 怎么区分？Plan 是人写的还是 AI 生成的？Todo 是 Plan 的子任务吗？
 
 | 维度 | Plan（计划模式） | Todo（任务清单） |
 |---|---|---|
@@ -39,7 +39,7 @@
 | 投影键 | `plan` → `{ active, pending }` | `todos` → 清单或 `null` |
 | 与另一方关系 | **无**：Plan 不持有 Todo，Todo 不知道 Plan | **无**：Todo 不含 plan 字段，也不引用计划 |
 
-结论：**Plan 是 AI 生成、用户审阅的"设计产物 + 协作状态"；Todo 是 AI 维护的"执行步骤清单"。二者独立，Todo 不是 Plan 的子任务树，DSH 也刻意不做逐项编辑/父子关系（`dsh-tool-todo` README 的"已知限制"明确"整表替换是唯一操作""条目形状刻意保持最小"）。**
+结论：**Plan 是 AI 生成、用户审阅的"设计产物 + 协作状态"；Todo 是 AI 维护的"执行步骤清单"。二者独立，Todo 不是 Plan 的子任务树，基线 也刻意不做逐项编辑/父子关系（`dsh-tool-todo` README 的"已知限制"明确"整表替换是唯一操作""条目形状刻意保持最小"）。**
 
 证据：
 - `dsh-plan-mode/README.zh.md` L12/L59："agent 完成计划后，会以 markdown 形式、从标题开头书写计划并调用 `exit_plan_mode`"；"你评审该计划的原文，选择 `Approve` 或 `Keep planning`"。
@@ -48,7 +48,7 @@
 
 ### Q2. 生成流程：AI 怎么生成 Plan？用户怎么审阅/修改/批准？批准后怎么驱动执行？
 
-**生成与呈交（DSH）**：
+**生成与呈交（基线）**：
 1. 用户用 `/plan`（或 Web composer `+` 菜单的"计划"）**进入计划模式**；`dsh-plan-mode` 在系统提示词注入部署方配置的 `plan:policy` 段落，引导 agent "先探索与设计，再呈交完整计划"。
 2. agent 正常调用工具（计划模式**不限制**工具）探索代码/设计，然后调用 `exit_plan_mode(plan=<完整 markdown>)`。
 3. 该工具走**用户交互通道**：`ctx.get("userQuestions").ask({ questions: [{ id:"plan-review", header:"Plan review", question:"Approve this plan and leave plan mode?", detail: args.plan, options:[Approve, Keep planning], intent:{ kind:"plan-review", approve:"Approve", callId: exec.callId } }] })`。
@@ -67,8 +67,8 @@
 
 ### Q3. 执行状态：Plan 执行中怎么展示进度？每个 Todo 的状态怎么投影？
 
-- **Plan 没有"计划级进度对象"**：DSH 不跟踪"计划完成百分之几"。Plan 的可见呈现只有：① 计划模式徽章（`active`/`pending`，`dsh-client-ui-plan`）；② 计划正文（右侧边栏审阅页 + 回合末产物卡片）。**执行阶段的进度表达完全交给 Todo**。
-- **Todo 状态**：`pending / in_progress / completed` 三态；投影 `todos` 单元把最新的整份 `todo/write` 列表暴露给 UI，"首次写入前为 `null`，下一轮次开始时清空，而 `turn/end` 保留刚完成的清单"。**宿主**不臆造"running/failed"——DSH 的 Todo 没有 `failed` 态（失败表现为模型把该项改回 pending 或重写清单）。UI 从会话事件真源派生清单，天然可回放。
+- **Plan 没有"计划级进度对象"**：基线 不跟踪"计划完成百分之几"。Plan 的可见呈现只有：① 计划模式徽章（`active`/`pending`，`dsh-client-ui-plan`）；② 计划正文（右侧边栏审阅页 + 回合末产物卡片）。**执行阶段的进度表达完全交给 Todo**。
+- **Todo 状态**：`pending / in_progress / completed` 三态；投影 `todos` 单元把最新的整份 `todo/write` 列表暴露给 UI，"首次写入前为 `null`，下一轮次开始时清空，而 `turn/end` 保留刚完成的清单"。**宿主**不臆造"running/failed"——基线 的 Todo 没有 `failed` 态（失败表现为模型把该项改回 pending 或重写清单）。UI 从会话事件真源派生清单，天然可回放。
 - 附：`dsh-client-ui-trajectory` 是**事件记录表 + 时间概览**（按轮分组），`dsh-client-ui-workflow-run` 是**工作流运行节点**（运行→阶段→成员折叠）。二者展示的是"执行轨迹/工作流"，**不是 Plan 的进度**；`dsh-tool-workflow` 的 `phase()/log()` 只服务工作流运行，与 Plan 无关。
 
 证据：
@@ -77,13 +77,13 @@
 
 ### Q4. Plan 和 Goal 怎么协作？目标驱动轮次，计划驱动步骤？
 
-DSH 代码层面 **Plan 与 Goal 无相互引用**，是**概念分工**：
+基线 代码层面 **Plan 与 Goal 无相互引用**，是**概念分工**：
 
 - **Goal = 驱动"轮次"的长期目标**：`objective` + `phase` + `roundsStarted` + `maxGoalRounds` 等字段（`dsh-goal/lib/types/index.js` L50–L83、`fold.js` L85–L101）；变更用 `{id, revision}` CAS（README："变更必须携带 `{ id, revision }`"）；`dsh-goal-round-driver/lib/index.js` L102–L164 在**agent 空闲 + goal active + round 未超限**时，构造 `goal` 来源的 user message 并 `agent.followup()` 驱动**下一轮**；超限则 block 目标（L200–L236：`agent/status=idle` 触发、`goal/changed` 重新驱动、error/disposed 解除武装）。
 - **Plan = 把关"设计"的协作状态**：通常在每个目标的早期（或某轮内）产出一次计划、经用户批准后，作为该轮执行的依据；它不驱动轮次，也不停留在跨轮。
 - **Todo = 承载"步骤"的执行清单**：轮内/步内由 agent 反复整表更新。
 
-一句话：**Goal 决定"要不要继续下一轮"，Plan 决定"这一轮按什么设计做"，Todo 记录"现在做到第几步"。** 三者是**同一 agent 会话上叠加的三层视图**，DSH 未在代码里硬绑，SaCode 也建议保持低耦合（见 §5）。
+一句话：**Goal 决定"要不要继续下一轮"，Plan 决定"这一轮按什么设计做"，Todo 记录"现在做到第几步"。** 三者是**同一 agent 会话上叠加的三层视图**，基线 未在代码里硬绑，SaCode 也建议保持低耦合（见 §5）。
 
 证据：`dsh-goal/README.zh.md` L10–L12（跨多轮/会话/fork/重启持久，用户与 agent 可 create/edit/pause/resume/complete/block/clear）、L50–L83（`goal` 投影键、phase、roundsStarted、maxGoalRounds、activation）；`dsh-tool-goal/lib/index.js` L53–L79（完成/阻塞操作必须由"直接人类输入或当前 goal round"授权，体现 Goal 是驱动实体）。
 
@@ -97,16 +97,16 @@ DSH 代码层面 **Plan 与 Goal 无相互引用**，是**概念分工**：
 
 证据：`dsh-plan-mode/lib/index.js` L259–L261 使用 `ctx.get("userQuestions")`（而非 approval 服务）；`dsh-user-approval/README.zh.md` L10–L13。
 
-### Q6. SaCode 对照：现有 execution RPC 与 DSH Plan/Todo 是什么对应关系？能复用还是新增？
+### Q6. SaCode 对照：现有 execution RPC 与 基线 Plan/Todo 是什么对应关系？能复用还是新增？
 
-**关键结论：`execution/*` 与 DSH Plan 不在同一层，不能拿来当"计划"。**
+**关键结论：`execution/*` 与 基线 Plan 不在同一层，不能拿来当"计划"。**
 
-| SaCode 现有 RPC | 实际语义 | 对应 DSH 的什么 | 与 Plan 的关系 |
+| SaCode 现有 RPC | 实际语义 | 对应 基线 的什么 | 与 Plan 的关系 |
 |---|---|---|---|
 | `execution/propose` / `authorize` / `start` / `stop` / `describe` / `output` / `list` | 真实**进程**的提案→授权→启动→监督→输出分页 | `dsh-tool-bash`/`pwsh` + `dsh-user-approval` + `dsh-jobs` + `dsh-sandbox` | **无关**。批准计划 ≠ 授权运行命令 |
-| `execution/review-file` / `review-prepare` / `review-apply` / `review-apply-describe` / `review-apply-stop` | **变更审查并写回**（读登记的前后文件对象、条件写回、异步与停止） | （DSH 无直接等价；接近 diff-review 写回） | 可作为"计划执行后差异复核"，**不是计划审阅** |
+| `execution/review-file` / `review-prepare` / `review-apply` / `review-apply-describe` / `review-apply-stop` | **变更审查并写回**（读登记的前后文件对象、条件写回、异步与停止） | （基线 无直接等价；接近 diff-review 写回） | 可作为"计划执行后差异复核"，**不是计划审阅** |
 | `approval/ask`（`ApprovalDesk.askForCall/consumeForCall`） | 工具**一次性审批工单**（绑定工具名+原始参数） | `dsh-user-approval` | 计划审阅**可复用它作传输**（见 §4.2 决策） |
-| `approval/mode`（`ModeController`：plan/build/auto/yolo） | **权限档**：plan 档 = 只读分析（`PermissionPolicy.decide("plan", tool)` 仅放行白名单只读工具） | 无直接等价（DSH plan mode 是协作态，不是权限档） | **名称撞车**：SaCode 的"plan 档"≠ DSH 的"计划模式" |
+| `approval/mode`（`ModeController`：plan/build/auto/yolo） | **权限档**：plan 档 = 只读分析（`PermissionPolicy.decide("plan", tool)` 仅放行白名单只读工具） | 无直接等价（基线 plan mode 是协作态，不是权限档） | **名称撞车**：SaCode 的"plan 档"≠ 基线 的"计划模式" |
 | `session/projection`（含 `todos`） | 会话投影（消息 + 待办） | `dsh-session-projection` + `dsh-tool-todo` 的 `todos` | **Todo 已复用** |
 | `goal/create|edit|pause|resume|clear|describe` | 长期目标控制 | `dsh-goal` + `dsh-tool-goal` + `dsh-command-goal` | **Goal 已复用** |
 
@@ -120,11 +120,11 @@ DSH 代码层面 **Plan 与 Goal 无相互引用**，是**概念分工**：
 
 ---
 
-## 2. DSH 机制摘要（供后续实现对照）
+## 2. 基线 机制摘要（供后续实现对照）
 
 ### 2.1 五个概念的正名（避免把工具当计划）
 
-| DSH 包 | 是什么 | 与"计划"的关系 |
+| 基线 包 | 是什么 | 与"计划"的关系 |
 |---|---|---|
 | `dsh-plan-mode` + `dsh-client-ui-plan` | **计划模式**：协作状态 + 提示词段落 + `/plan` 命令 + `exit_plan_mode` 工具 + 计划审阅 UI | **这就是 Plan** |
 | `dsh-tool-todo` | **Todo**：`todo_write` 整表替换工具 + `todos` 投影 | 执行步骤清单 |
@@ -191,7 +191,7 @@ DSH 代码层面 **Plan 与 Goal 无相互引用**，是**概念分工**：
 - 废弃的 `PlanModeController`（`plan/mode` log-only 布尔）——是**旧协作态开关**；
 - `host/main.cj` 里的 `planModel`/`planBaseUrl`（模型路由变量）、`batch.cj` 的 `plan` 字段（批处理计划）——**与计划功能无关的同名变量**。
 
-DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；二者**不等价**。接入方案必须让"计划模式"与"plan 权限档"显式协作或分列（见 §4.1 决策），不能混用一个 `plan` 词。
+基线 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；二者**不等价**。接入方案必须让"计划模式"与"plan 权限档"显式协作或分列（见 §4.1 决策），不能混用一个 `plan` 词。
 
 ---
 
@@ -199,20 +199,20 @@ DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；�
 
 ### 4.1 总体设计（三层保持低耦合）
 
-沿用 DSH 的三层视图，但按 SaCode 现有机制落地：
+沿用 基线 的三层视图，但按 SaCode 现有机制落地：
 
 - **Goal 层（已有）**：跨轮目标与轮次预算，`goal/*` RPC 不变。
 - **Plan 层（新增）**：新增"计划模式"协作态 + 计划呈交工具 + 计划审阅通道；与 Goal 保持**可选协作**（见 §5）。
 - **Todo 层（已有）**：执行阶段步骤清单，`todo_write` 不变。
 
 **关键决策 D1（计划模式 vs plan 权限档）**：建议**两者并存且显式联动**——
-- "创建计划"进入**计划模式**（新增协作态，`plan/mode` 事件复用/扩展），同时也把 `ModeController` 切到 **`plan` 权限档**（只读），用**已有的权限策略**天然保证"计划阶段不写文件/不跑危险命令"（比 DSH 的"软引导"更硬，符合 SaCode 的授权文化）。
+- "创建计划"进入**计划模式**（新增协作态，`plan/mode` 事件复用/扩展），同时也把 `ModeController` 切到 **`plan` 权限档**（只读），用**已有的权限策略**天然保证"计划阶段不写文件/不跑危险命令"（比 基线 的"软引导"更硬，符合 SaCode 的授权文化）。
 - 计划 Approve 后：退出计划模式，并把 `ModeController` 切到 **`build`**（或用户选定档），再进入执行。
 - 这样既复用了现有权限策略，又实现了"设计—批准—执行"的协作语义。
 
 **关键决策 D2（计划审阅通道）**：两个可选方案。
 - **方案 A（推荐）复用 `ApprovalDesk` 工单作传输**：把"计划审阅"表达为一次 `approval/ask` 工单，工单载荷标注 `intent: "plan-review"` + `callId` + 计划正文摘要，选项 `Approve`/`Keep planning`。优点：复用已落盘的 `approval/asked/decided` 与一次性消费语义，改动最小。缺点：与"工具动作授权"共用事件类型，需在载荷里严格区分，避免审计混淆。
-- **方案 B 新增独立审阅通道**：仿 DSH `userQuestions` 新增 `plan/review-ask` + `plan/review-decided` 事件与 RPC，专用渲染器。优点：语义干净、与工具审批彻底分离（与 DSH 一致）。缺点：新增事件类型/投影/RPC/IPC，工作量更大。
+- **方案 B 新增独立审阅通道**：仿 基线 `userQuestions` 新增 `plan/review-ask` + `plan/review-decided` 事件与 RPC，专用渲染器。优点：语义干净、与工具审批彻底分离（与 基线 一致）。缺点：新增事件类型/投影/RPC/IPC，工作量更大。
 > 建议：**先 A、后按需演进到 B**；无论 A/B，都必须在载荷与 UI 上**显式标注这是"计划审阅"而非"动作授权"**。
 
 ### 4.2 RPC / 事件映射表（复用 vs 新增）
@@ -239,7 +239,7 @@ DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；�
 | 回合末计划卡片 | 无 | 仿"产物卡片"在回合末渲染 `plan/submitted`（标题 + "打开"），点击打开审阅面板；刷新后从历史恢复 |
 | `renderer/app.js` | L1064 已挂 `TodoPanel`（`self.proj.todos`） | 新增计划投影读取（`self.proj.plan`）与卡片/面板挂载 |
 | `apps/desktop/preload.cjs` + `main.cjs` | 已有 `approvalGetMode/approvalSetMode` | 若走方案 A：复用 `approvalAsk`；若走方案 B：新增有限 IPC 通道（`planSubmit/planReviewAnswer/planDescribe`），**逐字段校验、不提供任意 method** |
-| `renderer/pages/composer-commands.ts` | 无 `plan` 命令 | 可选：新增 `/plan`、`/plan off` 斜杠命令（对齐 DSH） |
+| `renderer/pages/composer-commands.ts` | 无 `plan` 命令 | 可选：新增 `/plan`、`/plan off` 斜杠命令（对齐 基线） |
 
 > 所有前端改动需遵守：Vue3 **runtime** + `h()`、CSP `script-src 'self'`（禁模板编译器/模块加载器）、IPC 为**有限动作集合**、增删通道同步 `preload.cjs` 与 `test/bridge.test.mjs`。
 
@@ -274,18 +274,18 @@ DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；�
 - Goal active → 轮次驱动进入第 N 轮 → 该轮内可选进入计划模式产出/更新计划 → 批准后执行 → Todo 记录步骤 → 轮末凭证据+声明判定是否完成 → 未完成则驱动第 N+1 轮。
 - Plan 通常**在目标早期产出一次**，后续轮次按需修订；Todo **每轮/每步**更新；三者互不互相持有对象引用（低耦合）。
 
-**无 Goal 时**：单轮内"进入计划模式 → 呈交 → 批准 → 执行（Todo 步骤）→ 完成"，与 DSH 的基础路径一致。
+**无 Goal 时**：单轮内"进入计划模式 → 呈交 → 批准 → 执行（Todo 步骤）→ 完成"，与 基线 的基础路径一致。
 
 ---
 
 ## 6. 风险与边界
 
-1. **命名撞车（高）**：SaCode 的 `plan` 已有权限档/废弃开关/路由变量多重含义。接入必须新增**独立命名**（如"计划模式协作态"用显式 `plan/mode` 语义 + 文档标注），不得把 DSH 的"计划模式"与 SaCode 的"plan 权限档"混为一谈（见 §3.3、§4.1 D1）。
+1. **命名撞车（高）**：SaCode 的 `plan` 已有权限档/废弃开关/路由变量多重含义。接入必须新增**独立命名**（如"计划模式协作态"用显式 `plan/mode` 语义 + 文档标注），不得把 基线 的"计划模式"与 SaCode 的"plan 权限档"混为一谈（见 §3.3、§4.1 D1）。
 2. **与执行/RPC 混淆（高）**：严禁把 `execution/propose→authorize→start` 当作"计划批准"。**批准计划不授予写入/运行权限**；执行阶段仍走原审批链。文档与 UI 文案都要区分"计划审阅"与"工具/执行授权"。
-3. **审阅通道语义（中）**：方案 A 复用 `approval/ask` 会在同一事件类型里混入"计划审阅"，审计上必须靠 `intent` 区分；若不接受混用，选方案 B 新增独立通道（与 DSH 一致）。
-4. **持久真源（中）**：计划正文必须作为**会话日志事件**持久（log-only），否则刷新/重开丢失——DSH 这块正文只存侧栏导航内存、刷新即丢（`dsh-client-ui-plan/README.zh.md` L38），SaCode 应**做得更稳**（落 `plan/submitted`，投影可回放）。
-5. **待生效语义（中）**：SaCode 的 `ModeController.set` 是**立即落事件**，而 DSH 在开轮期间是 **pending → 轮内 pre-step 才追加**。接入需明确：进入/退出计划模式对"下一次请求"何时生效，避免在途轮次语义漂移。
-6. **软约束 vs 硬约束（中）**：DSH 计划模式"引导而非强制"；SaCode 的 `plan` 权限档会**真实 deny** 写入。二者叠加后，"计划阶段"实际是**只读硬约束**——这更安全，但要向用户说明"计划模式下不能改码"。
+3. **审阅通道语义（中）**：方案 A 复用 `approval/ask` 会在同一事件类型里混入"计划审阅"，审计上必须靠 `intent` 区分；若不接受混用，选方案 B 新增独立通道（与 基线 一致）。
+4. **持久真源（中）**：计划正文必须作为**会话日志事件**持久（log-only），否则刷新/重开丢失——基线 这块正文只存侧栏导航内存、刷新即丢（`dsh-client-ui-plan/README.zh.md` L38），SaCode 应**做得更稳**（落 `plan/submitted`，投影可回放）。
+5. **待生效语义（中）**：SaCode 的 `ModeController.set` 是**立即落事件**，而 基线 在开轮期间是 **pending → 轮内 pre-step 才追加**。接入需明确：进入/退出计划模式对"下一次请求"何时生效，避免在途轮次语义漂移。
+6. **软约束 vs 硬约束（中）**：基线 计划模式"引导而非强制"；SaCode 的 `plan` 权限档会**真实 deny** 写入。二者叠加后，"计划阶段"实际是**只读硬约束**——这更安全，但要向用户说明"计划模式下不能改码"。
 7. **不伪造完成（高）**：Approve 计划 ≠ 任务完成。完成仍以真实退出码/证据/`update_goal` 声明合并判定（沿用现有 Goal 完成闸与执行结算口径），不得因"计划已批准"升级任何完成状态。
 8. **前端受限面（中）**：Vue runtime + `h()`、CSP 禁 `unsafe-eval`、IPC 有限集合——计划审阅面板与卡片必须按现约束实现，不引模板编译器/模块加载器，不新增任意 method 通道。
 9. **并发与归属（低-中）**：新增 core 文件/事件/RPC 前先按 `docs/plans/w00-path-ownership-and-isolation-2026-10-06.md` 与 `AGENTS.md` 协调归属，不覆盖其他会话在途改动。
@@ -296,7 +296,7 @@ DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；�
 ## 7. 登记与后续
 
 - 本文登记：`docs/README.md`（维护记录，2026-10-20 条目）与 `docs/plans/README.md`（B 功能与界面设计，设计状态）。
-- 与本文同期的 DSH 调研类同构参考：`docs/plans/mcp-integration-design-2026-10-20.md`。
+- 与本文同期的 基线 调研类同构参考：`docs/plans/mcp-integration-design-2026-10-20.md`。
 - 后续实现顺序建议（另需授权）：① core 计划模式服务 + `plan:policy` 段落；② `exit_plan_mode` 工具 + `plan/submitted` 事件/投影；③ 审阅通道（方案 A）；④ 前端按钮/面板/卡片接线；⑤ 端到端真实任务验收。
 - 关联需求：F02、F04；缺口口径对齐 `docs/product/PRD.md` 第 804 行"计划审阅批准流程（区别于工具权限审批）的产品闭环待核查"。
 
@@ -370,7 +370,7 @@ DSH 的"计划模式"是**协作态**，SaCode 的"plan 档"是**权限档**；�
   - `cd apps/host && cjpm build`，再 `SACODE_HOST=<新 host exe> node --test apps/host/test/session/plan-review.test.mjs`
 - 已完成的**非 core 依赖**验证：`node scripts/pack-pages.mjs`（`plan-review`、`permission-menu` 编译通过并过 bundle guard）；`check_ipc_surface_parity.cjs` GATE PASS（155↔155）；新增 `.mjs`/`.cjs` 语法检查通过。
 
-## 附：DSH 源码索引（本次调研读取）
+## 附：基线 源码索引（本次调研读取）
 
 | 包 | 关键文件 | 关键符号 |
 |---|---|---|

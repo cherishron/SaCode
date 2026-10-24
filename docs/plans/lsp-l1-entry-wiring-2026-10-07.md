@@ -1,10 +1,10 @@
 # L1：LSP 语义工具契约与入口接线 —— 公共入口责任登记（2026-10-07，A）
 
-> **进度对账（2026-10-09 整理）**：本文档为历史登记单/设计，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为历史登记单/设计，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
 本文件是 L1 批开工前的**登记单**，不是实施方案。实施完成后验收证据另落 `docs/evidence/`。
 口径来源：`docs/product/PRD.md` §4.3（7 verb 表 + L1/L2/L3 分期）、
-`docs/plans/plan-deepseek-harness-replication.md`（一切皆插件、会话日志唯一真源）、
+`docs/plans/plan-architecture-overview.md`（一切皆插件、会话日志唯一真源）、
 协议基线为 LSP 3.17 官方规范。
 
 ## 1. 基线

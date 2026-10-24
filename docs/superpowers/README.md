@@ -11,13 +11,13 @@
 |---|---|---|
 | [`2026-10-03-conversation-surface-tinyrobot-design.md`](specs/2026-10-03-conversation-surface-tinyrobot-design.md) | 对话面 TinyRobot 消息组件接入设计 | plans/2026-10-03-conversation-surface-tinyrobot |
 | [`2026-10-03-next-sdk-page-tools-design.md`](specs/2026-10-03-next-sdk-page-tools-design.md) | Next SDK 页面工具接入设计 | plans/2026-10-03-next-sdk-page-tools |
-| [`2026-10-05-model-center-design.md`](specs/2026-10-05-model-center-design.md) | 模型中心设计（供应商/自定义/调度恢复/计量/加速/迁移） | plans/2026-10-05-model-center-b1、b2 |
-| [`2026-10-05-model-center-catalog-13-providers.md`](specs/2026-10-05-model-center-catalog-13-providers.md) | 13 家内置供应商 CatalogEntry 草案 | plans/2026-10-05-model-center-b1 |
+| [`2026-10-05-model-center-design.md`](../clients/desktop/2026-10-05-model-center-design.md) | 模型中心设计（供应商/自定义/调度恢复/计量/加速/迁移） | plans/2026-10-05-model-center-b1、b2 |
+| [`2026-10-05-model-center-catalog-13-providers.md`](../clients/desktop/2026-10-05-model-center-catalog-13-providers.md) | 13 家内置供应商 CatalogEntry 草案 | plans/2026-10-05-model-center-b1 |
 | [`2026-10-08-browser-use-design.md`](specs/2026-10-08-browser-use-design.md) | Browser Use：接管用户已登录浏览器 | plans/2026-10-08-browser-use-core-foundation |
 | [`2026-10-09-approval-modes-design.md`](specs/2026-10-09-approval-modes-design.md) | 4 种审批模式（Plan/Build/Auto/Yolo） | plans/2026-10-09-approval-modes |
 | [`2026-10-09-hooks-lifecycle-design.md`](specs/2026-10-09-hooks-lifecycle-design.md) | Hooks 生命周期事件系统（25 事件） | plans/2026-10-09-hooks-lifecycle-implementation |
 | [`2026-10-09-slash-command-system-design.md`](specs/2026-10-09-slash-command-system-design.md) | 斜杠命令系统（注册/补全/分层执行） | plans/2026-10-09-slash-command-system |
-| [`2026-10-10-unified-remote-mobile-design.md`](specs/2026-10-10-unified-remote-mobile-design.md) | 统一远程接入与 Kuikly 移动端设计 | plans/2026-10-10-unified-remote-mobile |
+| [`2026-10-10-unified-remote-mobile-design.md`](../clients/mobile/2026-10-10-unified-remote-mobile-design.md) | 统一远程接入与 Kuikly 移动端设计 | plans/2026-10-10-unified-remote-mobile |
 
 ## plans/ — 实施计划（14 篇）
 
@@ -25,8 +25,8 @@
 |---|---|---|
 | [`2026-10-03-conversation-surface-tinyrobot.md`](plans/2026-10-03-conversation-surface-tinyrobot.md) | 对话面升级（TinyRobot 组件） | |
 | [`2026-10-03-next-sdk-page-tools.md`](plans/2026-10-03-next-sdk-page-tools.md) | Next SDK 页面工具接入 | |
-| [`2026-10-05-model-center-b1-catalog.md`](plans/2026-10-05-model-center-b1-catalog.md) | 模型中心 B1 模型目录 | |
-| [`2026-10-05-model-center-b2-scheduling.md`](plans/2026-10-05-model-center-b2-scheduling.md) | 模型中心 B2 调度闭环 | |
+| [`2026-10-05-model-center-b1-catalog.md`](../clients/desktop/2026-10-05-model-center-b1-catalog.md) | 模型中心 B1 模型目录 | |
+| [`2026-10-05-model-center-b2-scheduling.md`](../clients/desktop/2026-10-05-model-center-b2-scheduling.md) | 模型中心 B2 调度闭环 | |
 | [`2026-10-06-w30-d-host-routing-seam.md`](plans/2026-10-06-w30-d-host-routing-seam.md) | W30 接口变更单：模型中心接入真实请求路径 | 变更单 |
 | [`2026-10-08-browser-use-core-foundation.md`](plans/2026-10-08-browser-use-core-foundation.md) | Browser Use 核心基础 | |
 | [`2026-10-08-session-worktree.md`](plans/2026-10-08-session-worktree.md) | 会话级 Worktree | |
@@ -36,7 +36,7 @@
 | [`2026-10-09-goal-execution-improvements.md`](plans/2026-10-09-goal-execution-improvements.md) | 持续目标改进与验收标准（F04） | |
 | [`2026-10-09-hooks-lifecycle-implementation.md`](plans/2026-10-09-hooks-lifecycle-implementation.md) | Hooks 生命周期事件系统 | 见 sdd 台账 |
 | [`2026-10-09-slash-command-system.md`](plans/2026-10-09-slash-command-system.md) | 斜杠命令系统 | 见 sdd 台账 |
-| [`2026-10-10-unified-remote-mobile.md`](plans/2026-10-10-unified-remote-mobile.md) | 统一远程接入与移动工作台 | 同包交付 CLI/Host/daemon |
+| [`2026-10-10-unified-remote-mobile.md`](../clients/mobile/2026-10-10-unified-remote-mobile.md) | 统一远程接入与移动工作台 | 同包交付 CLI/Host/daemon |
 
 ## sdd/ — 规格驱动开发台账（2 组 · 9 文件）
 

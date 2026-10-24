@@ -89,7 +89,7 @@
 
 仓内其它 core 测试的既有做法是 `Directory.createTemp(".../core/target/...")`（见 `team_runner_test.cj:36`、`team_workspace_test.cj:10`）。另外，把 core 的测试产物落在 `apps/desktop/` 下本身就是跨模块边界违规。
 
-**这条的含义超出测试本身**：它证明**这批测试从未在干净检出上跑通过**，只在本机目录残留的脏状态下绿过。与 [三份方案实施前源码审计](sacode-2026-10-11-preflight-source-audit.md) §5 记录的 `after-pack.cjs` 是同一类问题——工作区悬空掩盖了交付缺陷。
+**这条的含义超出测试本身**：它证明**这批测试从未在干净检出上跑通过**，只在本机目录残留的脏状态下绿过。与 [三份方案实施前源码审计](../plans/sacode-2026-10-11-preflight-source-audit.md) §5 记录的 `after-pack.cjs` 是同一类问题——工作区悬空掩盖了交付缺陷。
 
 ### B7. `providerAvailable` 是硬编码常量，导致整条执行接线成为不可达死代码
 

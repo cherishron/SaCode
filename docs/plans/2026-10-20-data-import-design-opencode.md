@@ -140,7 +140,7 @@ interface ImportAdapter {
 
 ## 7. 依赖与待确认项
 
-1. **跨产品来源格式**：他产品（如 DSH/Claude Code/Cursor）的会话/知识/配置导出格式各异；首版优先支持 **sacode-migrate 包**（同源导入）+ **SaCode session.log JSONL**；跨产品格式适配器按需逐个加（每个来源一个 ImportSource 实现），不在首版承诺通用。
+1. **跨产品来源格式**：他产品（如 基线/Claude Code/Cursor）的会话/知识/配置导出格式各异；首版优先支持 **sacode-migrate 包**（同源导入）+ **SaCode session.log JSONL**；跨产品格式适配器按需逐个加（每个来源一个 ImportSource 实现），不在首版承诺通用。
 2. **会话导入的稳定 ID**：SaCode 会话按 sessionId；跨产品会话无稳定 ID 时用（来源标识+时间戳）哈希作 ID，需确认去重粒度（整会话 vs 单事件）。
 3. **知识导入去重**：确认 `knowledge/import` 既有去重粒度（hash？标题？）是否满足"重复导入不重复追加"；若不满足需补。
 4. **技能导入与技能模块协调**：导入 SKILL.md 到 `~/.sacode/skills` 须与技能 FilesystemSkillProvider 的目录约定一致（§技能方案）；按 `name` 去重，严格子集校验（frontmatter 5 键）。

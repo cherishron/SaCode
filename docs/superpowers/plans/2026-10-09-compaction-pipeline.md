@@ -10,7 +10,7 @@
 
 **Tech Stack:** Cangjie 1.1.3 (core), NDJSON JSON-RPC over stdio (host), Vue runtime + IPC bridge (desktop), no external dependencies.
 
-**Spec:** This plan implements the F06/F09 requirements from `docs/product/PRD.md` (lines 99, 124, 269) and the M2 compaction row from `docs/plans/dsh-capability-matrix.md` (63 modules, "only marker; actual summary generation, threshold trigger, tombstone + prompt reassembly not done").
+**Spec:** This plan implements the F06/F09 requirements from `docs/product/PRD.md` (lines 99, 124, 269) and the M2 compaction row from `docs/plans/capability-matrix.md` (63 modules, "only marker; actual summary generation, threshold trigger, tombstone + prompt reassembly not done").
 
 ## Global Constraints
 

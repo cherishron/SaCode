@@ -38,4 +38,4 @@ Host 增量编译已真实退出 0，build-increment-exit.json 记录 2026-10-08
 
 ## 桌面消费端后续增量
 
-本报告初次核查时，turnPoll 未消费模型审批通知，手动审批路径可能二次调用工具。后续已新增独立模型审批消费层，绑定会话和 task/start 信封身份、展示完整 argumentsJson，只回答原票，不重复 callTool；切换、停止和迟到回执按身份与代际保护。状态及实际 renderer 分支 14 项通过，最新任务身份 Host 集成仍在验证，见 [桌面模型审批消费证据](desktop-model-approval-consumption-2026-10-08.md)。这些增量仍不能替代保持 sandbox 的真实 Electron 页面与最终统一产物验收。
+本报告初次核查时，turnPoll 未消费模型审批通知，手动审批路径可能二次调用工具。后续已新增独立模型审批消费层，绑定会话和 task/start 信封身份、展示完整 argumentsJson，只回答原票，不重复 callTool；切换、停止和迟到回执按身份与代际保护。状态及实际 renderer 分支 14 项通过，最新任务身份 Host 集成仍在验证，见 [桌面模型审批消费证据](../clients/desktop/desktop-model-approval-consumption-2026-10-08.md)。这些增量仍不能替代保持 sandbox 的真实 Electron 页面与最终统一产物验收。

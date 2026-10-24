@@ -86,6 +86,6 @@ F02/F04 精确模型工具审批通知增量（2026-10-08）：保留 approval/a
 
 同批补充任务身份：approval/asked 增加 turnRequestId，为本次 task/start 的 NDJSON 信封 ID 文本；桌面固定数字 RPC ID 的文本值来自 HostBridge 发号。taskStart IPC 返回对应 turnRequestId，turnPoll IPC 返回发起该 poll 时绑定的身份及 approvalRequests。消费者同时核对会话、请求身份与本地轮询代际；旧 poll 只取走自己任务的通知，新任务提前到达的通知保留。成功起轮仅清理旧模型通知，不清理其他提供方事件。缺少任务身份不允许降级成“同会话即可批准”。模型审批消费源码与状态测试已实施，真实 Electron IPC 和窗口交互仍待验收。
 
-F02/F04 桥接恢复补充：ChildProcess 事件及迟到写回调仅能更新自己仍为当前连接时的读面。显式 start 拒绝替换活动 Host，丢弃旧连接通知与报文缓冲，拒绝遗留请求；没有 PID 的启动失败允许显式重试。恢复不重放工具或授权，当前进程退出仍立即拒绝请求。Node 状态与真实 Host 异常退出/重启只读证据见 [桥接恢复](../evidence/desktop-host-bridge-recovery-2026-10-08.md)；它不是 GUI 自动重连实现。
+F02/F04 桥接恢复补充：ChildProcess 事件及迟到写回调仅能更新自己仍为当前连接时的读面。显式 start 拒绝替换活动 Host，丢弃旧连接通知与报文缓冲，拒绝遗留请求；没有 PID 的启动失败允许显式重试。恢复不重放工具或授权，当前进程退出仍立即拒绝请求。Node 状态与真实 Host 异常退出/重启只读证据见 [桥接恢复](../clients/desktop/desktop-host-bridge-recovery-2026-10-08.md)；它不是 GUI 自动重连实现。
 
 当前默认编译快照的接口复验见 [Windows 当前源码统一构建](../evidence/windows-current-source-build-2026-10-08.md)：同核心 Host 目标六场景、CLI 目标八场景、真实 Windows Ctrl+C、Host 执行六动作及 CLI 十项准入/恢复拒绝链已取得实测。模型为本地协议夹具；执行门禁仍关闭，未证明实际命令、构建报告、远端模型或 Electron GUI 可用。旧段落的“待验收”须按对应证据层理解，不能扩大为全部未实现或全部产品已通过。

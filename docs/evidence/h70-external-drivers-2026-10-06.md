@@ -86,7 +86,7 @@ if (!exists) { return failResult(..., "source-missing") }
 ## 后续建议
 
 1. 补语音驱动测试（需在有 whisper.cpp 的环境验证）
-2. 补 `docs/plans/dsh-capability-matrix.md` 回填
+2. 补 `docs/plans/capability-matrix.md` 回填
 3. 合并 `turn_routing.cj.bak` → `turn_routing.cj`（并发会话遗留）
 
 ---

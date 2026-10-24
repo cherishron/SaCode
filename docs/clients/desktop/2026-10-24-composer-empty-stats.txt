@@ -1,0 +1,44 @@
+2026-10-24 新建空会话隐藏输入区统计占位
+
+范围与状态
+- 用户截图指出：新建时，选择项目与输入框之间不应显示“0”计数。
+- 工作区基线 HEAD a0b16c38a1147708f2ef75302695092f3d3ed833，存在其他会话未提交改动。本批仅修改 app.js 的统计装配、composer-stats.ts 的空态显示条件、既有 composer-stats.test.mjs，并同步 PRD/F06 台账及索引。
+- 源码已修正；未提交、未重打正式候选、未安装或发布。不能据此称用户正在运行的旧包已更新，也不升级 F06 的真实完整计量能力状态。
+
+根因与修正
+- ComposerStats 原先挂载即读 usageStatus / ledgerStats；usageOf 接受合法的 used=0，形成真值对象，统计组件因而渲染“0”。装配未把页面已有的 emptyConversation 状态交给统计组件。
+- 现由 app.js 传 empty:emptyConversation，ComposerStats 在空态返回 null，隐藏整行而不是把 0 改成未知或修改用量。已有对话仍按原规则呈现真实数据；切换会话时原有迟到保护保留；尾部 ContextMeter 不改。
+- 旧浮层随空态子树卸载关闭，已有对话可重新显示统计。
+
+红先与单测
+临时根：target/tmp/composer-empty-20261024-ExVwRR/
+命令：node --test apps/desktop/test/composer-stats.test.mjs
+- red.log：tests 7 / pass 5 / fail 2 / cancelled 0 / skipped 0，rc=1。恰为新增的 used=0 与 used=1200 两条空会话隐藏断言失败，实际拿到统计行而非 null。
+- green.log：tests 7 / pass 7 / fail 0 / cancelled 0 / skipped 0，rc=0。两例均验证空态隐藏→进入对话恢复真实用量→回空态立即隐藏。
+命令：node --test --test-concurrency=1 apps/desktop/test/composer-stats.test.mjs apps/desktop/test/renderer-syntax.test.mjs apps/desktop/test/renderer-bundle-guard.test.mjs apps/desktop/test/page-sources-parse.test.mjs apps/desktop/test/renderer-el-shape.test.mjs apps/desktop/test/composer-custom-model.test.mjs
+- regression.log：tests 16 / pass 16 / fail 0 / cancelled 0 / skipped 0，rc=0。
+- 隔离编译的 composer-stats.iife.js 确认接入 globalThis.Vue，并通过静态产物门禁：无运行时求值、动态或外部模块。
+
+真实桌面页面验证
+- 外部浏览器连接器返回 BROWSER_CONNECTOR_WAITING，因此未声称外部浏览器操作成功。
+- 启动仅监听 127.0.0.1 的临时静态服务器，提供完整 renderer 快照；只在该快照内编译最新 composer-stats.iife.js，未覆盖共享 vendor、dist 或任何正式候选文件。
+- 使用既有正式候选 D:/tmp/sacode-final-20261023/SaCode.exe 的真实 Electron、preload、IPC 与 Host 加载该页面。由主进程 Inspector 驱动此自有诊断实例；默认 sandbox=true，未传 --no-sandbox；--startup-check 与私有 session/settings/user-data 隔离，不读写用户现有会话或模型配置，不调用真实模型。
+- 桌面 exe SHA256：403f56814b1bf02fd243fd17161f35c6bd08a31f1d64154f0182e9c192ad6044。
+- Host SHA256：e90998498778593f2dec0a01ddad8c8a3029d636d68dabdb1899821367404af9。
+- 页面 app.js SHA256：e741cd3d07495c196f8dcaa946091039d7f1665a65e2fdb2b1eb3c8fb1ea75ef。
+- composer-stats.ts SHA256：61ade0c29c6cbcd43c53db73d4f80bc78709bb607aa2370601a99da20e4e6137。
+- 本次运行统计产物 SHA256：ce6d2df13fd160d9012dd90dfee47762ee71fb61a270c9ca68eb01815601dc04。
+- identity.json 确认页面快照中的 app.js / composer-stats.ts 与修改后工作区逐字节一致。
+- verify-ui.mjs → ui-result.json，5/5，rc=0，consoleErrors=[]，自然退出 code=0，无强制清理：
+  1. 完整产品 preload/IPC/真实 Host 可读。
+  2. 已有会话是非空，统计行1、pill=["0"]（同形正控，不把所有统计都关掉凑通过）。
+  3. 打开用量浮层后，点击真实“新建会话”按钮；新会话 empty=true、stats=0、pills=[]、open=0。
+  4. 调用页面现有会话选择方法切回旧会话，统计行恢复、pill=["0"]。
+  5. 再切回新会话，600×700 CSS 像素窄窗下输入区可见且统计行0。
+- empty-dark.png 与 empty-light-narrow.png 已人工查看，新建状态无“0”占位，输入框与选择项目入口正常。
+- 首轮诊断脚本在初始 loadFile 尚未完成时过早 loadURL，触发 ERR_ABORTED(-3)，不是产品失败；保留 attempt1-ui-result.json / stdout / stderr。改为等待首次页面就绪后，第二轮取得上述5条结果，未删除旧失败证据。
+- 本轮 PID 5552 与 17384 均自然退出；结束后未见本轮正式候选路径的 SaCode/Host 残留。观察到仓内另一来源 Host PID11764，非本轮所有，未操作。
+
+证据边界
+- 这是当前源码完整页面在既有 Electron/Host 上的隔离验证，不是全量同源候选重打，不是正式安装态或真实模型任务验收。
+- 不改变模型可用性、预算单位、token明细缺失、安装器或 portable 启动问题的既有状态；这些反馈仍独立处理。

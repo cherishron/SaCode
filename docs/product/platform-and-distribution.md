@@ -6,7 +6,9 @@
 
 ## 1. 产品定位与入口
 
-SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，不是以 DSH 全系统复刻或消除编译警告为目标的实验。
+2026-10-23 移动入口纠偏：`apps/mobile` 为 SaCode 移动工作台，电脑出票→手机设备配对为正式接入，不要求 saai 账号/sa-idp/gateway-rs。Android 正式入口为受保护 RemoteDevicesPage，本机档案只隔离 registry/vault，不授予远端权限；旧数据不清除或自动迁移，applicationId 保留。171 项共享测试、3 项路由回归、APK 构建及 Honor 覆盖安装通过；检查时锁屏，新首屏 GUI 待验，OHOS 仅源码调整未构建。见[证据](../clients/mobile/2026-10-23-mobile-sacode-entry-correction.md)。
+
+SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，不是以全系统复刻或消除编译警告为目标的实验。
 
 仓颉 `core` 是共享业务实现：会话与执行事实、授权、取消、恢复及结算保持统一。CLI、Host、daemon 和前端适配这份核心，不为不同平台复制 Agent 主循环或授权规则。会话日志是会话与执行事实的真源；文件、Git、数据库、配置等仍有各自的权威源，不把所有业务数据强塞进日志。
 
@@ -48,7 +50,16 @@ Linux 的最新构建成功不等于真实任务支持完成：上述 `2c56c76` 
 
 用户批准从 `D:/Project/sa/saai/sa-app` 复制手机工程到 `apps/mobile/` 根，旧项目保留，不带 `.git`，与 SaCode 同仓管理。真实工程为 KMP / KuiklyUI，含 `androidApp`、`shared`、`framework` 与 `ohosApp`；Android 任务名为 `:androidApp:assembleDebug`。既有 `kotlin/`、`kotlin-test/` 是 JVM 协议代码及测试，不是 Android 应用。
 
-本批仅源码归并与路径/治理适配；上方带日期的平台读数保留历史，鸿蒙 CLI 与移动应用壳是不同角色，不据目录存在修改为运行通过。Android/鸿蒙工具链、签名、真机与真实远程任务另行验收。记录见[手机源码导入](../evidence/2026-10-23-mobile-source-import.txt)。
+本批仅源码归并与路径/治理适配；上方带日期的平台读数保留历史，鸿蒙 CLI 与移动应用壳是不同角色，不据目录存在修改为运行通过。Android/鸿蒙工具链、签名、真机与真实远程任务另行验收。记录见[手机源码导入](../clients/mobile/2026-10-23-mobile-source-import.txt)。
+
+### 3.2 移动端与 Web 路线（2026-10-23）
+
+两条产品路线已补录到 [PRD](PRD.md#移动端与-web-产品路线2026-10-23-补录) 与 [实时路线台账](PRD-tracking.md#移动端与-web-路线台账2026-10-23-补录)：
+
+- **移动端**：KMP / KuiklyUI 工程→围绕正式功能收敛 demo→KuiklyMarkdown/可用 ChatUI 组件适配→既有 daemon 直连真实任务→再评 Relay/SSH 与扩展平台。Android Debug 构建仅为局部证据；鸿蒙壳与 CLI 不混作同一角色。先验证替代链路，再按引用清单清理样例。
+- **Web**：独立 Web 前端 + 受控桥接/网关，复用 Host / daemon 与共享 core，不重做授权业务。当前为规划/设计，未实施部署；有限方法、身份/Origin 校验、工作区归属、TLS/WSS、资源限额、断连恢复与同源交付均为开放前门槛。桥接 PoC 不等于已支持 Web，多租户须另验。
+
+此补录不把 Web 方案中未验证的协议名、工时、回归风险或打包判断升级为事实；现有平台矩阵与桌面交付优先级不变，新增端按实际入口/平台/构建/运行/发布分别登记。
 
 ## 4. 平台后端要求
 
@@ -70,6 +81,7 @@ Linux/macOS/OHOS 可以复用经验证的原生适配部分，但须保留 ABI�
 
 - npm 是 Windows/Linux/macOS CLI 的主要便捷安装渠道：薄启动包按平台/架构选择对应原生产物包，不依赖桌面进程。
 - 当前源码主包是 `npm/sacode-cli`（包名 `@stand-alone/sacode`），现有平台包为 `npm/sacode-cli-win32-x64`；其他平台包尚待实现/验证，不在本文宣称已发布。
+- 主包同时携带 Node/Ink 终端界面单文件 `tui/index.mjs`（打包时由 `scripts/pack-tui.mjs` 构建并校验自足）：无参数且 stdin/stdout 都是 TTY，或显式 `sacode tui` 时进入；其余命令仍透传仓颉 CLI。需要 Node ≥18。本机已用 `npm pack` 产物做 `npm install --omit=optional` 安装态验证（伪 TTY 无参启动 rc=0、非 TTY rc=64、缺宿主 rc=69、缺平台包透传 rc=79），并在干净目录 `npm ci` 重建出同哈希产物；**未**从 registry 安装、未验证已发布平台包组合与其他平台终端，不据此宣称 TUI 已交付。
 - 主包、平台包、CLI、daemon、运行库与扩展宿主版本需一致或明确声明兼容，不把本机能启动代替 registry 安装验收。
 - 同时提供适合目标环境的 release 压缩包及校验和，避免强制用户安装 npm 才能获得原生 CLI。其他通用安装渠道按实际需求接入，不自动新增未确认的包管理器方案。
 - 鸿蒙 CLI 保留独立原生产物分发；npm/其他渠道在目标设备上的可用性待核，不笼统宣称“有 npm”或“没有 npm”。
@@ -105,7 +117,7 @@ GitHub Actions 构建、打包并提供可下载产物是已确认目标。2026-
 
 依赖顺序是：工具链与平台契约 → 目标入口构建/启动/真实任务 → 壳层适配与完整打包 → 干净环境安装验收。CI 框架可并行建设，但不能替代前面各层验收。
 
-macOS 与鸿蒙当前无设备不等于永久移出范围；先准备工具链、适配与构建证据，真实运行明确待验。警告清理、证据数量和历史 DSH 模块计数都不是交付主目标。
+macOS 与鸿蒙当前无设备不等于永久移出范围；先准备工具链、适配与构建证据，真实运行明确待验。警告清理、证据数量和历史模块计数都不是交付主目标。
 
 ## 8. 资料边界
 

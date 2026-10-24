@@ -57,9 +57,22 @@ node --test apps/host/test/acp/*.test.mjs apps/cli/test/acp/*.test.mjs
 
 ## 5. Electron 测试环境门禁与交互跑道（2026-10-19）
 
-c3 全套出现过 16 项 `0x80000003`（STATUS_BREAKPOINT）假失败，根因是**代理代跑环境**（沙箱注入／受限进程树）里 Chromium 默认沙箱初始化被阻断，与 SaCode 代码无关，用户手动双击不受限。门禁把这 16 项在受限时标成 `env-blocked-electron` 跳过，不计失败、不计通过、单独列出；并给用户一条一键交互跑道。详见 [2026-10-19 证据](evidence/2026-10-19-electron-test-env-gate.md)。
+c3 全套出现过 16 项 `0x80000003`（STATUS_BREAKPOINT）假失败，根因是**代理代跑环境**（沙箱注入／受限进程树）里 Chromium 默认沙箱初始化被阻断，与 SaCode 代码无关，用户手动双击不受限。门禁把这 16 项在受限时标成 `env-blocked-electron` 跳过，不计失败、不计通过、单独列出；并给用户一条一键交互跑道。详见 [2026-10-19 证据](clients/desktop/2026-10-19-electron-test-env-gate.md)。
 
 **判据**：以「默认沙箱下最小 Electron 探针能否启动」为准（`apps/desktop/test-support/electron-env-probe.cjs`，不传 `--no-sandbox`、不关 GPU、不改系统）。本会话代理环境实测 `exit=0x80000003`、28–170ms、无输出。进程完整性（Medium）、WorkBuddy 进程存在、`ELECTRON_RUN_AS_NODE` 都**不单独判死**——会误伤装过 WorkBuddy 的普通用户。父链/会话只作旁证写进 `details`。
+
+**在仓库内受限时不要直接认命（2026-10-24 实测）**：`0x80000003` 与 D10 同源——仓库工作区里的文件继承低完整性标签，默认沙箱 Electron 在此启动即崩。把 `apps/desktop`（可排除 `node_modules`、`dist/electron`、`dist/releases`）与 `node_modules/electron/dist` 复制到 `D:/tmp/<用途>-<日期>/`（仓外临时产物，不入库），再用 `ELECTRON_OVERRIDE_DIST_PATH` 指向该中立二进制即可真实执行门控用例，**不关沙箱、不改 ACL**：
+
+```bash
+cd apps/desktop
+env -u ELECTRON_RUN_AS_NODE ELECTRON_OVERRIDE_DIST_PATH='D:\tmp\<用途>-<日期>\electron' \
+  TMP='D:\Project\sa\saai\sa-code\target\tmp\<用途>' TEMP='D:\Project\sa\saai\sa-code\target\tmp\<用途>' \
+  node --test test/model-pages-render.test.mjs
+```
+
+`TMP`/`TEMP` 是必需的：需要起宿主的用例用 `os.tmpdir()` 建目录，本机 `%TEMP%` 对宿主写入返回 `Permission denied`（rc=-13），不设会得到与被测代码无关的红。
+
+这属于本地验证通道，不是产品默认配置，也不改变交付仍需中性导出的事实。
 
 **10 个文件**（16 条用例）：`approval-mode-electron-host`、`inline-editor-render`、`knowledge-electron`、`model-credential-electron-host`、`model-pages-render`、`models/model-pull-electron`、`pack-next-sdk`（仅“真实 Electron 严格 CSP”那条，其余 4 条构建守卫照跑）、`plugin-inventory-lifecycle`、`provider-credential-retry-render`、`window-visibility`。各文件 `import {electronTestOptions} from '../test-support/electron-env-gate.mjs'` 后把 Electron 用例选项包一层；命中受限即 `# SKIP env-blocked-electron: …`。
 

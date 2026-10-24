@@ -93,7 +93,7 @@
 
 （F11 / F13–F17 无方法，无授权面。）
 
-**执行族的分布**：契约里 `permission=execute` 的方法**恰 8 条**（本机实测 2026-10-10）：`task/start` `execution/start` `worktree/enter` `worktree/agent-prepare` `worktree/agent-finish` `model/pull` `extension/call` `prompt/enhance`。批次 J 已在 `remote_gate.cj` 侧拦下这 8 条（`remote-execution-gate.test.mjs` 五条真 HTTP 用例已钉住整族拒绝：批判、方法面、无强制后端归因、read/write 照旧、宣告与门禁同源）。**F02 / F08 / F12 / F18 这四个域在 execute 族上有方法**——`execution/authorize|describe|output|stop` 与 `worktree/cleanup|exit` 与 `custom/import/*` 与 `prompt/poll|cancel` 都不在 execute 族，所以它们各自仍走 write/approval/management，不受批次 J 拒绝面影响。这是「沙箱失败不得通过用户批准绕过」这条不变量（`docs/plans/plan-deepseek-harness-replication.md` §架构不变量）的直接约束面。
+**执行族的分布**：契约里 `permission=execute` 的方法**恰 8 条**（本机实测 2026-10-10）：`task/start` `execution/start` `worktree/enter` `worktree/agent-prepare` `worktree/agent-finish` `model/pull` `extension/call` `prompt/enhance`。批次 J 已在 `remote_gate.cj` 侧拦下这 8 条（`remote-execution-gate.test.mjs` 五条真 HTTP 用例已钉住整族拒绝：批判、方法面、无强制后端归因、read/write 照旧、宣告与门禁同源）。**F02 / F08 / F12 / F18 这四个域在 execute 族上有方法**——`execution/authorize|describe|output|stop` 与 `worktree/cleanup|exit` 与 `custom/import/*` 与 `prompt/poll|cancel` 都不在 execute 族，所以它们各自仍走 write/approval/management，不受批次 J 拒绝面影响。这是「沙箱失败不得通过用户批准绕过」这条不变量（`docs/plans/plan-architecture-overview.md` §架构不变量）的直接约束面。
 
 ## 移动端消费面（Kuikly 工程现状）
 

@@ -1,21 +1,21 @@
-# Qwen Code Batch API 复刻方案草案
+# Qwen Code Batch API 实现方案草案
 
-> **进度对账（2026-10-09 整理）**：本文档为方案草案（v0.1，供评审，尚未实现），所列范围/接口为设计目标。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为方案草案（v0.1，供评审，尚未实现），所列范围/接口为设计目标。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
 - 状态：v0.1，供架构评审；**尚未开始实现**，不装依赖、不替换实现、不发布。
-- 本次范围：把 https://qwenlm.github.io/qwen-code-docs/zh/users/features/batch/ 的 CLI 封装层（`qwen batch` 子命令族）复刻进本仓（仓颉 `core` + `apps/cli` + `apps/desktop`）。
-- 复刻口径：**行为等价 / 架构约束等价 / 格式或协议兼容 / 插件源码兼容**四级分开验收，不把其中一种宣称为全部兼容。完整范围保留，分批交付不等于删项。
+- 本次范围：把 https://qwenlm.github.io/qwen-code-docs/zh/users/features/batch/ 的 CLI 封装层（`qwen batch` 子命令族）实现进本仓（仓颉 `core` + `apps/cli` + `apps/desktop`）。
+- 实现口径：**行为等价 / 架构约束等价 / 格式或协议兼容 / 插件源码兼容**四级分开验收，不把其中一种宣称为全部兼容。完整范围保留，分批交付不等于删项。
 - 三类标注：**事实**（上游原文可复查）/ **本项目提案**（接口名冻结前不是上游 API）/ **兼容目标**（不承诺）。
 
 ---
 
 ## 0. 口径先行：这个功能的分母是什么
 
-**事实**：`batch` 不在 `docs/plans/dsh-capability-matrix.md` 的 63 模块冻结快照里（全表 grep 无命中）；`docs/evidence/dsh-upstream-delta-commits-2026-10-06.json` 里出现的 batch 串全部是无关项（write-batching 架构笔记、resume-selector-batch-projection bug-fix、windows-signature-batch 打包脚本），不是本功能。
+**事实**：`batch` 不在 `docs/plans/capability-matrix.md` 的 63 模块冻结快照里（全表 grep 无命中）；`docs/evidence/dsh-upstream-delta-commits-2026-10-06.json` 里出现的 batch 串全部是无关项（write-batching 架构笔记、resume-selector-batch-projection bug-fix、windows-signature-batch 打包脚本），不是本功能。
 
 **事实**：上游页面是 **CLI 用户指南**，不是 DashScope Batch API 的 HTTP 契约。页面本身**没有** HTTP 端点、请求/响应 schema、JSONL 行格式、文件上传端点——这些属于 DashScope 平台 API 参考文档，不在本页面内（两次 WebFetch 均确认）。
 
-**结论（本项目提案）**：按 AGENTS.md「有→复刻契约；没有→自有增量不占上游分母」，本功能属**自有增量**，不进 63 行矩阵分母。复刻对象是 **CLI 封装层 + 编排语义**；底层 HTTP API 是**外部平台依赖**，与本仓已有模型 provider API 同等接入性质，不是可从本页面冻结的上游契约。
+**结论（本项目提案）**：按 AGENTS.md「有→实现契约；没有→自有增量不占上游分母」，本功能属**自有增量**，不进 63 行矩阵分母。实现对象是 **CLI 封装层 + 编排语义**；底层 HTTP API 是**外部平台依赖**，与本仓已有模型 provider API 同等接入性质，不是可从本页面冻结的上游契约。
 
 ---
 
@@ -27,11 +27,11 @@
 | L1 CLI 封装 | `qwen batch check/run/collect/retry/list/cancel/clean` + `settings.json` 配置面 | 把平台 API 包成**有审批、有快照、有状态机**的本地命令 |
 | L2 编排语义 | 计划文件（`.qwen/batch/plans/<slug>.json`）、快照哈希、delivered/held/failed 三态、自动收集开关 | 批处理是**有持久产物的有状态流程**，不是一次远程调用 |
 
-关键判断：**批处理与日常对话是两条独立的计费/认证面**（`batch.model` / `batch.authType` / `envKey` 独立于日常 provider），且**提交后立即返回、等待过程不调用模型**。这两条是复刻的架构锚点，不是 UI 细节。
+关键判断：**批处理与日常对话是两条独立的计费/认证面**（`batch.model` / `batch.authType` / `envKey` 独立于日常 provider），且**提交后立即返回、等待过程不调用模型**。这两条是实现的架构锚点，不是 UI 细节。
 
 ---
 
-## 2. 复刻的硬规格：架构不变量表
+## 2. 实现的硬规格：架构不变量表
 
 | # | 不变量 | 出处 |
 |---|---|---|
@@ -54,11 +54,11 @@
 
 ---
 
-## 3. 系统地图与复刻分层
+## 3. 系统地图与实现分层
 
 ### 3.1 上游子系统清单（本页面可确认的部分）
 
-| 子系统 | 内容 | 复刻分层 |
+| 子系统 | 内容 | 实现分层 |
 |---|---|---|
 | batch-config | `settings.json` 的 `batch.*` 段 + `settings.env` 的 `envKey` 引用 | P0 |
 | batch-plan | 计划文件的生成、快照哈希、`maxCostUsd`/`maxOutputTokens`/`thinking_budget` | P0 |
@@ -175,12 +175,12 @@ P2 桌面入口 + 自动收集上下文判定                       → 门禁�
 
 **已读范围**：
 - 上游页面 `https://qwenlm.github.io/qwen-code-docs/zh/users/features/batch/`（两次 WebFetch，内容一致）。
-- `docs/plans/dsh-capability-matrix.md`（全表 grep 确认无 batch 行）。
+- `docs/plans/capability-matrix.md`（全表 grep 确认无 batch 行）。
 - `docs/evidence/dsh-upstream-delta-commits-2026-10-06.json`（确认 delta 中无本功能）。
 - 本仓 `core/src/` grep：`batch` 仅作局部变量（`batchEnd`/`lineBatches`/`attachmentImageBatch`），无批处理 API 入口。
 
 **自行复核过的结论**：
-- 「本仓没有 Batch API 功能」——基于 `core/src/`、`apps/`、`docs/` 全仓 grep，排除 `.tmp-dsh-asar/`（那是上游 DSH 参考副本，非本仓源码）。
+- 「本仓没有 Batch API 功能」——基于 `core/src/`、`apps/`、`docs/` 全仓 grep，排除 `.tmp-dsh-asar/`（那是上游 基线 参考副本，非本仓源码）。
 - 「batch 不在 63 模块分母」——基于能力矩阵全表 grep 无命中。
 
 **上游文档自身没给出的**（已列入 §8）：远端 HTTP 契约、并发数、顺序保证、任务记录完整 schema。

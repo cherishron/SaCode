@@ -150,4 +150,4 @@ PRD §6 验收标准（F13 行）：
 - SaCode PRD F13：`docs/product/PRD.md:106-107, 238, 276`
 - webhook/schedule/workflow 实现：`core/src/{webhook,schedule,workflow}.cj`
 - 当前状态登记：`docs/evidence/p0-status-2026-10-02.md:308`
-- 能力矩阵校正：`docs/plans/dsh-capability-matrix.md:144, 174`
+- 能力矩阵校正：`docs/plans/capability-matrix.md:144, 174`

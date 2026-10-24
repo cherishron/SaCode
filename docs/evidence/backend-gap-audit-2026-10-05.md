@@ -2,7 +2,7 @@
 
 > 性质：**只读审计**。本文件未运行 `cjpm build` / `cjpm test` / `npm` / `node`，未修改任何 `.cj` / `.cjs` / `.ts` / `.mjs` 源码。
 > 全部结论来自对 `core/src/*.cj`、`apps/host/src/main.cj`、`apps/cli/src/main.cj`、`apps/desktop/preload.cjs`、`extjs/` 的逐行阅读，以及对冻结上游树 `D:\Temp\SaCode-official-639ed015\tree.json` 的路径检索。
-> 上游契约正文只读过 [能力矩阵](../plans/dsh-capability-matrix.md) 已登记的那部分（63 模块 en/zh 直读账在 `docs/evidence/upstream-module-reads-2026-10-04.md`）；**未下载的上游源码正文（尤其 `packages/session-query/session-log-export/*`、`packages/boot/plugin-manager/*`）一律标「待核」，不替它编造格式**。
+> 上游契约正文只读过 [能力矩阵](../plans/capability-matrix.md) 已登记的那部分（63 模块 en/zh 直读账在 `docs/evidence/upstream-module-reads-2026-10-04.md`）；**未下载的上游源码正文（尤其 `packages/session-query/session-log-export/*`、`packages/boot/plugin-manager/*`）一律标「待核」，不替它编造格式**。
 
 ---
 
@@ -179,7 +179,7 @@
 
 - 上游（冻结树可证）：`packages/session-query/session-log-export/src/{index,archive,routes}.ts`、`src/client/{controller,Dialog,HeaderAction,index,locales}.ts`、`tests/` 下 9 个 spec（`archive.host` / `route.host` / `command.host` / `controller.client` / `dialog.client` / `header-action.client` / `loader-composition.host` / `client-apply.client`）。
 - 本仓：`.cj` 全文搜 `export` → 只有 `core/src/otel_test.cj:7` 一句注释；Host 73 个方法、桌面 52 个 IPC key 里都没有导出面。`SessionQuery`（`core/src/sq.cj`）只有 `byType` / `byKeyword` / `countAll`。
-- **待核**：`archive.ts` / `routes.ts` / `controller.ts` 的正文本次读不到（本机 DSH 安装路径不可访问、raw.githubusercontent.com TLS 失败、上游 zip 无有效中央目录），所以**导出格式（zip？jsonl？markdown？目录结构？文件名规则？）一律不许猜**。`docs/evidence/plugin-manager-backend-gap-2026-10-05.md` 第 17-19 行已如实记录同样的取证失败。
+- **待核**：`archive.ts` / `routes.ts` / `controller.ts` 的正文本次读不到（本机 DSH 安装路径不可访问、raw.githubusercontent.com TLS 失败、上游 zip 无有效中央目录），所以**导出格式（zip？jsonl？markdown？目录结构？文件名规则？）一律不许猜**。`docs/clients/desktop/plugin-manager-backend-gap-2026-10-05.md` 第 17-19 行已如实记录同样的取证失败。
 - 复刻步骤：先解锁上游正文（找一份能用的网络出口或本地安装副本），再定 `session/export` 的 Host 方法与产物契约；在拿到正文之前，只允许做「与格式无关」的部分——把 `SessionQuery` 扩成带时间窗/分页/按 surface 过滤，并加 `session/query` 有限方法。
 - 验收：导出一份含附件的会话 → 冷进程导入 → 投影逐条一致；导出文件不含模型凭据（照 `real-provider-tools.test.mjs:57` 的断言形态）。
 
@@ -205,7 +205,7 @@
 
 - `core/src` 搜 `plugin|Plugin` → 2 命中，都在 `boot_actions_test.cj`（给 `BootSequence` 注册了一个名叫 `"plugins"` 的 stage）。**没有 PluginManager、没有 manifest 解析、没有依赖激活、没有安装态、没有 HMR。**
 - 上游（冻结树可证）是一整套：`packages/boot/plugin-manager/src/{index,build-approval,failure,github-connection,install-failure,install-spec,operations,patch,registry,run-tree,tools,types}.ts` + 11 个测试；`packages/host/plugin-inventory/src/index.ts`；`packages/extensions/{tool-cordis,ui-cordis,cordis-host-runner,cordis-client-runner}/src/index.ts`；`packages/llm/plugin-package-inventory-deepseek/src/index.ts`；`packages/preset/{agent-preset,agent-preset-registry,persona}/src/index.ts`；`snapshots/session/plugin-manager{,-mcp}/` 两组 cordis 快照。
-- 本仓桌面侧的插件管理器是**夹具页面**：`apps/desktop/test-support/plugin-manager-smoke.cjs` 自己造 `managerFixture.snapshot`，产品入口断言的是 `unconnected: ...textContent.includes('尚未接入')` 与 `disabled: ...find(b=>b.textContent==='添加插件').disabled`——**即页面自己承认没接**。另一位成员已把这条写进 `docs/evidence/plugin-manager-backend-gap-2026-10-05.md` 与 `plugin-lifetime-architecture-2026-10-05.md`，本审计只做后端侧的正面确认：**后端也是 0**。
+- 本仓桌面侧的插件管理器是**夹具页面**：`apps/desktop/test-support/plugin-manager-smoke.cjs` 自己造 `managerFixture.snapshot`，产品入口断言的是 `unconnected: ...textContent.includes('尚未接入')` 与 `disabled: ...find(b=>b.textContent==='添加插件').disabled`——**即页面自己承认没接**。另一位成员已把这条写进 `docs/clients/desktop/plugin-manager-backend-gap-2026-10-05.md` 与 `plugin-lifetime-architecture-2026-10-05.md`，本审计只做后端侧的正面确认：**后端也是 0**。
 - 上游 `packages/boot/plugin-manager/src/*` 的正文本次读不到 → **manifest 字段、安装态目录、依赖激活算法一律待核，不许先设计再对账**。
 - 复刻步骤（顺序不能反）：① 先解锁上游 `plugin-manager` 与 `plugin-inventory` 正文；② 在 core 定「本地插件包」最小 manifest（name / version / entry / contributes）与安装目录；③ 落 `PluginRegistry`（安装 / 启用 / 停用 / 卸载，全部落 log-only 事件，与其它 registry 同一套纪律）；④ 让 `ToolRegistry` 从插件取 spec（工具即插件）；⑤ `ModelToolRuntime` 的 specs 从插件表出（模型面即插件）；⑥ Host 加 `plugin/{list,install,enable,disable,uninstall}` 有限方法；⑦ 桌面把夹具 adapter 换成真 adapter。
 - 验收：写一个本地 `.cj`-无关的最小插件包（一个 CJS 工具 + 一份 manifest）→ `plugin/install` → 它声明的工具出现在 `extension/list` 且**能被真实模型调用** → 卸载后从列表消失且不能再调。

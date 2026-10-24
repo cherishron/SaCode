@@ -9,7 +9,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const OWNERSHIP = 'docs/plans/w00-path-ownership-and-isolation-2026-10-06.md';
-const MATRIX = 'docs/plans/dsh-capability-matrix.md';
+const MATRIX = 'docs/plans/capability-matrix.md';
 const SRC_EXT = ['cj', 'ts', 'tsx', 'js', 'mjs', 'cjs', 'vue', 'css', 'json', 'ps1', 'md'];
 // 临时输出的判据不是「扩展名是 txt」，而是「仓根或模块根的裸转储」：
 // 实测有 o.txt / test-output.txt / .qoder-el-*.txt / core/ct3.txt / cto2.txt / build-check.txt 这类形态。
@@ -125,7 +125,7 @@ const BASE_OWNERSHIP = [
   '| A | W00 | dir | scripts/ |',
   '| B | W10 | file | core/src/session.cj |',
   '| C | W20 | file | core/src/plugin_store.cj |',
-  '| A | W00 | file | docs/plans/dsh-capability-matrix.md |',
+  '| A | W00 | file | docs/plans/capability-matrix.md |',
 ].join('\n');
 
 const PROBES = [
@@ -138,7 +138,7 @@ const PROBES = [
   { check: 'staged-worktree-drift', expect: 'WARN', blurb: '把一条改成 AM（暂存后又改）',
     status: (s) => s.replace(' M core/src/plugin_store.cj', 'AM core/src/plugin_store.cj') },
   { check: 'matrix-not-dirty-at-close', expect: 'WARN', blurb: '追加一条矩阵在飞改动（基线里矩阵是干净的）',
-    status: (s) => s + '\n M docs/plans/dsh-capability-matrix.md' },
+    status: (s) => s + '\n M docs/plans/capability-matrix.md' },
   { check: 'ownership-rows-parsed', expect: 'FAIL', blurb: '归属表整体取空',
     ownership: () => '' },
   { check: 'status-parsed', expect: 'FAIL', blurb: 'status 读数为空',

@@ -1,6 +1,6 @@
 # 批次 N：审计完整性——值级脱敏替代「整条丢弃」，并补上 deviceId 这个没有第一道的洞
 
-规格出处：`docs/superpowers/specs/2026-10-10-unified-remote-mobile-design.md` §7 第 125 行
+规格出处：`docs/clients/mobile/2026-10-10-unified-remote-mobile-design.md` §7 第 125 行
 
 > 审计保存时间、主体、设备、实例、资源、方法、operationId、结果类别与审批引用；不保存 token、登记秘密、任意请求正文或模型密钥。读面同样受权限限制。
 
@@ -135,4 +135,4 @@ Summary: TOTAL: 167
 
 ## 7. 与计划的映射
 
-`docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` 第 147 行「审计保存 who/when/what/result；遍历日志断言无登记秘密/token/模型key」——本批把这条从「靠整条丢弃保证」改成「靠字段级脱敏同时保证」，两侧都有具名用例与 wire 读数，但同一行还挂着「禁跨主机认证重定向与 trust-all」那一半（TLS 面，批次 I 只验了客户端信任链），所以该行仍保持未勾，附本批注记。
+`docs/clients/mobile/2026-10-10-unified-remote-mobile.md` 第 147 行「审计保存 who/when/what/result；遍历日志断言无登记秘密/token/模型key」——本批把这条从「靠整条丢弃保证」改成「靠字段级脱敏同时保证」，两侧都有具名用例与 wire 读数，但同一行还挂着「禁跨主机认证重定向与 trust-all」那一半（TLS 面，批次 I 只验了客户端信任链），所以该行仍保持未勾，附本批注记。

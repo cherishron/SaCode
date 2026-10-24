@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 基线HEAD `5c22a36` + 工作区。前轮[桌面操作生命周期](2026-10-18-model-pull-desktop-lifecycle.md)保持冻结，本记录是用户第2项要求的增量验证。
+- 基线HEAD `5c22a36` + 工作区。前轮[桌面操作生命周期](../clients/desktop/2026-10-18-model-pull-desktop-lifecycle.md)保持冻结，本记录是用户第2项要求的增量验证。
 - 入口：Windows x64供应商页面、模型拉取状态适配器；本轮不改Host/执行隔离代码，不提交、不打安装包、不替换用户Downloads包。
 - 重用前轮新Host及中性官方Electron副本，不安装工具、不关闭沙箱、不改ACL/系统安全配置。Host身份沿[Host记录](2026-10-17-model-pull-host-lifecycle.md)，SHA256 `c40b45a5c2bbf99d0f130d0f084ba00fd07c8b90f9eec6c3ae2d1d059474fa1e`。
 

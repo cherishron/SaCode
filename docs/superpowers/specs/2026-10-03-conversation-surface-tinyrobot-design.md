@@ -4,7 +4,7 @@
 
 - 日期：2026-10-03
 - 目标矩阵行：`conversation`（当前 ◐，本批冲 ✔）
-- 关联验收口径：`docs/plans/plan-deepseek-harness-replication.md` §6.1.3（按上游一等公民面复刻桌面 UI）
+- 关联验收口径：`docs/plans/plan-architecture-overview.md` §6.1.3（按上游一等公民面实现桌面 UI）
 - 本批不动：`apps/host`、`core`、`apps/cli`、`extjs`、IPC 通道集合（恰好 11 键不变）
 
 ---
@@ -37,7 +37,7 @@
 - **不接 Next SDK 页面工具**：那是新外部工具调用通道，独立批次，且必须另行过审批不变量；
 - **不接 TinyRobot 的 sender / conversations / welcome 等其余组件**：本批只折叠 `bubble` 一族。
   `sender-compat` 拖 tiptap/ProseMirror（>500KB），与现有 composer 无关，YAGNI；
-- **不宣称像素级复刻上游 UI**：依据 §6.1.3，本仓没有上游设计稿/令牌表/截图，只验收行为等价；
+- **不宣称像素级实现上游 UI**：依据 §6.1.3，本仓没有上游设计稿/令牌表/截图，只验收行为等价；
 - **不改协议与会话日志**：投影帧、事件类型、IPC 11 键全部原样。
 
 ---
@@ -73,7 +73,7 @@
 
 ## 3. 数据通道不变量（本批的验收底线）
 
-这些是复刻方案里的既有不变量，本批只在其上叠视图，不许有任何一条被稀释：
+这些是实现方案里的既有不变量，本批只在其上叠视图，不许有任何一条被稀释：
 
 1. 消息唯一真源仍是 `session.log`；界面数据仍只来自 `session/projection` 与 `turn/poll`。
    分组、折叠**只是投影之上的视图派生**：不写日志、不发协议帧、不新增 IPC 通道；
@@ -224,7 +224,7 @@ h("button", { class: "btn btn-fold", "data-fold-toggle": m.id, onClick: toggle }
 
 - `AGENTS.md`：vendor 步骤改三步 + 两种折叠产物（js/css）；渲染层描述补「消息面经
   TinyRobot BubbleList 渲染，vue 双别名」；
-- `docs/plans/dsh-capability-matrix.md`：`conversation` 行「已复刻」列 ◐→✔（按 §6.1.2
+- `docs/plans/capability-matrix.md`：`conversation` 行「已实现」列 ◐→✔（按 §6.1.2
   表体行号核对后再改；「上游已核」列保持 ☐ 不假勾——它只能由读上游原文补）；
 - `docs/evidence/`：追加本批实测计数（dev 与打包态两套）。
 

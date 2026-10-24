@@ -267,7 +267,7 @@ function selftest(root, docPath) {
   // 索引取不到源文件，此时「备注引用的文件存在」必须判红灯而不是空集合放行。
   const fx = path.join(dir, 'fixture-root');
   fs.mkdirSync(path.join(fx, 'docs/plans'), { recursive: true });
-  const fdoc = path.join(fx, 'docs/plans/dsh-capability-matrix.md');
+  const fdoc = path.join(fx, 'docs/plans/capability-matrix.md');
   fs.copyFileSync(docPath, fdoc);
   const caught = audit(fx, fdoc).find((c) => c.name === 'index-source' && c.level === 'FAIL');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -284,7 +284,7 @@ const root = hasRootArg ? argv[0] : path.resolve(__dirname, '..', '..');
 if (!fs.existsSync(root)) { console.log('用法: node docs/qa/check-matrix-evidence.cjs [repoRoot] [--selftest] [docPath]'); process.exit(2); }
 const useSelftest = argv.includes('--selftest');
 const pos = argv.filter((a) => !a.startsWith('--'));
-const docPath = (hasRootArg ? pos[1] : pos[0]) || path.join(root, 'docs/plans/dsh-capability-matrix.md');
+const docPath = (hasRootArg ? pos[1] : pos[0]) || path.join(root, 'docs/plans/capability-matrix.md');
 try {
   process.exit(useSelftest ? selftest(root, docPath) : report(audit(root, docPath)));
 } catch (e) {

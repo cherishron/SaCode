@@ -32,7 +32,7 @@
 ### 2.2 生效链条（引 10-08 / 10-11 既有证据）
 
 - [windows-low-integrity-delivery-fix-2026-10-08.md](windows-low-integrity-delivery-fix-2026-10-08.md)：父进程令牌完整性 RID=8192（Medium），新 Electron 进程 RID=4096（Low）——新进程完整性取调用者与可执行文件标签的较小者（Microsoft MIC 规则）；Low 主进程 `CreateWindowStation` 返回 Win32 5 后退出 `0x80000003`。同字节产物经 `probe-neutral-delivery.cjs`（按内容重写、不复制安全描述符）从中性目录运行：**SMOKE PASS、退出 0**。
-- [2026-10-11-takeover-regression-and-plugin-delivery.md](2026-10-11-takeover-regression-and-plugin-delivery.md) §9.10/§9.11：用户 Explorer 直接启动实测 `CreateWindowStation handle=0 error=5`；独立 32/64 位子程序写默认 TEMP 返回错误 5、写 D 盘私有目录成功；Chromium 130 枚举 12 = `SBOX_ERROR_CANNOT_CREATE_WINSTATION`。
+- [2026-10-11-takeover-regression-and-plugin-delivery.md](../clients/desktop/2026-10-11-takeover-regression-and-plugin-delivery.md) §9.10/§9.11：用户 Explorer 直接启动实测 `CreateWindowStation handle=0 error=5`；独立 32/64 位子程序写默认 TEMP 返回错误 5、写 D 盘私有目录成功；Chromium 130 枚举 12 = `SBOX_ERROR_CANNOT_CREATE_WINSTATION`。
 
 ### 2.3 本轮复现与 A/B 对照
 
@@ -104,7 +104,7 @@ NSIS 大型安装器（>500 KB）运行时，启动器先把自身解压到 `%TE
 | N2 | 仓库内（Low 标签） | 同上 | **失败**：无写入、无解压（静默退出） | 复现"低完整性写不了 Medium TEMP" |
 | N3 | 中性 | 仓库内私有目录（Low） | **成功** | Medium 写 Low 允许——解释 10-11 探针" D 盘私有目录 rc=0" |
 
-三格结果与 MIC 规则完全一致，与 [2026-10-11-takeover-regression-and-plugin-delivery.md](2026-10-11-takeover-regression-and-plugin-delivery.md) §9.9/§9.10 的既有读法（C 盘 TEMP 失败/D 盘成功）互为印证，并补上了当时"没有取证到具体文件访问失败的底层原因"的缺口。
+三格结果与 MIC 规则完全一致，与 [2026-10-11-takeover-regression-and-plugin-delivery.md](../clients/desktop/2026-10-11-takeover-regression-and-plugin-delivery.md) §9.9/§9.10 的既有读法（C 盘 TEMP 失败/D 盘成功）互为印证，并补上了当时"没有取证到具体文件访问失败的底层原因"的缺口。
 
 **边界**：探针为静默模式，未复现交互式错误对话框（用户截图为交互形态）；机制判定不受影响。10-11 记录"最小 NSIS 探针在默认 C 盘 TEMP 12 秒未退出"与"写 TEMP 错误 5"分别对应交互弹窗等待与静默拒绝两种形态。
 

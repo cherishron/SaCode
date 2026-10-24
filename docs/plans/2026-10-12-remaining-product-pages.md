@@ -19,7 +19,7 @@
 
 ## 接线复核更新
 
-上述三条失败已复现为系统 Temp 的设置目录创建权限错误；独占夹具修复后，搜索、恢复、适配器与真实 Host 接线合跑 33/33，退出码 0。出处见 docs/evidence/2026-10-12-plugin-wiring-temp-recheck.md。未重建 Host，远程市场目录仍缺契约。
+上述三条失败已复现为系统 Temp 的设置目录创建权限错误；独占夹具修复后，搜索、恢复、适配器与真实 Host 接线合跑 33/33，退出码 0。出处见 docs/clients/desktop/2026-10-12-plugin-wiring-temp-recheck.md。未重建 Host，远程市场目录仍缺契约。
 
 ## 页面入口更新
 

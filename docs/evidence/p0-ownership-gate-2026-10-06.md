@@ -30,7 +30,7 @@ SELFTEST: PASS (probes=17, missed=0, baseline=green)   rc=0
 
 ## 2. 矩阵现值计数锚点
 
-`docs/plans/dsh-capability-matrix.md` 表体前新增一行现值口径：
+`docs/plans/capability-matrix.md` 表体前新增一行现值口径：
 
 ```
 表体计数（门禁 check_p0_ownership 机械复算，唯一现值口径）：✔ 9 / ◐ 54 / ☐ 0

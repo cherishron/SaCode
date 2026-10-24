@@ -1,22 +1,22 @@
 # SaCode 技能（Skill）清单接入方案设计（2026-10-20）
 
-> 纯调研 + 设计。DSH 源码只读（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）+ SaCode 源码只读。本文件不改产品代码、不碰在途文件、不构成实施授权。
+> 纯调研 + 设计。基线 源码只读（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）+ SaCode 源码只读。本文件不改产品代码、不碰在途文件、不构成实施授权。
 
 ## 0. 背景与问题
 
 用户反馈："当前客户端尚未接入可引用的技能清单"。核实属实：`apps/desktop/renderer/pages/composer-menu.ts:21` 注释明说"技能清单：宿主 `extension/list` 的真实注册表"，`enter('skills')` 调 `loadTools()`→`props.listTools()`→IPC `extension/list`，即**把普通工具列表当技能展示**。这不是真正的技能。
 
-要搞清楚 DSH 怎么区分"工具"和"技能"，再给 SaCode 的接入路径。
+要搞清楚 基线 怎么区分"工具"和"技能"，再给 SaCode 的接入路径。
 
 ---
 
-## 1. DSH 机制摘要（逐条回答 6 个调研问题）
+## 1. 基线 机制摘要（逐条回答 6 个调研问题）
 
 证据来自 `dsh-tool-skill`、`dsh-skill`、`dsh-skill-badge`、`dsh-skill-filesystem`、`dsh-skill-office`、`dsh-client-ui-skill`、`dsh-agent-preset`、`dsh-agent-preset-registry`、`dsh-agent-instructions`、`dsh-system-prompt`、`dsh-persona`。行号均指各包 `lib/index.js`（或 `lib/client.js`）。
 
 ### 1.1 技能 vs 工具：技能是"指令文本"，不是"工具+提示词+约束"的打包
 
-DSH 的"技能"（skill）= **一份可复用的任务专项指令文本**（markdown 正文 + YAML frontmatter 元数据），**不是**"一组工具 + 提示词 + 行为约束"的打包。技能 schema 字段（`dsh-skill/lib/index.js:471-489` `validateDefinition`）：
+基线 的"技能"（skill）= **一份可复用的任务专项指令文本**（markdown 正文 + YAML frontmatter 元数据），**不是**"一组工具 + 提示词 + 行为约束"的打包。技能 schema 字段（`dsh-skill/lib/index.js:471-489` `validateDefinition`）：
 
 ```
 name, description, whenToUse?, invocation, source, provider, resourceBase?, path?, content, metadata?, rank
@@ -85,7 +85,7 @@ UI 侧（`dsh-client-ui-skill/lib/client.js:375-427`）：`/` 触发的 `inputTr
 
 ### 1.5 和 MCP 的关系：完全分离，无代码引用
 
-"MCP = 外部工具，技能 = 内部能力打包"的方向对，但需修正：**DSH 的技能不是"一组工具的打包"**，它只是指令文本。技能 schema 里没有 `tools` 字段，provider 接口（`list`/`get`）只产文本候选与文本定义，不向 ToolRuntime 注册工具。
+"MCP = 外部工具，技能 = 内部能力打包"的方向对，但需修正：**基线 的技能不是"一组工具的打包"**，它只是指令文本。技能 schema 里没有 `tools` 字段，provider 接口（`list`/`get`）只产文本候选与文本定义，不向 ToolRuntime 注册工具。
 
 - grep `mcp|MCP` 在 5 个 skill 包的 `lib/index.js` 与 README 中**零命中**。
 - MCP 工具注册走独立路径（`dsh-mcp-client/lib/index.js:104-156` `syncTools` 把 MCP 工具注册进 ToolRuntime）；技能加载**不触达 `ctx.tools`**。
@@ -104,7 +104,7 @@ UI 侧（`dsh-client-ui-skill/lib/client.js:375-427`）：`/` 触发的 `inputTr
 
 ## 2. SaCode 现状对照
 
-| 维度 | DSH | SaCode 现状 | 差距 |
+| 维度 | 基线 | SaCode 现状 | 差距 |
 |---|---|---|---|
 | 技能定义 | 指令文本（md+frontmatter），`name/description/whenToUse/content/...` | `core/src/skill.cj` `SkillRegistry` **log-only 存根**：只有 `name`+`description`，`register`/`uninstall`/`list`/`describe`，**无 `content`、无 provider、无 frontmatter** | 缺正文、缺 provider 接口 |
 | 技能工具 | `skill` 工具（模型主动加载） | **无** `skill` 工具；`extension/list` 返回普通工具（`{name,description,handler}`） | 缺模型面向的 skill 加载工具 |
@@ -114,7 +114,7 @@ UI 侧（`dsh-client-ui-skill/lib/client.js:375-427`）：`/` 触发的 `inputTr
 | 系统提示词 | `dsh-system-prompt` section 表 + waterfall；技能**不**进 section | `core/src/sysprompt.cj` `SystemPromptBuilder` 简单拼装：角色 + `ToolRegistry.list()` 工具清单 + goal；**无 section 机制** | 技能目录**不**进 sysprompt（§3.4），保持 `sysprompt.cj` 现状不动；目录走持久 user 消息 |
 | 技能 vs 工具 | 技能是文本，工具是函数；`skill` 是唯一桥 | "技能"入口接 `extension/list` 普通工具 | **核心错位**：把工具当技能 |
 | 技能 vs MCP | 完全分离 | SaCode MCP 也在设计（见 `mcp-integration-design-2026-10-20.md`）；技能与 MCP 同样应分离 | 设计一致即可 |
-| plugin-descriptions | — | `apps/desktop/renderer/plugin-descriptions.ts:10-11,68` 已有 `skill-filesystem`/`tool-skill`/`ui-skill` 描述（DSH 插件名抄过来的） | 描述在，实现缺 |
+| plugin-descriptions | — | `apps/desktop/renderer/plugin-descriptions.ts:10-11,68` 已有 `skill-filesystem`/`tool-skill`/`ui-skill` 描述（基线 插件名抄过来的） | 描述在，实现缺 |
 | Host RPC | `skills/list`（typert） | Host 能力表（`docs/plans/host-capabilities.json` + `apps/host/src/main.cj:1274`）**无 `skill/*`** | 缺 `skill/list`、`skill/get` |
 
 SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可复用）、`user-text.ts` 的 `/name` slash 渲染钩子（`openSkill`）、`plugin-descriptions.ts` 的技能插件描述、`sysprompt.cj` 的 `ToolRegistry` 驱动拼装（**不改**，技能目录不进 sysprompt）。**核心闭环差五段**：技能正文 + provider、`skill` 加载工具（单个，不把每项技能注册为工具）、目录扫描（含文件边界）、agent pre-step 注入（目录+正文+去重+slash 边界）、Host `skill/*` RPC + UI 数据源切换。
@@ -127,19 +127,19 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 ### 3.1 技能定义与 provider（core）
 
-- 扩展 `core/src/skill.cj` 的 `SkillRegistry` → 持 `SkillDefinition`（对齐 DSH schema）：
+- 扩展 `core/src/skill.cj` 的 `SkillRegistry` → 持 `SkillDefinition`（对齐 基线 schema）：
   ```
   SkillSummary { name, description, whenToUse?, modelInvocable, userInvocable, source, provider, path?, resourceBase? }
   SkillDefinition { summary: SkillSummary, content: String }   // 组合（不继承），暴露 name()/description() 访问器
-  // 不用 DSH 的 invocation/rank 数值字段：调用策略用 modelInvocable/userInvocable 两布尔位；
+  // 不用 基线 的 invocation/rank 数值字段：调用策略用 modelInvocable/userInvocable 两布尔位；
   // 跨层同名覆盖按 §3.2 优先级表，不靠 rank。
   ```
   保留现有 `register`/`uninstall` log 事件（向后兼容），新增 `listSummaries()`（返回 name+description+whenToUse，供目录）与 `get(name)`（返回完整 definition 含 content）。
-- provider 接口（对齐 DSH `RUNTIME_SKILL_PROVIDER`）：`{ name, list() → SkillSummary[], get(name) → SkillDefinition? }`。core 提供内置 `BundledSkillProvider`（硬编码随包技能）+ `FilesystemSkillProvider`（扫描目录）。
+- provider 接口（对齐 基线 `RUNTIME_SKILL_PROVIDER`）：`{ name, list() → SkillSummary[], get(name) → SkillDefinition? }`。core 提供内置 `BundledSkillProvider`（硬编码随包技能）+ `FilesystemSkillProvider`（扫描目录）。
 
 ### 3.2 发现路径与目录扫描 provider（core）
 
-**发现根表与同名覆盖规则**（不照搬 DSH 的 `.dsh` 路径，用 SaCode 品牌目录）：
+**发现根表与同名覆盖规则**（不照搬 基线 的 `.dsh` 路径，用 SaCode 品牌目录）：
 
 | 层 | 路径 | 优先级 | 说明 |
 |---|---|---|---|
@@ -148,7 +148,7 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 | 用户 | `<userHome>/.sacode/skills` | 3 | 用户全局技能（Windows：`C:\Users\<user>\.sacode\skills`） |
 | 内置 | `<appResources>/skills` | 4（最低） | 随包出货，被以上覆盖 |
 
-- **同名覆盖**：同一 `name` 跨层出现时，**高优先级层胜出，低层被遮蔽（不合并字段）**。理由：最贴近当前项目的技能应优先（与工作区配置惯例一致）。DSH 是 bundled rank 最高覆盖 user，SaCode 反过来——项目/用户自定义优先于内置。
+- **同名覆盖**：同一 `name` 跨层出现时，**高优先级层胜出，低层被遮蔽（不合并字段）**。理由：最贴近当前项目的技能应优先（与工作区配置惯例一致）。基线 是 bundled rank 最高覆盖 user，SaCode 反过来——项目/用户自定义优先于内置。
 - **用户目录与 `C:\Users\jingg\.sacode` 的关系**：用户技能目录就是 SaCode 用户主目录 `~/.sacode` 下的 `skills/` 子目录（即 `C:\Users\<user>\.sacode\skills`），**不是独立根**。SaCode 的其它用户级数据（设置、凭据等）同在 `~/.sacode/` 下。`<userHome>` 由 `os.homedir()`（仓颉等价）解析，不硬编 `jingg`。
 - **`<projectRoot>` 的来源**：当前会话 `workspace/get` 返回的 `directory`（Host 已有此 RPC），不取 CLI 启动 cwd——避免在 worktree/子目录里误扫上层。
 - **文件格式**：**Markdown + YAML frontmatter 严格子集**（不承诺完整 YAML 兼容）。`.md` 平铺文件 或 `<name>/SKILL.md` 目录 bundle。frontmatter 声明子集仅 5 键：`name`（必填，kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`）/`description`（必填，非空）/`whenToUse`（可选，单行字符串）/`disable-model-invocation`（可选，仅 `true`|`false`）/`user-invocable`（可选，仅 `true`|`false`）。**拒绝**：未知键（含 `metadata`——不解释故不入子集）、重复键、引号串（`"..."`/`'...'`）、块标量（`|`/`>`）、多行续行、空行、无冒号行、非法布尔。**不接受** `.yaml`/`.json` 技能文件，**不递归**嵌套子目录（depth=1）。
@@ -169,7 +169,7 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 **工具注册：一个加载工具，不把技能注册为工具**
 
-- 新增 `core/src/tool_skill.cj`：定义**名为 `skill` 的单个加载工具**（对齐 DSH `dsh-tool-skill`），参数 `{name: string}`，`execute` 调 `SkillRegistry.get(name)`，返回 `renderSkillContent(skill)` 文本，注册进 `ToolRegistry`。
+- 新增 `core/src/tool_skill.cj`：定义**名为 `skill` 的单个加载工具**（对齐 基线 `dsh-tool-skill`），参数 `{name: string}`，`execute` 调 `SkillRegistry.get(name)`，返回 `renderSkillContent(skill)` 文本，注册进 `ToolRegistry`。
 - **明确排除**："把每项技能注册为独立工具"（即每条 `SkillDefinition` 注册一个同名工具）**不做**。技能是注入给模型读的指令文本，不是可调用函数；为每条技能开一个工具会让工具表爆炸、与 MCP 工具混界、且模型会误把技能当副作用动作调。**唯一**因技能而注册的工具是 `skill` 加载器本身。
 - 现有 `extension/list`（普通工具）与技能**不共用通道**：`extension/list` 返回 `{name,description,handler}` 工具；`skill/list` 返回 `SkillSummary`（指令文档）。两者数据结构不同，UI 必须分开展示（见 §3.6）。
 
@@ -187,12 +187,12 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 - **仅扫直接用户输入**：pre-step 扫描已认领的 `source.kind === "user"` 消息的 text block；**不扫**工具输出、引用文档、assistant 消息、注入的 `<skill_content>` 自身。防止模型在工具结果里看到 `/name` 文本后被误当用户引用再注入。
 - **代码块不触发**：text block 内的 fenced code block（` ``` ` 围栏）与行内 code（`` ` ``）里的 `/name` **不匹配**——先剥代码块再跑正则，避免示例代码被当手势。
-- **手势正则**：`/(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g`（对齐 DSH `SKILL_GESTURE`，kebab-case 名，空白边界）。`/` 后必须紧跟字母数字，避免匹配文件路径（如 `/foo/bar` 不匹配，因为 `foo/bar` 含 `/` 不符合 `[a-z0-9-]+`）。
+- **手势正则**：`/(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g`（对齐 基线 `SKILL_GESTURE`，kebab-case 名，空白边界）。`/` 后必须紧跟字母数字，避免匹配文件路径（如 `/foo/bar` 不匹配，因为 `foo/bar` 含 `/` 不符合 `[a-z0-9-]+`）。
 - **未知名称**：`/foo` 但 `foo` 不是已注册技能 → **原样保留为字面文本**，不注入、不报错、不替换。用户消息不被破坏。
 - **多技能**：`/a /b` → 两个都匹配，按出现顺序逐个注入正文。
-- **`disable-model-invocation` 行为**：这类技能 `skill/list` 仍返回（标 `modelInvocable:false`）供 UI 展示与 `/name` 触发，但 `skill` 工具的 `execute` 收到它时**拒绝**（返回 `skill-not-model-invocable`），目录摘要里加"仅用户"标记。`user-invocable:false` 的反例（仅模型可调、用户手势不触发）首版不实现（DSH 也基本不用）。
+- **`disable-model-invocation` 行为**：这类技能 `skill/list` 仍返回（标 `modelInvocable:false`）供 UI 展示与 `/name` 触发，但 `skill` 工具的 `execute` 收到它时**拒绝**（返回 `skill-not-model-invocable`），目录摘要里加"仅用户"标记。`user-invocable:false` 的反例（仅模型可调、用户手势不触发）首版不实现（基线 也基本不用）。
 
-**`<skill_content>` 块格式**（对齐 DSH `renderSkillContent`）：
+**`<skill_content>` 块格式**（对齐 基线 `renderSkillContent`）：
 
 ```
 <skill_content name="...">
@@ -206,7 +206,7 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 ### 3.4 系统提示词不承载技能目录（避免双写）
 
-- 技能**不作为 system-prompt section**（与 DSH 一致：`SECTION_ORDERS` 无 SKILL 条目）。`sysprompt.cj` `SystemPromptBuilder.build()` **不追加**技能目录段。
+- 技能**不作为 system-prompt section**（与 基线 一致：`SECTION_ORDERS` 无 SKILL 条目）。`sysprompt.cj` `SystemPromptBuilder.build()` **不追加**技能目录段。
 - 目录摘要**只在 §3.3 的持久 user-role `<available_skills>` 消息里**出现一次，不进 `sysprompt`。这样避免同份目录既在持久消息又在 system prompt 重复堆叠——模型不会在 system 段和 user 段各看到一遍目录。
 - 正文 `<skill_content>` 也走 user 角色注入（§3.3），不进 system prompt。
 - 唯一进 system prompt 的是"现有工具清单"（`ToolRegistry.list()`）与 goal——这两者与技能无关，保持 `sysprompt.cj` 现状不动。
@@ -252,7 +252,7 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 **约束**
 
-- `skill/get` **不走审批**（读已注册技能正文，无副作用，对齐 DSH）；模型调 `skill` 工具也不走 `approval/ask`。技能正文里若指示模型调 write/edit/bash，那些工具调用照常走审批工单。
+- `skill/get` **不走审批**（读已注册技能正文，无副作用，对齐 基线）；模型调 `skill` 工具也不走 `approval/ask`。技能正文里若指示模型调 write/edit/bash，那些工具调用照常走审批工单。
 - `skill/get` **只按 `name` 取**，**不接受 path 参数**——不能用它读任意文件。`name` 必须是已注册技能名。
 - `digest` 用于 UI 判断目录是否变化，避免每轮重拉。
 
@@ -294,8 +294,8 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 ### 3.7 技能 vs MCP vs 预设的边界（设计约束）
 
-- **技能 ≠ MCP**：技能是文本注入，MCP 是工具注册；两者正交，不互相引用（对齐 DSH）。SaCode 的 MCP 设计（`mcp-integration-design-2026-10-20.md`）与技能设计独立。
-- **技能 ≠ 预设**：SaCode 暂无 preset 系统；技能不依赖预设。即便将来引入 preset，技能也不在 preset schema 里声明（对齐 DSH：preset 无 `skills` 字段）。
+- **技能 ≠ MCP**：技能是文本注入，MCP 是工具注册；两者正交，不互相引用（对齐 基线）。SaCode 的 MCP 设计（`mcp-integration-design-2026-10-20.md`）与技能设计独立。
+- **技能 ≠ 预设**：SaCode 暂无 preset 系统；技能不依赖预设。即便将来引入 preset，技能也不在 preset schema 里声明（对齐 基线：preset 无 `skills` 字段）。
 - **技能 ≠ AGENTS.md**：SaCode 若引入 AGENTS.md 加载（对齐 `dsh-agent-instructions`），它和技能同走 pre-step 注入通道，但职责不同（AGENTS.md 是工作区长期指令，技能是任务专项指令）。
 
 ---
@@ -303,12 +303,12 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 ## 4. 风险与边界
 
 - **技能不是工具**：最大风险是重蹈覆辙——把 `extension/list` 工具当技能。`composer-menu.ts` 必须切到 `skill/list`，"技能"卡片只展示真技能（有 `content` 的），不展示普通工具。
-- **不向 ToolRuntime 注册技能工具**：技能加载只注入文本，不注册工具（对齐 DSH `dsh-tool-skill` 全文唯一 `tools.register` 只注册 `skill` 自身）。唯一的"技能工具"是 `skill` 加载器本身。
-- **加载不审批、下游照常审批**：`skill/get` 与 `skill` 工具调用不走 `approval/ask`（读文本无副作用）；技能正文里指示模型调 write/edit/bash 等，走现有审批工单。这与 DSH 一致（DSH 技能不接 approval）。
-- **正文不缓存**：每次 `get()` 重读当前文件（对齐 DSH `dsh-skill/README.zh.md:99`），保证编辑后立即生效。SaCode 无 chokidar，首版用 mtime 轮询或会话级快照+手动刷新，不阻塞。
-- **frontmatter 解析**：仓颉需自写轻量 YAML frontmatter 解析（DSH 用 yaml 库）。首版只支持 `name`/`description`/`whenToUse`/`disable-model-invocation`/`user-invocable` 五字段，不引完整 YAML 库。
+- **不向 ToolRuntime 注册技能工具**：技能加载只注入文本，不注册工具（对齐 基线 `dsh-tool-skill` 全文唯一 `tools.register` 只注册 `skill` 自身）。唯一的"技能工具"是 `skill` 加载器本身。
+- **加载不审批、下游照常审批**：`skill/get` 与 `skill` 工具调用不走 `approval/ask`（读文本无副作用）；技能正文里指示模型调 write/edit/bash 等，走现有审批工单。这与 基线 一致（基线 技能不接 approval）。
+- **正文不缓存**：每次 `get()` 重读当前文件（对齐 基线 `dsh-skill/README.zh.md:99`），保证编辑后立即生效。SaCode 无 chokidar，首版用 mtime 轮询或会话级快照+手动刷新，不阻塞。
+- **frontmatter 解析**：仓颉需自写轻量 YAML frontmatter 解析（基线 用 yaml 库）。首版只支持 `name`/`description`/`whenToUse`/`disable-model-invocation`/`user-invocable` 五字段，不引完整 YAML 库。
 - **目录扫描根**：用 `.sa-code/skills` 而非 `.dsh/skills`（品牌归属），但**兼容 `.agents/skills`**（跨工具生态，AGENTS.md 规范）。bundled 技能随包 `assets/skills/`。
-- **`/name` 手势正则**：对齐 DSH `/(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g`，kebab-case 名，空白边界。避免误匹配文件路径 `/`。
+- **`/name` 手势正则**：对齐 基线 `/(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*)(?=\s|$)/g`，kebab-case 名，空白边界。避免误匹配文件路径 `/`。
 - **slash 仅扫直接用户输入**：不扫工具输出、引用文档、assistant 消息、注入的 `<skill_content>` 自身；代码块（fenced/inline）内的 `/name` 先剥再匹配，避免示例代码被当手势（§3.3）。未知名原样保留不报错；多技能按序注入。
 - **文件访问边界（安全）**：`FilesystemSkillProvider` 读取**只在四个声明根内**（§3.2）：**按路径组件边界**判定（不用裸 `startsWith`，避免 `skills-other` 误判）、candidate+祖先符号链接/reparse 拒绝、文件超 `maxInstructionBytes` fail-closed 不截断、frontmatter 坏 fail-closed 丢候选不抛。**"读文本不审批"仅限已注册技能的 SKILL.md 正文**，不等于授予本机任意文件读——任意文件读仍走 `read` 工具+审批。
 - **`get()` TOCTOU 残留**：`verifiedRead` 在最终读取时重核路径/链接/大小/名称，把替换利用窗口压到最小，但**不声称彻底解决文件替换竞争**；理论上完全一致须文件锁，本版不引入（§3.2）。
@@ -319,10 +319,10 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 - **`openSkill` 不扩权**：只打开 `skill/list` 返回的 `path`（已在声明根内校验过）；UI 不把 path 暴露成可输入框。`path=null`（bundled/opaque）改在 Inspect 面板展示 `content`，不落盘。`resourceBase` 指引不触发额外读取，模型要读资源目录下文件须走 `read`/`web-fetch` 工具受审批。
 - **目录不双写**：`<available_skills>` 摘要只在持久 user 消息出现一次，**不**进 `sysprompt`（§3.4）；避免模型在 system 段和 user 段各看一遍目录，浪费上下文且口径漂移。
 - **同轮去重**：同一 `(stepId, name)` 正文只注入一次 user 消息；模型调 `skill` 工具同名时工具结果落历史但不重复追加 user 注入（§3.3）。
-- **资源指引不抓取**：`<skill_resources>` 只给 directory/url/opaque hint，不枚举不下载文件（对齐 DSH "Resources are guidance, not attachments"）。
-- **正文大小**：DSH README 标"已知限制/不做"正文版本化与大小上限（`dsh-tool-skill/README.zh.md:244,248`）。SaCode 首版也不做版本化；可加 `maxInstructionBytes` 配置（对齐 DSH `Config.maxInstructionBytes`）防超大正文撑爆上下文。
-- **`whenToUse` 消费方**：DSH 注册表保留 `whenToUse` 但目录模板**不渲染**它（`dsh-tool-skill/README.zh.md:243`）。SaCode 可在 `skill/list` 摘要里返回 `whenToUse`，UI 是否展示留待实现期决定。
-- **未验证项（DSH 源码未答）**：远程/HTTP skill provider（DSH README 提及但 5 包无实现）；`metadata` 字段是否被用作非正式 MCP 工具引用（schema 不解释，无证据）；`whenToUse` 实际消费方（`dsh-tool-present` grep 零命中）。SaCode 首版不做远程 provider、不解释 `metadata`。
+- **资源指引不抓取**：`<skill_resources>` 只给 directory/url/opaque hint，不枚举不下载文件（对齐 基线 "Resources are guidance, not attachments"）。
+- **正文大小**：基线 README 标"已知限制/不做"正文版本化与大小上限（`dsh-tool-skill/README.zh.md:244,248`）。SaCode 首版也不做版本化；可加 `maxInstructionBytes` 配置（对齐 基线 `Config.maxInstructionBytes`）防超大正文撑爆上下文。
+- **`whenToUse` 消费方**：基线 注册表保留 `whenToUse` 但目录模板**不渲染**它（`dsh-tool-skill/README.zh.md:243`）。SaCode 可在 `skill/list` 摘要里返回 `whenToUse`，UI 是否展示留待实现期决定。
+- **未验证项（基线 源码未答）**：远程/HTTP skill provider（基线 README 提及但 5 包无实现）；`metadata` 字段是否被用作非正式 MCP 工具引用（schema 不解释，无证据）；`whenToUse` 实际消费方（`dsh-tool-present` grep 零命中）。SaCode 首版不做远程 provider、不解释 `metadata`。
 
 ## 5. 不在范围
 
@@ -338,7 +338,7 @@ SaCode 已有的可复用资产：`SkillRegistry` 存根（log 事件结构可�
 
 ## 6. 取证索引
 
-DSH（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）：
+基线（`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`）：
 - `dsh-tool-skill/lib/index.js`：`skillTool` 定义 `:59-66`、`execute` `:138-157`、`tools.register(skillTool)` `:167`、pre-step 注入 `:168-202`、目录投影 `:203-236`、`SKILL_GESTURE` `:373`、`invokedSkillNames` `:381-394`、目录模板 `:244`。
 - `dsh-skill/lib/index.js`：`SkillRegistry` `:119`、`registerProvider` `:147-183`、`renderSkillContent` `:57-70`、`validateDefinition` `:471-489`、`toSummary` `:491-503`、`RUNTIME_SKILL_PROVIDER` `:427-436`、分层合并 `:298-330`、`compareIndexedCandidates` `:519-520`。
 - `dsh-skill-filesystem/lib/index.js`：根表 `:150-188`、文件格式 `:586-592`、`parseSkillFile` `:664-705`、`get` 重读 `:115-134`、`SkillWatchManager` `:191-479`。

@@ -83,7 +83,7 @@
 
 **判定：自有增量，不新增矩阵行、分母保持 63。** 三重删除保护与进出语义按自有设计登记，不挂进 workspace 契约行；Qwen Code 页只作行为灵感。
 
-一处更正：本计划早先转述的矩阵 workspace 行缺口「宿主与扩展仍共用进程级当前目录」全仓 grep 0 命中，该句是我方转述时自造的，不予采用；行级真实缺口以 `docs/plans/dsh-capability-matrix.md` 的 workspace 行为准。
+一处更正：本计划早先转述的矩阵 workspace 行缺口「宿主与扩展仍共用进程级当前目录」全仓 grep 0 命中，该句是我方转述时自造的，不予采用；行级真实缺口以 `docs/plans/capability-matrix.md` 的 workspace 行为准。
 
 另一处更正（2026-10-09 直读 `core/src/agent.cj` 后）：本节原先写「进入 worktree 后 shell 与文件工具仍在主检出执行」，**归因过宽**。`workingPath()`（`core/src/agent.cj`）与 `lspVerbStep` 一直是执行时读 `SessionWorkspace(log, fallback: workingDirectory).effectiveDirectory()`，`workspace/directory` 事件优先于入口 fallback，因此 read/write/edit/glob/grep/bash/pwsh/LSP 本就跟会话目录走。真实冻结点只有 `run_code`：`PtcExecutor` 只用构造期那份目录且原先没有 `cwd` 形参——本批改为 `runCode(..., cwd!: String = "")` 并补指定用例（去掉 `cwd:` 即红）。Host 侧仍需显式传 `workingDirectory` 作 fallback，但它是「补齐基准」而非「修一个全程跑错目录的大 bug」。
 

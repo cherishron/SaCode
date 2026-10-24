@@ -1,13 +1,13 @@
 # 2026-10-10 计划未勾项推进性审计
 
-审计对象：`docs/superpowers/plans/2026-10-10-unified-remote-mobile.md`。
+审计对象：`docs/clients/mobile/2026-10-10-unified-remote-mobile.md`。
 计数与时间戳取自本批提交前一刻的工作区读数，不复用旧批次口径。
 
 ## 0. 分母
 
 ```
-$ grep -c '^- \[ \]' docs/superpowers/plans/2026-10-10-unified-remote-mobile.md   → 70
-$ grep -c '^- \[x\]' docs/superpowers/plans/2026-10-10-unified-remote-mobile.md   → 7
+$ grep -c '^- \[ \]' docs/clients/mobile/2026-10-10-unified-remote-mobile.md   → 70
+$ grep -c '^- \[x\]' docs/clients/mobile/2026-10-10-unified-remote-mobile.md   → 7
 ```
 
 7 项已勾（任务 1/6/6/4 各若干小条与 4 项「授权后提交」），70 项未勾。审计按未勾行做四档分类。
@@ -304,4 +304,4 @@ remote-idempotency        5/5   remote-utf8-boundary       3/3
 - **本批的产出是一份分类判定**，不是「把 70 项变成 60 项」。70 项未勾仍为 70 项，本批只把它们排进 A/B/C/D 四档并写出解锁顺序。
 - **未做**：任何源码编辑（含 A1/A3 那两个「单文件单行改动」）；任何测试命令的复跑（daemon 二进制缺失）；任何 Linux / Kuikly 环境动作。
 - **未改**：任何并发会话持有的文件、任何未落库的 fixture、任何计划与证据文档以外的一行。
-- **计数**：`docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` 未勾项在本批前后均 **70**，本批不勾任何一项。
+- **计数**：`docs/clients/mobile/2026-10-10-unified-remote-mobile.md` 未勾项在本批前后均 **70**，本批不勾任何一项。

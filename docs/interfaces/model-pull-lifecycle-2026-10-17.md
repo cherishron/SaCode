@@ -1,7 +1,7 @@
 # 模型发现：总预算、取消与操作关联结果（2026-10-17）
 
 - 状态：工作区契约，Windows x64 私有 Host 定向验证；未提交、未安装、未发布。
-- 适用入口：Host NDJSON JSON-RPC；2026-10-18桌面工作区已新增有限preload查询/取消与供应商页，见[桌面证据](../evidence/2026-10-18-model-pull-desktop-lifecycle.md)。daemon未开放新增方法，正式安装包未更新。
+- 适用入口：Host NDJSON JSON-RPC；2026-10-18桌面工作区已新增有限preload查询/取消与供应商页，见[桌面证据](../clients/desktop/2026-10-18-model-pull-desktop-lifecycle.md)。daemon未开放新增方法，正式安装包未更新。
 - 源码：`apps/host/src/model_pull_job.cj`、`core/src/model_catalog_request.cj`、`core/src/model_catalog.cj`。
 - 证据：[Host 生命周期验证](../evidence/2026-10-17-model-pull-host-lifecycle.md)；问题沿革：[D22 复核](../evidence/2026-10-17-model-pull-timeout-followup.md)。
 

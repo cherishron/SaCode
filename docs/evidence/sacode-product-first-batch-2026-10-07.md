@@ -6,7 +6,7 @@
 
 - [需求追踪](../plans/sacode-product-traceability-2026-10-07.md)：F01–F20 的核心候选、Host/CLI 入口、桌面消费、测试候选、缺口、工作包主责与依赖。当前主责为职责分工，具体实施者尚待认领；未核项保持待核。
 - [接口设计](../plans/sacode-product-interfaces-2026-10-07.md)：权威源、状态、增量方法与 CLI 动作、授权、持久化、失败及恢复；新增方法未实现，不加入产品能力声明。
-- [独立交互原型](../../apps/desktop/prototype/README.md)：自有入口，Vue runtime + h()、OpenTiny、复用 SlotCore/ClientScope。构建产物无 eval/new Function/import()，CSP script-src self、connect-src none，不包含运行时 npm 加载，不调用 Host 或真实提供方。目录不纳入现有桌面打包白名单。
+- 独立交互原型（**原型目录 `apps/desktop/prototype/` 已移除**）：自有入口，Vue runtime + h()、OpenTiny、复用 SlotCore/ClientScope。构建产物无 eval/new Function/import()，CSP script-src self、connect-src none，不包含运行时 npm 加载，不调用 Host 或真实提供方。目录不纳入现有桌面打包白名单。
 - PRD F18 修正为增强直接替换与按钮/Ctrl+Z 回退，不弹预览。原型增强只改演示草稿，不发送真实消息、不执行工具；模拟文本保留原任务，不额外添加要求。
 
 ## 本轮实测
@@ -28,7 +28,7 @@
 运行后本机证据（gitignore，不入库）：
 
 - `apps/desktop/prototype/evidence/checks.json`、smoke.log、exit-code.txt。
-- [亮色截图](../../apps/desktop/prototype/evidence/light.png)、[深色截图](../../apps/desktop/prototype/evidence/dark.png)、[窄窗截图](../../apps/desktop/prototype/evidence/narrow.png)。截图已目视检查；初版外层溢出、标签换行及深色按钮问题修正后重新生成。
+- 亮色截图、深色截图、窄窗截图（**原型目录 `apps/desktop/prototype/evidence/` 已移除**，原图见 git 历史）。截图已目视检查；初版外层溢出、标签换行及深色按钮问题修正后重新生成。
 - 反证日志：`D:/Temp/SaCode-prototype-20261007/mutant/mutation.log`；仅取证副本，未污染正式源码。
 
 在仓库根目录先 build，再 verify；预览运行 `node apps/desktop/prototype/serve.mjs`，打开 http://127.0.0.1:3197/，Ctrl+C 停止。前端模拟状态刷新即重置，不冒充产品持久化。

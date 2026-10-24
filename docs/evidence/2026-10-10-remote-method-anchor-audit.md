@@ -1,6 +1,6 @@
 # 批次 Z：`remote-capability-contract.json` 实现锚点真实落地审查
 
-对齐 `docs/superpowers/plans/2026-10-10-unified-remote-mobile.md` §1 第 72 行：
+对齐 `docs/clients/mobile/2026-10-10-unified-remote-mobile.md` §1 第 72 行：
 「审查方法表真实引用，记录能力缺实现时需补哪个核心/Host模块；未完成项不得进 capabilities」。
 
 工作区 HEAD `435b030`。取证工具 `apps/desktop/.tmp-test/audit-anchors-v2.cjs`（探针输出到 `.tmp-test/contract-anchor-audit-v2.json`，未入库）。

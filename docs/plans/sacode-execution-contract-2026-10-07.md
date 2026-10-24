@@ -1,6 +1,6 @@
 # SaCode 执行与构建测试增量契约
 
-> **进度对账（2026-10-09 整理）**：本文档为历史快照/设计登记，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
+> **进度对账（2026-10-09 整理）**：本文档为历史快照/设计登记，引用基线或能力口径可能已过期。产品真实进度以 [`docs/product/PRD.md`](../product/PRD.md) 的「进度对账（2026-10-09 静态审计）」三档口径为准；若本文与 PRD 冲突，以 PRD 为准。
 
 2026-10-08 当前口径：execution 六动作及 CLI job 有限接口已实现并在同一新核心库的 Host/CLI 上复验，见 windows-unified-core-dual-entry-2026-10-08.md。下方初始拟议段为历史设计，不能据此否认已实现接口；真实 OS 隔离与公共启动门禁仍未放行，监督/输出/结算按后文实现增量及对应证据判定。
 
@@ -200,7 +200,7 @@ Host 与 CLI 均按当前工作区源码重建至私有 target，DLL 同目录�
 
 workspace/get 同源返回 sessionId、directory、revision；revision 来自 Workspace.revision 的 workspace/directory 计数。桌面完整提案、审批绑定、状态、输出与取消已实现，关闭/切换废弃客户端回执且不发送 stop。损坏输出页原子拒绝，UTF-8 跨页拼接；空页不当作 EOF。当前显式输入执行身份恢复，标签任务引用持久化尚未接入。
 
-证据见 `docs/evidence/execution-desktop-admission-2026-10-08.md` 与 `execution-dual-entry-recheck-2026-10-08.md`。桌面控制器 9/9（含 1 真实 Host），选定核心 118 通过/1 跳过；这些不能代替全量核心或 Electron 页面。Electron 在进入页面脚本前退出 0x80000003，原因待核，主责 G/W60；解锁后须取得正式页面、亮暗主题及会话/断连/关闭竞态证据。构建测试页面、真实报告、隔离/子树监督和 GoalRunner 实际轮次接线继续待实施，不因上述专项通过升级为完成。
+证据见 `docs/clients/desktop/execution-desktop-admission-2026-10-08.md` 与 `execution-dual-entry-recheck-2026-10-08.md`。桌面控制器 9/9（含 1 真实 Host），选定核心 118 通过/1 跳过；这些不能代替全量核心或 Electron 页面。Electron 在进入页面脚本前退出 0x80000003，原因待核，主责 G/W60；解锁后须取得正式页面、亮暗主题及会话/断连/关闭竞态证据。构建测试页面、真实报告、隔离/子树监督和 GoalRunner 实际轮次接线继续待实施，不因上述专项通过升级为完成。
 
 ## 18. 目标轮次产品持久提供方（2026-10-08）
 

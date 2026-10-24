@@ -42,7 +42,7 @@
 | `apps/desktop/main.cjs` | `seedIfNeeded` 补一条 `assistant/message`；`uiSmoke` 迁移 `.msg` 选择器 + 新增断言 | 改（Task 2、3、4、5） |
 | `apps/desktop/package.json`（+ lock） | `vendor` 三步；按需新增 `markdown-it`/`dompurify` devDep | 改（Task 2） |
 | `AGENTS.md` | vendor 步骤与渲染层描述同步 | 改（Task 7） |
-| `docs/plans/dsh-capability-matrix.md` | `conversation` 行「已复刻」◐→✔ | 改（Task 7） |
+| `docs/plans/capability-matrix.md` | `conversation` 行「已实现」◐→✔ | 改（Task 7） |
 | `docs/evidence/p0-status-2026-10-02.md` | 追记本批实测计数与限制 | 改（Task 7） |
 
 ---
@@ -372,7 +372,7 @@ Modify `apps/desktop/renderer/index.html`（整文件替换；顺序纪律：CSS
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
-<title>DSH</title>
+<title>基线</title>
 <link rel="stylesheet" href="vendor/tinyvue.iife.css">
 <link rel="stylesheet" href="vendor/tinyrobot.css">
 <link rel="stylesheet" href="styles.css">
@@ -986,7 +986,7 @@ cd "D:/Project/sa/saai/sa-code" && git add scripts/pack-tinyvue.mjs && git diff 
 
 **Files:**
 - Modify: `AGENTS.md`
-- Modify: `docs/plans/dsh-capability-matrix.md`
+- Modify: `docs/plans/capability-matrix.md`
 - Modify: `docs/evidence/p0-status-2026-10-02.md`
 
 - [ ] **Step 1: AGENTS.md 同步（vendor 三步 + 渲染层描述）**
@@ -998,7 +998,7 @@ Modify `AGENTS.md`：
 
 - [ ] **Step 2: 能力矩阵 conversation 行 ◐→✔（按表头名取列，别按下标）**
 
-Modify `docs/plans/dsh-capability-matrix.md` 第 73 行。**表头是 `| 模块 | zh | 站点 | 阶段 | 上游已核 | 已复刻 | 备注 |`**——「已复刻」是第 6 列、「上游已核」是第 5 列（全表保持 ☐，不假勾）。改后：
+Modify `docs/plans/capability-matrix.md` 第 73 行。**表头是 `| 模块 | zh | 站点 | 阶段 | 上游已核 | 已实现 | 备注 |`**——「已实现」是第 6 列、「上游已核」是第 5 列（全表保持 ☐，不假勾）。改后：
 
 ```markdown
 | conversation | ✔ | ✔ | M5/M6 | ☐ | ✔ | 切片已收口：`renderer/app.js` 经 `BubbleProvider + BubbleList`（groupStrategy=consecutive）按角色分组，`tool/` 行由自定义内容渲染器保住可见，长正文按 `renderer/msgfold.js` 的单一阈值默认折叠并可展开/收起；`--ui-smoke` 钉住组数、角色分布、placement、合并、折叠三态与 `--tr-*` 色值桥接。**剩余**：助手正文仍只在 `turn/poll` 帧里，未落 `assistant/message`（真 provider 批次）；`上游已核` 仍需读 63 篇原文 |
@@ -1045,13 +1045,13 @@ Expected: `npm test` rc=0 且 `# fail 0`（总数 ≥ 基线 + 8）；`host-buil
 
 ```bash
 cd "D:/Project/sa/saai/sa-code/apps/desktop" && npx electron-builder --config.electronDist=node_modules/electron/dist > /tmp/eb.log 2>&1; echo "builder rc=$?"
-ls -la dist/electron/win-unpacked/"DSH Desktop.exe"
+ls -la dist/electron/win-unpacked/"基线 Desktop.exe"
 ```
 
-Expected: rc=0，且 `win-unpacked/DSH Desktop.exe` 的 mtime 晚于本轮开始（**用 mtime/体积判「是不是新产物」，别把旧产物的断言当新证据**）。然后从打包产物跑：
+Expected: rc=0，且 `win-unpacked/基线 Desktop.exe` 的 mtime 晚于本轮开始（**用 mtime/体积判「是不是新产物」，别把旧产物的断言当新证据**）。然后从打包产物跑：
 
 ```bash
-cd "D:/Project/sa/saai/sa-code/apps/desktop/dist/electron/win-unpacked" && ./"DSH Desktop.exe" --ui-smoke --session-dir="$(cygpath -w "$TEMP/dsh-pkg-ui-$$")" > /tmp/pkg-ui.log 2>&1; echo "pkg rc=$?"
+cd "D:/Project/sa/saai/sa-code/apps/desktop/dist/electron/win-unpacked" && ./"基线 Desktop.exe" --ui-smoke --session-dir="$(cygpath -w "$TEMP/dsh-pkg-ui-$$")" > /tmp/pkg-ui.log 2>&1; echo "pkg rc=$?"
 sed -e 's/\x1b\[[0-9;]*m//g' /tmp/pkg-ui.log | grep -c "^UI OK"
 sed -e 's/\x1b\[[0-9;]*m//g' /tmp/pkg-ui.log | grep -c "^UI FAIL"
 ```
@@ -1061,7 +1061,7 @@ Expected: `pkg rc=0`、`UI OK` ≥ dev 态计数、`UI FAIL` = 0。任一不符�
 - [ ] **Step 6: 签名现状如实记录**
 
 ```bash
-cd "D:/Project/sa/saai/sa-code/apps/desktop" && powershell -NoProfile -Command "Get-AuthenticodeSignature dist/electron/dsh-desktop-portable.exe, 'dist/electron/DSH Desktop Setup 0.1.0.exe' | Select-Object Status, SignerCertificate | Format-Table -AutoSize"
+cd "D:/Project/sa/saai/sa-code/apps/desktop" && powershell -NoProfile -Command "Get-AuthenticodeSignature dist/electron/dsh-desktop-portable.exe, 'dist/electron/基线 Desktop Setup 0.1.0.exe' | Select-Object Status, SignerCertificate | Format-Table -AutoSize"
 ```
 
 Expected: 仍 `NotSigned`（本机无证书）。这条写进证据文档时按「未签名（本机无证书，签名与发布待授权）」，不写成已通过。
@@ -1075,12 +1075,12 @@ Modify `docs/evidence/p0-status-2026-10-02.md`：在「最新 R0 收口」段之
 - 剩余限制：助手正文仍不落 `assistant/message`（冒烟里的 assistant 组出自种子夹具）、Markdown 渲染路径未启用、Next SDK 页面工具与签名/npm publish 仍属未做/待授权；
   - 执行后更正：第一条已在同日提交 `d8b7ae6` 关闭——干净收束的一轮落一条 `assistant/message`，
     计数与变异反证见 `docs/evidence/p0-status-2026-10-02.md`「助手回复落进会话日志」一节；
-- 不写任何「像素级复刻上游」的声称。
+- 不写任何「像素级实现上游」的声称。
 
 - [ ] **Step 8: 提交**
 
 ```bash
-cd "D:/Project/sa/saai/sa-code" && git add AGENTS.md docs/plans/dsh-capability-matrix.md docs/evidence/p0-status-2026-10-02.md && git diff --cached --stat && git commit -m "docs(desktop): 对话面接入 TinyRobot 收口矩阵与复验证据"
+cd "D:/Project/sa/saai/sa-code" && git add AGENTS.md docs/plans/capability-matrix.md docs/evidence/p0-status-2026-10-02.md && git diff --cached --stat && git commit -m "docs(desktop): 对话面接入 TinyRobot 收口矩阵与复验证据"
 ```
 
 ---
@@ -1096,5 +1096,5 @@ cd "D:/Project/sa/saai/sa-code" && git add AGENTS.md docs/plans/dsh-capability-m
 5. `npm run smoke` `SMOKE PASS`；core 119/119、extjs 14/14 复核不变；
 6. 四刀变异反证各自转红并还原回绿，`git diff` 为空；
 7. `index.html` 引用的每个 `vendor/` 文件都由 `npm run vendor` 生成（Step 4 契约自检 rc=0）；
-8. 矩阵 `conversation` 行「已复刻」✔、「上游已核」仍 ☐；证据文档写明计数与剩余限制；
+8. 矩阵 `conversation` 行「已实现」✔、「上游已核」仍 ☐；证据文档写明计数与剩余限制；
 9. `preload.cjs` 与 `bridge.test.mjs` 未被本批改动（IPC 面 11 键不变）——`git diff --stat` 里不该出现它们。

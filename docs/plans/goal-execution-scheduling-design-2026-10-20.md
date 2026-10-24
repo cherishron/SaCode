@@ -2,16 +2,16 @@
 
 > 类别：③详细设计（接口 / 模块级）｜关联：**F04 持续目标**  
 > 状态：**设计（待评审）**｜基线：工作区 `dev`（调研日 2026-10-20；含未提交桌面/Host 改动）  
-> 边界：只读 DSH 解包源码 + 只读 SaCode `core/src/` 与 Host/桌面接线；**不写产品代码、不提交、不推送**  
+> 边界：只读 基线 解包源码 + 只读 SaCode `core/src/` 与 Host/桌面接线；**不写产品代码、不提交、不推送**  
 > 触发：用户反馈「设置目标没有实际反应，自动跨轮执行尚未接通」。桌面目标栏现文案即写死此句（`apps/desktop/renderer/pages/goal-bar.ts`）。
 
 ---
 
 ## 0. 结论先行
 
-DSH 的自动跨轮**不是** agent loop 在每轮结束时自己读 goal phase 再递归，而是独立插件 `dsh-goal-round-driver` 在 **agent 进入 idle** 与 **goal/changed** 两条边上，检查「active + armed + 未到轮上限 + 无竞争 inbox」，再 `agent.followup()` 塞一条 **goal-sourced** 续跑 user 消息。
+基线 的自动跨轮**不是** agent loop 在每轮结束时自己读 goal phase 再递归，而是独立插件 `dsh-goal-round-driver` 在 **agent 进入 idle** 与 **goal/changed** 两条边上，检查「active + armed + 未到轮上限 + 无竞争 inbox」，再 `agent.followup()` 塞一条 **goal-sourced** 续跑 user 消息。
 
-SaCode **核心调度器已经存在**（`GoalScheduler` / `GoalDriver` / `GoalRunner`），Host 也已在 `task/start` 且 `phase==active` 时走 `HostGoalRun`。缺的是 DSH 那一层 **空闲边驱动**：
+SaCode **核心调度器已经存在**（`GoalScheduler` / `GoalDriver` / `GoalRunner`），Host 也已在 `task/start` 且 `phase==active` 时走 `HostGoalRun`。缺的是 基线 那一层 **空闲边驱动**：
 
 | 已有 | 没有 |
 |---|---|
@@ -20,7 +20,7 @@ SaCode **核心调度器已经存在**（`GoalScheduler` / `GoalDriver` / `GoalR
 | 轮次边界重读 phase，暂停不杀当前轮 | `turn/poll` 结算后不回头看 goal |
 | 桌面 GoalBar 保存目标 | 保存后不 `task/start`；UI 明确写「尚未接通」 |
 
-**推荐路径：不新开 `goal/run` RPC，不复刻 DSH 的 followup/pre-step/reservation 状态机。** 在 Host 持有一份进程内 `GoalActivation`，于 create/resume 成功后与 `turn/poll` 结算空闲边调用现有 `HostGoalRun`。桌面只改展示，不双发起轮。
+**推荐路径：不新开 `goal/run` RPC，不实现 基线 的 followup/pre-step/reservation 状态机。** 在 Host 持有一份进程内 `GoalActivation`，于 create/resume 成功后与 `turn/poll` 结算空闲边调用现有 `HostGoalRun`。桌面只改展示，不双发起轮。
 
 ---
 
@@ -30,7 +30,7 @@ SaCode **核心调度器已经存在**（`GoalScheduler` / `GoalDriver` / `GoalR
 
 **是 round-driver 在 idle 边上决定，不是 agent loop 自己检查 goal phase，也不是 projection 事件触发执行。**
 
-DSH 三层各管各的：
+基线 三层各管各的：
 
 1. **`dsh-agent-loop`**：只跑当前物理 turn 的模型/工具循环，直到本 turn 终态。它不知道 goal。
 2. **`dsh-goal-round-driver`**：订阅 `agent/status`（idle）、`goal/changed`、`agent/created`、inbox 插入/认领/丢弃、`session/event`（`user/message` / `turn/end`）。`drive()` 仅在 `fiber=running && agent===live && status==idle && !competingQueued` 时，读 `goals.get(agent)`：`phase==active && activation==armed && roundsStarted < maxGoalRounds` 才 `followup(goal-sourced message)`。
@@ -38,11 +38,11 @@ DSH 三层各管各的：
 
 同一轮内部：driver 把续跑消息送进 inbox 后，agent 自己从 idle 进入 running。本轮结束后再回到 idle，driver 再决定要不要预约下一轮。checkpoint（`sessions.flush`）失败则 `disarm()`，不写 durable phase。
 
-SaCode 对照：`GoalDriver.run()` 把「下一轮」做成 **同一次 `TurnHandle` 内的 while 循环**（一轮 = 一次 `ModelAgentLoop.run`）。这在 `task/start` 已经选中 `HostGoalRun` 时等效于 DSH 的 idle→followup，但触发条件绑在「用户发了消息」上，没有独立 idle 监听。
+SaCode 对照：`GoalDriver.run()` 把「下一轮」做成 **同一次 `TurnHandle` 内的 while 循环**（一轮 = 一次 `ModelAgentLoop.run`）。这在 `task/start` 已经选中 `HostGoalRun` 时等效于 基线 的 idle→followup，但触发条件绑在「用户发了消息」上，没有独立 idle 监听。
 
 ### 1.2 epoch 守卫：三重纪元怎么防旧读覆盖新事件？CAS 对应哪个？
 
-DSH 有两套完全不同的「代数」：
+基线 有两套完全不同的「代数」：
 
 | 代数 | 作用域 | 持久？ | 对应 SaCode |
 |---|---|---|---|
@@ -56,13 +56,13 @@ DSH 有两套完全不同的「代数」：
 - `projectionEpoch`：`session/projection` 自增；过期投影丢弃。
 - 切会话时三个一起 `++`，并 `publish({})` 清空。
 
-**SaCode 的 CAS revision 对应 DSH 的 `GoalRef.revision`，不对应三重纪元。** 执行调度应继续以 `GoalService.snapshot().revision` + 进程内 `GoalActivation` 为准；不要把 UI epoch 抬进 Host。
+**SaCode 的 CAS revision 对应 基线 的 `GoalRef.revision`，不对应三重纪元。** 执行调度应继续以 `GoalService.snapshot().revision` + 进程内 `GoalActivation` 为准；不要把 UI epoch 抬进 Host。
 
 桌面现有单一 epoch 已能丢掉「保存后迟到的 describe」。缺的是：describe 永远看不到真实 activation（见 §3.2），以及 `session/projection` 根本不含 goal，UI 只能 2s 轮询 `goal/describe`。
 
 ### 1.3 projection 权威边：如何清除已完成的目标？
 
-DSH 这句话的原文语境是 **客户端 activation source**，不是执行器：
+基线 这句话的原文语境是 **客户端 activation source**，不是执行器：
 
 > projection drive is the authoritative clear edge; an active projection with no live goal is treated as transient.
 
@@ -88,7 +88,7 @@ SaCode：`session/projection` 现回执只有 messages/todos/toolCalls 等，**�
 
 ### 1.4 暂停 / 恢复：loop 怎么知道不再自动推进？恢复后怎么再触发？
 
-DSH：
+基线：
 
 - **暂停**：`goals.pause` → durable `paused` + `activation=disarmed` + `goal/changed`。若暂停来自 **Host 路径**且 agent 正在 running、当前 initiator 不是自己，driver **立刻 `agent.cancel({kind:"user"}, {keepInbox:true})`**。模型路径的 pause 则让本轮跑完。idle 后 `drive()` 因 phase/activation 不满足而停。
 - **取消中的预约**：idle 时若仍有 queued/claimed/cancelled 的 attempt 且 goal 仍 active+armed → **pause** 该目标（把「半截自动轮」收成暂停，而不是静默再约）。
@@ -99,13 +99,13 @@ SaCode 已对齐的部分：
 
 - `controlGoalJson` 在 create/resume 时 `arm()`，pause/clear 时 `disarm()`（但 Host **没持有** 这份 activation）。
 - `GoalDriver` 轮次边界：`phase==active && !armed()` → `stopReason=disarmed`；否则 `decide(phase, …)`，paused 即停。
-- **暂停不杀当前轮**（`goal_runner.cj` 口径，与 PRD / 2026-10-05 用户要求一致）。DSH Host 暂停会 cancel，**不要学**。
+- **暂停不杀当前轮**（`goal_runner.cj` 口径，与 PRD / 2026-10-05 用户要求一致）。基线 Host 暂停会 cancel，**不要学**。
 
 缺口：pause 只改 durable phase；若当前 `HostGoalRun` 的 `armed` 闭包是 `{ => !token.cancelled() }`，**暂停不能通过 activation 打断下一轮**，只能等边界读到 `paused`。这碰巧够用。真正坏在 **resume / create 之后没有 `requestDrive`**。
 
 ### 1.5 轮数 / 时长限制：如何限制无限循环？
 
-DSH round-driver 自己只强制 **一轮上限**：
+基线 round-driver 自己只强制 **一轮上限**：
 
 - `roundsStarted >= maxGoalRounds` → `goals.block(code: "round-limit")`。
 - 默认 `maxGoalRounds=256`（`dsh-goal` README）。
@@ -124,7 +124,7 @@ SaCode `HostGoalRun` / CLI 已有更紧的产品限额，建议保留：
 | 用量预算 | Host `meter` | `budgetExceeded` → `goal-budget` 阻塞 |
 | 崩溃 | `GoalCheckpoint` | 失败则 `checkpoint-failed` 停，lease 保留 |
 
-不要把 DSH 的 256 搬过来。自动起跑后限额是唯一的「用户没点停止也不会烧穿」的闸。
+不要把 基线 的 256 搬过来。自动起跑后限额是唯一的「用户没点停止也不会烧穿」的闸。
 
 ### 1.6 SaCode 对照：`goal/describe` 返回什么？`turn/start` 结束后有没有检查 goal？缺哪一环？
 
@@ -153,7 +153,7 @@ Host 调用是 `goalProjectionJson(source)`，**不传** `activation`，因此�
 
 ---
 
-## 2. DSH 机制摘要
+## 2. 基线 机制摘要
 
 解包根：`target/tmp/dsh-extract-20261019/dsh/node_modules/@deepseek-ai/`。
 
@@ -185,7 +185,7 @@ Host 调用是 `goalProjectionJson(source)`，**不传** `activation`，因此�
 
 ### 2.4 与 SaCode 产品策略已知冲突（保持 SaCode）
 
-| 点 | DSH | SaCode 已拍板 |
+| 点 | 基线 | SaCode 已拍板 |
 |---|---|---|
 | Host 暂停是否杀当前轮 | 是（keepInbox） | **否**，轮次边界重读 |
 | 默认轮上限 | 256 | **8** |
@@ -196,10 +196,10 @@ Host 调用是 `goalProjectionJson(source)`，**不传** `activation`，因此�
 
 ## 3. SaCode 现状对照
 
-### 3.1 分层 vs DSH activation source
+### 3.1 分层 vs 基线 activation source
 
 ```text
-DSH:  UI activation source ──RPC/event──► GoalService (CAS+phase)
+基线:  UI activation source ──RPC/event──► GoalService (CAS+phase)
                                   └──► GoalActivation 缓存
                                   └──► round-driver (idle 边 followup)
                                   └──► agent-loop (单 turn)
@@ -237,7 +237,7 @@ SaCode 现：
 1. **只设目标、不发消息**：日志里有 `goal/change`，栏显示「已启用」，模型 0 请求。  
 2. **设目标时已有一轮在跑**（当时 phase 还不是 active）：本轮按普通 `ModelAgentRunner` 收束，之后仍不自动续。  
 3. **暂停后再继续**：phase 回到 active，activation 仍无法被 describe 看见，且无 drive。  
-4. **重启 Host**：即便补上 activation，按 DSH/SaCode 注释也必须 disarmed；若错误地按 phase==active 自动起跑，会违反 V02「重启未确认前不新开轮」。
+4. **重启 Host**：即便补上 activation，按 基线/SaCode 注释也必须 disarmed；若错误地按 phase==active 自动起跑，会违反 V02「重启未确认前不新开轮」。
 
 ---
 
@@ -247,8 +247,8 @@ SaCode 现：
 
 1. **调度权威在 Host 进程，不在桌面、不在投影。** CLI/daemon 走同一 Host RPC 才能一起受益。  
 2. **不新增 `goal/run`。** 复用 `HostGoalRun` + 现有 `task/start` 的提供方/工具冻结逻辑。  
-3. **不复刻 DSH reservation/pre-step。** SaCode 没有 `Agent.followup` inbox 机器；`GoalDriver` 已在句柄内循环。  
-4. **activation 进程内、phase 落盘**——与 DSH 一致，也与现有 `GoalActivation` 注释一致。  
+3. **不实现 基线 reservation/pre-step。** SaCode 没有 `Agent.followup` inbox 机器；`GoalDriver` 已在句柄内循环。  
+4. **activation 进程内、phase 落盘**——与 基线 一致，也与现有 `GoalActivation` 注释一致。  
 5. **暂停不 cancel 当前轮**——保持已拍板口径。  
 6. **会话 select / 进程启动 = disarmed**，必须用户 resume 或 create 才 armed。
 
@@ -281,7 +281,7 @@ SaCode 现：
 - `GoalService` 四态与 CAS 语义。  
 - 有限控制面（仍无 `goal/complete`）。  
 - `turn/start` 诊断路径。  
-- DSH 风格 256 轮。  
+- 基线 风格 256 轮。  
 - 其他会话在途的桌面交互文件（本方案实施时应只动 goal-bar 与 Host 目标驱动相关行）。
 
 ### 4.3 RPC / 事件：加什么、不加什么
@@ -299,7 +299,7 @@ SaCode 现：
 
 可选后续（非 v1）：`session/projection` 增加 `goal` 对象，让 GoalBar 停 2s 轮询。这是 UI 推送，不是调度边。
 
-`task/start` 保持：若已在 GoalRun 中 → 现有 `turn-in-flight`；若 idle 且 active+armed，现逻辑已会走 `HostGoalRun`（用户发话 = 带 inbox 的续跑，与 DSH competing 让路后的人工 turn 同类）。
+`task/start` 保持：若已在 GoalRun 中 → 现有 `turn-in-flight`；若 idle 且 active+armed，现逻辑已会走 `HostGoalRun`（用户发话 = 带 inbox 的续跑，与 基线 competing 让路后的人工 turn 同类）。
 
 ### 4.4 `requestGoalDrive` 伪契约
 
@@ -430,7 +430,7 @@ else match decide(phase, maxRounds, maxElapsed, noProgress):
 | `claim` 恒假 | `GoalRunner.start` 写死 false | 同批修，否则自动跑=自动烧限额 |
 | 自动起跑烧额度 | 这是功能本身 | 保留 8/3600/3 + meter；模型未配置时 create 仍成功、drive 失败可见 |
 | 重启误跑 | 若错误用 phase==active 当 armed | 测试钉死 select 后 0 请求 |
-| 暂停语义回退成 DSH cancel | 与用户要求冲突 | 禁止在 pause 路径调 `turn/cancel` |
+| 暂停语义回退成 基线 cancel | 与用户要求冲突 | 禁止在 pause 路径调 `turn/cancel` |
 | 投影当调度边 | 延迟/截断会漏跑或误清 | drive 只读 `GoalService` + `GoalActivation` |
 | 远程 daemon | 若日后远程 `task/start` 被执行族拒绝 | drive 必须走与本机 `task/start` 同一授权；远程默认不应无人值守烧模型 |
 | 与 F02 普通对话抢句柄 | 用户正在跑非 goal 轮时 create | pendingDrive，本轮结算后再起，不插队 cancel |
@@ -439,7 +439,7 @@ else match decide(phase, maxRounds, maxElapsed, noProgress):
 
 **明确不在 v1：**
 
-- 复刻 DSH `pre-step` / `startsRequestSeries` / 256 轮。  
+- 实现 基线 `pre-step` / `startsRequestSeries` / 256 轮。  
 - 模型在非人 turn 里 `create_goal`（SaCode 控制面仍是用户 RPC；`update_goal` 只声明完成/进行中）。  
 - 把 activation 写入 `goal/change`。  
 - 新 RPC、新桌面 IPC。  
@@ -449,7 +449,7 @@ else match decide(phase, maxRounds, maxElapsed, noProgress):
 
 ## 7. 调研问题 → 实施检查表
 
-实施会话可用此表做验收，不必再翻 DSH：
+实施会话可用此表做验收，不必再翻 基线：
 
 - [ ] 只设目标、不发聊天：Host 在模型已配置时发出至少一轮请求；`goal/round-prompt` 进模型请求。  
 - [ ] `goal/describe.activation` 在 create 后为 `armed`，select/重启后为 `disarmed`。  
@@ -464,7 +464,7 @@ else match decide(phase, maxRounds, maxElapsed, noProgress):
 
 ## 8. 参考
 
-DSH（解包）：
+基线（解包）：
 
 - `dsh-goal-round-driver/README.md`、`lib/index.js`（`drive` / `requestDrive` / `validReservation`）  
 - `dsh-goal/README.md`、`lib/index.js`（activation 缓存、`agent/created` disarmed）  

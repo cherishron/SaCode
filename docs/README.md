@@ -1,5 +1,97 @@
 # SaCode 文档体系总览（2026-10-16 归类版）
 
+- 2026-10-24：发布通用 skill **`repo-conventions`**（仓库约定与项目治理）到 SkillHub（1.0.0 / 8 文件 / `skillId 293070`，待审核）；源码在 `.agents/skills/repo-conventions/`。证据：[发布记录](evidence/2026-10-24-repo-conventions-skill-publish.md)。
+
+- 2026-10-24：新增**多 agent 进度登记机制**——[`agents/`](agents/README.md)（各 agent 自报在飞，只改自己的文件，零写冲突）+ [`scripts/agent-board.mjs`](../scripts/agent-board.mjs) 汇总看板 [`product/agent-board.md`](product/agent-board.md)；根 `AGENTS.md` 新增「多 agent 进度登记（强制）」节（开工登记 / 收尾更新 / 收尾自检）。
+
+- 2026-10-24：新增 **端文档分类 ⑪** 与 [`clients/`](clients/README.md)——按端组织的**产品四端文档**（桌面 / CLI / 移动 / Web）。总览含共享契约、跨端差异对比矩阵与共同红线；逐端文档统一补齐**用途 / 需求 / 设计 / 边界 / 分步细节 / 与其它端差异**六要素；另把各端**专属文档物理归入 `clients/<端>/`**（目录内 `README.md`=端规格、`documents.md`=归类索引、其余为该端专属文档），并**同批重写全库引用**、通过断链校验；通用/后端文档仍留在原目录。共归入约 94 篇端专属文档 + 8 篇规格/索引。纯文档，只整理既有源码与已登记证据，不升级任何端的产品状态、不改源码、不提交。
+
+- 2026-10-24：新增根 [`CHANGELOG.md`](../CHANGELOG.md) **产品迭代记录**（以日期为锚点、含维护规则与近期批次回填）；由根 `AGENTS.md`「文档同步规则」第 4 条约束同批更新。
+
+- 2026-10-24：[Web 工作台技术负债台账](clients/web/web-tech-debt-2026-10-24.md)：用户提问「web 端还有技术负债吗」触发实核（不沿用 PRD 旧快照）：`apps/web` **61 文件 / 4918 行从未纳入版本控制**（`git ls-files` 为 0，非 gitignore 所致）、无 ESLint/Prettier、CI 与仓级门禁零覆盖。已修四项：忽略 `screenshots/` 与 Playwright 产物、`git add`（**仅暂存，未 commit 未 push**）、ESLint 10.13 + Prettier、新增 `web.yml` 工作流；另修 `playwright*.config.ts` 两处机器绑定浏览器路径，并据此暴露**本机缓存 chromium 1243 与所需 1248 长期不匹配**（旧硬编码一直在绕开该问题）。P0 修复后 typecheck 0、`lint` 与 `format:check` 均 rc=0、123 通过 + 1 门控跳过、构建 rc=0。P1/P2 六项未闭合：上游 SSE 断线不可观测、真实业务直播未验、候选非同源、任务审批未开放、真实链路测试默认跳过、浏览器侧撤销未端到端验证。[plans 索引](plans/README.md) 同批登记。
+
+- 2026-10-24：[extension/host 5 红环境根因](evidence/2026-10-24-extension-host-env-root-cause.md)：`bridge.test.mjs` 的 extension/host spawn 族（#33/35/36/37/38）定性为**环境问题**——仓库根 Low Mandatory Level 标签被宿主 EXE 继承为 Low IL，其拉起的 node 子进程 `lstat('D:\')` 被拒（`EPERM -4048`）→ 主模块解析失败、秒退、0 帧→`js-host-handshake-timeout`；P0「从未出现子进程」为采样漏采（子进程确已起、毫秒级退出）。A/B（同源码/二进制/node/脚本，仅宿主位置不同）：仓库内宿主 39 用例 33 pass/5 fail/1 cancelled，中性导出宿主（`SACODE_HOST`）extension 子集 **7/7**、全量 **83/83**。非代码缺陷；临时诊断已回退、`core` 与 HEAD 无差异；未改 ACL/完整性标签。
+
+- 2026-10-24：[F13 自动化调度「持久触发准入」核心切片（AU-02 第一阶段）](evidence/2026-10-24-automation-trigger-admission-core.md)：确认自动化「未接通」是**已立项未开始的功能 AU-02**（非桌面降级，硬接 `tick` 只会造空假入口）；按设计稿先落核心准入 `core/src/automation_trigger.cj`（独立版本化日志/单写者租约/幂等键不含 `definitionRevision`/准入 `flush` 屏障/`overlap=skip`/恢复 `unknown` 屏障/`misfire=skip` 水位）、`cjpm build` rc=0；core `cjpm test` 本机编译停滞未执行（不宣称通过）。未动 daemon/Host/桌面；下一步 F13-E 交接。
+
+- 2026-10-24：[桌面端降级审计](clients/desktop/2026-10-24-desktop-degradation-audit.md)：核查 `apps/desktop` 的「降级」——多数「未接通/未实现」是**后端本就未实现**的如实标注（A1 自动化执行器=`install()` 全仓无装配调用方→`tick` 恒空，=F13/D07；A2 费用统计探测/加速列=`PROBE_MINIMAL_MODE` 无产品调用方；A3 插件安装取消=Host 无 `plugin/install/cancel` 且 `install/start` 假异步），**不硬修以免伪造**；实修真降级 3 处（插件安装源读取失败不再静默退默认源、迁移复制给失败反馈、模型中心账本失败提示去「等 §6」）。读数：定向 **37/37** ＋ 渲染层门禁 **13/13** ＋ IPC **212↔212 GATE PASS**，合计 **50/50、0 失败/跳过**；纯渲染层、未改 core/Host、未打包/提交。未改 `side-panels.js` 产品状态声明与在飞/共享注释。
+
+- 2026-10-24：[TUI @文本文件引用](clients/cli/2026-10-24-cli-tui-text-references.md)：发送前默认取消确认，Host read/结算→资料快照随消息进模型；114/114含本地HTTP实收正文/冷重开，12宽窄帧与默认入口通过。新包561,133 B / `db9ad1b4…`，不是图片/通用附件，真终端/外部模型/安装未验。
+
+- 2026-10-24：[TUI会话管理](clients/cli/2026-10-24-cli-tui-session-management.md)：搜索/改名/归档/恢复归档、默认取消/修订回读/未知冻结；99/99含真实Host冷重开，14宽窄帧与无覆盖默认入口通过。新包547,489 B / `b02920b1…`；真终端/真模型/安装未验，桌面候选不变。
+
+- 2026-10-24：[内置浏览器 WebContentsView 接线（F14 人工浏览入口）](evidence/2026-10-24-browser-webcontents-view-wiring.md)：主进程 `WebContentsView` 控制器 + 8 条 `browserView*` IPC，隔离会话、跨站/下载/权限/新窗口默认拒绝、弹层与切页隐藏、切项目销毁+清旧 cookie；渲染层 `BrowserPanel` 接入工作台「内置浏览器」资源。单元+真实 Electron 10/10（含 20 项实跑）、`--ui-smoke` BROWSER_MAIN PASS 5 项、IPC 212/212、相邻 18/18。未改 core/Host、未接 Agent provider/截图/多标签/电脑操控、未重打候选；不升级 F14 完成。
+
+- 2026-10-24：[TUI配置与模型状态细化](clients/cli/2026-10-24-cli-tui-configuration-refinement.md)：/auth逐项校验/返回编辑/隐藏Key/保存前后核对及未知停止重发，/model区分配置与连通；82/82含真实Host表单保存/冷重开，本地端点0请求，未真实模型/终端/安装验收。
+
+- 2026-10-24：[默认TUI开发Host刷新](evidence/2026-10-24-host-skill-workspace-cache-fix.md#同日续批默认开发载荷刷新用户继续授权)：默认载荷完整替换为修复Host `71389261…`，709/709哈希一致、旧目录保留；默认目录Host7/7、TUI73/73，无SACODE_HOST的无参/显式tui与干净PATH伪TTY技能正文均通过。桌面交付候选未改、真终端/安装/真实模型未验。
+
+- 2026-10-24：[Host技能工作区缓存修复](evidence/2026-10-24-host-skill-workspace-cache-fix.md)：定位initialize过早缓存空目录/旧日志；skill查询按当前租约/持久快照装配。同快照旧逻辑3败→修复Host5/5，真实TUI73/73（含技能列表正文，无额外skip）。私有Host `71389261…`，默认旧Host/桌面包未覆盖，不宣称整包生效。
+
+- 2026-10-24：[TUI 能力浏览与技能发现阻塞](clients/cli/2026-10-24-cli-tui-capability-views.md)：/skills目录正文、/mcp注册连接状态、权限/计划只读入口，默认回归72过/1显式验收跳过；**独立真实技能发现1失败**，未凑通过。新包529,688 B / `bfb74c6b…`，12帧/烟测/打包通过；不连接服务、不放宽权限，桌面候选不变。
+
+- 2026-10-24：[TUI 路径引用与真实差异](clients/cli/2026-10-24-cli-tui-workspace-views.md)：补Home/End与DEL适配、`@`Host目录浏览/路径补全、`/diff`只读真实Git状态及patch；63/63含新增真实Host只读对照，新包523,224 B / `74a9c6e7…`。@不读取上传正文，不冒充完整附件；真终端/真模型/安装未验，桌面候选不变。
+
+- 2026-10-24：[TUI 四方向细节打磨](clients/cli/2026-10-24-cli-tui-polish.md)：轻量代码着色/Markdown与表格、词编辑/撤销/历史搜索、工具详情展开与明确标注的审批请求预览、窄屏留白；52/52与伪TTY通过，新包511,622 B / `2b258424…`。补随包Apache和37包许可；非真实diff/真终端/真实模型验收，桌面候选不变。
+
+- 2026-10-24：[P0 跨端打通前闸门](evidence/2026-10-24-p0-cross-end-gates.md)：闭合 Web 工作台开工前阻断——P0-1 `--manage grant-scope` scope 闭集授予、P0-2 `turn/poll` 游标重放（`TurnFrameJournal`：page 不消费、多客户端同游标同帧、take 兼容旧消费）、P0-3 `session/projection` 精确读取 + 活动会话方法错配 `-32001 session-mismatch` 早期拒绝。daemon 级 31/31、桌面 `session-identity` 3/3、游标双客户端用例 1/1；Host/daemon 构建 rc=0、二进制含全部 P0 标记。core `cjpm test` 因 HEAD 同名 `@Test` 无法编译（P0 文件零 error）；extension/host spawn 经旧二进制对照确认为预先存在工具链问题；remote-product 5 条 openssl ENOENT 阻断。未提交/安装/发布，不升级 F 域。
+
+- 2026-10-24：[供应商页新增/编辑表单改为弹窗（试点）](clients/desktop/2026-10-24-provider-editor-dialog.md)：表单改由共享 `SaCodeDialog` 承载（760px 宽变体、操作条 sticky、错误在弹窗内、保存中关闭被守卫），列表不再被顶出视野；真 Vue 结构回归 2/2（含 HEAD 反证）、受影响非 Electron 34/34、渲染层门禁 22/22。真实 Electron 在仓外中立目录实跑（仓库内受完整性标签 `0x80000003`，中立目录不受限）：门控 7 项 **7/7 通过、0 跳过**（首轮 4 败为驱动侧两处失效断言：价格字段按旧标签取节点、内置供应商说明文案，已按结构/现文案修正，未改并发改动）；`--ui-smoke` RC=0 `MODEL_MAIN_SMOKE PASS`，观感待用户确认；删除确认与其他页面内联表单未动，未重打候选。
+- 2026-10-24：[桌面渲染层视觉一致性修复](clients/desktop/2026-10-24-desktop-renderer-ui-token-unification.md)：三层重复色板合并为 `renderer/styles.css` 单一真源（下游重定义 0），LSP 面板暗色适配、`--settings-*` 根级化、对比度 18/18 PASS、圆角/字号/间距回到冻结档位、焦点环补 `select`；postcss 21 文件 0 错、渲染层门禁 6/6、受影响组件 26 过/5 环境跳过。**未做 GUI 亮暗/宽窄验收，未重打候选**；设计口径同步 [`renderer/DESIGN.md`](../apps/desktop/renderer/DESIGN.md) 与 [`product/desktop-design-standard.md`](clients/desktop/desktop-design-standard.md)。
+
+- 2026-10-24：[TUI 骨架重写](clients/cli/2026-10-24-cli-tui-skeleton.md)：用户确认后整体替换为历史流＋Markdown＋内联工具卡＋配置表单；适配 Gemini CLI Apache-2.0 展示代码，36/36 测试通过，新包 `a2ee51eb…` / 496,951 B。真实终端/模型/安装待验。
+
+- 2026-10-24：[上下文容量/用量读数接线（F06 局部）](evidence/2026-10-24-context-meter-capacity-wiring.md)：发现接口的 `context_window` 解析入注册表（只补空槽、重复拉取不涨 revision），渲染层容量与用量独立呈现、两侧齐全才出百分比；真实 LongCat 报 `1048576`。渲染层+设置 23/23、链路 1/1、Host 回归 20/20；core 新增单测因 HEAD 同名 `@Test` 未执行，未重打 dist/安装包，GUI 未复验，不升级 F06 全域。
+
+- 2026-10-24：[语音输入接线（F18 最小闭环）](clients/desktop/2026-10-24-voice-input-wiring.md)：`composer-voice` 由禁用占位改为可点击并状态化；Host `voice/record`（导入登记）+ `voice/transcribe|describe` 分派与**服务端发号**审批（capabilities +3），桌面 4 条 IPC（preload 202↔main 202 GATE PASS）；新增 `renderer/voice.js`（录音→16k 单声道 WAV→转写→仅写入草稿、可撤销、不自动发送）。`voice.test.mjs` 5/5、渲染层相关 20/20。ASR 未配置时 fail-closed；真实麦克风/ASR/GUI/打包/安装未验，不改当前候选与主阻塞。
+
+- 2026-10-24：[Gemini CLI 源码与渲染帧比较](clients/cli/2026-10-24-cli-tui-source-comparison.md)：用户再次指出差距后停止补丁式推进，取得19份固定版上游文件和8份本地合成帧，核实根布局/历史流/Markdown/工具/审批/配置差异及Apache-2.0复用条件。仅审查与整体改造方案，未改产品代码、未重打包；待批准骨架替换。
+
+- 2026-10-24：[TUI Gemini CLI 对齐与缺口](clients/cli/2026-10-24-cli-tui-gemini-alignment.md)：纠正把原目标缩成聊天框的偏差；固定上游源码参考，接命令菜单、多行输入、模型选择、会话/目录与工具结果，36/36（含真实 Host 冷重开）；新包 `78690d46…` / 476,975 B。认证配置、@文件、Markdown/diff、MCP/技能等明确未齐，不宣称完整交付。
+
+- 2026-10-24：用户授权创建并发布通用 [ui-design Skill](../.agents/skills/ui-design/SKILL.md)，附[设计原则](../.agents/skills/ui-design/references/design-principles.md)与[验证流程](../.agents/skills/ui-design/references/verification.md)。使用项目既有规范和令牌，区分方案、实现、只读审查与证据等级；结构测试5/5，SkillHub已接收1.0.0、待内容与安全审核（[发布证据](evidence/2026-10-24-ui-design-skill-publish.md)），不改变桌面候选或产品验收状态。
+
+- 2026-10-24：[新建空会话隐藏统计占位](clients/desktop/2026-10-24-composer-empty-stats.txt)：仅隐藏空会话输入区上方的活动/用量行，已有对话保持真实读数；新增2条先红后绿，组件7/7、相关回归16/16、隔离桌面完整页面与真实Host行为5/5。源码修正，正式候选未重打，不代表安装态已更新。
+
+- 2026-10-24：[CLI TUI 交互完善](clients/cli/2026-10-24-cli-tui-interaction.md)：字素光标编辑/草稿恢复、对话 PageUp/PageDown、审批 d 查看完整参数；23/23 测试、新包 `82152ba4…` / 460,413 B、伪 TTY 烟测通过。真实终端/模型/新包安装待验，桌面候选不变。
+
+- 2026-10-24：[桌面渲染层设计规范](clients/desktop/2026-10-24-desktop-renderer-design.md)：用户同意的 awesome-design-md Linear＋Vercel 原则提取，新增 `apps/desktop/renderer/DESIGN.md`（10 条原则→本仓 `--*` 令牌映射、组件基线、Do/Don't、边界），与 `product/desktop-design-standard.md` 分层授权，只采纳原则不复制品牌。纯文档，无代码/令牌/IPC 改动；上游未锁定 commit，GUI 观感待用户实机验收。
+
+- 2026-10-24：[CLI TUI 视觉调整](clients/cli/2026-10-24-cli-tui-design.md)：用户同意的 awesome-design-md Warp＋Ollama 终端适配，新增本地 DESIGN.md；中性消息、细线分区、工具活动/审批/输入层级与紧凑窗口，14/14 测试、新包 454,635 B（`3b0e801a…`）、伪 TTY 烟测通过。真实终端观感和真实模型任务待验，桌面候选不变。
+
+- 2026-10-24：[CLI TUI 中文分块解码续验](clients/cli/2026-10-23-cli-tui-ink.md#5-2026-10-24-续验跨块-utf-8-解码)：修复 stdout/stderr 跨块 UTF-8 乱码，逐字节回归先红后绿，8/8 测试；新产物 451,213 B（`77a811ee…`）、伪 TTY `/help`/Ctrl+D rc=0。10-23 安装/干净重建仍是旧哈希证据；真实终端和真实模型任务待验，桌面候选不变。
+
+- 2026-10-23：[CLI 终端交互界面（Node/Ink TUI）](clients/cli/2026-10-23-cli-tui-ink.md)：`apps/cli/tui/` 以 Ink 渲染，npm 无参 TTY/显式 `tui` 进入，其余透传仓颉 CLI；消息 `user/message` + `task/start`、审批/取消/结算全走 Host。Rollup 单文件 450,980 B，7/7 测试（真宿主引导+投影追加、审批待答 Ctrl+C）、伪 TTY `/help`/Ctrl+D rc=0；本机 tarball 安装态启动 rc=0、缺宿主 rc=69、缺平台包透传 rc=79；干净目录 `npm ci` 重建同哈希。真实终端亲手走查、真实模型审批与 registry 安装未验；候选不变。
+
+- 2026-10-23：[SaCode 手机配对入口整改](clients/mobile/2026-10-23-mobile-sacode-entry-correction.md)：正式启动不再走旧账号登录/网关聊天，采用独立本机设备档案与 daemon 配对；171 项共享测试、3 项路由回归、APK 构建通过，Honor 保留数据安装成功。检查时锁屏，首屏 GUI 待解锁；真实 daemon/任务/鸿蒙未验。
+
+- 2026-10-23：[手机端组件 Demo 清理](clients/mobile/2026-10-23-mobile-demo-removal.md)：删除组件目录源码、登录入口和 Android 注册，鸿蒙启动路由纠正；3 项路由回归、165 项单测及 APK 构建通过，DEX 无旧目录类；保留数据安装到 Honor 并启动登录页。登录后设备/任务尚未验收，未做鸿蒙构建。
+
+- 2026-10-23：[CLI 审查缺陷修复与三入口构建钩子重写](clients/cli/2026-10-23-cli-review-and-fixes.md)：修六项——`build.cj` 硬编码本机路径/不认 `--target-dir`（env 优先 + `SACODE_BUILD_TARGET_DIR`）、裸 `goal` 落自测、租约失败分类与 5/8 退出码、worktree `flush-failed` 保留租约、PowerShell 5.1 管道 BOM、usage/help 与 `knowledge`/`call edit` 展示不一致。CLI 重建 rc=0、`main.exe all` ALL PASS、CLI Node 153/150 pass/3 skip、钩子测试 2/2。未跑完整四成员 `build-platform.mjs`，候选 `0f08a6ce…` 未重打；[台账](product/PRD-tracking.md) 新增 D25、[证据索引](evidence/README.md) 同批登记。
+
+- 2026-10-23：[移动端 M04-A 三处根因修复](clients/mobile/2026-10-23-mobile-m04a-routing-task-init.md)：HomeTabs/聊天按钮改走安全只读页、任务不支持不标 done、initialize 传 workspaceId；续修任务提示与任务列表响应式，离线 165 单测（含实际 Kuikly 面板回归）与 Debug APK 通过；后续获授权保留数据覆盖安装成功，已解锁并确认登录页启动，登录后设备/任务面板仍待验，未 daemon 实连，不升级 M04。[台账](product/PRD-tracking.md) 同批登记。
+
+- 2026-10-23：补齐 [PRD 移动端与 Web 产品路线](product/PRD.md#移动端与-web-产品路线2026-10-23-补录)、[阶段台账](product/PRD-tracking.md#移动端与-web-路线台账2026-10-23-补录)及[平台路线](product/platform-and-distribution.md#32-移动端与-web-路线2026-10-23)。移动端涵盖 demo 收敛、Markdown/ChatUI、真实 daemon 闭环及扩展通道；Web 涵盖契约安全、桥接 PoC、工作台与部署。此前专项方案/源码归并不等于完整产品路线；本次不升级运行/交付状态，不改桌面候选、不提交推送。
+
+- 2026-10-23：[Web 技术选型](clients/web/2026-10-23-web-technical-selection.md)：在 [Web 工作台架构](clients/web/2026-10-23-web-workbench-architecture.md) 基础上冻结首版技术栈——Vue 3.5 + Vite 8 + Fastify 5 + TypeBox + 不透明服务端会话 + SSE，复用桌面 `RemoteTransport` 的 TLS pin/并发/幂等能力；明确 TypeScript 5.9 而非 7、vue-router 4/Pinia 3 而非新 major、Caddy 反代与 Playwright E2E，并列出 T1–T6 待确认项。§13 增补跨端契约与验收矩阵，按源码核对桌面/CLI/移动/Web 现状，登记硬阻塞：远程 scope 无生产授予入口（task/approval 恒拒 `scope-required`）、Host `turn/poll` 排他消费阻止多端同会话、S11 资源身份未修、CLI 无认证/TLS、契约 consumer 不参与运行时授权；S08/S09 在当前 HEAD 已有修复代码但未复测，仍按未闭合处理。因此 W01/W02-A 仅开放只读面。版本为只读查询候选值，未安装、未建工程、未部署；[plans 索引](plans/README.md) 同批登记。
+
+- 2026-10-23：[GUI 界面填写 API 密钥与真实闭环补验](clients/desktop/2026-10-23-longcat-gui-key-entry.md)：补上正常双击路径此前未验的一环——无环境密钥时在供应商页填写并保存 Key（隔离 `credentials.env` 57 B、与输入逐字节一致）→ 真实拉取 `LongCat-2.5-Preview/LongCat-2.0` → 设默认 → read→write 任务审批 #1 `allowed-once` → 落盘与真实 diff → 关闭重开 `keyConfigured:true` 且回放正确；会话日志 107 条事件（tool/call 2、审批 1/1），密钥扫描 451/453 文件两次零命中。探针两处自身缺陷已留存并离线更正，仍待用户亲手复验，不宣称已交付。
+
+
+- 2026-10-23：[LongCat 真实模型主闭环（宿主级与 GUI 级）](evidence/2026-10-23-longcat-real-task-loop.md)：用用户提供的真实 LongCat 模型在交付候选 `D:/tmp/sacode-final-20261023` 上走通宿主协议与真实 GUI 两条闭环——读取→模型提出写入→审批 #1 `allowed-once`→落盘→真实 diff→关闭重开回放；GUI 会话日志 142 条事件、tool/call 3、approval 1/1，密钥零落盘、无残留进程。仍待用户亲手复验，不宣称已交付；shell/run_code 与 D14 未覆盖。
+
+- 2026-10-23：[UI 冒烟 283/16 分诊与测试支持修复](clients/desktop/2026-10-23-ui-smoke-triage.md)：16 项失败逐条归因为 `test-support/ui-smoke.cjs` 滞后（非产品 UI 缺陷）；仅改测试支持后同源诊断副本 301 OK/0 FAIL/`UI_SMOKE PASS`，计数对账 283+16+2=301；候选 `app.asar` 未重打，交付包仍报 283/16。
+
+- 2026-10-23：[Linux Electron 桌面打包与打包态验收](clients/desktop/2026-10-23-linux-desktop-package.md)：远端 Ubuntu 用与工作区同源的源码打出 AppImage（133,944,198 字节，sha256 `0c5d5d0b…6813`）与 deb（102,549,392 字节，sha256 `835152ba…9e05`）；三种形态（AppImage/unpacked/deb 载荷）协议冒烟均 `SMOKE PASS` rc=0、无孤儿宿主，UI 冒烟 dev/打包三份 282 OK / 17 FAIL 失败集逐字节相同（打包零回归，17 项为 HEAD 现状）；打包元数据补 `linux.executableName=sacode`、`maintainer`、`homepage`。AppImage 原生 FUSE 启动因宿主缺 `libfuse.so.2` 记 BLOCKED，deb 未安装。证据索引与台账同批登记；未提交/发布。
+
+- 2026-10-23：[Kuikly AI 参考资料采纳](clients/mobile/2026-10-23-kuikly-ai-reference-adoption.txt)：移动端按官方 AIChat 文档接入 KuiklyMarkdown（1.0.6-2.0.21，与 Kotlin 2.0.21 对齐），AI 气泡改走真实 Markdown 渲染；实测文档给的 2.1.21 版本不兼容、镜像路径 404（构件在已配置的 maven-tencent），javap 确认 API 是 ViewContainer 扩展。Debug APK 组装通过（9,182,509 B，增量 +359,511 B）。未接流式入口、KuiklyChatUI 与真机渲染验收，不改桌面候选。
+
+- 2026-10-23：[手机工程源码归并](clients/mobile/2026-10-23-mobile-source-import.txt)：用户批准将外部 sa-app 的 KMP/Kuikly 工程复制整合到 apps/mobile 根，原项目不动、不复制 .git，由 SaCode 同仓管理。保留 kotlin/kotlin-test（仅 JVM 协议代码及测试，不是 Android 应用），适配目录门禁、构建任务名与移动端文档。构建及真机任务另验，不改变桌面候选身份；[证据索引](evidence/README.md) 同批登记。
+
+- 2026-10-22：[沙箱解析缺陷修复与强制隔离真实入口边界](evidence/2026-10-22-sandbox-resolve-fix-and-enforcing-boundary.md)。修 `resolveWindowsExecutable` 对不存在路径抛 FException（红先 PASSED 1/SKIPPED 5）；enforcing 开启时 run_code 真实打印 `RUN_CODE_STDOUT`、shell 真实执行 PowerShell 包装层，退出码真实，不再折叠为 io-error/SANDBOX_UNAVAILABLE；剩余边界是工作区 ACL（AC SID 受限），未授权不改。HEAD core 套件因两个同名 `@Test`（9c85fed）无法编译，红/绿在同源私有模块取证。
+
+- 2026-10-22：[Web 部署方案设计](clients/web/2026-10-22-web-deployment-design.md)。用户问“现在是不是有了 cli、desktop，web 部署有了吗”——核查确认只有 CLI（`apps/cli`+npm 薄启动包）与 Electron 桌面（`apps/desktop`），**无 Web 部署**（无 `apps/web`、renderer 是 file://+CSP+构建期折叠三件套专为 Electron 设计）。方案对比：A 改桌面 renderer 跑浏览器（推翻三件套+重构 IPC 面，风险高）vs B WS 桥+独立前端（推荐，Host 不动、桌面零回归、复用 HostBridge 逻辑与 pack-service 底座）。推荐方案 B 含拓朴、改造点（WS 桥/无头服务扩展/鉴权会话隔离/Vite SPA/方法面映射/流式审批取消）、Host JSON-RPC 方法面映射表、分阶段工作量估算（17-28 人天，S1-S2 约 2-4 人天即证“Web 部署有了”）、验收出口与风险边界。纯设计，未改产品代码/Host/core/桌面，未构建/提交/发布。同批登记 [plans 索引](plans/README.md) §B 与速览表、[对接总览](integration/README.md) §1。
+
 - 2026-10-21：[D23 reasoning_content链路局部修复证据](evidence/2026-10-21-d23-reasoning-content.md)：独立思考增量、保存与历史回传；隔离构建成功，25/25合成回归，真实供应商及候选待验，SSE网络夹具9项环境错误保留。
 
 - 2026-10-21：[调度者 Agent 与团队方案](plans/sacode-orchestrator-agent-2026-10-21.md)。取代原 [本地 Agent 预设](plans/sacode-local-agent-presets-2026-10-11.md) 的"标准/PTC/极简/创造"四模式方向（原方案存储/作用域/修订/导入导出与生命周期约束仍可复用）。核心定位：本地主 Agent 是调度者，委派原语唯一＝subagent；ACP 不是顶层委派通道，而是 subagent 可持有的**能力**（动机＝用户用外部 Agent 额度省自己 token）；外部 Agent 继承委派它的 subagent 权限边界（"什么人干什么事情"）；预设团队（explorer/planner/implementer/reviewer）+用户可编辑员工，员工编辑器用 checkbox 快捷勾选 SaCode 既有能力；多外部 Agent 默认顺序按优先级降级、轮询可选；主 Agent 直调 ACP 默认关、subagent 默认开；额度来源单独记账。F10 拓扑调整：ACP 从主 Agent 直连下沉为 subagent 能力。[plans 索引](plans/README.md) B 节同批登记，原预设条目标注方向废弃。纯设计，未改产品代码。
@@ -18,7 +110,7 @@
 
 - 2026-10-19：[c4候选交接与手动验收](evidence/2026-10-19-c4-delivery.md)，含用户配置共享5/5、候选哈希与五项未验边界；候选待验。
 
-- 2026-10-19：[Electron 测试环境门禁与交互跑道](evidence/2026-10-19-electron-test-env-gate.md)。代理环境里把 16 项 `0x80000003` 假失败标为 `env-blocked-electron` 跳过；二轮修复 6 项非 Electron 前提（2 条缺 `SACODE_CLI`→`env-blocked-missing-cli`、3 条缺 openssl→`env-blocked-missing-openssl`、windows-artifact-export 改仓外中性目录后真过）。全套自测 **1066/1038 pass/0 fail/28 skip**；交互跑道 `scripts/run-electron-tests-interactive.cmd` 命中受限即 exit 2。判据＝默认沙箱最小 Electron 探针，不传 `--no-sandbox`。正向交互路径须用户复验。
+- 2026-10-19：[Electron 测试环境门禁与交互跑道](clients/desktop/2026-10-19-electron-test-env-gate.md)。代理环境里把 16 项 `0x80000003` 假失败标为 `env-blocked-electron` 跳过；二轮修复 6 项非 Electron 前提（2 条缺 `SACODE_CLI`→`env-blocked-missing-cli`、3 条缺 openssl→`env-blocked-missing-openssl`、windows-artifact-export 改仓外中性目录后真过）。全套自测 **1066/1038 pass/0 fail/28 skip**；交互跑道 `scripts/run-electron-tests-interactive.cmd` 命中受限即 exit 2。判据＝默认沙箱最小 Electron 探针，不传 `--no-sandbox`。正向交互路径须用户复验。
 
 - 2026-10-20：[「创建计划」接入方案（DSH Plan/Todo 调研）](plans/plan-todo-integration-design-2026-10-20.md)。更正前提：DSH 的 Plan 是 **plan mode**（`dsh-plan-mode`+`dsh-client-ui-plan`），`dsh-tool-workflow` 是多 agent 编排工具、与计划无关；Plan（AI 生成 markdown、用户审阅、`exit_plan_mode` 批准后退出并执行）与 Todo（`todo_write` 整表替换、`todos` 投影）正交，**计划审阅走 `user-questions` 通道而非工具审批**；Goal（`{id,revision}` CAS + round-driver）驱动轮次。SaCode 现状：**Todo 与 Goal 已完整**（`todo.cj`/`todo_tool.cj`/`todos` 投影/`TodoPanel`；`goal*.cj`+`goal/*`），**唯独计划无产品闭环**（`plan.cj:PlanModeController` 已废弃，`composer-menu.ts` "创建计划"按钮禁用），PRD 第 804 行同口径。推荐：复用 Todo/Goal/审批工单/权限模式，新增计划模式+`exit_plan_mode`+计划审阅通道，`execution/*` 与 Plan 不同层不可复用。纯调研设计，未实施。
 
@@ -35,7 +127,7 @@
 - 2026-10-17 A3 GPU 最小对照复验：[脱敏 HTML 报告](../target/tmp/codex-outputs-20261017/A3-GPU复验-20261017-1352.html)（临时运行报告，按用户裁决迁移），阻塞未解决，真实日志页面未验；任务34保持进行中。
 
 > 本文件是 `docs/` 的**唯一入口索引**。先读分类体系与治理规则，再进各分类索引页。
-> 全库约 250 篇：产品 3｜设计规格与计划 55（接口与对接另设专项总览，见 ⑨⑩）｜测试与验收 10+｜工程治理 4｜历史证据 177＋8 数据文件｜历史验收 4。
+> 全库约 260 篇：产品 3｜设计规格与计划 56（接口与对接另设专项总览，见 ⑨⑩）｜端文档 9｜测试与验收 10+｜工程治理 5｜历史证据 177＋8 数据文件｜历史验收 4。
 > **维护规则：新增任何文档，必须同批登记到所属分类索引页；索引页与文档同批更新，不允许"只加文件不改索引"。**
 
 ---
@@ -54,12 +146,13 @@
 | ⑧ | **历史验收** | 阶段验收观察（4 篇） | `qa/*.md` | **冻结，不修改** | [qa/README.md](qa/README.md) |
 | ⑨ | **接口文档**（详细设计） | 各入口面（CLI / Host / 桌面 IPC / daemon / ACP / LSP / JS 扩展）的接口真源、契约与机器可读清单 | `plans/` 契约类＋`plans/*.json`；总览在 `interfaces/` | 与源码同批更新 | [interfaces/README.md](interfaces/README.md) |
 | ⑩ | **对接方案** | 外部 Agent、远程/移动、页面业务与 Git/知识库/自动化的接线方案与状态边界 | `plans/` 对接类、`superpowers/plans/`；总览在 `integration/` | 执行期活跃 | [integration/README.md](integration/README.md) |
+| ⑪ | **端文档** | 四个用户可交互前端（桌面 / CLI / 移动 / Web）的总览、逐端用途·需求·设计·边界·分步细节与跨端差异 | `clients/` | 随端迭代，与源码同批更新 | [clients/README.md](clients/README.md) |
 
-**说明**：分类是逻辑归类，物理位置不做搬迁——证据区存在大量交叉引用、并发会话按现路径引用文档，搬迁会制造断链。这与 2026-10-16 产物治理确立的"约定＋索引＋守卫"是同一思路；分类靠索引表达，不靠移动目录。
+**说明**：分类以逻辑归类为主，物理位置一般不做搬迁——证据区存在大量交叉引用、并发会话按现路径引用文档，搬迁易制造断链，这与 2026-10-16 产物治理确立的"约定＋索引＋守卫"是同一思路。**例外（2026-10-24）**：四端**专属**文档已按端归入 [`clients/<端>/`](clients/README.md)，并同批重写全库引用；通用/后端文档仍留在原目录，不迁移。
 
 ## 1. 治理原则（不可绕过）
 
-1. **需求权威**：[`product/PRD.md`](product/PRD.md) 定义 F01–F21 与授权/任务验收；[`product/platform-and-distribution.md`](product/platform-and-distribution.md) 细化平台、安装渠道与 GitHub 构建。旧 DSH 复刻范围、模块数量不覆盖现行定位，**不计算整体完成率**。
+1. **需求权威**：[`product/PRD.md`](product/PRD.md) 定义 F01–F21 与授权/任务验收；[`product/platform-and-distribution.md`](product/platform-and-distribution.md) 细化平台、安装渠道与 GitHub 构建。历史参考范围与模块数量不覆盖现行定位，**不计算整体完成率**。
 2. **证据保全**：[`evidence/`](evidence/) 与 [`qa/`](qa/) 是带日期与基线的取证。新结果用新记录或明确的后续补记，不覆盖旧失败、不把旧通过升级成当前通过。PRD 内带日期的进度表同样是历史快照，不是实时真源。
 3. **设计区核对**：[`plans/`](plans/) 与 [`superpowers/`](superpowers/) 的草案与"未实现"标签描述当时设计，**需核当前源码**，不能直接当作今天的实现证明。
 4. **状态粒度**：分别登记源码/入口接线、固定提交构建、默认启动、真实任务、安装态与发布，按平台/架构记录；无法确认的写待核，工作区新增或删除不自动属于提交基线。
@@ -72,7 +165,7 @@
 
 - 2026-10-18：[模型拉取结果未知核对](evidence/2026-10-18-model-pull-unknown-verification.md)补强持续提示、禁重复及查询失败分列；即使目录已更新也不据此报本次成功。状态/页面18/18、定向63/63、默认沙箱Electron真实核对1/1；无安装包替换，D22仍部分修复。
 
-- 2026-10-18：[桌面模型拉取查询与取消](evidence/2026-10-18-model-pull-desktop-lifecycle.md)接入供应商页：先持有操作ID再发起，未知不重发，取消与收束分开。定向58/58、桥接2/2、中性默认沙箱Electron/Host集成2/2；IPC149/149。未提交/未正式打包/未验安装态，跨renderer重启恢复未实现，D22保持部分修复。
+- 2026-10-18：[桌面模型拉取查询与取消](clients/desktop/2026-10-18-model-pull-desktop-lifecycle.md)接入供应商页：先持有操作ID再发起，未知不重发，取消与收束分开。定向58/58、桥接2/2、中性默认沙箱Electron/Host集成2/2；IPC149/149。未提交/未正式打包/未验安装态，跨renderer重启恢复未实现，D22保持部分修复。
 
 - 2026-10-17：[Host模型发现生命周期](evidence/2026-10-17-model-pull-host-lifecycle.md)及[接口契约](interfaces/model-pull-lifecycle-2026-10-17.md)：网络总预算默认20秒，精确操作查询/取消，超时禁止迟到写库。核心16/16、真实Host/兼容集成16/16；Host178条门禁与13条自证通过。DNS等系统调用的资源退出、桌面接线及安装态仍待验，D22部分修复。
 
@@ -105,8 +198,11 @@
 | 取证读数 | `evidence/` | `<主题>-<日期>.md`（新式）；冻结，只增不改 |
 | 验收观察 | `qa/` | `<主题>-<日期>.md`；配套工具用 `.cjs`/`.mjs` |
 | 文档模板 | `templates/` | 见 [`templates/README.md`](templates/README.md) |
+| 端规格（某端的用途 / 需求 / 设计 / 边界 / 分步细节） | `clients/<端>/` | `README.md`（规格）+ `documents.md`（归类索引）；其余本端专属文档同目录；五要素齐全，与 [`clients/README.md`](clients/README.md) 的跨端差异矩阵同批更新 |
 
 ## 4. 维护记录
+
+- 2026-10-24（端文档体系）：新增 `clients/` 并按端**物理归入端专属文档**——[总览](clients/README.md)（共享契约 + 跨端差异矩阵 + 红线）、四端目录 [`desktop/`](clients/desktop/README.md)/[`cli/`](clients/cli/README.md)/[`mobile/`](clients/mobile/README.md)/[`web/`](clients/web/README.md)（各含端规格 `README.md` + 归类索引 `documents.md` + 该端专属文档）。按名称规则把 `evidence/`、`plans/`、`product/`、`superpowers/` 中 94 篇端专属文档移入对应端目录（`git mv`，保留历史），通用/后端 286 篇留原位；同批重写全库相对链接与正文路径引用并做断链校验（仅余既有断链）。纯文档整理，不改源码、不改 PRD/台账状态、不提交。
 
 - 2026-10-20（功能域设计批量归档）：十四份功能域设计文档从 `target/tmp/` 归档到 `docs/plans/`：F06 上下文压缩、F08 Git 工作台后端、F09 实时交互终端（后端+前端两份）、F11 知识库索引服务（CodeArts + MonkeyCode 两份互补）、F13 自动化与 Hooks、F14 浏览器与电脑操控、F15 SSH 后端、F16 数据库面板、F17 三层安全扫描、F18 语音与提示词增强、F19 数据导入（OpenCode + Qoder 两份，调度方判定以 Qoder 版为实施基线）。[plans 索引](plans/README.md) B 节与详细设计覆盖速览同批登记。全部为纯调研设计，未改产品代码。
 
@@ -140,12 +236,12 @@
 
 - **2026-10-17（本轮·cjpm build.cj stagePostBuild hook 全流程打通）**：新增 [`evidence/2026-10-17-cjpm-build-cj-stage-post-build-hook.md`](evidence/2026-10-17-cjpm-build-cj-stage-post-build-hook.md) —— 解决 issue #725（上游 cjpm build 不复制 bin-dependencies 的运行期 DLL），用户不能等上游修。cjpm 1.1.3 原生支持 `build.cj` 钩子（`stagePostBuild(): Int64` 在 build 后自动执行）；复制 DLL 用 `File.readFrom` + `File.writeTo`（字节读写，`std.fs.copy` String 重载不可靠 native error -1）；干净目录 `D:\tmp\build-cj-clean-20261017` 验证 90+ 个 DLL 全部复制成功；**仓内 apps/cli/build.cj 落地受阻根因＝仓库根 ACL 被 Codex 沙箱化**（`Everyone:(I)(CI)(DENY)(DC)` + `CodexSandboxUsers` SID，File.readFrom "Failed to open" 包括项目内文件），同 0x80000003（D10）问题族；修复方向：① `icacls /remove` 移除沙箱 SID + 解除 DENY；② 中性导出到 D:\tmp 再构建；[`evidence/README.md`](evidence/README.md) 主题表同批登记。
 
-- **2026-10-17（本轮·CLI 启动 0xC0000135 根因与夹具对齐）**：新增 [`evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md`](evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md) —— CLI 入口 0xC0000135 = STATUS_DLL_NOT_FOUND，根因是 `knowledge-context-cli.test.mjs` env 白名单孤儿化丢失 stdx 目录；修复＝对齐 worktree/remote/team-command/tips-surface 四夹具既有约定（拷 process.env + 前置 `SACODE_STDX_DLL_DIR`/`SACODE_RUNTIME_DLL_DIR` 到 PATH）；上游关联 atomgit #725；环境侧闭合，逻辑侧缺口另列 D13 延伸；[`AGENTS.md`](../AGENTS.md) 「环境」节新增「运行期 DLL 路径约定（防 0xC0000135；codex 必读）」段落固化约定；[`evidence/README.md`](evidence/README.md) 主题表同批登记；[`product/PRD-tracking.md`](product/PRD-tracking.md) D13 同批更新环境侧闭合 + 逻辑侧另列。
+- **2026-10-17（本轮·CLI 启动 0xC0000135 根因与夹具对齐）**：新增 [`evidence/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md`](clients/cli/2026-10-17-cli-launch-0xc0000135-stdx-dll-missing.md) —— CLI 入口 0xC0000135 = STATUS_DLL_NOT_FOUND，根因是 `knowledge-context-cli.test.mjs` env 白名单孤儿化丢失 stdx 目录；修复＝对齐 worktree/remote/team-command/tips-surface 四夹具既有约定（拷 process.env + 前置 `SACODE_STDX_DLL_DIR`/`SACODE_RUNTIME_DLL_DIR` 到 PATH）；上游关联 atomgit #725；环境侧闭合，逻辑侧缺口另列 D13 延伸；[`AGENTS.md`](../AGENTS.md) 「环境」节新增「运行期 DLL 路径约定（防 0xC0000135；codex 必读）」段落固化约定；[`evidence/README.md`](evidence/README.md) 主题表同批登记；[`product/PRD-tracking.md`](product/PRD-tracking.md) D13 同批更新环境侧闭合 + 逻辑侧另列。
 
 - **2026-10-16（本轮·三问题排查）**：新增 [`evidence/2026-10-16-windows-startup-three-issues-diagnosis.md`](evidence/2026-10-16-windows-startup-three-issues-diagnosis.md) —— ①双击 `0x80000003`（根因定位＝仓库根 Low Mandatory Level 继承链，中性导出对照 SMOKE PASS）②仓颉运行时 DLL（全位置哈希盘点＋重打路径）③NSIS 临时文件错误（最小探针三格对照实证）三问题排查与修复可行性；[`product/PRD-tracking.md`](product/PRD-tracking.md) D10 更新为"根因已定位"、新增 **D18**（NSIS）/ **D19**（旧 DLL 载荷）与 §3 平台快照同步；[`plans/windows-dependency-and-compatibility-2026-10-16.md`](plans/windows-dependency-and-compatibility-2026-10-16.md) §1/§3/§4/§5/§6 同批更新；[`evidence/README.md`](evidence/README.md) 主题表同批登记。
 - **2026-10-16（本轮·Windows 依赖评估）**：新增 [`plans/windows-dependency-and-compatibility-2026-10-16.md`](plans/windows-dependency-and-compatibility-2026-10-16.md) —— 构建/桌面/CLI 三层依赖清单、11 项 Windows 特有问题（含分发载荷需重打包换修正运行库的关键发现）、普通用户可行性与降级策略；[`product/platform-and-distribution.md`](product/platform-and-distribution.md) 与 [plans 索引](plans/README.md) 同批互链登记。
 - **2026-10-16（本轮·PRD 跟进台账）**：新增 [`product/PRD-tracking.md`](product/PRD-tracking.md) —— F01–F21 全程跟进台账（逐域状态、缺陷登记含证据与闭合历史、平台快照、关键分母读数）；[`AGENTS.md`](../AGENTS.md) 新增「文档同步规则」：**完成功能或闭合缺陷必须同批更新 PRD-tracking 与 PRD**；[`product/README.md`](product/README.md) 清单与使用规则同批登记。同批订正 [`interfaces/README.md`](interfaces/README.md) 的 Host 读数：原按 `host-capabilities.json` 记 120 条，现按门禁实测订正为工作区 **169**（164 字面 + 5 目标）/ HEAD 冻结 **158**，json 文件标注已过期（D11）。
-- **2026-10-16（本轮·合并与专项总览）**：`plans/sacode-workbench-visual-direction-2026-10-07.md` 并入 [`product/desktop-design-standard.md`](product/desktop-design-standard.md)（附录「交互原型修订记录」）；`build-linux.md` 并入 [`build-platforms.md`](build-platforms.md) §2（stdx 配置与 Linux 读数）；两份原文件降为历史指针，保住冻结证据与脚本的原有引用路径。新增 [`interfaces/README.md`](interfaces/README.md)（接口面速查＋契约与机器可读清单；Host 读数后经门禁实测订正为 169/158，见上行）与 [`integration/README.md`](integration/README.md)（对接方案状态总览）；分类表由八类扩为十类。
+- **2026-10-16（本轮·合并与专项总览）**：`plans/sacode-workbench-visual-direction-2026-10-07.md` 并入 [`product/desktop-design-standard.md`](clients/desktop/desktop-design-standard.md)（附录「交互原型修订记录」）；`build-linux.md` 并入 [`build-platforms.md`](build-platforms.md) §2（stdx 配置与 Linux 读数）；两份原文件降为历史指针，保住冻结证据与脚本的原有引用路径。新增 [`interfaces/README.md`](interfaces/README.md)（接口面速查＋契约与机器可读清单；Host 读数后经门禁实测订正为 169/158，见上行）与 [`integration/README.md`](integration/README.md)（对接方案状态总览）；分类表由八类扩为十类。
 - **2026-10-16（本次）**：归类版重构——本文件重写为八类总览；新增五个分类索引页（[product](product/README.md)、[plans](plans/README.md)、[superpowers](superpowers/README.md)、[qa](qa/README.md)、[evidence](evidence/README.md)）与 [`templates/`](templates/README.md)；`plans/` 补齐 10-11～10-16 新增 15 篇的登记。
 - 2026-10-15/16：测试临时根迁移至 `target/tmp/`，守卫上线（[`testing.md`](testing.md)、[`plans/artifact-layout-and-retention-2026-10-16.md`](plans/artifact-layout-and-retention-2026-10-16.md)）。
 - 2026-10-13：README 口径更新（平台读数、历史化标注）。

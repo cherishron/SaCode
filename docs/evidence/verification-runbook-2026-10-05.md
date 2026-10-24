@@ -1,6 +1,6 @@
 # SaCode 统一验收运行手册（2026-10-05）
 
-入口脚本：[`scripts/verify-all.mjs`](../verify-all.mjs)（Lead 落盘；`automated-test` 成员连续四次报告「已创建」但盘上没有，故由 Lead 据其交回的设计与自身实测信息写成）。
+入口脚本：[`scripts/verify-all.mjs`](../../scripts/verify-all.mjs)（Lead 落盘；`automated-test` 成员连续四次报告「已创建」但盘上没有，故由 Lead 据其交回的设计与自身实测信息写成）。
 
 ## 用法
 

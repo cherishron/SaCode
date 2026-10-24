@@ -110,4 +110,4 @@ Exception: Too many attempts to create a temporary file
 - `apps/cli/src/main.cj`：builtinTools read 描述与 params 串；`tool` 断言链新增 5 条实测。
 - `core/src/pipeline_test.cj`：unknown-tool 占位 edit→mcp。
 - `core/src/fs_test.cj`：新增 6 条用例（编译已过，待测试基础设施修复后运行）。
-- `docs/plans/dsh-capability-matrix.md`：filesystem 行、tools 行二次增量回填。
+- `docs/plans/capability-matrix.md`：filesystem 行、tools 行二次增量回填。

@@ -94,7 +94,7 @@ M apps/desktop/frame-smoke.cjs
 
 2026-10-08 F20/阶段 6 当前构建登记见 [Windows 当前源码统一构建](../evidence/windows-current-source-build-2026-10-08.md)：667 项快照输入保留逐字哈希，默认核心/Host 与同核心 CLI 均真实编译退出 0；新 Host 目标 6/6、CLI 目标 8/8、真实 Main 处理器审批 3/3 通过（模型为本地协议夹具）。冻结前端五步构建及五项依赖/CSP 检查通过。NSIS 安装候选已构建退出 0，asar 暂存载荷 26 项哈希及 91 个 Host 文件核对通过；未安装、未发布。后续同字节普通目录导出已解除仓库 Low 标签导致的 premain 崩溃，真实 Electron＋Host 协议冒烟退出 0，详见低完整性交付修复。完整页面套件仍红，OS 隔离门禁与安装升级/数据保留仍未收口，F20 不升级为通过。
 
-2026-10-08 最新 F02/F04 增量见 [真实文件精确审批与目标完成](../evidence/goal-file-approval-dual-entry-2026-10-08.md)：固定 CLI 八场景、新 Host 增量六场景通过，包含真实文件落盘、完整提案允许一次、同修订同轮 evidence+claim 与恢复不执行；Host 通知缺字段先红后绿，两入口文件哈希一致，Host 取消 2112ms。后续 [桌面审批消费](../evidence/desktop-model-approval-consumption-2026-10-08.md) 状态及真实 renderer 分支 14 项通过，带任务身份 Host 的允许/拒绝/取消与重启不执行三场景通过，实际 Main taskStart/turnPoll 分派在 Node VM 中验证。Electron 原生窗口站拒绝访问已定位，真实 GUI、OS 隔离和统一最新源码产物仍待验收；F02/F04/F09 不升级为通过。
+2026-10-08 最新 F02/F04 增量见 [真实文件精确审批与目标完成](../evidence/goal-file-approval-dual-entry-2026-10-08.md)：固定 CLI 八场景、新 Host 增量六场景通过，包含真实文件落盘、完整提案允许一次、同修订同轮 evidence+claim 与恢复不执行；Host 通知缺字段先红后绿，两入口文件哈希一致，Host 取消 2112ms。后续 [桌面审批消费](../clients/desktop/desktop-model-approval-consumption-2026-10-08.md) 状态及真实 renderer 分支 14 项通过，带任务身份 Host 的允许/拒绝/取消与重启不执行三场景通过，实际 Main taskStart/turnPoll 分派在 Node VM 中验证。Electron 原生窗口站拒绝访问已定位，真实 GUI、OS 隔离和统一最新源码产物仍待验收；F02/F04/F09 不升级为通过。
 
 第二轮独立复核在**同一固定提交 `35a69ca`**、同一分支上执行，未提交、未推送。工作量仍属工作区，不代表已入库或安装包。
 

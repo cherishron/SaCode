@@ -44,35 +44,35 @@ core 已把「浏览器工具规格 + 记账 + 执行器 + 截图物化」和「
 
 | 能力 | 文件:符号 | 关键事实 |
 | --- | --- | --- |
-| 浏览器工具声明面 | [browser_tool.cj](file:///d:/Project/sa/saai/sa-code/core/src/browser_tool.cj#L22-L37) `browserToolSpecs()` | 12 条工具；只读 list/get/screenshot/snapshot 免审批，其余写操作 `requiresApproval=true` |
-| 浏览器权限面 | [bu.cj](file:///d:/Project/sa/saai/sa-code/core/src/bu.cj#L9-L51) `BrowserUseLedger` | verb 白名单；落 `browser-use/action` 审计事件 |
-| 浏览器执行面（headless DOM） | [bu_exec.cj](file:///d:/Project/sa/saai/sa-code/core/src/bu_exec.cj#L88-L197) `BrowserExecutor` | **只支持 navigate**，`--headless --dump-dom`；click/type/scroll 如实报 `action-not-supported` |
-| 浏览器执行器（驱动 provider） | [browser_executor.cj](file:///d:/Project/sa/saai/sa-code/core/src/browser_executor.cj#L8-L39) `BrowserToolExecutor` | 审批面 + `BrowserProviderClient` + 取消 |
-| 浏览器 provider 客户端 | [browser_provider.cj](file:///d:/Project/sa/saai/sa-code/core/src/browser_provider.cj#L29-L63) `BrowserProviderClient` | NDJSON JSON-RPC，方法名 `browser/invoke`；**对应 Node provider 全仓不存在** |
-| 电脑工具声明面 | [computer_tool.cj](file:///d:/Project/sa/saai/sa-code/core/src/computer_tool.cj#L102-L110) `computerToolSpecs()` | 13 个 verb；按 CUA 0.20.11 声明；action 类 `requiresApproval=true` |
-| 电脑执行器 | [computer_executor.cj](file:///d:/Project/sa/saai/sa-code/core/src/computer_executor.cj#L6-L45) `ComputerToolExecutor` | 落 `computer-use/action` + `computer/exec`；图像字节不进执行日志 |
-| 电脑运行时 | [computer_runtime.cj](file:///d:/Project/sa/saai/sa-code/core/src/computer_runtime.cj#L43-L59) `ComputerRuntime.openFromEnvironment` | 开关 `SACODE_COMPUTER_USE`，Node≥22 + `SACODE_COMPUTER_NODE`/`SACODE_COMPUTER_PROVIDER` |
-| 截图物化 | [computer_images.cj](file:///d:/Project/sa/saai/sa-code/core/src/computer_images.cj#L17-L68) `materializeComputerResult` | 只消费固定截图槽，落 `AttachmentStore.saveImages`；剥离 `dataBase64`/`filePath` |
-| 截图只读授权 | [attachment_image.cj](file:///d:/Project/sa/saai/sa-code/core/src/attachment_image.cj#L7-L36) `sessionImageJson` | 只读当前会话历史 + inbox 已引用图片；未引用/跨会话/损坏均拒绝 |
-| 模型循环物化截图 | [model_agent.cj](file:///d:/Project/sa/saai/sa-code/core/src/model_agent.cj#L76-L87) | `computer.*` 结果经 `materializeComputerResult` → `tool/result` 引用 |
-| 派发骨架 | [agent.cj](file:///d:/Project/sa/saai/sa-code/core/src/agent.cj#L309-L356) `browserStep`/`pageStep`/`computerStep` | 未注入执行器时 `browserStep` 返回 `browser-provider-not-injected` |
-| 声明面登记门控 | [model_tool_runtime.cj](file:///d:/Project/sa/saai/sa-code/core/src/model_tool_runtime.cj#L60-L72) | `browser` 靠布尔位登记；`computer`/`page` 靠「注入了执行器」登记 |
-| provider（电脑）Node 实现 | [extjs/computer-use/provider.mjs](file:///d:/Project/sa/saai/sa-code/extjs/computer-use/provider.mjs) | 已存在：`computer/invoke`、`computer/cancel`、字段白名单 |
+| 浏览器工具声明面 | [browser_tool.cj](file:/d:/Project/sa/saai/sa-code/core/src/browser_tool.cj#L22-L37) `browserToolSpecs()` | 12 条工具；只读 list/get/screenshot/snapshot 免审批，其余写操作 `requiresApproval=true` |
+| 浏览器权限面 | [bu.cj](file:/d:/Project/sa/saai/sa-code/core/src/bu.cj#L9-L51) `BrowserUseLedger` | verb 白名单；落 `browser-use/action` 审计事件 |
+| 浏览器执行面（headless DOM） | [bu_exec.cj](file:/d:/Project/sa/saai/sa-code/core/src/bu_exec.cj#L88-L197) `BrowserExecutor` | **只支持 navigate**，`--headless --dump-dom`；click/type/scroll 如实报 `action-not-supported` |
+| 浏览器执行器（驱动 provider） | [browser_executor.cj](file:/d:/Project/sa/saai/sa-code/core/src/browser_executor.cj#L8-L39) `BrowserToolExecutor` | 审批面 + `BrowserProviderClient` + 取消 |
+| 浏览器 provider 客户端 | [browser_provider.cj](file:/d:/Project/sa/saai/sa-code/core/src/browser_provider.cj#L29-L63) `BrowserProviderClient` | NDJSON JSON-RPC，方法名 `browser/invoke`；**对应 Node provider 全仓不存在** |
+| 电脑工具声明面 | [computer_tool.cj](file:/d:/Project/sa/saai/sa-code/core/src/computer_tool.cj#L102-L110) `computerToolSpecs()` | 13 个 verb；按 CUA 0.20.11 声明；action 类 `requiresApproval=true` |
+| 电脑执行器 | [computer_executor.cj](file:/d:/Project/sa/saai/sa-code/core/src/computer_executor.cj#L6-L45) `ComputerToolExecutor` | 落 `computer-use/action` + `computer/exec`；图像字节不进执行日志 |
+| 电脑运行时 | [computer_runtime.cj](file:/d:/Project/sa/saai/sa-code/core/src/computer_runtime.cj#L43-L59) `ComputerRuntime.openFromEnvironment` | 开关 `SACODE_COMPUTER_USE`，Node≥22 + `SACODE_COMPUTER_NODE`/`SACODE_COMPUTER_PROVIDER` |
+| 截图物化 | [computer_images.cj](file:/d:/Project/sa/saai/sa-code/core/src/computer_images.cj#L17-L68) `materializeComputerResult` | 只消费固定截图槽，落 `AttachmentStore.saveImages`；剥离 `dataBase64`/`filePath` |
+| 截图只读授权 | [attachment_image.cj](file:/d:/Project/sa/saai/sa-code/core/src/attachment_image.cj#L7-L36) `sessionImageJson` | 只读当前会话历史 + inbox 已引用图片；未引用/跨会话/损坏均拒绝 |
+| 模型循环物化截图 | [model_agent.cj](file:/d:/Project/sa/saai/sa-code/core/src/model_agent.cj#L76-L87) | `computer.*` 结果经 `materializeComputerResult` → `tool/result` 引用 |
+| 派发骨架 | [agent.cj](file:/d:/Project/sa/saai/sa-code/core/src/agent.cj#L309-L356) `browserStep`/`pageStep`/`computerStep` | 未注入执行器时 `browserStep` 返回 `browser-provider-not-injected` |
+| 声明面登记门控 | [model_tool_runtime.cj](file:/d:/Project/sa/saai/sa-code/core/src/model_tool_runtime.cj#L60-L72) | `browser` 靠布尔位登记；`computer`/`page` 靠「注入了执行器」登记 |
+| provider（电脑）Node 实现 | [extjs/computer-use/provider.mjs](file:/d:/Project/sa/saai/sa-code/extjs/computer-use/provider.mjs) | 已存在：`computer/invoke`、`computer/cancel`、字段白名单 |
 
 ### 2.2 Host：现状
 
 | 项 | 文件:符号 | 关键事实 |
 | --- | --- | --- |
-| 页面工具分派骨架 | [page_tool_rpc.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L7-L114) `HostPageRuntime` | 租约 `WriteLease` + `durableCheckpoint` + `freezeAfterDurableFailure` + `PageToolChannel` + 可取消工作线程 |
-| 页面方法白名单 | [page_tool_rpc.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L116-L119) `isPageToolMethod` | `page/tool/{attach,prepare,call,poll,claim,result,cancel}` |
-| 分派入口 | [page_tool_rpc.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L121-L222) `handlePageToolRpc` | prepare 发精确工单、call 走 `executeWithApproval` |
-| Host 字段 | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1024) `var pageRuntime: ?HostPageRuntime` | 会话级单例 |
-| 电脑运行时装配 | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1440-L1445) / [L2416-L2422](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L2416-L2422) | 每轮 `openFromEnvironment`，`finally close()` |
-| ModelToolRuntime 装配 | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1448-L1452) | **未传 `browser:`**；`computer`/`page` 有传 |
-| 读面分类 | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L490-L506) | `attachment/image-read` 属读面；`page/tool/*` 分并发安全/飞行中 |
-| 分派循环 | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L3576) `handlePageToolRpc(this,…)` | 一行接入 |
-| 截图 IPC | [main.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1565-L1575) | 方法 `attachment/image-read` → `sessionImageJson` |
-| 网页设置面 | [web_surface.cj](file:///d:/Project/sa/saai/sa-code/apps/host/src/web_surface.cj) | `web/settings/*` 已有；**无 `web_fetch`/`web_search` Host 分派** |
+| 页面工具分派骨架 | [page_tool_rpc.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L7-L114) `HostPageRuntime` | 租约 `WriteLease` + `durableCheckpoint` + `freezeAfterDurableFailure` + `PageToolChannel` + 可取消工作线程 |
+| 页面方法白名单 | [page_tool_rpc.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L116-L119) `isPageToolMethod` | `page/tool/{attach,prepare,call,poll,claim,result,cancel}` |
+| 分派入口 | [page_tool_rpc.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/page_tool_rpc.cj#L121-L222) `handlePageToolRpc` | prepare 发精确工单、call 走 `executeWithApproval` |
+| Host 字段 | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1024) `var pageRuntime: ?HostPageRuntime` | 会话级单例 |
+| 电脑运行时装配 | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1440-L1445) / [L2416-L2422](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L2416-L2422) | 每轮 `openFromEnvironment`，`finally close()` |
+| ModelToolRuntime 装配 | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1448-L1452) | **未传 `browser:`**；`computer`/`page` 有传 |
+| 读面分类 | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L490-L506) | `attachment/image-read` 属读面；`page/tool/*` 分并发安全/飞行中 |
+| 分派循环 | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L3576) `handlePageToolRpc(this,…)` | 一行接入 |
+| 截图 IPC | [main.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1565-L1575) | 方法 `attachment/image-read` → `sessionImageJson` |
+| 网页设置面 | [web_surface.cj](file:/d:/Project/sa/saai/sa-code/apps/host/src/web_surface.cj) | `web/settings/*` 已有；**无 `web_fetch`/`web_search` Host 分派** |
 
 **Host 现状结论**：`browser/*`、`computer/*` **没有任何方法分派**；`computer` 仅在内轮循环里被 open/close，**没有对外 RPC 可调用**（模型侧 `computer.*` 经工具管线走，非 Host 方法）。`browser:` 位甚至没开。
 
@@ -80,13 +80,13 @@ core 已把「浏览器工具规格 + 记账 + 执行器 + 截图物化」和「
 
 | 项 | 文件:符号 | 关键事实 |
 | --- | --- | --- |
-| preload 固定动作集 | [preload.cjs](file:///d:/Project/sa/saai/sa-code/apps/desktop/preload.cjs#L52) | `attachmentImageRead` L52；`pageToolsList/pageToolCall` L176-177；无 `browser*`/`computer*` |
-| 主进程 IPC | [main.cjs](file:///d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L287-L292) / [L656-L683](file:///d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L656-L683) | `sacode:attachmentImageRead`；`sacode:pageTools*`（作用于工作台页面 `document.modelContext`） |
-| 工作台标签壳 | [workbench-tabs.ts](file:///d:/Project/sa/saai/sa-code/apps/desktop/renderer/pages/workbench-tabs.ts#L3-L22) `resources` | 现有资源：files/search/preview/editor/diff/git/inspect/trace/guide/terminal/agents/tests/scan(false)/deploy(false)/memory(false)/services(false)/sources/artifacts。**无 browser/web/computer** |
-| 右侧面板装配 | [side-panels.js](file:///d:/Project/sa/saai/sa-code/apps/desktop/renderer/side-panels.js#L37-L196) `renderPanels` | 标签选择回调 `onSelect`、`self.sideTab` |
-| 截图渲染 | [persisted-image.ts](file:///d:/Project/sa/saai/sa-code/apps/desktop/renderer/pages/persisted-image.ts#L9-L43) | 经 `attachmentImageRead` 取字节 → Blob → `<img>`；含 `image-lightbox` |
-| 渲染层导航防护 | [main.cjs](file:///d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L127-L130) | `will-attach-webview` 一律 `preventDefault`（渲染层挂不了 `<webview>`） |
-| Electron | [package.json](file:///d:/Project/sa/saai/sa-code/apps/desktop/package.json#L100) `electron ^33.0.0` | `WebContentsView` 可用（Electron ≥30） |
+| preload 固定动作集 | [preload.cjs](file:/d:/Project/sa/saai/sa-code/apps/desktop/preload.cjs#L52) | `attachmentImageRead` L52；`pageToolsList/pageToolCall` L176-177；无 `browser*`/`computer*` |
+| 主进程 IPC | [main.cjs](file:/d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L287-L292) / [L656-L683](file:/d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L656-L683) | `sacode:attachmentImageRead`；`sacode:pageTools*`（作用于工作台页面 `document.modelContext`） |
+| 工作台标签壳 | [workbench-tabs.ts](file:/d:/Project/sa/saai/sa-code/apps/desktop/renderer/pages/workbench-tabs.ts#L3-L22) `resources` | 现有资源：files/search/preview/editor/diff/git/inspect/trace/guide/terminal/agents/tests/scan(false)/deploy(false)/memory(false)/services(false)/sources/artifacts。**无 browser/web/computer** |
+| 右侧面板装配 | [side-panels.js](file:/d:/Project/sa/saai/sa-code/apps/desktop/renderer/side-panels.js#L37-L196) `renderPanels` | 标签选择回调 `onSelect`、`self.sideTab` |
+| 截图渲染 | [persisted-image.ts](file:/d:/Project/sa/saai/sa-code/apps/desktop/renderer/pages/persisted-image.ts#L9-L43) | 经 `attachmentImageRead` 取字节 → Blob → `<img>`；含 `image-lightbox` |
+| 渲染层导航防护 | [main.cjs](file:/d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L127-L130) | `will-attach-webview` 一律 `preventDefault`（渲染层挂不了 `<webview>`） |
+| Electron | [package.json](file:/d:/Project/sa/saai/sa-code/apps/desktop/package.json#L100) `electron ^33.0.0` | `WebContentsView` 可用（Electron ≥30） |
 
 ---
 
@@ -156,9 +156,9 @@ func handleBrowserComputerRpc(host: HostRuntime, method: String, body: String, r
 ```
 
 接入点（镜像 `handlePageToolRpc`，都是**一行**）：
-- 分派循环：在 [main.cj:3576](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L3576) 旁新增 `if (handleBrowserComputerRpc(this, method, body, idText)) { continue }`。
-- 读面分类：[main.cj:490](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L490) 的读面集合里加入 `browser/tabs/list`、`browser/tabs/get`、`browser/snapshot`、`computer/windows/list`、`computer/window/observe`。
-- 并发安全判定：[main.cj:505](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L505) 同款，把 `browser/*`、`computer/*` 的「需授权动作」排除出免并发限流面。
+- 分派循环：在 [main.cj:3576](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L3576) 旁新增 `if (handleBrowserComputerRpc(this, method, body, idText)) { continue }`。
+- 读面分类：[main.cj:490](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L490) 的读面集合里加入 `browser/tabs/list`、`browser/tabs/get`、`browser/snapshot`、`computer/windows/list`、`computer/window/observe`。
+- 并发安全判定：[main.cj:505](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L505) 同款，把 `browser/*`、`computer/*` 的「需授权动作」排除出免并发限流面。
 
 ### 4.3 `HostBrowserRuntime` 设计
 
@@ -305,12 +305,12 @@ class HostBrowserRuntime {
 ### 7.2 `attachmentImageRead`（展示截图）
 
 - **可复用（推荐）**。链路已通：
-  `materializeComputerResult`（[computer_images.cj:17](file:///d:/Project/sa/saai/sa-code/core/src/computer_images.cj#L17-L68)）
+  `materializeComputerResult`（[computer_images.cj:17](file:/d:/Project/sa/saai/sa-code/core/src/computer_images.cj#L17-L68)）
   → `AttachmentStore.saveImages`
   → `model_agent.cj:84` 写 `tool/result` 引用
-  → `sessionImageJson`（[attachment_image.cj:7](file:///d:/Project/sa/saai/sa-code/core/src/attachment_image.cj#L7-L36)）只读**已引用**图片
-  → Host `attachment/image-read`（[main.cj:1575](file:///d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1575)）
-  → 桌面 `attachmentImageRead`（[main.cjs:287](file:///d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L287-L292)）
+  → `sessionImageJson`（[attachment_image.cj:7](file:/d:/Project/sa/saai/sa-code/core/src/attachment_image.cj#L7-L36)）只读**已引用**图片
+  → Host `attachment/image-read`（[main.cj:1575](file:/d:/Project/sa/saai/sa-code/apps/host/src/main.cj#L1575)）
+  → 桌面 `attachmentImageRead`（[main.cjs:287](file:/d:/Project/sa/saai/sa-code/apps/desktop/main.cjs#L287-L292)）
   → 渲染 `PersistedImage`。
 - **边界（必须保持）**：`sessionImageJson` 只服务**已引用**图片，未引用/跨会话/损坏一律拒绝——这正是「截图不进普通日志、只经附件仓发布」的保证。
 - **浏览器截图接入**：让 `browser/screenshot` 结果走**同一物化器**（需要把浏览器 provider 的截图槽喂给 `materializeComputerResult`，或抽出一个共享物化器 `materializeImageResult`）。截图字节**不得**进 `browser/exec` 执行日志。
