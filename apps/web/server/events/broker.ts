@@ -9,6 +9,8 @@ export interface Subscriber {
   id: string;
   onFrame: (frame: RawEventFrame) => void;
   onRefillPrompt: () => void;
+  /** 上游失联时回调一次；未提供则静默忽略（合成传输不会失联）。 */
+  onUpstreamLost?: () => void;
 }
 
 export class EventBroker {
@@ -16,14 +18,48 @@ export class EventBroker {
   private subscribers = new Map<string, Subscriber>();
   private subCounter = 0;
   private upstreamClose: (() => void) | null = null;
+  private upstreamLost = false;
   private generation = 1;
   private sessionGenerations = new Map<string, number>();
 
-  constructor(private readonly transport: DaemonTransport) {}
+  constructor(
+    private readonly transport: DaemonTransport,
+    private readonly hooks: { onUpstreamLost?: () => void } = {},
+  ) {}
 
   async start(): Promise<void> {
-    const { close } = await this.transport.subscribe((frame) => this.ingest(frame));
+    const { close } = await this.transport.subscribe((frame) => this.ingest(frame), {
+      onLost: () => this.handleUpstreamLost(),
+    });
     this.upstreamClose = close;
+  }
+
+  /**
+   * 上游失联：关闭上游订阅并通知已建立的浏览器流。
+   * 不做自动重连——重连须重新校验身份与绑定，由上层按策略处理，
+   * 避免在没有凭据校验的情况下反复重连同一失效端点。
+   */
+  private handleUpstreamLost(): void {
+    if (this.upstreamLost) return;
+    this.upstreamLost = true;
+    this.upstreamClose?.();
+    for (const sub of [...this.subscribers.values()]) {
+      try {
+        sub.onUpstreamLost?.();
+      } catch {
+        /* 单个订阅者异常不影响其他订阅者 */
+      }
+    }
+    // 通知 gateway 摘除本 broker，使后续请求能重建并重新校验上游。
+    try {
+      this.hooks.onUpstreamLost?.();
+    } catch {
+      /* 上层钩子异常不影响订阅者清理 */
+    }
+  }
+
+  isUpstreamLost(): boolean {
+    return this.upstreamLost;
   }
 
   private ingest(frame: RawEventFrame): void {

@@ -30,7 +30,15 @@ export interface DaemonTransport {
   catalogSessions(workspaceId: string): Promise<Record<string, unknown>[]>;
   getSessionDetail(sessionId: string): Promise<Record<string, unknown>>;
   getSessionEvents(sessionId: string, afterEventId: string | null, limit: number): Promise<RawEventsPage>;
-  subscribe(onFrame: (frame: RawEventFrame) => void): Promise<{ close: () => void }>;
+  /**
+   * 订阅上游帧。`opts.onLost` 在判定上游失联时回调一次（尽力而为）。
+   * 上游 pump 静默结束无法被直接观测（桌面 RemoteTransport 无 onClose），
+   * 真实实现以轮询持久真源作为兜底：既能取到事件，也能据此判定不可达。
+   */
+  subscribe(
+    onFrame: (frame: RawEventFrame) => void,
+    opts?: { onLost?: () => void },
+  ): Promise<{ close: () => void }>;
   close(): void;
 }
 

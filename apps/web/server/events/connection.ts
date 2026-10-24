@@ -89,6 +89,23 @@ export class SseConnection {
   private onResponseClose = (): void => this.close();
   private onResponseError = (): void => this.close(true);
 
+  /**
+   * 上游失联：先尽力告知浏览器（背压时直接断开，不追加控制帧），再关闭。
+   * 与 expire 的区别是语义：这不是会话失效，浏览器重连后应重新拉取而非重新登录。
+   */
+  upstreamLost(): void {
+    if (this.closed) return;
+    if (!this.slow && !this.raw.destroyed && !this.raw.writableEnded) {
+      try {
+        this.slow = !this.raw.write('event: upstream-lost\ndata: {}\n\n');
+      } catch {
+        this.close(true);
+        return;
+      }
+    }
+    this.close();
+  }
+
   expire(): void {
     if (this.closed) return;
     if (!this.slow && !this.raw.destroyed && !this.raw.writableEnded) {

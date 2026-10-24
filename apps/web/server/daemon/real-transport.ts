@@ -15,6 +15,16 @@ export interface RealTransportHandle {
 
 const READ_METHODS = new Set<ReadMethod>(['initialize', 'session/catalog', 'session/events']);
 const DECIMAL = /^(0|[1-9][0-9]{0,17})$/;
+/** 轮询兜底的默认间隔与单次会话上限：控制只读 RPC 开销，不是实时推送的替代。 */
+const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const POLL_SESSION_CAP = 20;
+
+/** 可注入时钟，便于测试用假计时验证失联检测，不真实等待数十秒。 */
+export interface RealTransportClock {
+  setIntervalImpl: (fn: () => void, ms: number) => unknown;
+  clearIntervalImpl: (handle: unknown) => void;
+  pollIntervalMs: number;
+}
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('real-response-invalid');
   return value as Record<string, unknown>;
@@ -125,15 +135,23 @@ export class RemoteTransportAdapter implements DaemonTransport {
   private subscriptionClosers = new Set<() => void>();
   private failure: Error | undefined;
   private closed = false;
+  private readonly setIntervalImpl: (fn: () => void, ms: number) => unknown;
+  private readonly clearIntervalImpl: (handle: unknown) => void;
+  private readonly pollIntervalMs: number;
 
   constructor(
     cfg: TargetConfig,
     private readonly handle: RealTransportHandle,
+    clock: Partial<RealTransportClock> = {},
   ) {
     this.targetId = cfg.id;
     const bound = binding(cfg);
     this.workspaceId = bound.workspaceId;
     this.instanceId = bound.instanceId;
+    this.setIntervalImpl = clock.setIntervalImpl ?? ((fn, ms) => setInterval(fn, ms));
+    this.clearIntervalImpl =
+      clock.clearIntervalImpl ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+    this.pollIntervalMs = clock.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }
 
   private async request(
@@ -279,10 +297,14 @@ export class RemoteTransportAdapter implements DaemonTransport {
     };
   }
 
-  async subscribe(onFrame: (frame: RawEventFrame) => void): Promise<{ close: () => void }> {
+  async subscribe(
+    onFrame: (frame: RawEventFrame) => void,
+    opts?: { onLost?: () => void },
+  ): Promise<{ close: () => void }> {
     await this.initialize();
     let stopped = false;
     let abort: (() => void) | undefined;
+    let pollTimer: unknown;
     const positions = new Map<string, string | null>();
     let pending: Promise<void> | undefined;
     const dirty = new Set<string>();
@@ -291,35 +313,24 @@ export class RemoteTransportAdapter implements DaemonTransport {
       stopped = true;
       dirty.clear();
       abort?.();
+      if (pollTimer !== undefined) {
+        this.clearIntervalImpl(pollTimer);
+        pollTimer = undefined;
+      }
       this.subscriptionClosers.delete(close);
     };
-    const sub = await this.handle.subscribeNotifications((value) => {
-      if (stopped || this.closed) return;
-      let sessionId: string;
+    /** 失联/失败：标记后后续读取显式失败（不回落合成空成功），并尽力通知上层。 */
+    const fail = (error: Error): void => {
+      this.failure = error;
+      close();
       try {
-        const envelope = record(value);
-        const e = envelope.method === 'daemon/event' ? record(envelope.params) : envelope;
-        // 控制通知与缺失明确归属的旧直播通知不是会话事件。
-        if (envelope.method !== undefined && envelope.method !== 'daemon/event') return;
-        sessionId = text(e.sessionId);
-        if (typeof e.seq !== 'string' && !Number.isSafeInteger(e.seq)) return;
-        if (
-          !DECIMAL.test(String(e.seq)) ||
-          typeof (e.eventType ?? e.event) !== 'string' ||
-          typeof e.data !== 'string'
-        )
-          return;
+        opts?.onLost?.();
       } catch {
-        return;
+        /* 上层回调异常不阻断清理 */
       }
-      // 合并同会话提示，避免上游突发通知形成无界 Promise 队列。
-      dirty.add(sessionId);
-      if (dirty.size > 500) {
-        this.failure = new Error('real-subscription-overflow');
-        close();
-        return;
-      }
-      if (pending) return;
+    };
+    const scheduleRefill = (): void => {
+      if (stopped || this.closed || pending) return;
       // 通知没有日志代次，必须回持久真源核验，不将 daemon 全局 seq 当会话游标。
       pending = Promise.resolve()
         .then(async () => {
@@ -345,12 +356,38 @@ export class RemoteTransportAdapter implements DaemonTransport {
           }
         })
         .catch(() => {
-          this.failure = new Error('real-subscription-refill-failed');
-          close();
+          fail(new Error('real-subscription-refill-failed'));
         })
         .finally(() => {
           pending = undefined;
         });
+    };
+    const sub = await this.handle.subscribeNotifications((value) => {
+      if (stopped || this.closed) return;
+      let sessionId: string;
+      try {
+        const envelope = record(value);
+        const e = envelope.method === 'daemon/event' ? record(envelope.params) : envelope;
+        // 控制通知与缺失明确归属的旧直播通知不是会话事件。
+        if (envelope.method !== undefined && envelope.method !== 'daemon/event') return;
+        sessionId = text(e.sessionId);
+        if (typeof e.seq !== 'string' && !Number.isSafeInteger(e.seq)) return;
+        if (
+          !DECIMAL.test(String(e.seq)) ||
+          typeof (e.eventType ?? e.event) !== 'string' ||
+          typeof e.data !== 'string'
+        )
+          return;
+      } catch {
+        return;
+      }
+      // 合并同会话提示，避免上游突发通知形成无界 Promise 队列。
+      dirty.add(sessionId);
+      if (dirty.size > 500) {
+        fail(new Error('real-subscription-overflow'));
+        return;
+      }
+      scheduleRefill();
     });
     if (typeof sub === 'function') abort = sub;
     else if (sub && typeof sub.abort === 'function') abort = () => sub.abort();
@@ -362,7 +399,30 @@ export class RemoteTransportAdapter implements DaemonTransport {
     if (stopped || this.closed) {
       abort();
       stopped = true;
-    } else this.subscriptionClosers.add(close);
+    } else {
+      this.subscriptionClosers.add(close);
+      // 轮询兜底：上游 pump 静默结束时无法观测，改为定期回持久真源取新事件。
+      // 它同时充当活性探测——取不到即判定上游不可达，而不是静默假装已连接。
+      if (this.pollIntervalMs > 0) {
+        const tick = (): void => {
+          if (stopped || this.closed) return;
+          void (async () => {
+            try {
+              const sessions = await this.catalogSessions(this.workspaceId);
+              for (const item of sessions.slice(0, POLL_SESSION_CAP)) dirty.add(text(record(item).id));
+              if (dirty.size > 500) {
+                fail(new Error('real-subscription-overflow'));
+                return;
+              }
+              scheduleRefill();
+            } catch {
+              fail(new Error('real-upstream-unreachable'));
+            }
+          })();
+        };
+        pollTimer = this.setIntervalImpl(tick, this.pollIntervalMs);
+      }
+    }
     return { close };
   }
 

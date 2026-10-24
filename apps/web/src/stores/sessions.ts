@@ -3,6 +3,9 @@ import { markRaw } from 'vue';
 import { api } from '../api/client';
 import type { EventFrameView, SessionDetail, SessionSummary, TargetInfo } from '@shared/types';
 
+/** 上游失联提示文案；重连成功时按此常量精确清除，避免误清其他错误。 */
+const UPSTREAM_LOST_MESSAGE = '上游连接已断开，正在重连';
+
 export const useSessionsStore = defineStore('sessions', {
   state: () => ({
     targets: [] as TargetInfo[],
@@ -158,6 +161,8 @@ export const useSessionsStore = defineStore('sessions', {
       es.onopen = () => {
         if (this.es !== es || revision !== this.selectionRevision) return;
         this.streamStatus = 'open';
+        // 重连成功后清掉失联提示，避免残留陈旧错误。
+        if (this.error === UPSTREAM_LOST_MESSAGE) this.error = null;
         // 自动重连不保证恢复所有历史；从持久接口补读，不把环形回放当真源。
         if (opened) void refill();
         opened = true;
@@ -179,6 +184,13 @@ export const useSessionsStore = defineStore('sessions', {
         if (this.es !== es) return;
         this.disconnectStream();
         this.error = '登录已失效，请重新登录';
+      });
+      // 上游失联：服务端会关闭本流，浏览器按 retry 自动重连。
+      // 如实标为已断开，不继续显示"已连接"却收不到数据。
+      es.addEventListener('upstream-lost', () => {
+        if (this.es !== es || revision !== this.selectionRevision) return;
+        this.streamStatus = 'closed';
+        this.error = UPSTREAM_LOST_MESSAGE;
       });
       es.onerror = () => {
         if (this.es !== es || revision !== this.selectionRevision) return;

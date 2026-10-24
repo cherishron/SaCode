@@ -67,7 +67,13 @@ export class TargetGateway {
     const creation = Promise.resolve().then(async () => {
       const transport = await this.getTransport(targetId);
       if (this.stopped) throw new Error('gateway-stopped');
-      const broker = new EventBroker(transport);
+      // 失联后从缓存摘除：下次请求会重建 broker，重新走身份与绑定校验，
+      // 而不是沿用一条已失效的上游订阅（上游恢复后能自愈）。
+      const broker = new EventBroker(transport, {
+        onUpstreamLost: () => {
+          if (this.brokers.get(targetId) === broker) this.brokers.delete(targetId);
+        },
+      });
       try {
         await broker.start();
         if (this.stopped) throw new Error('gateway-stopped');

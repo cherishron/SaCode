@@ -30,11 +30,14 @@ describe('SessionStore', () => {
   });
 
   it('touch extends idle', async () => {
-    const s = new SessionStore(80, 100000);
+    // 容错留足：wait 只保证不少于名义值，并发跑时实际耗时可能远超。
+    // 原 80ms idle + 两次 50ms 等待的容错仅约 30ms，会在整套并发时偶发失败。
+    // 语义不变：不 touch 时 200+150 > 300 会过期；touch 后从续期点起 150 < 300 仍存活。
+    const s = new SessionStore(300, 100000);
     const r = s.create('o1', 'u1');
-    await wait(50);
+    await wait(200);
     s.touch(r.id);
-    await wait(50);
+    await wait(150);
     expect(s.get(r.id)?.id).toBe(r.id);
   });
 

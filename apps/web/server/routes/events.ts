@@ -94,6 +94,7 @@ export async function registerEvents(
           connection.write(`data: ${JSON.stringify(toEventFrame(frame))}\n\n`);
       },
       onRefillPrompt: () => connection.promptRefill('generation-changed'),
+      onUpstreamLost: () => connection.upstreamLost(),
     });
     for (const frame of broker.snapshotRing(sessionId)) {
       connection.write(`data: ${JSON.stringify(toEventFrame(frame))}\n\n`);
