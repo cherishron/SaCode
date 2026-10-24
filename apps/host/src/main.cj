@@ -496,7 +496,10 @@ func allowedDuringTurn(method: String): Bool {
     // 增强与轮次各走各的车道：turn 在跑时也要能润色下一条草稿，
     // 反过来增强在途时桌面的取消必须答得上来——否则「支持取消」只是一句空话。
     let enhanceSide = method == "prompt/enhance" || method == "prompt/poll" || method == "prompt/cancel"
-    return turnSide || readSide || callSide || approvalSide || planSide || meterSide || enhanceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method) || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || acpControlDuringTurn(method) || method == "execution/stop" ||
+    // 语音与增强/轮次各走各的车道：录音导入、转写、终态查询在途期间都要答得上来，
+    // 否则「点了录音没反应」或「取消追不上」。
+    let voiceSide = method == "voice/record" || method == "voice/transcribe" || method == "voice/describe"
+    return turnSide || readSide || callSide || approvalSide || planSide || meterSide || enhanceSide || voiceSide || isQueueMethod(method) || method == "goal/describe" || isGoalControlMethod(method) || ExecutionApi.readOnly(method) || AcpHistory.handles(method) || acpControlDuringTurn(method) || method == "execution/stop" ||
         (isPageToolMethod(method) && method != "page/tool/prepare" && method != "page/tool/call")
 }
 
@@ -530,6 +533,17 @@ func paramsTextOf(body: String): String {
         if (let Some(p) <- request.get("params")) { return p.asObject().toString() }
     } catch (_: Exception) {}
     return ""
+}
+
+// 这些方法作用于「当前活动会话」：写日志、起轮、轮询、取消、审批都只对当前会话有意义。
+// 请求里带了非空 sessionId 却指向别的会话时必须当场拒绝——否则迟到的远程请求会静默
+// 落到已切换的另一份会话上（审计 S11 的根因）。不带 sessionId 保留本机旧语义，
+// 远程门禁本身已要求 resourceKeys 带 sessionId。
+func bindsActiveSession(method: String): Bool {
+    return method == "session/submit" || method == "session/append" ||
+        method == "turn/start" || method == "task/start" ||
+        method == "turn/poll" || method == "turn/cancel" ||
+        method == "approval/ask" || method == "approval/answer"
 }
 
 // 条目与附件均来自核心日志投影；只交引用元数据，不交本地路径或上传字节。
@@ -1024,8 +1038,10 @@ class HostRuntime {
     var automationExecRpc: ?AutomationExecRpc = None
     var importRpcInstance: ?ImportRpc = None
     var webRpc: ?WebRpc = None
-    var skillRpc: ?SkillRpc = None
     var mcpRpc: ?McpRpc = None
+    // 语音：录制由桌面采集适配层完成、宿主只做导入登记；转写走独立车道，ASR 二进制缺失时 fail-closed。
+    var voiceRpc: ?VoiceRpc = None
+    var asrBinary = getVariable("SACODE_ASR_BINARY") ?? ""
     // 上传与结算之间靠暂存凭证连接：凭证由本宿主铸造，对端自报的 attachmentId
     // 没有通路——「谁上传的」与「谁引用的」必须是同一次会话里的同一张条子。
     // 宿主文件后端的内容寻址目录相对会话根（与 SessionCatalog(".") 同一个 CWD）。
@@ -1072,7 +1088,7 @@ class HostRuntime {
     var questionRuntime: ?StructuredUserQuestions = None
     // 计划审阅运行态：与提问同构（每条 turn 一个实例），答复/取消走独立 plan/* RPC。
     var planRuntime: ?PlanReviews = None
-    var turnSink = ThreadSafeDeliveryQueue(64)
+    var turnSink = TurnFrameJournal(4096)
     // 工具调用改成「立刻回执 + 独立线程收帧」：主循环因此能在转调期间继续读 stdin，
     // 桌面的 cancel/stop 才追得上在途调用。登记表只由主循环动，收帧线程只写 sink。
     var callSink = ThreadSafeDeliveryQueue(64)
@@ -1128,6 +1144,8 @@ class HostRuntime {
     func closeAdapters(): Unit {
         if (let Some(r) <- mcpRpc) { r.close() }
         mcpRpc = None
+        if (let Some(r) <- voiceRpc) { r.cancel() }
+        voiceRpc = None
         if (let Some(r) <- terminalRpc) { try { let _ = r.close() } catch (_: Exception) {} }
         if (let Some(r) <- automationExecRpc) { try { let _ = r.close() } catch (_: Exception) {} }
         if (let Some(r) <- sshRpc) { try { r.cancel() } catch (_: Exception) {} }
@@ -1139,7 +1157,6 @@ class HostRuntime {
         securityScanRpc = None
         importRpcInstance = None
         webRpc = None
-        skillRpc = None
         adapterSession = ""
     }
 
@@ -1151,8 +1168,6 @@ class HostRuntime {
         try { importRpcInstance = Some(ImportRpc()) } catch (_: Exception) { importRpcInstance = None }
         // 网页抓取/搜索按用户作用域装配；供应商与凭据由 core 读取，不经 RPC 参数覆盖。
         try { webRpc = Some(WebRpc(settings: WebSettings.forUser(), credentials: CredentialStore.forUser())) } catch (_: Exception) { webRpc = None }
-        // 技能清单按会话工作区装配；无工作区时返回空清单，不扫盘根。
-        try { skillRpc = Some(SkillRpc(shared, workingDirectory: sessionWorkingDirectory(shared))) } catch (_: Exception) { skillRpc = None }
         try {
             let compactLog = shared
             let compactSession = activeId
@@ -1238,9 +1253,11 @@ class HostRuntime {
             compactWiring = Some(wiring)
         } catch (_: Exception) { compactWiring = None }
         try { knowledgeIndexRpc = Some(KnowledgeIndexHostRpc(shared, activeId)) } catch (_: Exception) { knowledgeIndexRpc = None }
-        // 交互终端默认 fail-closed：authorizeCreate 缺省返回 false，创建被拒；
-        // 产品授权面接线前不放行任意命令行。
-        try { terminalRpc = Some(TerminalRpc()) } catch (_: Exception) { terminalRpc = None }
+        // 交互终端：开终端一次绑定当前会话工作区（cwd 必须等于规范化工作区目录）；
+        // 不继承未审计环境、不放行任意命令行；缺工作区或目录不一致即 fail-closed 拒绝。
+        try {
+            terminalRpc = Some(TerminalRpc(authorizeCreate: {cwd, _, _, _ => terminalCwdAllowed(cwd, shared)}))
+        } catch (_: Exception) { terminalRpc = None }
         // 自动化需真实工作区；无工作区时装配失败，该层保持不可用。
         try { automationExecRpc = Some(AutomationExecRpc(shared, lease, activeId, p, activeId)) } catch (_: Exception) { automationExecRpc = None }
         // SSH 信任根必须是本会话私有受管目录，不指向用户 ~/.ssh；路径不合法则整层不可用。
@@ -1248,6 +1265,11 @@ class HostRuntime {
             let trustRoot = canonicalize(Path(p).parent.toString()).toString() + "/ssh-trust"
             sshRpc = Some(SshExecRpc(shared, approvalDesk, lease, activeId, SshHostTrust(trustRoot)))
         } catch (_: Exception) { sshRpc = None }
+        // 语音：同会话一份；采集端把 WAV 落本会话隔离目录 voice/v1/，宿主按固定命名登记，不接受外部路径。
+        try {
+            voiceRpc = Some(VoiceRpc(shared, approvalDesk, lease, activeId, meter,
+                asrBinary: asrBinary, sessionRoot: canonicalize(Path(p).parent.toString()).toString()))
+        } catch (_: Exception) { voiceRpc = None }
         adapterSession = activeId
     }
 
@@ -1268,14 +1290,29 @@ class HostRuntime {
             if (mcpRpc.isNone()) { mcpRpc = Some(McpRpc(shared, approvalDesk, lease, activeId, p)) }
             return mcpRpc.getOrThrow().request(method, body, idText, activeId)
         }
+        // 技能发现依赖当前工作区：initialize 时 shared 可能尚未回放，后续目录
+        // 绑定也不会更改 activeId，不能复用按 adapterSession 缓存的空 provider。
+        // 与 workspace/get 同口径：持租约读内存，否则读持久快照；每次独立装配。
+        if (SkillRpc.handles(method)) {
+            var source = shared
+            if (!leaseHeld) {
+                source = SessionLog(p)
+                if (!source.load()) { emit(errFrame(idText, -32002, "replay-rejected")); return true }
+            }
+            try {
+                return SkillRpc(source, workingDirectory: sessionWorkingDirectory(source)).request(method, body, idText)
+            } catch (_: Exception) {
+                emit(errFrame(idText, -32003, "skill-unavailable")); return true
+            }
+        }
         ensureAdapters()
+        if (method == "voice/record" || method == "voice/transcribe" || method == "voice/describe") {
+            if (let Some(r) <- voiceRpc) { return r.request(method, body, idText, activeId, shared) }
+            emit(errFrame(idText, -32003, "voice-unavailable"))
+            return true
+        }
         if (let Some(r) <- importRpcInstance) {
             if (r.isMethod(method)) { return r.handle(method, body, idText, activeId, shared) }
-        }
-        if (SkillRpc.handles(method)) {
-            if (let Some(r) <- skillRpc) { return r.request(method, body, idText) }
-            emit(errFrame(idText, -32003, "skill-unavailable"))
-            return true
         }
         if (WebRpc.handles(method)) {
             if (let Some(r) <- webRpc) { return r.request(method, body, idText) }
@@ -1408,6 +1445,10 @@ class HostRuntime {
     }
 
     func handleRpc4(method: String, body: String, idText: String): Bool {
+        if (method == "connection/list" || method == "connection/save" || method == "connection/control") {
+            connectionRequest(method, body, idText, activeId, shared)
+            return true
+        }
         if (method == "automation/list" || method == "automation/save" || method == "automation/control") {
             automationRequest(method, body, idText, activeId, shared)
             return true
@@ -1496,7 +1537,7 @@ class HostRuntime {
 
     func handleRpc12(method: String, idText: String): Bool {
         if (method == "initialize") {
-            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"mcp/list\",\"mcp/connect\",\"mcp/disconnect\",\"mcp/tools\",\"mcp/call\",\"mcp/status\",\"model/pull/describe\",\"model/pull/cancel\",\"automation/list\",\"automation/save\",\"automation/control\",\"automation/tick\",\"automation/describe-execution\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"knowledge/index-build\",\"knowledge/search\",\"knowledge/describe-index\",\"ssh/exec\",\"ssh/describe\",\"terminal/create\",\"terminal/input\",\"terminal/resize\",\"terminal/interrupt\",\"terminal/describe\",\"terminal/close\",\"security/describe\",\"security/scan\",\"security/freshness\",\"security/fixDraft\",\"compact/run\",\"compact/describe\",\"import/sources\",\"import/pick-file\",\"import/preview\",\"import/plan\",\"import/confirm\",\"import/apply\",\"import/describe\",\"import/cancel\",\"web/fetch\",\"web/search\",\"skill/list\",\"skill/get\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"global/settings/set-default-permission\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/request-trace\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"session/rename\",\"session/archive\",\"session/clear\",\"user-question/answer\",\"plan/get-mode\",\"plan/set-mode\",\"plan/review-answer\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/review-file\",\"execution/review-prepare\",\"execution/review-apply\",\"execution/review-apply-describe\",\"execution/review-apply-stop\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
+            emit(okFrame(idText, "{\"protocolVersion\":\"0.1\",\"capabilities\":[\"mcp/list\",\"mcp/connect\",\"mcp/disconnect\",\"mcp/tools\",\"mcp/call\",\"mcp/status\",\"voice/record\",\"voice/transcribe\",\"voice/describe\",\"model/pull/describe\",\"model/pull/cancel\",\"connection/list\",\"connection/save\",\"connection/control\",\"automation/list\",\"automation/save\",\"automation/control\",\"automation/tick\",\"automation/describe-execution\",\"knowledge/list\",\"knowledge/save\",\"knowledge/remove\",\"knowledge/import\",\"knowledge/reference\",\"knowledge/index-build\",\"knowledge/search\",\"knowledge/describe-index\",\"ssh/exec\",\"ssh/describe\",\"terminal/create\",\"terminal/input\",\"terminal/resize\",\"terminal/interrupt\",\"terminal/describe\",\"terminal/output\",\"terminal/close\",\"terminal/kill\",\"security/describe\",\"security/scan\",\"security/freshness\",\"security/fixDraft\",\"compact/run\",\"compact/describe\",\"import/sources\",\"import/pick-file\",\"import/preview\",\"import/plan\",\"import/confirm\",\"import/apply\",\"import/describe\",\"import/cancel\",\"web/fetch\",\"web/search\",\"skill/list\",\"skill/get\",\"page/tool/attach\",\"page/tool/prepare\",\"page/tool/call\",\"page/tool/poll\",\"page/tool/claim\",\"page/tool/result\",\"page/tool/cancel\",\"acp/settings/describe\",\"acp/settings/set-enabled\",\"acp/provider/probe\",\"acp/diagnostics/describe\",\"acp/diagnostics/keep\",\"acp/delegation/create\",\"acp/delegation/poll\",\"acp/delegation/answer\",\"acp/delegation/cancel\",\"acp/delegation/close\",\"acp/delegation/list\",\"acp/delegation/describe\",\"workspace/recent\",\"workspace/select-recent\",\"profile/get\",\"profile/update\",\"team/describe\",\"team/approval/answer\",\"team/member/create\",\"team/message/send\",\"team/message/broadcast\",\"team/task/create\",\"team/task/assign\",\"team/task/claim\",\"team/task/complete\",\"team/member/stop\",\"global/appearance/get\",\"global/appearance/set-theme\",\"global/appearance/set-font-size\",\"global/appearance/set-busy-send\",\"global/settings/get\",\"global/settings/set-transcript-view\",\"global/settings/set-composer-enter\",\"global/settings/set-session-log\",\"global/settings/set-default-permission\",\"tips/get\",\"tips/startup\",\"tips/after-reply\",\"tips/set-hidden\",\"initialize\",\"session/projection\",\"session/request-trace\",\"session/append\",\"session/submit\",\"session/flush\",\"session/subscribe\",\"session/terminal-output\",\"extension/list\",\"extension/call\",\"extension/dispose\",\"turn/start\",\"turn/cancel\",\"turn/poll\",\"prompt/enhance\",\"prompt/poll\",\"prompt/cancel\",\"extension/host/spawn\",\"extension/host/load\",\"extension/host/list\",\"extension/host/call\",\"extension/host/dispose\",\"extension/host/poll\",\"extension/host/cancel\",\"extension/host/close\",\"approval/ask\",\"approval/answer\",\"approval/status\",\"approval/set-mode\",\"approval/get-mode\",\"usage/status\",\"usage/set-budget\",\"appearance/get\",\"appearance/set-theme\",\"session/catalog\",\"session/create\",\"session/select\",\"session/rename\",\"session/archive\",\"session/clear\",\"user-question/answer\",\"plan/get-mode\",\"plan/set-mode\",\"plan/review-answer\",\"workspace/get\",\"workspace/set-directory\",\"workspace/files\",\"workspace/git-status\",\"workspace/git-diff\",\"workspace/git-push-target\",\"task/start\",\"execution/propose\",\"execution/authorize\",\"execution/start\",\"execution/list\",\"execution/describe\",\"execution/review-file\",\"execution/review-prepare\",\"execution/review-apply\",\"execution/review-apply-describe\",\"execution/review-apply-stop\",\"execution/output\",\"execution/stop\",\"model/get\",\"model/configure\",\"model/use-key\",\"model/registry/describe\",\"model/registry/catalog\",\"model/registry/update\",\"model/registry/remove\",\"model/registry/set-default\",\"model/registry/add-catalog\",\"model/registry/sort\",\"model/registry/set-enabled\",\"model/registry/save-credential\",\"model/registry/create-instance\",\"credential/describe\",\"credential/set\",\"credential/unset\",\"model/list\",\"queue/describe\",\"queue/enqueue\",\"queue/update\",\"attachment/upload\",\"attachment/image-read\",\"plugin/describe\",\"plugin/set-enabled\",\"plugin/uninstall\",\"plugin/inventory\",\"plugin/bundle/set-enabled\",\"plugin/bundle/remove\",\"plugin/install/inspect\",\"plugin/install/start\",\"plugin/install/progress\",\"plugin/registries\",\"plugin/entry/set-enabled\",\"goal/describe\",\"goal/create\",\"goal/edit\",\"goal/pause\",\"goal/resume\",\"goal/clear\",\"ledger/stats\",\"custom/describe\",\"custom/upsert\",\"custom/remove\",\"binding/upsert\",\"binding/remove\",\"binding/reorder\",\"model/pull\",\"model/upstream/upsert\",\"custom/import/new\",\"custom/import/into\",\"lsp/define\",\"lsp/lookup\",\"lsp/references\",\"lsp/implementation\",\"lsp/call-hierarchy\",\"lsp/diagnostics\",\"lsp/rename\",\"worktree/enter\",\"worktree/describe\",\"worktree/exit\",\"worktree/agent-prepare\",\"worktree/agent-finish\",\"worktree/cleanup\",\"web/settings/describe\",\"web/settings/apply\",\"web/settings/set-credential\"],\"core\":\"cangjie\",\"transport\":\"stdio-ndjson\"}"))
             return true
         }
         return false
@@ -1696,6 +1737,7 @@ class HostRuntime {
                     { body => RealSseProvider(baseUrl, turnKey, body, tk) }, metadataOnly: true)
             }
             let goalRun = HostGoalRun(shared, lease, meter.budgetValue(), goalActivation)
+            turnSink.beginTurn(turnEpoch + 1)
             turnHandle = Some(goalRun.start(first, continuation, model, tk, turnSink, frozenTools, turnAtt, imageCapability))
             turnGoal = Some(goalRun)
             if (let Some(bound) <- turnComputer) {
@@ -1890,14 +1932,32 @@ class HostRuntime {
         return false
     }
 
-    func handleRpc16(method: String, idText: String): Bool {
+    func handleRpc16(method: String, body: String, idText: String): Bool {
         if (method == "session/projection") {
-            // 实例内可见性：持有租约时投影未 flush 的内存态（DSH 中 append 即可见，
+            // 资源身份：请求显式带 sessionId 时只读那一份日志，不能拿“当前活动会话”
+            // 的投影冒充被请求的会话。空串保留本机旧语义（桌面桥历史上不带这个字段）；
+            // 远程门禁本身已要求 sessionId 非空。
+            let wanted = jsonStr(body, "sessionId")
+            let viewingActive = wanted.size == 0 || wanted == activeId
+            // 实例内可见性：持有租约时投影未 flush 的内存态（基线中 append 即可见，
             // flush 只决定崩溃持久与跨进程可见），否则从磁盘重建。
             // 一律走守护访问器：turn 线程可能正在写，这里必须拿到一次自洽的快照，
             // 而不是边遍历共享列表边拼帧。
             var target = shared
-            if (!leaseHeld) {
+            if (!viewingActive) {
+                var exactPath = ""
+                try { exactPath = catalog.pathFor(wanted) } catch (e: Exception) {
+                    // 未知会话必须稳定拒绝：返回活动会话投影会让客户端以为“它存在”。
+                    emit(errFrame(idText, -32602, e.message))
+                    return true
+                }
+                let exact = SessionLog(exactPath)
+                if (!exact.load()) {
+                    emit(errFrame(idText, -32002, "replay-rejected"))
+                    return true
+                }
+                target = exact
+            } else if (!leaseHeld) {
                 let fresh = SessionLog(p)
                 if (!fresh.load()) {
                     emit(errFrame(idText, -32002, "replay-rejected"))
@@ -1936,7 +1996,7 @@ class HostRuntime {
             }
             marr += "]"
             rows += "]"
-            let toolCalls = projectToolCalls(projectionEvents, active: turnBusy)
+            let toolCalls = projectToolCalls(projectionEvents, active: turnBusy && viewingActive)
             var tools = "["
             let toolFrom = if (toolCalls.size > 64) { toolCalls.size - 64 } else { Int64(0) }
             for (i in toolFrom..toolCalls.size) {
@@ -1944,13 +2004,22 @@ class HostRuntime {
                 tools += toolCalls[i].toJson()
             }
             tools += "]"
-            let questionId = if (let Some(bound) <- questionRuntime) { if (bound.sessionId == activeId) { bound.activeQuestionId() } else { "" } } else { "" }
+            // 活动审批/问题只属于当前会话：请求的是别的会话时不能把活动会话的
+            // questionId/planId 塞进去，否则客户端会以为那份会话里也有待答事项。
+            let questionId = if (viewingActive) {
+                if (let Some(bound) <- questionRuntime) { if (bound.sessionId == activeId) { bound.activeQuestionId() } else { "" } } else { "" }
+            } else { "" }
             let cards = projectQuestionCards(projectionEvents, activeId: questionId)
             // 计划投影：正文来自 plan/submitted，决定来自 plan/review；planActive 是折叠 plan/mode 的只读量。
-            let planId = if (let Some(bound) <- planRuntime) { if (bound.sessionId == activeId) { bound.activeReviewId() } else { "" } } else { "" }
+            let planId = if (viewingActive) {
+                if (let Some(bound) <- planRuntime) { if (bound.sessionId == activeId) { bound.activeReviewId() } else { "" } } else { "" }
+            } else { "" }
             let planCards = projectPlans(projectionEvents, activeId: planId)
             let planActive = if (PlanModeController(target).active()) { "true" } else { "false" }
-            emit(okFrame(idText, "{\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr},\"messageRows\":${rows},\"toolCalls\":${tools},\"questionCards\":${cards},\"todos\":${todos},\"planActive\":${planActive},\"planCards\":${planCards}}"))
+            // 应答带回应读取的会话身份：客户端据此确认「拿到的是我要的那一份」，
+            // 而不是靠请求参数自证。
+            let responseSession = if (viewingActive) { activeId } else { wanted }
+            emit(okFrame(idText, "{\"sessionId\":\"${jsonEscapeText(responseSession)}\",\"projection\":${total},\"events\":${target.eventCount()},\"durable\":${target.durableCount()},\"pending\":${target.pendingCount()},\"truncatedTail\":${tailFlag},\"messages\":${marr},\"messageRows\":${rows},\"toolCalls\":${tools},\"questionCards\":${cards},\"todos\":${todos},\"planActive\":${planActive},\"planCards\":${planCards}}"))
             return true
         }
         return false
@@ -2327,7 +2396,10 @@ class HostRuntime {
 
     func handleRpc28(method: String, body: String, idText: String): Bool {
         if (method == "approval/set-mode") {
-            if (turnBusy) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
+            // 审批模式是人在环的配置写：SessionLog.append 自带 Mutex、ModeController.setDurable
+            // 经同一实例锁与写租约落持久检查点；turn 在途时主循环写这条事件，与 turn 线程写
+            // 帧同在该锁内串行，不会损坏日志。与 allowedDuringTurn 声明的「边跑边批」一致，
+            // 不再在途一律拒绝——否则 turn 一旦未结算（例如桌面停轮询），模式将永久不可切。
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) { emit(sessionLeaseError(idText, lease)); return true }
                 if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); return true }
@@ -2336,9 +2408,8 @@ class HostRuntime {
             approvalModeWriteRequest(shared, lease, paramsTextOf(body), idText)
             return true
         }
-        // 计划模式切换与审批模式同一条写车道：turn 在途时租约在用，先拒「在途」而不是抢锁。
+        // 计划模式切换与审批模式同一条写车道：同为人在环配置写，在途放行（理由同上）。
         if (method == "plan/set-mode") {
-            if (turnBusy) { emit(errFrame(idText, -32001, "turn-in-flight")); return true }
             if (!leaseHeld) {
                 if (!lease.takeoverIfStale()) { emit(sessionLeaseError(idText, lease)); return true }
                 if (!loadForWrite(shared, meter)) { lease.release(); emit(errFrame(idText, -32002, "replay-rejected")); return true }
@@ -2815,6 +2886,8 @@ class HostRuntime {
                             { body => RealSseProvider(baseUrl, turnKey, body, tk) }, metadataOnly: true) }
                     }
                     turnGoal = None
+                    // 新轮从帧日志的 0 游标开始：上一轮结算先留一代，供仍在轮询旧游标的客户端取终态。
+                    turnSink.beginTurn(turnEpoch)
                     if (goalStart) {
                         let goalRun = HostGoalRun(shared, lease, meter.budgetValue(), goalActivation)
                         turnHandle = Some(goalRun.start(first, continuation, model, tk, turnSink, frozenTools, turnAtt, if (centered) { true } else { imageCapability }))
@@ -2855,6 +2928,7 @@ class HostRuntime {
                 }
             } else {
                 turnGoal = None
+                turnSink.beginTurn(turnEpoch)
                 turnHandle = Some(TurnRunner().start(CancellableStreamProvider(tk, limit), tk, shared, turnSink))
             }
             turnBusy = true
@@ -2901,17 +2975,40 @@ class HostRuntime {
         return false
     }
 
-    func handleRpc37(method: String, idText: String): Bool {
+    func handleRpc37(method: String, body: String, idText: String): Bool {
         if (method == "turn/poll") {
-            let frames = turnSink.take(64)
-            var arr = "["
-            for (i2 in 0..frames.size) {
-                if (i2 > 0) {
-                    arr += ","
+            // 双路径：带 cursor 的按游标重放（多客户端互不偷帧）；
+            // 不带 cursor 的保持旧 take 语义，现有桌面/移动/CLI 不被迫同时升级。
+            let cursor = jsonNum(body, "cursor")
+            let reqTurn = jsonNum(body, "turnId")
+            let cursorMode = cursor >= 0
+            let responseTurn = turnSink.turnId()
+            var frames = ArrayList<String>()
+            var nextCursor: Int64 = -1
+            var pageEndCursor: Int64 = -1
+            var gapText = ""
+            var resetText = ""
+            var previousSettled = false
+            if (cursorMode) {
+                if (reqTurn >= 0 && reqTurn != responseTurn) {
+                    // 客户端拿的是上一轮/更早的游标。上一轮终态若还留着一代，
+                    // 先交付它再让客户端重新对表；不能把新轮的帧当旧轮读。
+                    if (reqTurn == turnSink.previousTurnId() && turnSink.previousSettlement().size > 0) {
+                        previousSettled = true
+                    }
+                    resetText = ",\"reset\":true"
+                    nextCursor = 0
+                } else {
+                    let page = turnSink.page(cursor, 64)
+                    frames = page.frames
+                    nextCursor = page.nextCursor
+                    pageEndCursor = turnSink.endCursor()
+                    if (page.gap) { gapText = ",\"gap\":true" }
                 }
-                arr += "\"${jsonEscapeText(frames[i2])}\""
+            } else {
+                frames = turnSink.take(64)
+                nextCursor = turnSink.endCursor()
             }
-            arr += "]"
             var turnText = "false"
             var runningText = "false"
             var settledText = "false"
@@ -2941,6 +3038,8 @@ class HostRuntime {
                     recordTurnContextOccupancy(shared, r.usage)
                     let oFlag = if (meter.over()) { "true" } else { "false" }
                     tail = ",\"cancelled\":${cFlag},\"delivered\":${r.delivered},\"text\":\"${jsonEscapeText(r.text)}\",\"finishReason\":\"${jsonEscapeText(r.finishReason)}\",\"interrupted\":${iFlag},\"settledToolCalls\":${r.settledToolCalls},\"pendingToolCalls\":${r.pendingToolCalls},\"overflow\":${turnSink.overflow()},\"dropped\":${turnSink.dropped()},\"usage\":\"${jsonEscapeText(r.usage)}\",\"usageVerdict\":\"${verdict}\",\"used\":${meter.used()},\"budget\":${meter.budgetValue()},\"over\":${oFlag},\"elapsedMs\":${optIntJson(r.elapsedMs)},\"ttftMs\":${optIntJson(r.ttftMs)},\"tokensPerSecond\":${optIntJson(r.tokensPerSecond)}"
+                    // 结算缓存：第二个客户端晚到时仍拿到同一份终态，而不是 turn=false/settled=false。
+                    turnSink.settle(tail)
                     turnHandle = None
                     if (let Some(bound) <- turnComputer) { bound.close() }
                     turnComputer = None
@@ -2958,8 +3057,58 @@ class HostRuntime {
                     requestGoalDrive(idText)
                 }
             }
+            if (cursorMode) {
+                // 游标客户端只在帧真正读完时收到 settled：否则它会在还有增量时提前 refresh，
+                // 正文与投影会出现一次可见的“回退再前进”。
+                if (resetText.size > 0) {
+                    if (previousSettled) {
+                        settledText = "true"
+                        tail = turnSink.previousSettlement()
+                    } else {
+                        settledText = "false"
+                        tail = ""
+                    }
+                    // 结算期间自动续轮：刚结束那一轮的终态已经进入 previous，仍要交出去。
+                    if (turnSink.turnId() != responseTurn && turnSink.previousTurnId() == responseTurn) {
+                        settledText = "true"
+                        tail = turnSink.previousSettlement()
+                    }
+                } else if (turnSink.turnId() != responseTurn) {
+                    // 本轮在请求处理期间被自动续轮替换：交付已读到的旧轮帧 + 旧轮终态，
+                    // 并让客户端把游标重置到新轮头。已读到的帧不能丢——它们属于旧轮正文。
+                    resetText = ",\"reset\":true"
+                    if (pageEndCursor > nextCursor) { gapText = ",\"gap\":true" }
+                    nextCursor = 0
+                    settledText = "true"
+                    tail = turnSink.previousSettlement()
+                } else if (turnSink.settled()) {
+                    if (nextCursor >= turnSink.endCursor()) {
+                        settledText = "true"
+                        tail = turnSink.settlement()
+                    } else {
+                        settledText = "false"
+                        tail = ""
+                    }
+                }
+                // turn/running 反映请求结束时的真实状态（可能已续到下一轮）。
+                turnText = "false"
+                runningText = "false"
+                if (let Some(h) <- turnHandle) {
+                    turnText = "true"
+                    runningText = if (h.isRunning()) { "true" } else { "false" }
+                }
+            }
+            var arr = "["
+            for (i2 in 0..frames.size) {
+                if (i2 > 0) {
+                    arr += ","
+                }
+                arr += "\"${jsonEscapeText(frames[i2])}\""
+            }
+            arr += "]"
             let questionId = if (let Some(bound) <- questionRuntime) { bound.activeQuestionId() } else { "" }
-            emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText},\"questionId\":\"${jsonEscapeText(questionId)}\"${tail}}"))
+            let finalTurn = if (resetText.size > 0) { turnSink.turnId() } else { responseTurn }
+            emit(okFrame(idText, "{\"frames\":${arr},\"turn\":${turnText},\"running\":${runningText},\"settled\":${settledText},\"questionId\":\"${jsonEscapeText(questionId)}\",\"turnId\":${finalTurn},\"nextCursor\":${nextCursor}${gapText}${resetText}${tail}}"))
             return true
         }
         return false
@@ -3496,7 +3645,7 @@ class HostRuntime {
             turnGoal = None
             turnBusy = false
             resetGoalActivation()
-            turnSink = ThreadSafeDeliveryQueue(64)
+            turnSink = TurnFrameJournal(4096)
             callSink = ThreadSafeDeliveryQueue(64)
             inflight = InflightCalls()
             emit(okFrame(idText, "{\"id\":\"${jsonEscapeText(activeId)}\",\"selected\":true,\"saved\":true,\"theme\":\"${SessionAppearance(shared).theme()}\"}"))
@@ -3886,8 +4035,17 @@ class HostRuntime {
             if (enhanceCharges[chargeIndex].settle()) { enhanceCharges.remove(at: chargeIndex) }
             chargeIndex -= 1
         }
+        if (let Some(r) <- voiceRpc) { let _ = r.settle() }
         let method = jsonStr(body, "method")
         let idText = jsonId(body)
+        // 资源身份：显式 sessionId 指向别的会话时，活动会话类方法一步都不能执行。
+        // 这条检查放在所有处理器之前，避免「先写后拒」或把写落到错误会话；
+        // 不带 sessionId 保留本机旧语义（远程门禁已强制 resourceKeys 带 sessionId）。
+        let explicitSession = jsonStr(body, "sessionId")
+        if (explicitSession.size > 0 && explicitSession != activeId && bindsActiveSession(method)) {
+            emit(errFrame(idText, -32001, "session-mismatch"))
+            continue
+        }
         try {
         if (method == "model/pull/describe" || method == "model/pull/cancel") {
             modelPulls.control(method, body, idText)
@@ -3968,7 +4126,7 @@ class HostRuntime {
         if (handleRpc13(method, body, idText)) { continue }
         if (handleRpc14(method, body, idText)) { continue }
         if (handleRpc15(method, body, idText)) { continue }
-        if (handleRpc16(method, idText)) { continue }
+        if (handleRpc16(method, body, idText)) { continue }
         if (handleRpc17(method, body, idText)) { continue }
         // 显式 durability 屏障：submit 只在内存可见，flush 才跨进程可见
         if (handleRpc18(method, body, idText)) { continue }
@@ -3996,7 +4154,7 @@ class HostRuntime {
         if (handleRpc34(method, idText)) { continue }
         if (handleRpc35(method, body, idText)) { continue }
         if (handleRpc36(method, idText)) { continue }
-        if (handleRpc37(method, idText)) { continue }
+        if (handleRpc37(method, body, idText)) { continue }
         // 提示词增强：一次独立的模型往返，请求里只有「一条指令 + 这一条草稿」。
         // 三条分支都不写会话消息（只有用量那一笔进账，它本来就该记在同一份账上），
         // 也不碰 turnBusy——所以 turn 在跑时能润色，润色在跑时桌面也停得下来。
@@ -4036,6 +4194,8 @@ class HostRuntime {
     }
     if (let Some(r) <- mcpRpc) { r.close() }
     mcpRpc = None
+    if (let Some(r) <- voiceRpc) { r.cancel() }
+    voiceRpc = None
     // stdin EOF 不释放活任务租约；先停止当前进程拥有的执行，再确认退出事实。
     let modelPullSettled = modelPulls.shutdown()
     if (!modelPullSettled) {
@@ -4130,4 +4290,21 @@ class HostRuntime {
 
 main() {
     return HostRuntime().run()
+}
+
+// 交互终端开终端授权：cwd 必须等于当前会话工作区（含 worktree 绑定）的规范化路径。
+// 不继承 Host 环境、不放行任意命令行；缺工作区或目录不一致即 fail-closed 拒绝。
+func terminalCwdAllowed(cwd: String, log: SessionLog): Bool {
+    if (cwd.size == 0) {
+        return false
+    }
+    try {
+        let have = sessionWorkingDirectory(log)
+        if (have.size == 0) {
+            return false
+        }
+        return canonicalize(cwd).toString() == canonicalize(have).toString()
+    } catch (_: Exception) {
+        return false
+    }
 }

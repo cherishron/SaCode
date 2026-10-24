@@ -117,13 +117,13 @@ class HostModelPull {
                     if (url.size == 0) {
                         throw Exception("provider-not-found")
                     }
-                    let ids = ModelCatalog().fetch(url, resolveCredentialKey(credentialRef), control: Some(control))
+                    let models = ModelCatalog().fetchModels(url, resolveCredentialKey(credentialRef), control: Some(control))
                     control.beginCommit()
                     commitAdmitted = true
                     mtx.lock();
                     status = "committing"
                     mtx.unlock()
-                    registry.applyPulledModels(providerId, ids, expectedRevision)
+                    registry.applyPulledModelEntries(providerId, models, expectedRevision)
                     committed = true
                     result = providerViewJson(registry.describe(), CredentialStore.forUser())
                 } catch (e: Exception) {

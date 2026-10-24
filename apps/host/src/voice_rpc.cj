@@ -158,6 +158,9 @@ public class VoiceRpc {
     private let meter: TokenMeter
     private let sessionId: String
     private let asrBinary: String
+    // 本会话隔离根（与 SessionCatalog 同一 CWD 的父目录）。采集适配层把已封存 WAV 落在此目录下的固定子目录，
+    // 宿主只按固定命名拼读取，不接受任意路径、URL 或 shell 参数。
+    private let sessionRoot: String
     private let enhanceSettings: ?ModelSettingsSnapshot
     private let openEnhance: (String, String, String, TurnToken) -> Provider
     private let acquireEnhance: () -> Bool
@@ -171,7 +174,7 @@ public class VoiceRpc {
     // 配置快照、ASR 和共享槽只接受可信 Host 注入，不从 renderer 或环境拼接。
     // acquire/release 必须与 prompt/enhance 共用一个槽；缺接线默认拒绝，不双启动。
     public init(log: SessionLog, desk: ApprovalDesk, lease: WriteLease, sessionId: String, meter: TokenMeter,
-        asrBinary!: String = "", enhanceSettings!: ?ModelSettingsSnapshot = None,
+        asrBinary!: String = "", sessionRoot!: String = "", enhanceSettings!: ?ModelSettingsSnapshot = None,
         acquireEnhance!: () -> Bool = {=> false}, releaseEnhance!: () -> Unit = {=>},
         openEnhance!: (String, String, String, TurnToken) -> Provider = {
             baseUrl, key, request, token => RealSseProvider(baseUrl, key, request, token,
@@ -184,6 +187,7 @@ public class VoiceRpc {
         this.meter = meter
         this.sessionId = sessionId
         this.asrBinary = asrBinary
+        this.sessionRoot = sessionRoot
         this.enhanceSettings = enhanceSettings
         this.openEnhance = openEnhance
         this.acquireEnhance = acquireEnhance
@@ -221,6 +225,56 @@ public class VoiceRpc {
         }
     }
 
+    // 桌面采集适配层把已封存 WAV 写到本会话隔离目录后，由宿主按固定命名登记为可转写录音。
+    // 只接受会话内 `voice/v1/<recordingId>.wav` 单一命名；不接受路径、URL 或 shell 参数。
+    private func importRecording(obj: JsonObject): String {
+        voiceRpcFields(obj, ["sessionId", "action", "requestId", "recordingId", "digest", "bytes"], ["durationMs"])
+        if (voiceRpcStr(obj, "action") != "import") {
+            throw Exception("voice-bad-arguments")
+        }
+        voiceRpcId(voiceRpcStr(obj, "requestId"), 128)
+        let recordingId = voiceRpcId(voiceRpcStr(obj, "recordingId"), 64)
+        for (b in recordingId.toArray()) {
+            if (!((b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 95 || b == 45)) {
+                throw Exception("voice-bad-arguments")
+            }
+        }
+        let digest = voiceRpcStr(obj, "digest")
+        if (digest.size != 64) { throw Exception("voice-bad-recording") }
+        for (b in digest.toArray()) {
+            if (!((b >= 48 && b <= 57) || (b >= 97 && b <= 102))) { throw Exception("voice-bad-recording") }
+        }
+        let bytes = obj.get("bytes").getOrThrow().asInt().getValue()
+        if (bytes < 44 || bytes > 26214400) { throw Exception("voice-bad-recording") }
+        if (sessionRoot.size == 0) { throw Exception("voice-recording-not-found") }
+        let path = "${sessionRoot}/voice/v1/${recordingId}.wav"
+        if (!exists(path)) { throw Exception("voice-recording-not-found") }
+        // 同 id 重复登记且摘要/字节不一致时拒绝，避免把已登记录音替换成另一段音频。
+        if (recordings.contains(recordingId)) {
+            let existing = recordings[recordingId]
+            if (existing.digest != digest || existing.bytes != bytes) {
+                throw Exception("voice-recording-conflict")
+            }
+            return recordingResult(recordingId, obj)
+        }
+        registerRecording(recordingId, path, digest)
+        checkpoint()
+        return recordingResult(recordingId, obj)
+    }
+
+    private func recordingResult(recordingId: String, obj: JsonObject): String {
+        let rec = recordings[recordingId]
+        let out = JsonObject()
+        out.put("recordingId", JsonString(recordingId))
+        out.put("digest", JsonString(rec.digest))
+        out.put("bytes", JsonInt(rec.bytes))
+        out.put("format", JsonString("wav"))
+        if (obj.get("durationMs").isSome()) {
+            out.put("durationMs", JsonInt(obj.get("durationMs").getOrThrow().asInt().getValue()))
+        }
+        return out.toString()
+    }
+
     // 非 RPC：先固定审批提案，调度方通过既有 approval/answer 作答。票据与完整动作绑定。
     public func prepareApproval(method: String, params: String): Int64 {
         synchronized(mutex) {
@@ -246,7 +300,7 @@ public class VoiceRpc {
                 throw Exception("voice-cancelled")
             }
             if (method == "voice/record") {
-                throw Exception("voice-record-not-available")
+                return importRecording(obj)
             }
             if (method == "voice/describe") {
                 return describe(obj)
@@ -269,6 +323,18 @@ public class VoiceRpc {
             }
             validateStart(method, obj)
             let expected = binding(method, obj)
+            // 客户端拿不到录音摘要与 ASR 二进制，无法自行固定票据；由宿主按规范参数发号，
+            // 与 prepareApproval 同义：票据与完整动作绑定，作答后带 approvalId 重试。
+            if (obj.get("approvalId").isNone()) {
+                checkpoint()
+                let id = desk.askForCall(method, expected)
+                checkpoint()
+                let out = JsonObject()
+                out.put("state", JsonString("pending-approval"))
+                out.put("approvalId", JsonInt(id))
+                out.put("recordingId", JsonString(voiceRpcStr(obj, "recordingId")))
+                return out.toString()
+            }
             let requestId = voiceRpcStr(obj, "requestId")
             if (let Some(id) <- requests.get(requestId)) {
                 let op = operations[id]
@@ -645,9 +711,11 @@ public class VoiceRpc {
         let out = JsonObject();
         out.put("sessionId", JsonString(sessionId))
         let record = JsonObject();
-        record.put("supported", JsonBool(false));
+        // 采集由桌面适配层完成，宿主只做导入登记；OS 麦克风许可由桌面探测，宿主不猜测。
+        let recordReady = sessionRoot.size > 0
+        record.put("supported", JsonBool(recordReady));
         record.put("permission", JsonString("unknown"))
-        record.put("reason", JsonString("voice-record-not-available"));
+        if (!recordReady) { record.put("reason", JsonString("voice-record-unavailable")) }
         out.put("record", record)
         let transcribe = JsonObject();
         transcribe.put("configured", JsonBool(asrBinary.size > 0))
