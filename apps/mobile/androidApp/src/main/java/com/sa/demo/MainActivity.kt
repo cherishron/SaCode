@@ -1,12 +1,10 @@
 package com.sa.demo
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
-import com.sa.demo.auth.OAuthBridge
+import com.sa.demo.feature.home.ProductRoutes
 import com.sa.demo.core.platform.PageRouterBridge
 import com.sa.demo.kuikly.ContextCodeHandler
 import com.sa.demo.kuikly.KuiklyErrorSink
@@ -53,70 +51,18 @@ class MainActivity : AppCompatActivity() {
                 .scheduleTask(0) { task() }
         }
         registerPages()
-        val startPage = resolveStartPage(intent)
-        loadPage(startPage)
-        handleOAuthIntent(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleOAuthIntent(intent)
-    }
-
-    private fun resolveStartPage(intent: Intent?): String {
-        // 深链回来时保持登录页，便于处理 code
-        return "LoginPage"
-    }
-
-    private fun handleOAuthIntent(intent: Intent?) {
-        val data: Uri = intent?.data ?: return
-        if (!isOAuthCallback(data)) return
-        OAuthBridge.deliver(
-            OAuthBridge.Callback(
-                code = data.getQueryParameter("code"),
-                state = data.getQueryParameter("state"),
-                error = data.getQueryParameter("error"),
-                errorDescription = data.getQueryParameter("error_description"),
-            )
-        )
-        // 若当前不在 LoginPage，切回登录页消费回调
-        loadPage("LoginPage")
-    }
-
-    private fun isOAuthCallback(data: Uri): Boolean {
-        val scheme = data.scheme?.lowercase() ?: return false
-        val host = data.host?.lowercase() ?: return false
-        val path = data.path ?: return false
-        return scheme == "saapp" && host == "oauth" && (path == "/callback" || path == "callback")
+        loadPage(ProductRoutes.START_PAGE)
     }
 
     private fun registerPages() {
-        BridgeManager.registerPageRouter("SaUICatalogPage") {
-            com.sa.demo.saui.catalog.SaUICatalogPage()
-        }
-        BridgeManager.registerPageRouter("LoginPage") {
-            com.sa.demo.feature.login.LoginPage()
-        }
-        BridgeManager.registerPageRouter("ChatPage") {
-            com.sa.demo.feature.chat.ChatPage()
-        }
-        BridgeManager.registerPageRouter("AgentPage") {
-            com.sa.demo.feature.agent.AgentPage()
-        }
         BridgeManager.registerPageRouter("RemoteDevicesPage") {
             com.sa.demo.feature.agent.RemoteDevicesPage()
         }
-        BridgeManager.registerPageRouter("BindAgentPage") {
-            com.sa.demo.feature.agent.BindAgentPage()
-        }
-        BridgeManager.registerPageRouter("AccountPage") {
-            com.sa.demo.feature.account.AccountPage()
-        }
-        android.util.Log.d("MainActivity", "Pages: LoginPage, ChatPage, AgentPage, BindAgentPage, AccountPage, SaUICatalogPage")
+        android.util.Log.d("MainActivity", "Pages: RemoteDevicesPage")
     }
 
-    private fun loadPage(pageName: String) {
+    private fun loadPage(requestedPage: String) {
+        val pageName = ProductRoutes.resolve(requestedPage)
         // Kuikly 核心运行在独立的 KRHandlerThread 上；页面内点击回调会从该线程直接进来。
         // Android 视图树只能由创建它的线程（主线程）操作，否则抛
         // "Only the original thread that created a view hierarchy can touch its views"。

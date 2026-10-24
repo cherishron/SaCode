@@ -1,12 +1,12 @@
 /**
  * Index.ets - Kuikly 容器页面渲染入口
  *
- * 替换原模板占位页，承载 Kuikly 组件加载 SaUICatalogPage。
+ * 替换原模板占位页，承载 Kuikly 组件加载 RemoteDevicesPage。
  * 实现加载状态机（Loading → Loaded / Error）与错误兜底 UI。
  *
  * 对应 design.md A3、2.4.4 状态机
  * 对应 tasks.md 任务 7.3
- * 对标 Android 端 MainActivity.loadPage("SaUICatalogPage")
+ * 对标 Android 端 MainActivity.loadPage("RemoteDevicesPage")
  */
 
 import { Kuikly, KuiklyNativeManager, KRNativeRenderController } from '@kuikly/render';
@@ -15,7 +15,7 @@ import hilog from '@ohos.hilog';
 
 const TAG = 'KuiklyContainer';
 const DOMAIN = 0x0001;
-const PAGE_NAME = 'SaUICatalogPage';
+const PAGE_NAME = 'RemoteDevicesPage';
 // 页面参数对齐 Android 端 mapOf("appId" to 1, "debug" to 1)
 const PAGE_DATA: Record<string, number> = { appId: 1, debug: 1 };
 // 加载超时阈值（10s，spec 5.3.3.4）
@@ -43,7 +43,7 @@ enum LoadError {
 const ERROR_MESSAGES: Record<LoadError, string> = {
     [LoadError.ASSET_MISSING]: '产物缺失：libshared.so 加载失败',
     [LoadError.PAGE_INIT_ERROR]: '初始化异常：Kuikly 运行时初始化失败',
-    [LoadError.PAGE_NOT_FOUND]: '页面未找到：SaUICatalogPage 路由未注册',
+    [LoadError.PAGE_NOT_FOUND]: '页面未找到：RemoteDevicesPage 路由未注册',
     [LoadError.TIMEOUT]: '加载超时：页面加载超过 10 秒',
     [LoadError.RENDER_ERROR]: '渲染异常：组件渲染出错'
 };
@@ -179,7 +179,7 @@ struct Index {
                             .width(48)
                             .height(48)
                             .color('#0052D9')
-                        Text('正在加载 SaUI Demo...')
+                        Text('正在加载 SaCode...')
                             .fontSize(16)
                             .fontColor('#666666')
                             .margin({ top: 16 })

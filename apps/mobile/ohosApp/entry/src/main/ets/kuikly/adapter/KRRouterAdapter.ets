@@ -2,7 +2,7 @@
  * KRRouterAdapter.ets - 鸿蒙端路由适配器
  *
  * 实现 openPage/closePage 路由事件，触发鸿蒙端导航回调。
- * 首版 SaUICatalogPage 单页场景，预留 ArkTS 原生页分支。
+ * 当前仅记录路由事件；产品多页导航尚未接通，不能视为已支持。
  *
  * 对标 Android 端 KRRouterAdapter.kt：
  *   - Android: openPage(context, pageName, pageData) / closePage(context)
@@ -22,8 +22,7 @@ const LOG_TAG = 'KuiklyRouter';
 export class KRRouterAdapter implements IKRRouterAdapter {
     openPage(context: common.UIAbilityContext, pageName: string, pageData: KRRecord): void {
         hilog.info(LOG_DOMAIN, LOG_TAG, 'openPage: %{public}s', pageName);
-        // 首版 SaUICatalogPage 单页场景，无需导航至其他页面
-        // 后续多页面场景可通过 router.pushUrl 实现原生页跳转
+        // 产品多页面导航待实现；这里尚未触发页面切换。
     }
 
     closePage(context: common.UIAbilityContext): void {

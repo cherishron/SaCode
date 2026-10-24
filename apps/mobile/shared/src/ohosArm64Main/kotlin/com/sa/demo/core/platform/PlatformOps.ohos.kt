@@ -3,7 +3,7 @@ package com.sa.demo.core.platform
 /**
  * HarmonyOS (ohosArm64) 平台实现
  * PlatformContext 为无平台依赖的标记类
- * showToast 首版空实现（登记差异：SaUICatalogPage Demo 未使用 toast）
+ * showToast 尚无宿主通道，不能视为已支持（见 ohos-known-differences.md）
  */
 actual class PlatformContext
 

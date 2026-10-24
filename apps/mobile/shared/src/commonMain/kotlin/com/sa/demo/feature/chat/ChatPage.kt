@@ -23,6 +23,12 @@ import com.sa.demo.saui.token.SaUIColors
 import com.sa.demo.saui.token.SaUIRadius
 import com.sa.demo.saui.token.SaUISpacing
 import com.sa.demo.saui.chat.ChatMessageBubble
+import com.sa.demo.saui.chat.ChatMessageRenderer
+import com.sa.demo.saui.chat.SaMarkdownTheme
+import com.tencent.kuikly.core.directives.vbind
+import com.tencent.kuikly.core.directives.vfor
+import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.reactive.handler.observableList
 import com.sa.demo.saui.chat.StreamingInputBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Color
@@ -39,6 +45,10 @@ import com.tencent.kuikly.core.views.layout.Row
 
 @Page("ChatPage")
 class ChatPage : Pager() {
+    companion object {
+        const val TASK_PANEL_HINT = "云端任务接口未就绪时只记录本地任务卡并标为不受支持，不会回退网关对话。"
+        const val TASK_EMPTY_HINT = "描述要云端处理的任务；接口未就绪时不会回退网关对话。"
+    }
 
     var status by observable("")
     var draft by observable("")
@@ -47,7 +57,26 @@ class ChatPage : Pager() {
     var useStream by observable(true)
     var selectedModel by observable("")
     var models by observable(listOf<String>())
-    var messages by observable(listOf<ChatUiMessage>())
+    private var messageSnapshot = emptyList<ChatUiMessage>()
+    internal var messageRenderers by observableList<ChatMessageRenderer>()
+        private set
+    var messages: List<ChatUiMessage>
+        get() = messageSnapshot
+        set(value) {
+            val next = value.toList()
+            val previous = messageRenderers.associateBy { it.key }
+            val renderers = next.map { message ->
+                previous[message.renderKey]?.takeIf { it.role == message.role }?.also { it.update(message) }
+                    ?: ChatMessageRenderer(message, this)
+            }
+            messageSnapshot = next
+            var prefix = 0
+            while (prefix < messageRenderers.size && prefix < renderers.size && messageRenderers[prefix] === renderers[prefix]) prefix++
+            while (messageRenderers.size > prefix) messageRenderers.removeAt(messageRenderers.lastIndex)
+            messageRenderers.addAll(renderers.drop(prefix))
+        }
+    var messageTheme by observable(SaMarkdownTheme.LIGHT)
+        private set
     var convList by observable(listOf<Conversation>())
     var projectList by observable(listOf<ProjectBrief>())
     var activeConvId by observable("")
@@ -62,6 +91,7 @@ class ChatPage : Pager() {
 
     // 请求身份句柄（含任务提交/非流式）；用于隔离迟到回调，不代表可取消。
     private var streamToken: CancelToken? = null
+    private var streamMessageKey: Any? = null
     // 仅 completeStream 执行阶段提供停止能力，独立于发送占用和输出偏好。
     private var streamCancellable by observable(false)
     // 请求开始前的历史长度；失败时 user 已删，不能再删除上一轮完整对话。
@@ -257,11 +287,14 @@ class ChatPage : Pager() {
         streamCancellable = true
     }
 
-    /** 长按消息气泡 → 复制原文。 */
+    fun toggleMessageTheme() {
+        messageTheme = if (messageTheme == SaMarkdownTheme.LIGHT) SaMarkdownTheme.DARK else SaMarkdownTheme.LIGHT
+    }
+
+    /** 长按消息气泡 → 复制原文，不修改首尾空白。 */
     fun copyMessage(content: String) {
-        val text = content.trim()
-        if (text.isEmpty()) return
-        status = if (copyToClipboard("SaApp", text)) "已复制" else "复制失败：当前平台不支持"
+        if (content.isEmpty()) return
+        status = if (copyToClipboard("SaApp", content)) "已复制" else "复制失败：当前平台不支持"
     }
 
     fun onProjectNameChange(text: String) {
@@ -325,19 +358,24 @@ class ChatPage : Pager() {
         send()
     }
 
+    private fun requestMessageIndex(token: CancelToken, convId: String): Int {
+        if (streamToken !== token || activeConvId != convId) return -1
+        val key = streamMessageKey ?: return -1
+        return messages.indexOfFirst { it.renderKey === key && !it.isUser && it.streaming }
+    }
+
     private fun applyStreamDelta(token: CancelToken, convId: String, content: String) {
-        if (streamToken !== token || activeConvId != convId) return
+        val index = requestMessageIndex(token, convId)
+        if (index < 0) return
         val list = messages.toMutableList()
-        if (list.isNotEmpty()) {
-            list[list.lastIndex] = ChatUiMessage("assistant", content, streaming = true)
-            messages = list
-        }
+        list[index] = list[index].copy(content = content)
+        messages = list
     }
 
     private fun sendWithPrompt(raw: String) {
-        val text = raw.trim()
+        val text = raw
         if (busy || streamToken != null) return
-        if (text.isEmpty()) {
+        if (text.isBlank()) {
             status = "请输入内容"
             return
         }
@@ -355,7 +393,9 @@ class ChatPage : Pager() {
         retryHistorySize = history.size
         history.add(com.sa.demo.chat.ChatTurn("user", text))
         val pending = history.toList()
-        messages = messages + ChatUiMessage("user", text) + ChatUiMessage("assistant", "", streaming = true)
+        val assistant = ChatUiMessage("assistant", "", streaming = true)
+        messages = messages + ChatUiMessage("user", text) + assistant
+        streamMessageKey = assistant.renderKey
         draft = ""
         busy = true
 
@@ -372,7 +412,7 @@ class ChatPage : Pager() {
                 taskId = taskId,
                 title = text.take(32),
                 status = "running",
-                detail = "探测云端任务接口并执行…",
+                detail = "探测云端任务接口…",
             )
             status = "云端任务处理中…"
         } else {
@@ -389,7 +429,9 @@ class ChatPage : Pager() {
             } else {
                 CloudSyncApi.TaskSubmitResult(true, null, "")
             }
-            val reply = if (stream) {
+            val reply = if (kind == "task" && !submit.supported) {
+                ""
+            } else if (stream) {
                 postToMain { beginStream(token, convId) }
                 val acc = StringBuilder()
                 ChatRepository.completeStream(env, model, pending, onDelta = { delta ->
@@ -414,9 +456,12 @@ class ChatPage : Pager() {
         result: Result<Triple<CloudSyncApi.TaskSubmitResult, String, Boolean>>,
     ) {
             if (streamToken !== token || activeConvId != convId) return
+            val messageIndex = requestMessageIndex(token, convId)
             streamCancellable = false
             streamToken = null
+            streamMessageKey = null
             busy = false
+            if (messageIndex < 0) return
             result.fold(
                 onSuccess = { triple ->
                     val submit = triple.first
@@ -428,15 +473,12 @@ class ChatPage : Pager() {
                     if (wasCancelled) {
                         history.add(com.sa.demo.chat.ChatTurn("assistant", reply))
                         val list = messages.toMutableList()
-                        if (list.isNotEmpty()) {
-                            list[list.lastIndex] = ChatUiMessage(
-                                "assistant",
-                                reply.ifBlank { "（已停止，未生成内容）" },
-                                streaming = false,
-                                retryable = true,
-                            )
-                            messages = list
-                        }
+                        list[messageIndex] = list[messageIndex].copy(
+                            content = reply.ifBlank { "（已停止，未生成内容）" },
+                            streaming = false,
+                            retryable = true,
+                        )
+                        messages = list
                         status = "已停止"
                         detailText = if (reply.isBlank()) "未生成内容" else "已保留 ${reply.length} 字"
                         if (kind == "task") {
@@ -452,26 +494,24 @@ class ChatPage : Pager() {
 
                     history.add(com.sa.demo.chat.ChatTurn("assistant", reply))
                     val list = messages.toMutableList()
-                    if (list.isNotEmpty()) {
-                        list[list.lastIndex] = ChatUiMessage("assistant", reply, streaming = false)
-                        messages = list
-                    }
+                    list[messageIndex] = list[messageIndex].copy(content = reply, streaming = false)
+                    messages = list
                     if (kind == "task" && taskLocalId != null) {
                         val tid = taskLocalId
                         tasks = tasks.map {
                             if (it.taskId == tid) {
                                 it.copy(
-                                    status = if (submit.supported && submit.taskId != null) "queued" else "done",
+                                    status = if (submit.supported && submit.taskId != null) "queued" else "unsupported",
                                     detail = if (submit.supported && submit.taskId != null) {
                                         "云端任务 ${submit.taskId}；本地已同步执行"
                                     } else {
-                                        "${submit.detail}；已用网关 chat 同步完成"
+                                        submit.detail
                                     },
                                     updatedAt = currentTimeMillis(),
                                 )
                             } else it
                         }
-                        status = "任务已处理"
+                        status = if (submit.supported && submit.taskId != null) "任务已排队" else "任务不受支持"
                         detailText = if (submit.supported && submit.taskId != null) {
                             "云端 ${submit.taskId}"
                         } else {
@@ -488,15 +528,12 @@ class ChatPage : Pager() {
                         history.removeAt(history.lastIndex)
                     }
                     val list = messages.toMutableList()
-                    if (list.isNotEmpty()) {
-                        list[list.lastIndex] = ChatUiMessage(
-                            "assistant",
-                            "错误：${err.message ?: err}",
-                            streaming = false,
-                            retryable = true,
-                        )
-                        messages = list
-                    }
+                    list[messageIndex] = list[messageIndex].copy(
+                        content = "错误：${err.message ?: err}",
+                        streaming = false,
+                        retryable = true,
+                    )
+                    messages = list
                     if (kind == "task") {
                         tasks = tasks.map {
                             if (it.status == "running") it.copy(status = "failed", detail = err.message ?: "failed") else it
@@ -583,7 +620,8 @@ class ChatPage : Pager() {
                 }
             }
 
-            // ---------- panels ----------
+            // 普通 Kotlin if 不建立结构订阅；切换面板时才重建该区域，不绑定消息 delta。
+            vbind({ page.panel }) {
             if (page.panel == 1) {
                 Scroller {
                     attr { flex(1f); padding(SaUISpacing.md) }
@@ -645,45 +683,50 @@ class ChatPage : Pager() {
                         attr { flexDirectionColumn() }
                         Text {
                             attr {
-                                text("云端任务：接口未就绪时 = 本地任务卡 + 网关 chat 同步执行")
+                                text(ChatPage.TASK_PANEL_HINT)
                                 fontSize(12f)
                                 color(Color.parseString16ToLong(SaUIColors.TextSecondarySolid))
                                 margin(bottom = SaUISpacing.sm)
                             }
                         }
-                        if (page.tasks.isEmpty()) {
-                            Text {
-                                attr {
-                                    text("当前会话暂无任务")
-                                    fontSize(13f)
-                                    color(Color.parseString16ToLong(SaUIColors.TextPlaceholderSolid))
-                                }
-                            }
-                        }
-                        page.tasks.forEach { t ->
-                            View {
-                                attr {
-                                    margin(bottom = SaUISpacing.sm)
-                                    padding(SaUISpacing.md)
-                                    backgroundColor(Color.parseString16ToLong(SaUIColors.BgContainer))
-                                    borderRadius(SaUIRadius.Medium)
-                                    flexDirectionColumn()
-                                }
-                                Column {
-                                    attr { flexDirectionColumn() }
+                        vbind({ page.tasks }) {
+                            Column {
+                                attr { flexDirectionColumn() }
+                                if (page.tasks.isEmpty()) {
                                     Text {
                                         attr {
-                                            text("${t.status} · ${t.title}")
-                                            fontSize(14f)
-                                            color(Color.parseString16ToLong(SaUIColors.TextPrimarySolid))
+                                            text("当前会话暂无任务")
+                                            fontSize(13f)
+                                            color(Color.parseString16ToLong(SaUIColors.TextPlaceholderSolid))
                                         }
                                     }
-                                    Text {
+                                }
+                                page.tasks.forEach { t ->
+                                    View {
                                         attr {
-                                            text("${t.taskId} | ${t.detail}")
-                                            fontSize(11f)
-                                            color(Color.parseString16ToLong(SaUIColors.TextSecondarySolid))
-                                            margin(top = 4f)
+                                            margin(bottom = SaUISpacing.sm)
+                                            padding(SaUISpacing.md)
+                                            backgroundColor(Color.parseString16ToLong(SaUIColors.BgContainer))
+                                            borderRadius(SaUIRadius.Medium)
+                                            flexDirectionColumn()
+                                        }
+                                        Column {
+                                            attr { flexDirectionColumn() }
+                                            Text {
+                                                attr {
+                                                    text("${t.status} · ${t.title}")
+                                                    fontSize(14f)
+                                                    color(Color.parseString16ToLong(SaUIColors.TextPrimarySolid))
+                                                }
+                                            }
+                                            Text {
+                                                attr {
+                                                    text("${t.taskId} | ${t.detail}")
+                                                    fontSize(11f)
+                                                    color(Color.parseString16ToLong(SaUIColors.TextSecondarySolid))
+                                                    margin(top = 4f)
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -824,18 +867,30 @@ class ChatPage : Pager() {
                     }
                 }
 
+                Row {
+                    attr { padding(SaUISpacing.xs, SaUISpacing.md) }
+                    Text {
+                        attr {
+                            text(if (page.messageTheme == SaMarkdownTheme.LIGHT) "气泡主题：浅色（点击切换）" else "气泡主题：深色（点击切换）")
+                            fontSize(12f)
+                            color(Color.parseString16ToLong(SaUIColors.BrandPrimary))
+                        }
+                        event { click { page.toggleMessageTheme() } }
+                    }
+                }
+
                 Scroller {
                     attr { flex(1f); padding(SaUISpacing.md) }
                     Column {
                         attr { flexDirectionColumn() }
-                        if (page.messages.isEmpty()) {
+                        vif({ page.messageRenderers.isEmpty() }) {
                             View {
                                 attr { padding(SaUISpacing.lg) }
                                 Text {
                                     attr {
                                         text(
                                             if (page.activeKind == "task")
-                                                "描述要云端处理的任务；接口未就绪时本地任务卡 + 网关 chat 同步执行"
+                                                ChatPage.TASK_EMPTY_HINT
                                             else
                                                 "发送消息，经网关 /v1/chat/completions；结束后自动写入本地历史"
                                         )
@@ -845,18 +900,16 @@ class ChatPage : Pager() {
                                 }
                             }
                         }
-                        page.messages.forEach { msg ->
+                        vfor({ page.messageRenderers }) { renderer ->
                             ChatMessageBubble.build(
-                                content = msg.content,
-                                role = if (msg.isUser) ChatMessageBubble.Role.USER else ChatMessageBubble.Role.ASSISTANT,
-                                streaming = msg.streaming,
-                                onCopy = { page.copyMessage(msg.content) },
-                                // 只给失败/已停止的助手消息加重试入口
-                                onRetry = if (msg.retryable) {
-                                    { page.retryLast() }
-                                } else {
-                                    null
-                                }
+                                renderer = renderer,
+                                theme = { page.messageTheme },
+                                onCopy = { page.copyMessage(renderer.content) },
+                                onRetry = if (renderer.role == "user") null else {
+                                    {
+                                        if (page.messages.lastOrNull()?.renderKey === renderer.key && renderer.retryable) page.retryLast()
+                                    }
+                                },
                             ).invoke(this)
                         }
                     }
@@ -870,8 +923,10 @@ class ChatPage : Pager() {
                     Column {
                         attr { flexDirectionColumn() }
 
-                        // 替换为 StreamingInputBar
-                        page.inputBarBuilder().invoke(this)
+                        // 输入栏按其自身状态重建，不订阅正文 delta，保证发送/停止/重试后能力即时更新。
+                        vbind({ listOf(page.draft, page.busy, page.useStream, page.selectedModel, page.models, page.modelPickerOpen, page.streamCancellable) }) {
+                            page.inputBarBuilder().invoke(this)
+                        }
 
                         // 辅助操作按钮
                         Row {
@@ -886,10 +941,10 @@ class ChatPage : Pager() {
                                 page.loadModels()
                             }.invoke(this)
                             SaButton.build(text = "我的电脑", variant = SaButton.Variant.TEXT, size = SaButton.ButtonSize.SMALL) {
-                                PageRouterBridge.open("AgentPage")
+                                PageRouterBridge.open("RemoteDevicesPage")
                             }.invoke(this)
                             SaButton.build(text = "绑定电脑", variant = SaButton.Variant.TEXT, size = SaButton.ButtonSize.SMALL) {
-                                PageRouterBridge.push("BindAgentPage")
+                                PageRouterBridge.push("RemoteDevicesPage")
                             }.invoke(this)
                             SaButton.build(text = "退出", variant = SaButton.Variant.TEXT, size = SaButton.ButtonSize.SMALL) {
                                 AuthRepository.logoutLocal()
@@ -898,6 +953,8 @@ class ChatPage : Pager() {
                         }
                     }
                 }
+            }
+
             }
 
             // 底部导航放最后——Column 首个子节点在顶部，导航必须在内容之下

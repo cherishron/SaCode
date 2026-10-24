@@ -144,6 +144,8 @@ class ChatPageRegressionTest {
             String::class.java, String::class.java,
         ).apply { isAccessible = true }
         field.set(page, old)
+        ChatPage::class.java.getDeclaredField("streamMessageKey").apply { isAccessible = true }
+            .set(page, page.messages.last().renderKey)
         apply.invoke(page, old, "a", "current")
         assertEquals("current", page.messages.last().content)
         field.set(page, null)
@@ -154,6 +156,24 @@ class ChatPageRegressionTest {
         assertEquals("current", page.messages.last().content)
         apply.invoke(page, next, "b", "wrong-conversation")
         assertEquals("current", page.messages.last().content)
+    }
+
+    @Test
+    fun delta_targets_original_message_not_new_tail_or_replacement() {
+        val page = generatingPage()
+        val token = token(page)
+        val original = page.messages.last()
+        val apply = ChatPage::class.java.getDeclaredMethod(
+            "applyStreamDelta", com.sa.demo.core.platform.CancelToken::class.java,
+            String::class.java, String::class.java,
+        ).apply { isAccessible = true }
+        page.messages = page.messages + ChatUiMessage("assistant", "unrelated")
+        apply.invoke(page, token, "a", "original delta")
+        assertEquals("original delta", page.messages.first { it.renderKey === original.renderKey }.content)
+        assertEquals("unrelated", page.messages.last().content)
+        page.messages = listOf(ChatUiMessage("assistant", "replacement", streaming = true))
+        apply.invoke(page, token, "a", "must not leak")
+        assertEquals("replacement", page.messages.single().content)
     }
 
     @Test
@@ -234,6 +254,8 @@ class ChatPageRegressionTest {
     private fun token(page: ChatPage): com.sa.demo.core.platform.CancelToken {
         val token = com.sa.demo.core.platform.CancelToken()
         ChatPage::class.java.getDeclaredField("streamToken").apply { isAccessible = true }.set(page, token)
+        ChatPage::class.java.getDeclaredField("streamMessageKey").apply { isAccessible = true }
+            .set(page, page.messages.lastOrNull()?.renderKey)
         return token
     }
 
@@ -312,6 +334,8 @@ class ChatPageRegressionTest {
     fun cancelled_settlement_preserves_partial_reply_and_retry_contract() {
         val page = generatingPage()
         val token = token(page)
+        val renderer = page.messageRenderers.last()
+        val markdownState = renderer.markdownState
         beginStream(page, token)
         page.stopStreaming()
         val historyField = ChatPage::class.java.getDeclaredField("history").apply { isAccessible = true }
@@ -328,6 +352,9 @@ class ChatPageRegressionTest {
         assertFalse(page.busy)
         assertEquals("已停止", page.status)
         assertEquals("partial", page.messages.last().content)
+        kotlin.test.assertSame(renderer, page.messageRenderers.last())
+        kotlin.test.assertSame(markdownState, page.messageRenderers.last().markdownState)
+        assertEquals("partial", markdownState.parseResult?.content)
         assertTrue(page.messages.last().retryable)
         assertFalse(page.messages.last().streaming)
         assertEquals(listOf("question", "partial"), LocalHistoryRepository.getConversation("anon", "a")!!.messages.map { it.content })

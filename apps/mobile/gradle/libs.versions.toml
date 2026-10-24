@@ -15,6 +15,10 @@ kuikly = "2.6.0-2.0.21"
 # KuiklyX 协程 — 切换到 Kuikly 线程（groupId 为 kuiklyx-open 非 kuiklyx）
 # 最新版本见 https://repo1.maven.org/maven2/com/tencent/kuiklyx-open/coroutines/
 kuiklyx-coroutines = "1.5.0-2.0.21"
+# KuiklyMarkdown — 流式增量 Markdown 渲染；版本后缀必须与 Kotlin 版本一致（2.0.21）。
+# 可用版本见 maven-tencent: com/tencent/kuiklybase/KuiklyMarkdown/maven-metadata.xml
+# 鸿蒙构建使用 "1.0.6-2.0.21-ohos" 变体，接入时另行切换。
+kuiklymarkdown = "1.0.6-2.0.21"
 
 [libraries]
 # Kotlin
@@ -60,6 +64,9 @@ kuiklyx-coroutines = { module = "com.tencent.kuiklyx-open:coroutines", version.r
 
 # Kuikly KSP — 处理 @Page 注解生成代码
 kuikly-ksp = { module = "com.tencent.kuikly-open:core-ksp", version.ref = "kuikly" }
+
+# KuiklyMarkdown — 流式 Markdown 渲染组件（GFM + 19 语言高亮 + 增量 AST）
+kuikly-markdown = { module = "com.tencent.kuiklybase:KuiklyMarkdown", version.ref = "kuiklymarkdown" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

@@ -1,4 +1,6 @@
-# SaApp 可用版本目标（MVP）
+# SaCode 移动端目标（迁入历史附后）
+
+> 2026-10-23 纠偏：SaCode 正式入口为设备配对，不以短信/密码或 saai 账号为前提。当前主链路为启动 → RemoteDevicesPage → 手动登记电脑 → 受认证的目录/事件只读访问；完整任务执行与审批仍按根 PRD M04 另验。旧 Login/Chat/Account 不进入 Android 正式路由，旧数据保留。以下 saai MVP 仅作迁入历史，不能再据其要求测试账号。见[整改证据](../../../docs/evidence/2026-10-23-mobile-sacode-entry-correction.md)。
 
 > 2026-10-23 迁入注：本文保留 10 月 10 日手机 MVP 目标与历史勾选，不再作为独立的当前交付主线。当前目标、安全与完成判定遵循 [SaCode 根规则](../../../AGENTS.md) 和 [PRD 交付卡](../../../docs/product/PRD-tracking.md)；远程执行/审批的旧条目不能覆盖[现行三 RPC 只读边界](sa-code-integration-progress.md)，下文 HomePage 设计已由 HomeTabs 路由方案替代。本轮未重跑测试或真机验收。
 > 创建：2026-10-10 · 目标：一个**能装、能登录、能对话、能管账号**的可用版本。
@@ -35,7 +37,7 @@ HomePage（新增）           TabBar 容器，三页签
 | 对话 | `ChatPage` | ⚠️ 已有待收敛 | 现在是独立全屏页，需嵌入 Tab |
 | 设备 | `DevicesPage` | ⚠️ 待改造 | 现 `AgentPage`；协议改 JSON-RPC |
 | 我的 | `AccountPage` | ⬜ 待建 | 资料/绑定/设备/安全 |
-| 组件目录 | `SaUICatalogPage` | ✅ 已有 | 非产品流程，不计入验收 |
+| 组件目录 Demo | — | 已删除 | 不再打包或注册；共享组件与测试保留 |
 
 ### 各页职责边界
 

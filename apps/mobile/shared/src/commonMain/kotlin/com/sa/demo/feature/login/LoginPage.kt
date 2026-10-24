@@ -547,11 +547,6 @@ class LoginPage : Pager() {
                         variant = SaButton.Variant.TEXT,
                         size = SaButton.ButtonSize.SMALL,
                     ) { page.startOAuthBrowser() }.invoke(this)
-                    SaButton.build(
-                        text = "打开组件库 Demo",
-                        variant = SaButton.Variant.TEXT,
-                        size = SaButton.ButtonSize.SMALL,
-                    ) { PageRouterBridge.push("SaUICatalogPage") }.invoke(this)
                 }
 
                 View {

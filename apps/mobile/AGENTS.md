@@ -1,7 +1,7 @@
-# SaUI 组件库 Demo + SaApp 移动端 - Agents 技术文档
+# SaCode 移动端 - Agents 技术文档
 
 > AI 开发助手的规则手册。详细 DSL 陷阱见 [docs/kuikly-dsl-gotchas.md](./docs/kuikly-dsl-gotchas.md)。
-> **产品线角色**：SaCode 同仓移动客户端 **SaApp**（OAuth `client_id=saapp`），工程根为 `apps/mobile/`。原产品线文档 `../docs/clients/design-sa-app.md` 是迁入前参考，未导入本仓。
+> **产品角色**：SaCode 移动工作台，正式入口为 RemoteDevicesPage + 独立本机设备档案 + daemon 配对，不要求 sa-idp/gateway-rs、手机号或 saai 账号。旧 Login/Chat/Account/Agent/BindAgent 源码仅供依赖审计，不注册 Android 正式路由；旧数据不清除或自动迁移。下方 saai 认证/网关说明仅为迁入历史，不能作为配对前提。applicationId 保留以兼容覆盖安装。
 
 ## 单仓库规则与验收边界（2026-10-23）
 
@@ -58,7 +58,7 @@ sdk.dir=<本机 Android SDK 路径>
 | `com.sa.demo.storage` | SecureStore（Android Keystore AES-GCM）；**禁止**明文 SP 存 token/key |
 | `com.sa.demo.core.platform` | HTTP / 打开浏览器 / 页面路由桥 / 墙钟（expect-actual） |
 | `LoginPage` | **App 内原生登录**：短信 / 密码 / 注册直调 sa-idp；OAuth 浏览器仅兜底 |
-| `ChatPage` | 对话 + **本地历史/项目** + **云端任务**（接口未就绪时本地卡 + chat 同步执行） |
+| `ChatPage` | 对话 + **本地历史/项目** + **云端任务**（接口未就绪时标 unsupported，不回退 chat） |
 | `history/*` | LocalHistoryRepository / CloudSyncApi（用户级历史，云端契约见产品线 design-sa-app） |
 
 深链：`saapp://oauth/callback`（Manifest 已注册，`launchMode=singleTask`）。
@@ -85,7 +85,6 @@ sdk.dir=<本机 Android SDK 路径>
 │       │       │   ├── token/           # SaUIColors / Typography / Spacing / Radius / Shadow
 │       │       │   ├── base|form|data|feedback|foundation|navigation/
 │       │       │   ├── chat/            # ChatMessageBubble / StreamingInputBar
-│       │       │   └── catalog/         # SaUICatalogPage 组件目录页
 │       │       ├── core/               # 核心平台代码
 │       │       ├── feature/            # 业务页面 (login/chat/agent)
 │       │       └── App.kt              # 应用入口
@@ -117,6 +116,8 @@ AndroidApplication.onCreate() 中必须按此顺序：
 ---
 
 ## Kuikly 开发强制流程
+
+用户指定开发入口：[Kuikly AI](https://kuikly.tds.qq.com/AI/)。官方技能来源为 [Tencent-TDS/KuiklyUI-AI](https://github.com/Tencent-TDS/KuiklyUI-AI)，不是名为“mobile端开发”的通用 AI SDK。UI/响应式任务先读取 `skills/kuikly-ui-framework/SKILL.md`、`skills/kuikly-reactive-observer/SKILL.md` 及所引用规则；从官网/仓库读取不等于已安装到本机，未经实际安装不得宣称自动加载。官方最新示例须与本工程 Kuikly 2.6.0 源码对照：该版本没有 `ObservableList.diffUpdate`，不要直接套用新版本 API。KuiklyChatUI/Markdown 是渲染组件，不能替代 daemon RPC、SSE、TLS 与审批。
 
 **所有 Kuikly UI 开发必须查阅官方文档，禁止凭记忆编写：**
 
@@ -194,11 +195,11 @@ Switch { attr { isOn(true); onColor(Color(...)) } }
 AlertDialog { attr { title("..."); message("..."); actionButtons("确定") } }
 ```
 
-### 组件目录页
+### 产品页面与组件测试
 
-`SaUICatalogPage` 页面（`@Page("SaUICatalogPage")`）保留为组件目录与可视化自测工具；应用实际启动页为 `LoginPage`，产品流程不能由目录页验收替代。
+组件目录 Demo 页面及其 Android 注册、登录入口已按用户要求删除；鸿蒙启动页指向 `LoginPage`，鸿蒙导航和构建仍须独立验收。不要重新向产品安装包加入演示页。
 
-**新增组件必须同时加 Demo 卡片**；组件可视化验证与登录、对话、设备、账号等真实产品任务分别取证。
+新增或修改组件须补充单测或 Kuikly 视图树回归，并在实际产品页面验证；保留共享 SaUI 组件与测试，不因 `com.sa.demo` 包名而整树删除。
 
 ---
 
@@ -345,7 +346,7 @@ private fun statusCard(): ViewBuilder = {
 
 ## 已知问题
 
-- **KSP 页面注册遗漏**：KSP 增量编译可能遗漏非变更文件的页面注册。MainActivity 中手动注册 SaUICatalogPage，如新增 @Page 页面需同步添加。
+- **KSP 页面注册遗漏**：KSP 增量编译可能遗漏非变更文件的页面注册。MainActivity 显式注册产品页面，新增 @Page 页面需同步核对；已删除的演示页不得重新注册。
 
 ---
 

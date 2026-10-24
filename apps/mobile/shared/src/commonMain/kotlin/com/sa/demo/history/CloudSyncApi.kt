@@ -76,8 +76,8 @@ object CloudSyncApi {
     }
 
     /**
-     * 提交云端任务。接口未就绪时返回 supported=false，调用方改为
-     * 「本地任务卡 + 网关 chat 同步执行」降级。
+     * 提交云端任务。接口未就绪时返回 supported=false，调用方应标 unsupported，
+     * 不得回退网关 chat 并宣称任务已完成。
      */
     fun submitTask(
         env: SaaiEnv,
@@ -111,11 +111,11 @@ object CloudSyncApi {
             )
             when {
                 resp.statusCode == 404 || resp.statusCode == 405 ->
-                    TaskSubmitResult(false, null, "云端任务接口未就绪，改本地任务+同步 chat")
+                    TaskSubmitResult(false, null, "云端任务接口未就绪")
                 resp.isSuccess ->
                     TaskSubmitResult(true, extractTaskId(resp.body), "任务已提交")
                 resp.statusCode == 401 || resp.statusCode == 403 ->
-                    TaskSubmitResult(false, null, "任务接口鉴权失败，改本地任务")
+                    TaskSubmitResult(false, null, "任务接口鉴权失败")
                 else ->
                     TaskSubmitResult(false, null, "任务提交 HTTP ${resp.statusCode}")
             }

@@ -52,11 +52,10 @@ saui/
 │   ├── SaNavbar.kt           # 导航栏
 │   ├── SaTabBar.kt           # 标签栏
 │   └── SaSteps.kt            # 步骤条 (HORIZONTAL/VERTICAL)
-├── chat/           # 聊天业务组件
+└── chat/           # 聊天业务组件
 │   ├── ChatMessageBubble.kt  # 消息气泡 (左右对齐 + 围栏代码块 + 流式光标)
 │   └── StreamingInputBar.kt  # 流式输入栏 (输入/流式开关/模型切换/发送停止)
-└── catalog/
-    └── SaUICatalogPage.kt    # 组件目录页 (50 个 Demo 卡片)
+
 ```
 
 ## Token 系统

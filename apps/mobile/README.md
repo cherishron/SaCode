@@ -1,12 +1,14 @@
-﻿# SaApp（saai 移动端）
+﻿# SaCode 移动端
 
 [![Kotlin Version](https://img.shields.io/badge/Kotlin-2.0.21-blue.svg)](https://kotlinlang.org/)
 [![KuiklyUI](https://img.shields.io/badge/KuiklyUI-2.6.0-green.svg)](https://github.com/Tencent-TDS/KuiklyUI)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20OHOS-green.svg)](https://kotlinlang.org/docs/multiplatform.html)
 
-> saai 产品线**移动客户端**：KMP + KuiklyUI + SaUI。  
-> OAuth 客户端 **`saapp`** · 工程归属 `sa-code/apps/mobile/`，与 SaCode 统一 Git 管理。原产品线规划 `../docs/clients/design-sa-app.md` 为迁入前参考，未导入。  
-> 仍保留 SaUI 组件库 Demo（`SaUICatalogPage`）。
+> SaCode 移动工作台：KMP + KuiklyUI + SaUI，与 SaCode 同仓管理。
+> 正式入口为 `RemoteDevicesPage`：电脑 SaCode 出具一次性登记票 → 手机手动配对 → 设备凭据换取短期 token → 按工作区权限只读访问。不要求 sa-idp、gateway-rs、手机号或旧 saai 账号。
+> 本地随机设备档案仅用于注册表/安全存储命名空间，不代表远程身份。旧账号绑定不自动迁移、旧数据不清除；重新配对进入独立档案。`com.sa.demo` applicationId 保留以兼容覆盖安装。
+> 旧 Login/Chat/Account/Agent/BindAgent 源码暂留供依赖审计，但不注册 Android 产品路由；设备页不提供旧导航，旧 OAuth 深链已移除。共享组件与测试保留。
+> 当前只开放 `initialize`、`session/catalog`、`session/events`；扫码、Relay、SSH、远程执行/审批尚未交付。鸿蒙仅调整入口源码，网络/安全存储/路由仍需单独实现和验收。
 
 ## 技术栈
 
@@ -86,7 +88,7 @@ Gradle 默认只装配 `framework`、`shared`、`androidApp`。`ohosApp/` 与 OH
 
 1. 部署方准备 sa-idp（`:8080`）与 **gateway-rs**（`:8090`），确认就绪。原产品线指南 `../docs/guides/local-dev.md` 为迁入前参考，未导入本仓。
 2. `MainActivity.resolveStartPage()` 实际启动 `LoginPage`，提供 App 内短信/密码登录及注册，OAuth 浏览器登录保留为兜底；深链为 `saapp://oauth/callback`。开发固定短信码不是生产认证设计。
-3. 登录后进入 `ChatPage`，底部 `HomeTabs` 在对话、设备、我的之间路由切换；`SaUICatalogPage` 仅为组件自测。
+3. 登录后进入 `ChatPage`，底部 `HomeTabs` 在对话、设备、我的之间路由切换；组件目录 Demo 不再注册或打包。
 4. 远程设备只读接入仍限 `initialize`、`session/catalog`、`session/events`；未验收授权、会话归属、SSE 服务端隔离与强制沙箱前，不开放执行和审批。见[接入实施记录](docs/sa-code-integration-progress.md)。
 
 配置见 `shared/.../env/SaaiEnv.kt`（默认 Dev 环境）。

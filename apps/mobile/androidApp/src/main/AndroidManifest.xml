@@ -23,16 +23,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- OAuth 回调：与 idp_oauth_clients saapp 白名单一致 -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="oauth"
-                    android:pathPrefix="/callback"
-                    android:scheme="saapp" />
-            </intent-filter>
         </activity>
     </application>
 

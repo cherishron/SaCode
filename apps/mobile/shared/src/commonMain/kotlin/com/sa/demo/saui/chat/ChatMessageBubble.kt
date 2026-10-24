@@ -1,29 +1,21 @@
 package com.sa.demo.saui.chat
 
+import com.sa.demo.chat.ChatUiMessage
 import com.sa.demo.saui.token.SaUIColors
 import com.sa.demo.saui.token.SaUIRadius
 import com.sa.demo.saui.token.SaUISpacing
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.layout.FlexAlign
 import com.tencent.kuikly.core.layout.FlexJustifyContent
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuikly.core.views.layout.Row
 
-/**
- * ChatMessageBubble：聊天消息气泡。
- * 支持用户/AI 左右对齐、极简 Markdown（围栏代码块）、流式光标。
- *
- * 交互：
- * - 传入 [onCopy] 后长按气泡即触发复制（移动端聊天的通用手势）
- * - 传入 [onRetry] 后气泡下方渲染「重试」入口；不传则不渲染，保持默认外观不变
- */
+/** 用户原文与助手 Markdown 气泡；复制、光标、重试由调用方控制。 */
 object ChatMessageBubble {
-
     enum class Role { USER, ASSISTANT }
-
-    /** 「重试」入口文案，便于调用方统一多语言时替换。 */
     const val RETRY_LABEL = "重试"
 
     fun build(
@@ -31,115 +23,76 @@ object ChatMessageBubble {
         role: Role,
         streaming: Boolean = false,
         onCopy: (() -> Unit)? = null,
-        onRetry: (() -> Unit)? = null
+        onRetry: (() -> Unit)? = null,
+        theme: SaMarkdownTheme = SaMarkdownTheme.LIGHT,
     ): ViewBuilder = {
-        val isUser = role == Role.USER
-        val bgColor = if (isUser) SaUIColors.BrandPrimary else SaUIColors.BgComponent
-        val textColor = if (isUser) SaUIColors.TextAnti else SaUIColors.TextPrimarySolid
-        val align = if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START
+        val renderer = ChatMessageRenderer(ChatUiMessage(
+            if (role == Role.USER) "user" else "assistant", content, streaming, retryable = onRetry != null,
+        ), this)
+        build(renderer, { theme }, onCopy, onRetry).invoke(this)
+    }
 
+    /** 流式页面复用同一个 renderer，参数读取留在响应式 attr/指令闭包内。 */
+    fun build(
+        renderer: ChatMessageRenderer,
+        theme: () -> SaMarkdownTheme = { SaMarkdownTheme.LIGHT },
+        onCopy: (() -> Unit)? = null,
+        onRetry: (() -> Unit)? = null,
+    ): ViewBuilder = {
+        val isUser = renderer.role == "user"
         Row {
             attr {
-                justifyContent(align)
+                justifyContent(if (isUser) FlexJustifyContent.FLEX_END else FlexJustifyContent.FLEX_START)
                 padding(left = SaUISpacing.md, right = SaUISpacing.md, top = SaUISpacing.xs, bottom = SaUISpacing.xs)
             }
-
             View {
                 attr {
-                    backgroundColor(Color.parseString16ToLong(bgColor))
+                    backgroundColor(if (isUser) Color.parseString16ToLong(SaUIColors.BrandPrimary) else theme().assistantBackground())
                     borderRadius(SaUIRadius.Medium)
                     padding(SaUISpacing.md, SaUISpacing.md, SaUISpacing.md, SaUISpacing.md)
                     maxWidth(280f)
                 }
-
-                // 长按复制：仅在调用方提供回调时绑定，避免无响应手势
-                if (onCopy != null) {
-                    event { longPress { onCopy() } }
+                if (onCopy != null) event { longPress { onCopy() } }
+                if (isUser) {
+                    // 一个原生 Text 直接绑定原文，保留空行、前后空白及围栏，不经过任何 Markdown 解析。
+                    Text {
+                        attr {
+                            text(renderer.content)
+                            fontSize(15f)
+                            color(Color.parseString16ToLong(SaUIColors.TextAnti))
+                        }
+                    }
+                } else {
+                    SaMarkdown(renderer, theme)
                 }
-
-                // 简单 Markdown：代码块用等宽字体 + 背景区分
-                renderContent(content, textColor).invoke(this)
-
-                if (streaming) {
+                vif({ renderer.streaming }) {
                     Row {
                         attr { marginTop(SaUISpacing.xs); alignItems(FlexAlign.CENTER) }
                         Text {
                             attr {
                                 text("▍")
                                 fontSize(12f)
-                                color(Color.parseString16ToLong(textColor))
+                                color(if (isUser) Color.parseString16ToLong(SaUIColors.TextAnti) else theme().markdownConfig().colors.text)
                             }
                         }
                     }
                 }
-
-                // 重试入口：仅在调用方提供回调时渲染（通常只给失败消息传）
                 if (onRetry != null) {
-                    Row {
-                        attr { marginTop(SaUISpacing.xs); alignItems(FlexAlign.CENTER) }
-                        Text {
-                            attr {
-                                text(RETRY_LABEL)
-                                fontSize(12f)
-                                color(
-                                    Color.parseString16ToLong(
-                                        // 用户气泡是蓝底，重试用白字保证对比度
-                                        if (isUser) SaUIColors.TextAnti else SaUIColors.BrandPrimary
-                                    )
-                                )
+                    vif({ renderer.retryable }) {
+                        Row {
+                            attr { marginTop(SaUISpacing.xs); alignItems(FlexAlign.CENTER) }
+                            Text {
+                                attr {
+                                    text(RETRY_LABEL)
+                                    fontSize(12f)
+                                    color(if (isUser) Color.parseString16ToLong(SaUIColors.TextAnti) else theme().markdownConfig().colors.linkColor)
+                                }
+                                event { click { onRetry() } }
                             }
-                            event { click { onRetry() } }
                         }
                     }
                 }
             }
         }
     }
-
-    /**
-     * 极简 Markdown 渲染：按行扫描，识别 ``` 围栏代码块，其余按正文逐行输出。
-     * 返回 ViewBuilder 而非扩展函数——ViewBuilder 是 lambda 类型，
-     * 作为扩展接收者会导致 `this` 不是 ViewContainer，View/Text 无法解析。
-     */
-    private fun renderContent(content: String, textColor: String): ViewBuilder = {
-        val textColorLong = Color.parseString16ToLong(textColor)
-
-        MdParser.parse(content).forEach { block ->
-            when (block) {
-                is MdBlock.Text -> Text {
-                    attr {
-                        text(block.text)
-                        fontSize(BODY_FONT_SIZE)
-                        color(textColorLong)
-                        marginBottom(SaUISpacing.xxs)
-                    }
-                }
-
-                is MdBlock.Code -> View {
-                    attr {
-                        backgroundColor(CODE_BG)
-                        borderRadius(SaUIRadius.Small)
-                        padding(SaUISpacing.sm, SaUISpacing.sm, SaUISpacing.sm, SaUISpacing.sm)
-                        marginTop(SaUISpacing.xs)
-                        marginBottom(SaUISpacing.xs)
-                    }
-                    Text {
-                        attr {
-                            text(block.code)
-                            fontSize(CODE_FONT_SIZE)
-                            color(CODE_FG)
-                            fontFamily(MONOSPACE)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private const val CODE_FENCE = "```"
-    private const val MONOSPACE = "monospace"
-    private const val BODY_FONT_SIZE = 15f
-    private const val CODE_FONT_SIZE = 12f
-    private const val CODE_BG = 0xFF1E1E1EL
-    private const val CODE_FG = 0xFFD4D4D4L
 }

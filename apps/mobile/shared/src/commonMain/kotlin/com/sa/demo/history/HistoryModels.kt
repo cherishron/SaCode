@@ -20,7 +20,7 @@ data class ConversationMessage(
 data class CloudTaskRef(
     val taskId: String,
     val title: String,
-    val status: String = "queued", // queued | running | done | failed
+    val status: String = "queued", // queued | running | done | failed | unsupported | canceled
     val detail: String = "",
     val createdAt: Long = currentTimeMillis(),
     val updatedAt: Long = currentTimeMillis(),

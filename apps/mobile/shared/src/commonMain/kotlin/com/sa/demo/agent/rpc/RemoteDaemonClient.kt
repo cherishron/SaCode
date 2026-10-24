@@ -54,7 +54,8 @@ class RemoteDaemonClient(
         }
     }
 
-    fun initialize(): RemoteInitialization = RemoteInitialization.parse(call(AgentMethods.INITIALIZE))
+    fun initialize(workspaceId: String): RemoteInitialization =
+        RemoteInitialization.parse(call(AgentMethods.INITIALIZE, RemoteRequestContext(workspaceId).params()))
 
     fun catalog(context: RemoteRequestContext): AgentRpc.Catalog =
         AgentRpc.parseCatalog(call(AgentMethods.SESSION_CATALOG, context.params()))

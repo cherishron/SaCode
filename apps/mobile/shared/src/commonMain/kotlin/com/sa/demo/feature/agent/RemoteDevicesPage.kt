@@ -4,12 +4,11 @@ import com.sa.demo.agent.AgentRegistry
 import com.sa.demo.agent.BoundAgent
 import com.sa.demo.agent.AgentConnectMode
 import com.sa.demo.agent.rpc.*
-import com.sa.demo.auth.AuthRepository
+import com.sa.demo.agent.LocalDeviceProfile
 import com.sa.demo.core.platform.*
 import com.sa.demo.storage.SecureStores
 import com.sa.demo.saui.base.SaButton
 import com.sa.demo.saui.token.SaUIColors
-import com.sa.demo.feature.home.HomeTabs
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
@@ -24,7 +23,7 @@ class RemoteDevicesPage : Pager() {
     var address by observable("https://")
     var workspace by observable("")
     var displayName by observable("我的电脑")
-    var protocolName by observable("saapp-phone")
+    var protocolName by observable("sacode-phone")
     var enrollmentSecret by observable("")
     var status by observable("请登记设备或选择已有绑定")
     var busy by observable(false)
@@ -45,17 +44,25 @@ class RemoteDevicesPage : Pager() {
     private var remoteSessions: List<AgentRpc.CatalogEntry> = emptyList()
     var streamStatus by observable("未订阅")
     var deleteConfirm by observable(false)
-    private fun account() = AuthRepository.storedUsername().orEmpty()
+    private var profile: LocalDeviceProfile? = null
+    private var ownerId = ""
+    private fun ownerCurrent() = profile?.isCurrent(ownerId) == true
+    private fun owner() = ownerId
     private fun vault() = RemoteCredentialVault(SecureStores.get())
 
     override fun didInit() {
         super.didInit()
-        refreshDevices()
-        AgentRegistry.active(account())?.takeIf { it.remoteInstanceId.isNotBlank() }?.let { select(it) }
+        runCatching {
+            val localProfile = LocalDeviceProfile(SecureStores.get())
+            ownerId = localProfile.ownerId()
+            profile = localProfile
+            refreshDevices()
+            AgentRegistry.active(owner())?.takeIf { it.remoteInstanceId.isNotBlank() }?.let { select(it) }
+        }.onFailure { status = "本机设备档案或存储不可用，无法安全保存绑定" }
     }
 
     private fun refreshDevices() {
-        devicesText = AgentRegistry.list(account()).joinToString("\n") {
+        devicesText = AgentRegistry.list(owner()).joinToString("\n") {
             "${it.name} · ${if (it.remoteInstanceId.isBlank()) "旧绑定，需重新登记" else it.remoteInstanceId}"
         }.ifBlank { "暂无绑定" }
     }
@@ -75,7 +82,7 @@ class RemoteDevicesPage : Pager() {
         historyText = ""
         catalogText = ""
         remoteSessions = emptyList()
-        val repository = RemoteAuthRepository(address, account(), agent.deviceId, vault())
+        val repository = RemoteAuthRepository(address, owner(), agent.deviceId, vault())
         auth = repository
         client = RemoteDaemonClient(address, repository::token, nextRequestId = { "${currentTimeMillis()}-${sequence++}" }, invalidateToken = repository::invalidateToken)
         status = "已选择 ${agent.name}，点击连接读取"
@@ -83,17 +90,16 @@ class RemoteDevicesPage : Pager() {
 
     private fun <T> run(work: () -> T, success: (T) -> Unit) {
         if (busy) return
-        val owner = account()
-        if (owner.isBlank()) { status = "请先登录，不能匿名保存设备凭据"; return }
+        val owner = owner()
+        if (!ownerCurrent()) { status = "本机设备档案不可用，请重新打开应用"; return }
         val stamp = epoch.current()
-        val loginEpoch = com.sa.demo.auth.LocalSessionEpoch.current()
         busy = true
         asyncRun({
-            check(com.sa.demo.auth.LocalSessionEpoch.current() == loginEpoch && account() == owner) { "登录会话已改变" }
+            check(ownerCurrent() && owner() == owner) { "本机设备档案已改变" }
             work()
         }) { result ->
             postToKuikly {
-                if (!alive || !epoch.accepts(stamp) || account() != owner || com.sa.demo.auth.LocalSessionEpoch.current() != loginEpoch) return@postToKuikly
+                if (!alive || !epoch.accepts(stamp) || owner() != owner || !ownerCurrent()) return@postToKuikly
                 busy = false
                 result.fold(success, { failure ->
                     status = when (failure) {
@@ -112,32 +118,33 @@ class RemoteDevicesPage : Pager() {
     }
 
     fun enroll() {
-        if (workspace.isBlank()) { status = "请填写部署方提供的 workspaceId"; return }
+        if (busy) return
+        if (!ownerCurrent()) { status = "本机设备档案不可用，请重新打开应用"; return }
+        if (workspace.isBlank()) { status = "请填写电脑端提供的 workspaceId"; return }
         val invalid = RemoteEndpoint.validate(address)
         if (invalid != null) { status = invalid; return }
-        val owner = account()
+        val owner = owner()
         val id = AgentRegistry.newDeviceId()
         val url = address.trim().trimEnd('/')
         val ws = workspace.trim()
         val label = displayName.trim().ifBlank { "电脑" }
         val secret = enrollmentSecret
+        enrollmentSecret = ""
         val name = protocolName
-        val sessionEpoch = com.sa.demo.auth.LocalSessionEpoch.current()
+        val localProfile = profile ?: return
         run({
             val credentialVault = vault()
             val repository = RemoteAuthRepository(url, owner, id, credentialVault, persistCredential = { receipt ->
-                com.sa.demo.auth.LocalSessionEpoch.ifCurrent(sessionEpoch) {
-                    check(account() == owner) { "登录账号已改变" }
+                localProfile.ifCurrent(owner) {
                     credentialVault.save(owner, id, receipt)
                 }
             })
             val receipt = repository.enroll(secret, name)
-            val agent = BoundAgent(deviceId = id, name = label, idpSub = owner,
+            val agent = BoundAgent(deviceId = id, name = label,
                 preferredMode = AgentConnectMode.PUBLIC_HTTP.name, publicUrl = url, useRelay = false,
                 remoteInstanceId = receipt.instanceId, enrolledDeviceId = receipt.enrolledDeviceId, workspaceId = ws)
             try {
-                com.sa.demo.auth.LocalSessionEpoch.ifCurrent(sessionEpoch) {
-                    check(account() == owner) { "登录账号已改变" }
+                localProfile.ifCurrent(owner) {
                     AgentRegistry.upsert(owner, agent)
                 }
             } catch (e: Exception) { repository.forget(); throw e }
@@ -158,7 +165,7 @@ class RemoteDevicesPage : Pager() {
         stopSubscription()
         connected = false
         run({
-            val init = rpc.initialize()
+            val init = rpc.initialize(agent.workspaceId)
             require(init.instanceId == agent.remoteInstanceId) { "实例身份与登记回执不符，请检查地址" }
             require("session/catalog" in init.capabilities) { "目标没有目录读取能力" }
             init to rpc.catalog(context)
@@ -218,10 +225,10 @@ class RemoteDevicesPage : Pager() {
         val token = CancelToken()
         streamToken = token
         val stamp = epoch.current()
-        val owner = account()
+        val owner = owner()
         val subscription = RemoteEventSubscription(agent.publicUrl.ifBlank { agent.lanUrl }, selected, repository)
         fun dispatch(action: () -> Unit) = postToKuikly {
-            if (alive && !token.isCancelled && epoch.accepts(stamp) && account() == owner && sessionId.trim() == selected) action()
+            if (alive && !token.isCancelled && epoch.accepts(stamp) && owner() == owner && ownerCurrent() && sessionId.trim() == selected) action()
         }
         asyncRun({
             subscription.run(token, { message -> dispatch { streamStatus = message } }, {
@@ -245,7 +252,7 @@ class RemoteDevicesPage : Pager() {
 
     override fun pageDidAppear() {
         super.pageDidAppear()
-        if (resumeSubscription && alive && account().isNotBlank()) {
+        if (resumeSubscription && alive && ownerCurrent()) {
             resumeSubscription = false
             subscribe()
             readHistory()
@@ -254,11 +261,11 @@ class RemoteDevicesPage : Pager() {
 
     fun cycleDevice() {
         if (busy) return
-        val devices = AgentRegistry.list(account()).filter { it.remoteInstanceId.isNotBlank() }
+        val devices = AgentRegistry.list(owner()).filter { it.remoteInstanceId.isNotBlank() }
         if (devices.isEmpty()) { status = "暂无已登记设备"; return }
         val next = devices[(devices.indexOfFirst { it.deviceId == target?.deviceId } + 1) % devices.size]
         select(next)
-        AgentRegistry.setActive(account(), next.deviceId)
+        AgentRegistry.setActive(owner(), next.deviceId)
     }
 
     fun cycleSession() {
@@ -286,7 +293,7 @@ class RemoteDevicesPage : Pager() {
         if (!deleteConfirm) { deleteConfirm = true; status = "再次点击删除，确认清除本地凭据；不会撤销服务端设备"; return }
         stopSubscription()
         auth?.forget()
-        AgentRegistry.remove(account(), agent.deviceId)
+        AgentRegistry.remove(owner(), agent.deviceId)
         epoch.advance()
         target = null; auth = null; client = null
         history = RemoteHistorySnapshot(); historyText = ""; catalogText = ""
@@ -308,15 +315,16 @@ class RemoteDevicesPage : Pager() {
         attr { backgroundColor(Color.parseString16ToLong(SaUIColors.BgPage)) }
         Column {
             attr { flex(1f); padding(top = 36f, left = 16f, right = 16f) }
-            Text { attr { text("PC Agent · 安全只读接入"); fontSize(20f); fontWeightBold() } }
+            Text { attr { text("SaCode · 连接电脑"); fontSize(20f); fontWeightBold() } }
             Scroller {
                 attr { flex(1f) }
                 Column {
-                    page.field("HTTPS 服务地址", page.address) { page.address = it }.invoke(this)
-                    page.field("workspaceId（部署方提供）", page.workspace) { page.workspace = it }.invoke(this)
-                    page.field("电脑显示名", page.displayName) { page.displayName = it }.invoke(this)
-                    page.field("手机协议名（ASCII）", page.protocolName) { page.protocolName = it }.invoke(this)
-                    page.field("一次性登记秘密", page.enrollmentSecret, secret = true) { page.enrollmentSecret = it }.invoke(this)
+                    Text { attr { text("无需手机号或 saai 账号。请在电脑 SaCode 生成一次性登记票，填写 HTTPS 地址与 workspaceId 后配对。当前仅支持手动登记与只读访问，扫码暂未接入。"); fontSize(12f); margin(top = 8f) } }
+                    page.field("HTTPS 服务地址", { page.address }) { page.address = it }.invoke(this)
+                    page.field("workspaceId（电脑端提供）", { page.workspace }) { page.workspace = it }.invoke(this)
+                    page.field("电脑显示名", { page.displayName }) { page.displayName = it }.invoke(this)
+                    page.field("手机协议名（ASCII）", { page.protocolName }) { page.protocolName = it }.invoke(this)
+                    page.field("一次性登记秘密", { page.enrollmentSecret }, secret = true) { page.enrollmentSecret = it }.invoke(this)
                     SaButton.build("登记新设备", disabled = page.busy) { page.enroll() }.invoke(this)
                     SaButton.build("切换已有设备", variant = SaButton.Variant.TEXT, disabled = page.busy) { page.cycleDevice() }.invoke(this)
                     Text { attr { text(page.devicesText); fontSize(12f); margin(top = 8f) } }
@@ -325,7 +333,7 @@ class RemoteDevicesPage : Pager() {
                     Text { attr { text(page.catalogText); fontSize(12f) } }
                     SaButton.build("选择下一个会话", variant = SaButton.Variant.TEXT, disabled = page.busy) { page.cycleSession() }.invoke(this)
                     Text { attr { text("上方地址等字段用于新登记；读取始终使用已选绑定的已保存配置。"); fontSize(12f) } }
-                    page.field("远程会话 ID（来自目录）", page.sessionId) { page.changeSession(it) }.invoke(this)
+                    page.field("远程会话 ID（来自目录）", { page.sessionId }) { page.changeSession(it) }.invoke(this)
                     SaButton.build("读取 / 继续补读历史", disabled = page.busy) { page.readHistory() }.invoke(this)
                     SaButton.build("订阅事件并自动补读", disabled = page.busy) { page.subscribe() }.invoke(this)
                     SaButton.build("停止订阅", variant = SaButton.Variant.TEXT) { page.stopSubscription() }.invoke(this)
@@ -335,14 +343,13 @@ class RemoteDevicesPage : Pager() {
                     SaButton.build("删除本地绑定", variant = SaButton.Variant.DANGER_OUTLINE, disabled = page.busy) { page.forget() }.invoke(this)
                 }
             }
-            HomeTabs.build(HomeTabs.DEVICES).invoke(this)
         }
     }
 
-    private fun field(label: String, value: String, secret: Boolean = false, change: (String) -> Unit): ViewBuilder = {
+    private fun field(label: String, value: () -> String, secret: Boolean = false, change: (String) -> Unit): ViewBuilder = {
         Text { attr { text(label); fontSize(12f); margin(top = 8f) } }
         Input {
-            attr { text(value); height(40f); fontSize(14f); if (secret) keyboardTypePassword() }
+            attr { text(value()); height(40f); fontSize(14f); if (secret) keyboardTypePassword() }
             event { textDidChange { change(it.text) } }
         }
     }

@@ -9,14 +9,14 @@
 | KRLogAdapter | 日志适配器 | android.util.Log.i/d/e(tag, msg) → LogCat | hilog.info/debug/error(0x30, tag, '%{public}s', msg) | 鸿蒙端独立实现 KRLogAdapter.ets，实现 IKRLogAdapter 接口，经 hilog 输出，固定 DOMAIN=0x30 | 2026-09-18 |
 | KRImageAdapter | 图片适配器 | Executors+BitmapFactory+Drawable+Handler(mainLooper)，assets/file/web 三源 | 首版占位策略：fetchDrawable 直接 callback(null)，不崩溃 | 对齐 Android 端 KuiklyFramework.initAdapters placeholder 行为；后续可扩展 TaskPool 子线程加载 | 2026-09-18 |
 | KRThreadAdapter | 线程适配器 | Executors.newFixedThreadPool(2).execute(task) | taskpool.execute(task)（鸿蒙 TaskPool 并发机制） | 鸿蒙端独立实现 KRThreadAdapter.ets，禁阻塞 UI 主线程；stackSize() 返回 0 对齐 Android | 2026-09-18 |
-| KRRouterAdapter | 路由适配器 | openPage(context, pageName, pageData) / closePage(context)，静态回调变量 | openPage(context, pageName, pageData) / closePage(context)，hilog 日志记录 | 首版 SaUICatalogPage 单页无需导航；预留 router.pushUrl 原生页跳转分支 | 2026-09-18 |
+| KRRouterAdapter | 路由适配器 | openPage(context, pageName, pageData) / closePage(context)，静态回调变量 | openPage(context, pageName, pageData) / closePage(context)，hilog 日志记录 | 组件目录 Demo 已删除，入口源码已改为 RemoteDevicesPage（未构建验证）；设备配对还受平台 SecureStore/网络未实现阻塞；产品多页导航仍未接通，需独立实现与验收 | 2026-09-18 |
 | KRFontAdapter | 字体适配器 | getTypeface(fontFamily, result) → result(null) | getTypeface(fontFamily, result) → result(null) | 完全对齐 Android 端返回 null 行为，不抛异常；后续可扩展 FontRegistry | 2026-09-18 |
 | KRColorParserAdapter | 颜色解析适配器 | colorStr.toLongOrNull()?.toInt() | Number(colorStr) → isNaN 判断 → 截断为 32 位整数 | 对齐 Android 端 toLongOrNull().toInt() 语义，保证渲染颜色一致 | 2026-09-18 |
 | KRExceptionAdapter | 异常适配器 | android.util.Log.e("KuiklyException", stackTraceToString()) | hilog.error(0x30, "KuiklyException", '%{public}s', name+message+stack) | 鸿蒙端独立实现 KRExceptionAdapter.ets，经 hilog 输出堆栈，不静默 | 2026-09-18 |
 | 适配器注册机制 | 适配器注册方式 | KuiklyFramework.initAdapters() → KuiklyRenderAdapterManager 属性设置 | KuiklyAdapterManager 单例 → KuiklyRenderAdapterManager 属性设置 | 对齐官方 KuiklyUI/ohosApp AppKRRenderManager 模式；KuiklyViewDelegate 构造时调用 initIfNeed() 确保一次性注册 | 2026-09-18 |
 | NapierInitializer | Napier 日志后端 | Antilog 桥接 LogCat（NapierInitializer.android.kt） | 空实现（Napier 无 ohosArm64 变体不进入依赖集） | 日志可观测性由 KRLogAdapter → hilog 承担，能力不缺失 | 2026-09-18 |
 | PlatformContext | 平台上下文 | 包装 android.content.Context | 无平台依赖标记类 | 鸿蒙侧无系统能力依赖载体；getPlatformContext 保持"未初始化即抛出"语义 | 2026-09-18 |
-| showToast | Toast 提示 | Toast.makeText(context, message, LENGTH_SHORT).show() | 空实现 | SaUICatalogPage Demo 未使用 toast（调用面为零）；如需补充经渲染库 Toast 组件路径验证 | 2026-09-18 |
+| showToast | Toast 提示 | Toast.makeText(context, message, LENGTH_SHORT).show() | 空实现 | 宿主 Toast 通道尚未实现；组件目录 Demo 已删除，不能沿用旧样例调用面为零作为产品能力证据 | 2026-09-18 |
 | platformModule | DI 模块 | 含 androidContext/androidLogger（koin-android） | 空 Koin Module | 鸿蒙侧不引用 koin-android；appModule 当前为空 module，影响面为零 | 2026-09-18 |
 | Kuikly 依赖制品 | 依赖坐标差异 | com.tencent.kuikly-open:core:2.6.0-2.0.21 | com.tencent.kuikly-open:core:2.6.0-2.0.21-ohos（三端 ohos 变体） | 版本号基线一致（2.6.0-2.0.21），ohos 后缀变体由官方 harmony-dev 方式 2 指定 | 2026-09-18 |
 | KSP 版本 | KSP 处理器版本 | 2.0.21-1.0.28 | 2.0.21-1.0.27（官方鸿蒙链路指定版本） | 版本差异由官方链路要求决定，不影响 @Page 注解处理语义 | 2026-09-18 |

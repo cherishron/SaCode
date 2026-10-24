@@ -53,6 +53,8 @@ data class ChatUiMessage(
     val streaming: Boolean = false,
     /** 该条回复是否可重发（发送失败 / 用户主动停止）。 */
     val retryable: Boolean = false,
+    /** 仅供 UI 投影复用；copy 保留身份，不进入业务历史或序列化协议。 */
+    val renderKey: Any = Any(),
 ) {
     val isUser: Boolean get() = role == "user"
 }

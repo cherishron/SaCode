@@ -28,11 +28,22 @@ class RemoteDaemonClientTest {
         assertEquals("hello", page.events.single().data)
     }
 
+    @Test fun initialize_sends_workspace_id_in_params() {
+        val client = RemoteDaemonClient("https://pc.example", { "token" }, RemoteHttpExecutor { request ->
+            val body = saaiJson.parseToJsonElement(request.body!!).jsonObject
+            assertEquals("initialize", body["method"]?.jsonPrimitive?.content)
+            val params = body.getValue("params").jsonObject
+            assertEquals("ws", params["workspaceId"]?.jsonPrimitive?.content)
+            HttpResponse(200, """{"jsonrpc":"2.0","id":"req","result":{"instanceId":"i","protocolVersion":"0.1","capabilities":[],"sandboxEnforcement":{"enforcing":false,"limitations":[]}}}""")
+        }, { "req" })
+        client.initialize("ws")
+    }
+
     @Test fun initialize_does_not_treat_capability_as_execution_permission() {
         val client = RemoteDaemonClient("https://pc.example", { "token" }, RemoteHttpExecutor {
             HttpResponse(200, """{"jsonrpc":"2.0","id":"req","result":{"instanceId":"i","protocolVersion":"0.1","capabilities":["task/start"],"sandboxEnforcement":{"enforcing":false,"limitations":["no-file-system-isolation"]}}}""")
         }, { "req" })
-        val init = client.initialize()
+        val init = client.initialize("ws")
         assertEquals("i", init.instanceId)
         assertTrue("task/start" in init.capabilities)
         assertFalse(init.sandboxEnforcing)
@@ -42,7 +53,7 @@ class RemoteDaemonClientTest {
         val client = RemoteDaemonClient("https://pc.example", { "token" }, RemoteHttpExecutor {
             HttpResponse(200, """{"jsonrpc":"2.0","id":"wrong","result":{}}""")
         }, { "req" })
-        assertEquals(AgentRpc.ERR_PARSE, assertFailsWith<RemoteRpcException> { client.initialize() }.failure.code)
+        assertEquals(AgentRpc.ERR_PARSE, assertFailsWith<RemoteRpcException> { client.initialize("ws") }.failure.code)
     }
 
     @Test fun unsupported_page_shapes_fail_instead_of_advancing_cursor() {

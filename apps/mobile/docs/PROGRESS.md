@@ -1,4 +1,4 @@
-﻿# SaApp 进度（当前实际状态）
+﻿# SaCode 移动端进度（当前实际状态）
 
 > 更新：2026-10-23 · 归属：`sa-code/apps/mobile/`，旧 `sa-app` 保留，统一由 SaCode Git 管理。
 > 本文件记录手机局部状态；产品完成与当前交付的唯一台账是 [SaCode PRD 跟进台账](../../../docs/product/PRD-tracking.md)，文档权威顺序见 [根文档索引](../../../docs/README.md)。
@@ -7,7 +7,11 @@
 
 ## 一句话状态
 
-**手机工作树源码已安全复制至 `apps/mobile/`，本轮仅源码与路径/规范适配，未运行 Gradle、安装、真机或真实 daemon 验收，不能称已交付。**
+**正式入口已纠偏为 SaCode 设备配对，不依赖 saai 账号/IdP/gateway。LocalDeviceProfile 提供独立本机 registry/vault 隔离，不替代 daemon 授权；旧数据保留，不自动迁移。171 项共享测试、3 项路由回归与 Debug 构建通过，Honor 保留数据覆盖安装成功；检查时锁屏，新配对页 GUI 待手动解锁。真实 daemon、完整任务与鸿蒙仍待验。**
+
+见[入口整改证据](../../../docs/evidence/2026-10-23-mobile-sacode-entry-correction.md)。下方旧登录/网关记录为迁入历史，不再是 SaCode 正式主链路。
+
+当前读数与边界见[Demo 清理证据](../../../docs/evidence/2026-10-23-mobile-demo-removal.md)与[M04-A 证据](../../../docs/evidence/2026-10-23-mobile-m04a-routing-task-init.md)；下方历史构建失败等旧记录不覆盖本次复验。
 
 当前受保护远程客户端保持三 RPC 只读面：`initialize`、`session/catalog`、`session/events`。旧表中的执行/审批描述为历史快照，不代表现已开放。原签名库、本机配置、含口令的原 Gradle 文件及构建/会话输出均排除；既有 `kotlin/`、`kotlin-test/` 9 文件保留。后续同源构建、真机 HTTPS、账号/设备/会话归属、安全与恢复分别取证。
 
@@ -49,7 +53,7 @@
 
 - `framework/`：Kuikly 适配器 7 个（ColorParser / Exception / Font / Image / Log / Router / Thread）
 - `shared/.../saui/`：26 个 SaUI 基础组件（Token 5 · Base 1 · Foundation 3 · Form 5 · Data 4 · Feedback 10 · Navigation 3）+ 3 个聊天业务组件（`chat/`）
-- `SaUICatalogPage`：组件库 Demo 页面，**保留**
+- 组件目录 Demo 页面及登录/Android 注册入口已按用户要求删除；保留共享组件和测试。鸿蒙启动路由改为 `LoginPage`，未做鸿蒙构建验收。
 
 ## 验证状态
 
@@ -73,7 +77,7 @@
 | 中 | 鸿蒙 OHOS 侧真机验证（`ohosApp` 与 `ohosArm64Main` 已就位，未见验证记录） |
 | 中 | 短信登录真机（依赖 sa-idp 短信通道，当前仅开发码 `123456`） |
 | 中 | `docs/index.md` 仍是 SaUI Demo 索引（最后更新 2026-07-10），未覆盖 saai 接入模块 —— 已在本轮补链 |
-| 低 | `SaUICatalogPage` 组件库 Demo 与产品页面并存，后续需决定是否移出主入口 |
+| 低 | 组件目录 Demo 已删除；后续组件验证走单测、Kuikly 视图树和实际产品页面，不再加入演示入口 |
 
 ## 已知文档偏差（本轮已修正）
 

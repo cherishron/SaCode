@@ -23,5 +23,8 @@ class RemoteSafetyTest {
         }, { "req" })
         assertFailsWith<IllegalArgumentException> { client.call("task/start") }
         assertFailsWith<IllegalArgumentException> { client.call("approval/answer") }
+        assertFailsWith<IllegalArgumentException> { client.call("session/select") }
+        assertFailsWith<IllegalArgumentException> { client.call("turn/start") }
+        assertFailsWith<IllegalArgumentException> { client.call("host/cancel") }
     }
 }
