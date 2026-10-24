@@ -1,7 +1,7 @@
 // 一次性核对：verb 接入清单是否恰好覆盖矩阵里全部 ◐ 行（不多不漏）
 const fs = require("fs");
 
-const ml = fs.readFileSync("docs/plans/dsh-capability-matrix.md", "utf8").split(/\r?\n/);
+const ml = fs.readFileSync("docs/plans/capability-matrix.md", "utf8").split(/\r?\n/);
 const hi = ml.findIndex((l) => l.startsWith("| 模块 |"));
 if (hi < 0) throw new Error("矩阵表头没找到");
 const cols = ml[hi].split("|").map((s) => s.trim());

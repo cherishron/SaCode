@@ -27,7 +27,7 @@ export const UNWIRED_GATES = [
   },
   {
     file: "check_verb_checklist_cover.cjs",
-    reason: "对账 dsh-capability-matrix 的 ◐ 清单与 verb 清单，归属矩阵/能力面那条线（2026-10-06 工作区读数 RESULT: FAIL、rc=1，漏 core/extensions/system-prompt，且矩阵文件当时有未落库改动）。接线要先由该主责把矩阵与清单对上，A 不在别人的红态上按接线键。",
+    reason: "对账 capability-matrix 的 ◐ 清单与 verb 清单，归属矩阵/能力面那条线（2026-10-06 工作区读数 RESULT: FAIL、rc=1，漏 core/extensions/system-prompt，且矩阵文件当时有未落库改动）。接线要先由该主责把矩阵与清单对上，A 不在别人的红态上按接线键。",
   },
   {
     file: "check_artifact_placement.cjs",

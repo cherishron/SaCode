@@ -31,8 +31,19 @@ const ROUTE_PREDICATES = [
   { file: "core/src/acp_runtime_api.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
   { file: "core/src/acp_history.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
   { file: "core/src/execution_api.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  // 适配器式分派（main.cj 经 `if (XxxRpc.handles(method))` 转发）；补齐后 33 条声明面才不再误报「未分派」。
+  { file: "apps/host/src/automation_exec_rpc.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/compact_rpc_wiring.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/import_rpc.cj", signature: /public\s+func\s+isMethod\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "core/src/knowledge_index_rpc.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/mcp_rpc.cj", signature: /static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/skill_rpc.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/terminal_rpc.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
+  { file: "apps/host/src/web_rpc.cj", signature: /public\s+static\s+func\s+handles\s*\(\s*method\s*:\s*String\s*\)\s*:\s*Bool\s*\{/ },
 ];
-const DENOMINATOR = 171;
+// 2026-10-24：HEAD 声明面已达 222 条（含 8 条 terminal + 语音/model-pull 等新增），
+// 冻结分母据 HEAD 复核更新为 222；提交新增接口时再同步更新本值与证据。
+const DENOMINATOR = 222;
 
 const checks = [];
 function check(name, ok, detail) {

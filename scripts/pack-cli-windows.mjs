@@ -31,7 +31,7 @@ rmSync(extOut, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 mkdirSync(extOut, { recursive: true });
 cpSync(process.env.SACODE_CLI_EXE || join("apps/cli", "target", "release", "bin", "main.exe"), join(out, "sacode.exe"));
-// 扩展宿主源码要随包走：从 npm 装出来的 dsh 没有仓库目录可退，`sacode extjs` 会在工作目录
+// 扩展宿主源码要随包走：从 npm 装出来的 CLI 没有仓库目录可退，`sacode extjs` 会在工作目录
 // 这一步直接炸掉（实测 IllegalArgumentException: WorkingDirectory "extjs" not exist）。
 for (const f of EXT_SRC) {
   if (!existsSync(f)) {
@@ -41,7 +41,7 @@ for (const f of EXT_SRC) {
   cpSync(f, join(extOut, f.split("/")[1]));
 }
 if (!existsSync(EXT_EXAMPLE)) {
-  console.error(`缺少样例工具目录 ${EXT_EXAMPLE}，装出来的 dsh 跑不了扩展宿主自检`);
+  console.error(`缺少样例工具目录 ${EXT_EXAMPLE}，装出来的 CLI 跑不了扩展宿主自检`);
   process.exit(2);
 }
 mkdirSync(join(extOut, "example"), { recursive: true });
@@ -105,7 +105,7 @@ for (const dll of [...MINGW_REQUIRED, ...MINGW_OPTIONAL]) {
 // stdx 运行期 DLL：core 直接 import stdx.net.http（RealSseProvider）与 stdx.encoding.json，
 // 平台包必须带这些 DLL，否则剥掉 SDK 后 sacode realstream 会缺 DLL 当场炸（rc=127）。
 if (!existsSync(STDX)) {
-  console.error(`缺少 stdx 动态库目录 ${STDX}，装出来的 dsh 跑不了真实流`);
+  console.error(`缺少 stdx 动态库目录 ${STDX}，装出来的 CLI 跑不了真实流`);
   process.exit(2);
 }
 let sx = 0;

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { sdkRoot, runtimeLibDir, pathEntries } from "./sdk-paths.mjs";
 
-// 这两条判据决定装出来的 dsh 缺不缺 DLL：默认 SDK 根目录写错，包里没有运行期库；
+// 这两条判据决定装出来的 CLI 缺不缺 DLL：默认 SDK 根目录写错，包里没有运行期库；
 // PATH 切错，MinGW/OpenSSL 那几颗在 Windows 上永远搜不到（盘符后面的冒号不是分隔符）。
 test("默认 SDK 根目录不丢路径分隔符", () => {
   assert.equal(sdkRoot({}), "D:/Program Files/HuaWei/Cangjie");

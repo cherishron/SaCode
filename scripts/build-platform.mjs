@@ -52,7 +52,13 @@ for (const member of members) {
   }
   const start = Date.now();
   try {
-    await runBuild('cjpm', args, { cwd: join(sourceRoot, member), timeout: 1200000 });
+    // 构建钩子拿不到 cjpm 的命令行参数：把本轮 target-dir 经环境变量交给 build.cj，
+    // 它才能把运行期 DLL 抄到真正的产物 bin，而不是旧布局目录。
+    await runBuild('cjpm', args, {
+      cwd: join(sourceRoot, member),
+      timeout: 1200000,
+      env: { ...process.env, SACODE_BUILD_TARGET_DIR: targetDir }
+    });
     results.push({ member, exit: 0, elapsedMs: Date.now() - start });
     if (member !== 'core') {
       const candidates = [];

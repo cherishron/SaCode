@@ -15,8 +15,8 @@ const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
 const root = join(__dirname, "..");
-const MATRIX = "docs/plans/dsh-capability-matrix.md";
-const FRONTEND = "docs/plans/dsh-frontend-acceptance.md";
+const MATRIX = "docs/plans/capability-matrix.md";
+const FRONTEND = "docs/plans/frontend-acceptance.md";
 const CANON = "表体计数（门禁 check_p0_ownership 机械复算，唯一现值口径）";
 // 责任列是在 6cc063a 加进来的；对账基线取它的前一版，证明加列本身没吞行、没加行、没改名。
 const OWNER_COLUMN_COMMIT = "6cc063a^";

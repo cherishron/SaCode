@@ -35,6 +35,8 @@ if (spec.os === 'ohos') {
   execFileSync('tar', ['-czf', join(output, `sacode-${spec.target}.tar.gz`), '-C', platform, '.'], { stdio: 'inherit' });
 } else {
   npmRun(['pack', '--pack-destination', output], platform);
+  // TUI 是主包的一部分（单文件产物），平台包不受影响；先构建再 pack。
+  execFileSync(process.execPath, ['scripts/pack-tui.mjs'], { cwd: root, stdio: 'inherit' });
   npmRun(['pack', '--pack-destination', output], join(root, 'npm/sacode-cli'));
   execFileSync('tar', ['-czf', join(output, `sacode-${spec.target}.tar.gz`), '-C', platform, '.'], { stdio: 'inherit' });
   const host = join(platform, 'bin', `sacode-host${spec.suffix}`);
