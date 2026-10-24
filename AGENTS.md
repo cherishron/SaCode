@@ -1,14 +1,14 @@
 # AGENTS.md
 
 ## 项目定位
-SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用仓颉共享业务核心，CLI、Host、daemon 与桌面前端复用同一业务语义。DSH 是历史研究与架构参考，不以完整复刻、63 模块覆盖率或警告清零作为当前产品完成标准。
-改动前先读当前文档，不要靠记忆或历史 PASS 推断进度：
+SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用仓颉共享业务核心，CLI、Host、daemon 与桌面前端复用同一业务语义。产品能力为自主设计与独立实现，不以历史参考范围、模块覆盖率或警告清零作为当前产品完成标准。
+改动前先读当前文档，不要靠记忆或历史 PASS 推断进度。**多 agent 并行时，动手前先按「多 agent 进度登记（强制）」在自己的 `docs/agents/<agent-id>.md` 登记在飞项，收尾同批更新；收尾前跑 `node scripts/agent-board.mjs` 自检。**
 - `docs/product/PRD.md` — 现行 F01–F21 需求、授权与真实任务验收要求；其中带日期的进度表仅是当时快照。
 - `docs/product/PRD-tracking.md` — F01–F21 全程跟进台账：逐域状态（完成/未完成）、缺陷登记（含证据与闭合历史）、平台快照与关键分母读数；**完成功能或闭合缺陷必须同批更新（见下「文档同步规则」）**。
 - `docs/product/platform-and-distribution.md` — Windows/Linux/macOS 桌面与 CLI、鸿蒙 CLI/后续 ArkTS/ArkUI 前端、npm 与 GitHub 构建分发目标及实际验证边界。
 - `docs/README.md` — 文档权威顺序、最新已登记平台读数与历史资料导航；`docs/build-platforms.md` 给出多平台与 Linux 依赖配置（原 `build-linux.md` 已并入其 §2）。
 - `docs/interfaces/README.md`、`docs/integration/README.md` — 各入口面接口速查（CLI/Host/桌面 IPC/daemon/ACP/LSP）与对接方案状态总览。
-需要核历史来源时再读 `docs/plans/plan-deepseek-harness-replication.md`、`docs/plans/dsh-capability-matrix.md` 与 `docs/evidence/p0-status-2026-10-02.md`，不能将其旧范围和结果当当前授权或完成状态。
+需要核历史来源时再读 `docs/plans/plan-architecture-overview.md`、`docs/plans/capability-matrix.md` 与 `docs/evidence/p0-status-2026-10-02.md`，不能将其旧范围和结果当当前授权或完成状态。
 
 ## 当前最高推进优先级：先交付一个走通版本（2026-10-18 用户确认）
 
@@ -24,10 +24,20 @@ SaCode 是面向开发者的**可信、可控的 AI 编程工作台**，采用�
 - **完成一个功能或闭合一个缺陷时，必须同批更新产品文档**，不允许"代码先行、文档滞后"跨批次累积：
   1. `docs/product/PRD-tracking.md` — 更新对应 Fxx 行的状态、已完成事实与剩余缺口；缺陷闭合时改状态、保留历史行，附证据路径与日期；
   2. `docs/product/PRD.md` — 需求口径、验收前提或进度描述受影响时，更新对应条目；
-  3. 新证据写入 `docs/evidence/`（带日期）并由台账引用；接口/契约变化同步 `docs/interfaces/README.md`，对接状态同步 `docs/integration/README.md`。
+  3. 新证据写入 `docs/evidence/`（带日期）并由台账引用；接口/契约变化同步 `docs/interfaces/README.md`，对接状态同步 `docs/integration/README.md`；
+  4. 根 `CHANGELOG.md` — 同批追加本轮迭代条目（分类 / 日期 / 证据链接），保持产品迭代记录连续。
 - 未取得「提交 / 入口 / 平台 / 实际运行证据」四要素前，不得在 PRD 或台账中把功能标为已完成、已验证；测试通过、页面接线、RPC 宣告各自不足以升级状态。
 - 新增任何文档必须同批登记所属分类索引页（`docs/README.md` 与对应目录 README）。
 - 提交、推送、安装与发布仍按各次独立授权执行；文档同步不构成对上述动作的授权。
+
+## 多 agent 进度登记（强制，2026-10-24 新增）
+
+多 agent 并行时，进度统一登记在 `docs/agents/<agent-id>.md`（**每个 agent 只改自己的文件**，零写冲突）；汇总看板由 `scripts/agent-board.mjs` 生成到 `docs/product/agent-board.md`。这是解决"各自开发、做完不更新进度"的机制，与本文档同步规则同为强制。
+
+- **开工登记**：动手前先在自己的 `docs/agents/<agent-id>.md` 的"在飞"表加一行（工作包 / F 域 / 状态 / 涉及路径 / 证据 / 下一步），并更新 `- updated:`。
+- **收尾更新**：完成、闭合或暂停时，同批更新该行状态与证据，并按"文档同步规则"更新台账 / evidence / `CHANGELOG.md`。
+- **收尾自检**：收尾前跑 `node scripts/agent-board.mjs --write`；若 `docs/product/agent-board.md` 的"未登记告警"里出现**你改动范围内**的文件，必须先补登记（否则视为未登记违规）。
+- 模板见 `docs/agents/_template.md`；格式与用法见 `docs/agents/README.md`。
 
 ## 推进与并发边界
 - 当前优先完成真实开发任务、页面工具的核心授权/取消/结算、ACP 委派与 LSP 结果进入工作台，以及验收源码统一构建与安装后任务。平台支持是正式范围，不为此另造业务核心。

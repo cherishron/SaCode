@@ -2,9 +2,9 @@
 
 SaCode 是面向开发者的**可信、可控的 AI 编程工作台**。仓颉（Cangjie）共享核心驱动 CLI、Host 与 daemon，桌面和终端入口复用同一套授权、取消、恢复与结算语义。
 
-> 目标不是完整复刻 DSH 或清零编译警告，而是完成真实开发任务。DSH 方案与矩阵保留为历史参考，不作为当前产品完成标准。
+> 目标是完成真实开发任务并交付可信、可控的产品能力，不以编译警告清零或历史参考范围作为完成标准。
 
-产品需求见 [PRD](docs/product/PRD.md) 与 [全程跟进台账](docs/product/PRD-tracking.md)，平台、npm 分发与 GitHub 构建要求见 [平台支持与分发](docs/product/platform-and-distribution.md)，接口与对接见 [接口总览](docs/interfaces/README.md) 与 [对接方案](docs/integration/README.md)，历史证据与阅读顺序见 [文档导航](docs/README.md)。
+产品需求见 [PRD](docs/product/PRD.md) 与 [全程跟进台账](docs/product/PRD-tracking.md)，平台、npm 分发与 GitHub 构建要求见 [平台支持与分发](docs/product/platform-and-distribution.md)，接口与对接见 [接口总览](docs/interfaces/README.md) 与 [对接方案](docs/integration/README.md)，历史证据与阅读顺序见 [文档导航](docs/README.md)，产品迭代记录见 [CHANGELOG](CHANGELOG.md)。
 
 ## 平台目标与当前状态
 
@@ -21,7 +21,7 @@ CLI 分发采用 npm 薄启动包 + 原生平台包及压缩包/校验和路线�
 
 ## 版本与目录结构
 
-SaCode 采用仓颉共享核心、CLI 与桌面入口，并提供独立 daemon 源码。仓颉配置要求 **cjc 1.1.3**，匹配 **stdx 1.1.3.1**；具体包版本以各清单为准，组件版本对齐仍需交付验收，不把版本号当完成声明。现行产品范围按 PRD 的 **F01–F21 共 21 个能力域**组织，历史 DSH 的 63 子系统矩阵用于追溯，不作为当前产品完成率。
+SaCode 采用仓颉共享核心、CLI 与桌面入口，并提供独立 daemon 源码。仓颉配置要求 **cjc 1.1.3**，匹配 **stdx 1.1.3.1**；具体包版本以各清单为准，组件版本对齐仍需交付验收，不把版本号当完成声明。现行产品范围按 PRD 的 **F01–F21 共 21 个能力域**组织；历史能力矩阵仅用于追溯，不作为当前产品完成率。
 
 | 路径 | 说明 |
 | --- | --- |
@@ -60,7 +60,7 @@ SaCode 采用仓颉共享核心、CLI 与桌面入口，并提供独立 daemon �
 
 ## 这是什么
 
-SaCode 使用自有 Agent 组织改码、验证、差异审查与恢复，并经 ACP 委派外部 Agent、经 LSP 获取真实语义结果。DSH 是架构与交互参考，不承诺其全部行为、数据格式或插件源码兼容。以下为已有源码能力索引，不是全部平台、入口或安装态通过声明：
+SaCode 使用自有 Agent 组织改码、验证、差异审查与恢复，并经 ACP 委派外部 Agent、经 LSP 获取真实语义结果。全部业务能力为自主设计与独立实现，保持自身架构、数据格式与扩展契约的一致。以下为已有源码能力索引，不是全部平台、入口或安装态通过声明：
 
 - 会话日志（append/flush 持久化屏障、损坏尾帧截断、崩溃恢复合成、写租约与残留接管）
 - 投影（派生消息，纯函数、引用门控：无关事件不重建，命中缓存返回同一引用）
@@ -70,7 +70,7 @@ SaCode 使用自有 Agent 组织改码、验证、差异审查与恢复，并经
 - CLI、Host、daemon 与 Electron 桌面适配入口，npm 薄启动包与现有 Windows 平台包
 - 桌面渲染层（Vue 3 runtime + IPC 有限面，流式/审批/取消有真机断言；TinyVue 组件经构建期折叠接入）
 
-TinyRobot 消息组件与 HTTPS/SSE provider 已有源码接入。近期工作重点是页面工具进入共享执行授权链、真实模型任务闭环、ACP 委派/LSP 结果进入工作台，以及同源码 Host/CLI/桌面重建和安装后任务。Windows 中断实现不能推导 POSIX 信号已支持；各平台真实取消、持久化、进程监督与系统依赖须独立验收。旧 P0 和桌面复刻记录仅说明其注明日期的状态。
+TinyRobot 消息组件与 HTTPS/SSE provider 已有源码接入。近期工作重点是页面工具进入共享执行授权链、真实模型任务闭环、ACP 委派/LSP 结果进入工作台，以及同源码 Host/CLI/桌面重建和安装后任务。Windows 中断实现不能推导 POSIX 信号已支持；各平台真实取消、持久化、进程监督与系统依赖须独立验收。旧 P0 和桌面历史记录仅说明其注明日期的状态。
 
 ## 架构
 
@@ -133,7 +133,7 @@ core = { path = "../../core" }
 - **产品验收**：需要真实任务、失败与恢复、授权边界及新构建产物的运行证据。
 - **测试计数**：以本次实际执行的结果和退出码为准；跳过、取消、环境阻塞分别说明，不写死一个会随源码变化的总数。
 
-详细范围见 [产品需求](docs/product/PRD.md)，历史复刻索引见 [能力矩阵](docs/plans/dsh-capability-matrix.md)，历史实测与限制见 [证据记录](docs/evidence/p0-status-2026-10-02.md)。这些文档均需结合记录日期和当前源码阅读，旧 PASS 不代替本轮验证。
+详细范围见 [产品需求](docs/product/PRD.md)，历史能力索引见 [能力矩阵](docs/plans/capability-matrix.md)，历史实测与限制见 [证据记录](docs/evidence/p0-status-2026-10-02.md)。这些文档均需结合记录日期和当前源码阅读，旧 PASS 不代替本轮验证。
 
 ## 环境要求
 
